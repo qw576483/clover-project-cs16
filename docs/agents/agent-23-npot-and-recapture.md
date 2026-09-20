@@ -1,6 +1,6 @@
 # agent-23：修非二次幂贴图被拉伸（并顺带补齐 3 处证据缺口）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 承接 agent-22 的未决 4（它发现但**没动**这个缺陷，因为不在它那片的六项里）。
 
 ## 0. 现象与影响（agent-22 实测）

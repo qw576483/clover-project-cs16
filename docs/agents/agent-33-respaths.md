@@ -1,6 +1,6 @@
 # agent-33：把工程内 Resources 路径收敛到 `Core/ResPaths.cs`
 
-> 项目：`c:\Work\Server\full-dev\clover-project-cs16`。**纯项目侧、纯重构**（值一字不改）。
+> 项目：`clover-project-cs16`。**纯项目侧、纯重构**（值一字不改）。
 > 背景：skill §8「原版资源」硬约定 —— 工程内素材必须复制进 `Assets/Resources/**`，**路径收敛到 `Core/ResPaths.cs`**。现状是**这个文件不存在**，路径常量散落在 5+ 个文件里。
 
 ## 0. 现状（已核实，别重查）

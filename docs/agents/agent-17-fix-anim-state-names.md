@@ -1,6 +1,6 @@
 # agent-17：修动画状态名不匹配（R5/R6 未通过）（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > **这是 bug 修复**：动画资产已生成（615 `.anim` / 38 `.controller`），但**状态机切不动**。
 
 ## 0. 现象与证据（上一棒实机测出来的，别重复采）

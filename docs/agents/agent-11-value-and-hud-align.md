@@ -1,6 +1,6 @@
 # agent-11：数值与 HUD 对齐（1:1）（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > **本片改 `client/**` 业务代码**（这是你的授权范围）。原版值出处已全部由前几棒解析落盘，**你只搬，不发明**。
 
 ## 0. 输入（先读，出处都在里面）

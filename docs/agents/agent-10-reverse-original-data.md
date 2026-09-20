@@ -1,6 +1,6 @@
 # agent-10：解除 BLOCKED-1 / BLOCKED-2 —— 从原版二进制取权威数值（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 本片**纯离线**（Python / 二进制解析 / 图片量化），⛔ 不许碰 Unity 工程与 `client/Assets/**`。
 
 ## 0. 背景（主 agent 已核实）

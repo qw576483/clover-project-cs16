@@ -4,7 +4,7 @@
 > **本文档是 2026-09-20 07:16 主 agent 基于过期认知的重复改写版（原版被覆盖）。保留仅为留痕，⛔ 不要再照它派一遍活。**
 > 实证（主 agent 已亲自核验）：引擎 `Runtime/Presentation/{ViewBob,CameraMath,LookAccumulator}.cs` 均已存在；项目 `Module/CameraRig/ViewBob.cs` 已删除；`FirstPersonCamera.cs` / `PlayerMotor.cs` 已改用引擎件（注释明写 `E-core-18 下沉`）。
 
-> **跨仓库片**：引擎 `c:\Work\Server\full-dev\clover-client-unity-engine` ＋ 项目 `c:\Work\Server\full-dev\clover-project-cs16`
+> **跨仓库片**：引擎 `clover-client-unity-engine` ＋ 项目 `clover-project-cs16`
 > **本片串行执行**（agent-27 已核验通过后才派本片）。⛔ 不要假设有别的片在同时改文件。
 > 串行原因：`compile-check-client.ps1` 的产物落在**共享目录** `csc-out\`，两片同时跑会互相覆盖 `CloverEngine.*.dll`。
 > **E 号已由主 agent 预分配：本片占用 `E-core-18`**（⛔ 别自己取号、⛔ 别顺延）。

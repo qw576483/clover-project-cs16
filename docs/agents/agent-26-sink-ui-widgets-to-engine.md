@@ -1,6 +1,6 @@
 # agent-26：UI 通用控件工厂下沉（引擎 `UIFactory`）
 
-> **跨仓库片**：引擎 `c:\Work\Server\full-dev\clover-client-unity-engine` ＋ 项目 `c:\Work\Server\full-dev\clover-project-cs16`
+> **跨仓库片**：引擎 `clover-client-unity-engine` ＋ 项目 `clover-project-cs16`
 > 本片是「通用能力下沉」的第 2 片（25 = 日志，已完成；26 = UI 控件；27 = 音效闸门，未派）。
 > 用户已明确：**本机没开 Unity，不要求跑编辑器/PlayMode**；但**离线编译必须跑**。
 
@@ -54,7 +54,7 @@
 
 ## 3. 离线编译（**必跑**，不需要 Unity）
 
-- 引擎：`c:\Work\Server\full-dev\.codebuddy\doc-audit\tools\compile-check-client.ps1`（先读头部确认用法）⇒ 要 `RESULT: ALL PASS` / `GATE_EXITCODE=0`，且 `Presentation` 那一段 OK；⛔ `Core` 的 asmdef 引用列表必须**仍为空**（本片不该动 Core）。
+- 引擎：`.codebuddy\doc-audit\tools\compile-check-client.ps1`（先读头部确认用法）⇒ 要 `RESULT: ALL PASS` / `GATE_EXITCODE=0`，且 `Presentation` 那一段 OK；⛔ `Core` 的 asmdef 引用列表必须**仍为空**（本片不该动 Core）。
 - 项目：agent-25 用编辑器自带 Roslyn 按 `Cs16.asmdef` 边界编过一次（脚本已删）。你**自己重建**一个等价命令即可（读 agent-25 的回报格式或自己按 asmdef 参考集拼），要求 `EXITCODE=0`；也可带 `/define:UNITY_EDITOR` 再跑一次覆盖编辑器路径（注意参考集里**别同时放**单体 `Managed\UnityEditor.dll` 与模块化 `UnityEditor.CoreModule.dll`，会 CS0433 二义）。
 - 回报贴**原始输出末尾 + 退出码**。⛔ 不许为了过闸门改脚本/asmdef。
 

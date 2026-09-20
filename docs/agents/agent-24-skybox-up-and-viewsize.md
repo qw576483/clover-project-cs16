@@ -1,6 +1,6 @@
 # agent-24：天空盒 `up` 面朝向定案 + `viewsize` 结论登记（离线为主）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 本片**基本离线**（像素邻接计算 + 注释/文档），最后若要改 `Dust2Builder.cs` 才需要一次 Play 采一张抬头图。
 
 ## 0. 两条已核实的事实（直接用，别重查）

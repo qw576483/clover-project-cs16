@@ -1,6 +1,6 @@
 # agent-19：把闸门第 6 条改成「按行判过期」（消除"改一处全废"的假阳性）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 修的是**闸门自身的口径**：`tools/verify.ps1` 第 6 条 `evidence-freshness`。
 
 ## 0. 问题（skill 已明写这是错的）

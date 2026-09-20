@@ -1,6 +1,6 @@
 # agent-14：对照表收口（把已对齐的差值改成 0，未对齐的写清现状）（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 前几棒把**数值 / HUD / 动画 / 素材**都改完了；`策划/对照表.md` 还停留在"改之前"的对照状态。
 > 本片只做**对照表的收口**（⛔ 不碰 `client/**`）。
 

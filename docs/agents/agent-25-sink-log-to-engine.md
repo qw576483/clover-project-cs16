@@ -1,6 +1,6 @@
 # agent-25：日志能力下沉（S1 降频计数口径 + S2 运行时日志缓冲）
 
-> **跨仓库片**：引擎 `c:\Work\Server\full-dev\clover-client-unity-engine` ＋ 项目 `c:\Work\Server\full-dev\clover-project-cs16`
+> **跨仓库片**：引擎 `clover-client-unity-engine` ＋ 项目 `clover-project-cs16`
 > 本片是「能把项目里通用能力下沉到引擎」的第 1 片（共 2 片：25 = 日志，26 = UI 控件 + 音效）。
 > 用户已明确：**本机没开 Unity，不要求跑编辑器/PlayMode**；但**离线编译必须跑**（引擎结构规则 §7 第 8 条）。
 
@@ -116,7 +116,7 @@ public static class LogBuffer
 
 ## 3. 离线编译验证（**必跑**，不需要 Unity）
 
-闸门：`c:\Work\Server\full-dev\.codebuddy\doc-audit\tools\compile-check-client.ps1`
+闸门：`.codebuddy\doc-audit\tools\compile-check-client.ps1`
 
 - 先读该脚本头部注释确认用法（按 asmdef 边界分步编译）；
 - **引擎侧**改动要能编过（尤其 `Core` 的 asmdef 引用列表**必须仍为空** —— 新增文件不许引入任何依赖）；
@@ -135,7 +135,7 @@ public static class LogBuffer
 
 ## 5. skill 同步（本片只做**登记**，内容我主 agent 收尾统一核）
 
-- 若 `c:\Work\Server\full-dev\clover-tools\ai-skill\**` 里存在"引擎已有能力清单 / 必查清单"这类**列表**（用 `Select-String` 搜 `LogThrottle`、`必查能力`、`Event`+`Timer`+`Fsm` 同段出现），把 `LogThrottle`/`LogBuffer` 补进**同一处**；
+- 若 `clover-tools\ai-skill\**` 里存在"引擎已有能力清单 / 必查清单"这类**列表**（用 `Select-String` 搜 `LogThrottle`、`必查能力`、`Event`+`Timer`+`Fsm` 同段出现），把 `LogThrottle`/`LogBuffer` 补进**同一处**；
 - ⛔ 找不到就不许新建小节、不许改 skill 的规则句；把"搜了什么、结果如何"写进回报即可（我收尾时决定）。
 
 ## 6. 不许
@@ -145,7 +145,7 @@ public static class LogBuffer
 - ⛔ 不许改 `clover-project-cs16` 的 `策划/**`、`docs/**`、`tools/**`、`.ai-tmp/test` 历史文件；
 - ⛔ 不许读工作区里别的 `clover-project-*` 工程；
 - ⛔ 不许开子 agent；不许新增 README/交接 md；
-- 临时脚本只放 `clover-project-cs16\.ai-tmp\test\`，用完删。
+- 临时脚本只放 `.ai-tmp\test\`，用完删。
 
 ## 7. 回报格式
 

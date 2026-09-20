@@ -1,6 +1,6 @@
 # agent-18：修「角色/武器不可见」+「actor 上飘 + 物理层缺失」（交付级缺陷）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 上一棒（agent-17）修好了动画状态机（`HasState` 全 True、状态真的切换），
 > 但实机核对时发现**两个更早存在、更严重的缺陷** —— 本片修它们。
 

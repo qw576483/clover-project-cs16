@@ -1,6 +1,6 @@
 # agent-32：主菜单按原版资源重做
 
-> 项目：`c:\Work\Server\full-dev\clover-project-cs16`。**纯项目侧**。
+> 项目：`clover-project-cs16`。**纯项目侧**。
 > 用户投诉：「你的**菜单界面**也不是原版cs啊！……你可以比原版少，但是**你起码界面是原版的**啊！」
 > 前一片（agent-31）已把**选阵营 / 设置**按 `teammenu.res` / `optionssub*.res` 逐字段重做并验收通过；本片只做**主菜单**。
 

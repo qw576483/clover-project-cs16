@@ -1,6 +1,6 @@
 # agent-16：收尾三件（闸门假阳性 / 验收表证据回填 / 对照表收口）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 上一棒（agent-15，实机取证）**产物已落地但回报丢了**：`client/Assets/Screenshots/` 现有 **41 张**截图（含 3 张联络图
 > `contact-sheet-1-menu.png` / `contact-sheet-2-ingame.png` / `contact-sheet-3-map-assets.png`），
 > 生成器产物 **615 `.anim` + 38 `.controller`** 已落盘，`evidence-freshness` 已转 PASS。

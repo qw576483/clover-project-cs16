@@ -1,6 +1,6 @@
 # agent-20：收掉最后一条过期证据（P1）+ 刷新验收表口径文本
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 闸门现在只剩一条 FAIL，且是**真阳性**（不是口径问题）。
 
 ## 0. 现状（闸门原文）

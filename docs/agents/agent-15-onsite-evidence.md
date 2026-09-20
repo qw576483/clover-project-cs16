@@ -1,6 +1,6 @@
 # agent-15：实机取证（第 ④ 拍）—— 跑生成器 + 进 Play + 采联络图 + 重采截图
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > **用户的 Unity 编辑器已经开着**（这是本片的前提，已确认）。
 > 本片是交付前的**唯一实机取证**，按 skill §1.13 第 ④ 拍走：**一条驱动链路按序跑完，只采一次**。
 
@@ -9,7 +9,7 @@
 | 事实 | 证据 |
 |---|---|
 | 编辑器在跑 | 进程 PID **34268**，标题 `Administrator: client - Boot - … Unity 6.6 (6000.6.0f1)` |
-| Pipeline 已就绪 | `unity status`（**必须在 `client` 目录内执行**）⇒ `7802 / ready / …\clover-project-cs16\client / 6000.6.0f1 / 34268` |
+| Pipeline 已就绪 | `unity status`（**必须在 `client` 目录内执行**）⇒ `7802 / ready / …\client / 6000.6.0f1 / 34268` |
 | ⚠️ **cwd 决定连谁** | 在项目根执行 `unity status` 会得到**空表**（那不是没开编辑器）。**所有 unity 命令都先 `cd client`**（或用 `--project-path`） |
 | 编辑器编译正常 | `unity command console_status` ⇒ `compilationFailed:false, compiling:false, consoleErrors:0` |
 | 面板生成器**已成功跑过一次** | `unity command eval --code 'Cs16.EditorTools.UiBuilder.Generate(); return 1;' --timeout 300` ⇒ `success:true, result:1`（可重跑） |

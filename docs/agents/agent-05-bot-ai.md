@@ -5,8 +5,8 @@
 ```
 (1) 拿到 skill：工具集里有 use_skill 就用它加载 clover-engine + unity-cli；
     没有就直接读文件（命中即用）：
-      · c:/Work/Server/full-dev/clover-project-cs16/tools/ai-skill/SKILL.md   ← 项目级，首选
-      · c:/Work/Server/full-dev/clover-tools/ai-skill/SKILL.md                ← 仓库源
+      · tools/ai-skill/SKILL.md   ← 项目级，首选
+      · clover-tools/ai-skill/SKILL.md                ← 仓库源
       · ~/.codebuddy/skills/ai-skill/SKILL.md                                 ← 安装副本
     （unity-cli 同理）
     都找不到 → 回报调用方要路径，**不许凭记忆写代码**。
@@ -14,7 +14,7 @@
 ```
 
 **必读**：
-- `c:/Work/Server/full-dev/clover-project-cs16/docs/步骤文档.md`（§3 契约）
+- `docs/步骤文档.md`（§3 契约）
 - `策划/策划案/CS1.6单机参考规格.md` §2.4（**3 档难度参数表 = 你的验收合同**）
 - `clover-tools/ai-skill/patterns/client/3d-mmo-basics.md` §0（"活靶子没有巡逻范围/不还手"等真因）
 - 契约：`Assets/Scripts/Module/Match/CsTypes.cs`（`CsBotProfile` / `CsBotIntent` / `CsBotState` / `CsActor`）、

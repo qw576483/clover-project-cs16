@@ -3,7 +3,7 @@
 > **本片已于 2026-09-19 21:37 首派并完成（`E-core-17`，主体见引擎 `修复记录.md:1260`）。**
 > **本文档是 2026-09-20 07:16 主 agent 基于过期认知的重复改写版；当日复派实际做的是「核验 + 收口」**：补掉首轮遗留的 2 处裸 `Warn`（`PlayBGM` 缺失分支 / 池满告警，只换发射通道）、补文档与 skill、重出全部证据（30 PASS）。复派不涉及项目侧文件改动。
 
-> **跨仓库片**：引擎 `c:\Work\Server\full-dev\clover-client-unity-engine` ＋ 项目 `c:\Work\Server\full-dev\clover-project-cs16`
+> **跨仓库片**：引擎 `clover-client-unity-engine` ＋ 项目 `clover-project-cs16`
 > **本片串行执行**（agent-28 在本片核验通过后才派）。⛔ 不要假设有别的片在同时改文件。
 > 串行原因：`compile-check-client.ps1` 的产物落在**共享目录** `csc-out\`，两片同时跑会互相覆盖 `CloverEngine.*.dll`（项目侧要拿"刚产出的那份"编，会被污染成假失败/假通过）。
 > **E 号已由主 agent 预分配：本片占用 `E-core-17`**（⛔ 别自己取号、⛔ 别顺延）。

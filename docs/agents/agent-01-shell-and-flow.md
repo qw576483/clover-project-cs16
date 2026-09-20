@@ -5,8 +5,8 @@
 ```
 (1) 拿到 skill：工具集里有 use_skill 就用它加载 clover-engine + unity-cli；
     没有就直接读文件（命中即用，不必读完）：
-      · c:/Work/Server/full-dev/clover-project-cs16/tools/ai-skill/SKILL.md   ← 项目级，首选
-      · c:/Work/Server/full-dev/clover-tools/ai-skill/SKILL.md                ← 仓库源
+      · tools/ai-skill/SKILL.md   ← 项目级，首选
+      · clover-tools/ai-skill/SKILL.md                ← 仓库源
       · ~/.codebuddy/skills/ai-skill/SKILL.md                                 ← 安装副本
     （unity-cli 同理，目录名换成 unity-cli/）
     都找不到 → 回报调用方要路径，**不许凭记忆写代码**。
@@ -14,7 +14,7 @@
 ```
 
 **必读**（按序）：
-- `c:/Work/Server/full-dev/clover-project-cs16/docs/步骤文档.md` §3（关键契约速查）
+- `docs/步骤文档.md` §3（关键契约速查）
 - `clover-tools/ai-skill/patterns/client/app-flow.md`（本任务的主范式，**照抄结构**）
 - `clover-tools/ai-skill/reference/architecture.md`（分层铁律）
 - `clover-tools/ai-skill/reference/engine-mental-model.md` §1/§2（模块谁挂、生命周期）

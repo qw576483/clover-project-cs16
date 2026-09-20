@@ -1,6 +1,6 @@
 # agent-08：收尾闸门升级 + 引用可达性修复（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 主 agent 已用最新 clover-engine skill 核验，本片只修**流程层**缺口，**不碰业务代码**。
 
 ## 0. 开工必做
@@ -8,7 +8,7 @@
 1. 工具集里有 `use_skill` → 执行 `use_skill("clover-engine")`。
 2. **必读**（按序，命中即用）：
    - 全局 skill 规则层：`~/.codebuddy/skills/ai-skill/SKILL.md`（重点 §1.8 / §1.11 / §1.12 / §1.13）
-   - **闸门模板（本片的规格真源）**：`c:/Work/Server/full-dev/clover-tools/ai-skill/reference/verify-template.md`
+   - **闸门模板（本片的规格真源）**：`clover-tools/ai-skill/reference/verify-template.md`
      —— **第 102~259 行的骨架就是要求**，逐条落地，⛔ 不许自己另发明条目。
    - 现状：`tools/verify.ps1`（旧版，只有 1~9 条，缺第 10~15 条）
 
@@ -29,7 +29,7 @@
 
 ### 1.2 修 `client/资源欠缺清单.md` 的失效引用
 
-该文件多处引用**已不存在的工程外路径** `c:/Work/Server/full-dev/_assets_tmp/cs16src/...`（如第 16/17/54/62 行）。
+该文件多处引用**已不存在的工程外路径** `_assets_tmp/cs16src/...`（如第 16/17/54/62 行）。
 真实位置已迁到项目内 `原版资源/cs16src/`（含 `cs16_build.py`、`hlsdk/`、`inno/`、`goldsrs/`、`cstrike-LiON.iso`）。
 
 要求：

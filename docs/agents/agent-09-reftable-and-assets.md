@@ -1,6 +1,6 @@
 # agent-09：原版对照表 + 素材调研 + 原版资源清单（clover-project-cs16）
 
-> 项目根：`c:\Work\Server\full-dev\clover-project-cs16`
+> 项目根：`clover-project-cs16`
 > 本片产出**三份文档**（全是 §2 / §4 闸门 3 / §1.9 的硬要求），⛔ 不许碰业务代码。
 
 ## 0. 开工必做
