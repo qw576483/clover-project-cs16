@@ -62,7 +62,7 @@ HUMAN-ONLY  engine-credit
 | 事实 | 说明 |
 |---|---|
 | **unity 命令必须在 `client` 目录内执行** | 否则 `unity status` 空表（那不是编辑器没开） |
-| `unity command eval` 有主线程 5 s 上限 | 长任务用 `--detach` / job 轮询，见 `clover-tools/ai-skill/reference/pipeline-and-unity-cli.md` |
+| `unity command eval` 有主线程 5 s 上限 | 长任务用 `--detach` / job 轮询，见 `clover-ai-skill/reference/pipeline-and-unity-cli.md` |
 | `--code` 里不要写字符串字面量 | PowerShell 会把引号吃掉（`return "x";` → `return x;`） |
 | 编辑器 PID / 状态 | 34268 / `ready`（若已关闭，先回报再定） |
 

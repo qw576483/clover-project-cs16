@@ -6,7 +6,7 @@
 (1) 拿到 skill：工具集里有 use_skill 就用它加载 clover-engine + unity-cli；
     没有就直接读文件（命中即用，不必读完）：
       · tools/ai-skill/SKILL.md   ← 项目级，首选
-      · clover-tools/ai-skill/SKILL.md                ← 仓库源
+      · clover-ai-skill/SKILL.md                ← 仓库源
       · ~/.codebuddy/skills/ai-skill/SKILL.md                                 ← 安装副本
     （unity-cli 同理）
     都找不到 → 回报调用方要路径，**不许凭记忆写代码**。
@@ -16,8 +16,8 @@
 **必读**：
 - `docs/步骤文档.md`（全文，尤其 §3）
 - `策划/策划案/CS1.6单机参考规格.md` §2.3（玩法系统清单，你的验收）
-- `clover-tools/ai-skill/reference/architecture.md`（分层）
-- `clover-tools/ai-skill/reference/game-delivery.md` §5（行为→表现规格）
+- `clover-ai-skill/reference/architecture.md`（分层）
+- `clover-ai-skill/reference/game-delivery.md` §5（行为→表现规格）
 - 契约文件：`Assets/Scripts/Core/*.cs`、`Assets/Scripts/Module/Match/CsTypes.cs`、`ICsMatch.cs`
 
 ## 1. 目标

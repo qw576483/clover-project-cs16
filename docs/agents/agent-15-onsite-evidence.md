@@ -16,7 +16,7 @@
 | ⚠️ **`eval` 有主线程 5 s 上限** | `Cs16.EditorTools.ArtSetup.Generate()` ⇒ `Main thread operation timed out after 5000ms`（它要生成 615 个 clip + 68 个 prefab）⇒ **必须用后台/分离方式** |
 | 中文/引号会被 PowerShell 吃掉 | `--code` 里**不要写字符串字面量**（`return "x";` 会被传成 `return x;`）。要返回就 `return 1;` |
 
-> **长任务的正确打法先查**：`clover-tools/ai-skill/reference/pipeline-and-unity-cli.md`（P-0~P-5，含 `eval_file` 形态、
+> **长任务的正确打法先查**：`clover-ai-skill/reference/pipeline-and-unity-cli.md`（P-0~P-5，含 `eval_file` 形态、
 > `--detach` / job 轮询、域重载、失焦不 tick、截图限制）。**先读它再试**，别自己发明。
 
 ## 1. 开工必做

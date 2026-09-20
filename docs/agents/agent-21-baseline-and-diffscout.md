@@ -73,7 +73,7 @@
 | 事实 | 说明 |
 |---|---|
 | unity 命令必须在 `client` 目录内执行 | 否则 `unity status` 空表（不是编辑器没开）；每条命令也可带 `--project-path` |
-| `unity command eval` 有 ~5s 主线程上限 | 长任务用 `--detach` / job 轮询（见 `clover-tools/ai-skill/reference/pipeline-and-unity-cli.md`） |
+| `unity command eval` 有 ~5s 主线程上限 | 长任务用 `--detach` / job 轮询（见 `clover-ai-skill/reference/pipeline-and-unity-cli.md`） |
 | `--code` 里不要写字符串字面量 | PowerShell 会吃掉引号 |
 | **本片不要求进我方工程 Play** | 用户报的是"与原版不一致"，判据在**原版那一侧**；我方现状用**只读**方式（读代码/读已有截图）确定即可 |
 | 驱动脚本 | 本轮要复用的放 `<项目根>/.ai-tmp/drivers/`；真一次性的放 `.ai-tmp/test/` 用完删 |

@@ -31,7 +31,7 @@ client/Assets/Screenshots/05_ingame_ct.png     09-19 12:50:43   ← P1 现在引
 - 编辑器用法（**都在 `client` 目录内执行**）：`unity status` 确认 `ready`；`unity command editor_play` 进 Play；
   用既有驱动脚本（`.ai-tmp/test/` 里的历史脚本可读可复用）走到游戏内；`unity command capture_game_view --source screen --save_path <绝对路径>`
   （⚠️ **必须 `source=screen`**，`camera` 会漏掉 overlay UI）；采完 `editor_stop`。
-  ⚠️ `unity command eval` 有 **5 s 主线程上限**，长任务用 `--detach`/job 轮询（见 `clover-tools/ai-skill/reference/pipeline-and-unity-cli.md`）；
+  ⚠️ `unity command eval` 有 **5 s 主线程上限**，长任务用 `--detach`/job 轮询（见 `clover-ai-skill/reference/pipeline-and-unity-cli.md`）；
   `--code` 里**不要写字符串字面量**（PowerShell 会吃引号）。
 
 ### 1.2 刷新验收表里两处**旧口径文本**（`策划/验收表.md`）

@@ -38,7 +38,7 @@ ctl=player_CT_gsg9  HasState('idle1')=False  HasState('player_CT_gsg9_idle1')=Tr
 
 用户的编辑器开着（PID 34268，`unity status` **在 `client` 目录内**才连得上；当前它可能还在 Play —— 先 `unity command editor_stop`，改完 `unity command recompile` 等编译完成，再跑生成器，最后 `editor_play`）。
 
-1. **生成器**：跑 `Cs16.EditorTools.ArtSetup.Generate()`（长任务，用 `--detach` / job 轮询，见 `clover-tools/ai-skill/reference/pipeline-and-unity-cli.md`；⛔ 不许只凭"命令返回 true"就说成功，**要验证磁盘上的 state 名真的变了**——可直接读 `.controller` 资产或用 `eval` 断言）；
+1. **生成器**：跑 `Cs16.EditorTools.ArtSetup.Generate()`（长任务，用 `--detach` / job 轮询，见 `clover-ai-skill/reference/pipeline-and-unity-cli.md`；⛔ 不许只凭"命令返回 true"就说成功，**要验证磁盘上的 state 名真的变了**——可直接读 `.controller` 资产或用 `eval` 断言）；
 2. **实机断言**（用 `unity command eval`，代码里不要写字符串字面量 —— PowerShell 会吃掉引号）：
    - `Animator.HasState(0, Animator.StringToHash("<候选名>"))` 对 **idle1 / run / walk / crouch_idle / jump / death1** 逐个为 **True**；
    - 进 Play 后驱动角色状态变化（走 / 跑 / 蹲 / 死），断言 **当前 state hash 真的变了**（不是一直停在 defaultState）；

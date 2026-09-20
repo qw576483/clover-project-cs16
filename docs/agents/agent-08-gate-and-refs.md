@@ -8,7 +8,7 @@
 1. 工具集里有 `use_skill` → 执行 `use_skill("clover-engine")`。
 2. **必读**（按序，命中即用）：
    - 全局 skill 规则层：`~/.codebuddy/skills/ai-skill/SKILL.md`（重点 §1.8 / §1.11 / §1.12 / §1.13）
-   - **闸门模板（本片的规格真源）**：`clover-tools/ai-skill/reference/verify-template.md`
+   - **闸门模板（本片的规格真源）**：`clover-ai-skill/reference/verify-template.md`
      —— **第 102~259 行的骨架就是要求**，逐条落地，⛔ 不许自己另发明条目。
    - 现状：`tools/verify.ps1`（旧版，只有 1~9 条，缺第 10~15 条）
 
@@ -54,7 +54,7 @@
 
 ## 3. 不许
 
-- ⛔ 不许改任何 skill（项目级 `tools/ai-skill/`、仓库源 `clover-tools/ai-skill/`、宿主安装副本）；
+- ⛔ 不许改任何 skill（项目级 `tools/ai-skill/`、仓库源 `clover-ai-skill/`、宿主安装副本）；
 - ⛔ 不许碰 `client/Assets/**` 下的业务代码 / 资源 / 场景 / prefab；
 - ⛔ 不许改契约文件、不许改 `策划/验收表.md` 与 `策划/策划案/**`；
 - ⛔ 不许开子 agent；

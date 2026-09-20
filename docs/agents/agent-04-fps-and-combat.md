@@ -6,7 +6,7 @@
 (1) 拿到 skill：工具集里有 use_skill 就用它加载 clover-engine + unity-cli；
     没有就直接读文件（命中即用）：
       · tools/ai-skill/SKILL.md   ← 项目级，首选
-      · clover-tools/ai-skill/SKILL.md                ← 仓库源
+      · clover-ai-skill/SKILL.md                ← 仓库源
       · ~/.codebuddy/skills/ai-skill/SKILL.md                                 ← 安装副本
     （unity-cli 同理）
     都找不到 → 回报调用方要路径，**不许凭记忆写代码**。
@@ -15,8 +15,8 @@
 
 **必读**：
 - `docs/步骤文档.md` §3
-- `clover-tools/ai-skill/patterns/client/3d-mmo-basics.md` §0/§1/§2/§3（症状→真因表、预测、本地碰撞、相机六条）
-- `clover-tools/ai-skill/reference/engine-mental-model.md` §4/§5（能力边界 + 主角操作三条铁律）
+- `clover-ai-skill/patterns/client/3d-mmo-basics.md` §0/§1/§2/§3（症状→真因表、预测、本地碰撞、相机六条）
+- `clover-ai-skill/reference/engine-mental-model.md` §4/§5（能力边界 + 主角操作三条铁律）
 - `策划/策划案/CS1.6单机参考规格.md` §2.2/§2.3（HUD 与射击手感）
 - 契约文件：`Assets/Scripts/Core/*.cs`、`Assets/Scripts/Module/Match/ICsMatch.cs`、`Assets/Scripts/Module/Map/ICsMap.cs`
 

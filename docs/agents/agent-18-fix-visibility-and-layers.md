@@ -49,7 +49,7 @@
 
 ## 2. 验证（必须实机，编辑器的用法见下）
 
-现场：编辑器 PID 34268，`unity status` **在 `client` 目录内执行**才连得上；`unity command eval` 有 **5 s 主线程上限**（长任务用 `--detach`/job 轮询，见 `clover-tools/ai-skill/reference/pipeline-and-unity-cli.md`）；`--code` 里**不要写字符串字面量**（PowerShell 吃引号）。
+现场：编辑器 PID 34268，`unity status` **在 `client` 目录内执行**才连得上；`unity command eval` 有 **5 s 主线程上限**（长任务用 `--detach`/job 轮询，见 `clover-ai-skill/reference/pipeline-and-unity-cli.md`）；`--code` 里**不要写字符串字面量**（PowerShell 吃引号）。
 
 1. **编译**：`recompile` + `recompile_status`（`compilationFailed:false`）；离线 `compile-check.ps1` ⇒ `csc exit=0`；
 2. **实机断言**（逐条给原文）：

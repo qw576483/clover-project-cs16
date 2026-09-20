@@ -6,7 +6,7 @@
 (1) 拿到 skill：工具集里有 use_skill 就用它加载 clover-engine + unity-cli；
     没有就直接读文件（命中即用）：
       · tools/ai-skill/SKILL.md   ← 项目级，首选
-      · clover-tools/ai-skill/SKILL.md                ← 仓库源
+      · clover-ai-skill/SKILL.md                ← 仓库源
       · ~/.codebuddy/skills/ai-skill/SKILL.md                                 ← 安装副本
     （unity-cli 同理）
     都找不到 → 回报调用方要路径，**不许凭记忆写代码**。
@@ -15,9 +15,9 @@
 
 **必读**：
 - `docs/步骤文档.md` §3
-- `clover-tools/ai-skill/patterns/client/ui.md`、`patterns/client/app-flow.md`（面板范式）
-- `clover-tools/ai-skill/reference/architecture.md`（**UI 不许 using Module**）
-- `clover-tools/ai-skill/reference/engine-mental-model.md` §4（`UIFactory` 全套方法）
+- `clover-ai-skill/patterns/client/ui.md`、`patterns/client/app-flow.md`（面板范式）
+- `clover-ai-skill/reference/architecture.md`（**UI 不许 using Module**）
+- `clover-ai-skill/reference/engine-mental-model.md` §4（`UIFactory` 全套方法）
 - `策划/策划案/CS1.6单机参考规格.md` §2.1/§2.2（HUD 清单 H1~H14 + G11/G12/G13）
 - 契约：`Assets/Scripts/Core/*.cs`、`Assets/Scripts/Module/Match/ICsMatch.cs`
 
