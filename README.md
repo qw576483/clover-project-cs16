@@ -19,7 +19,8 @@
 ## 怎么玩
 
 1. Unity **6000.x** 打开 `client/`；
-2. 进 Play：主菜单 → 新游戏 → 选阵营 → 进 de_dust2。
+2. 进 Play：主菜单 → 新游戏 → 选阵营 → 进 de_dust2；
+3. 引擎包 `com.clover.unity-engine` 由 UPM 自动从 [clover-client-unity-engine](https://github.com/qw576483/clover-client-unity-engine) 拉取（首次打开联网克隆，之后走本地缓存）—— **需本机已装 Git 且在 `PATH` 里**。
 
 ## 工程结构
 

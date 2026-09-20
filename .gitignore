@@ -28,3 +28,9 @@ client/.idea/
 # ★ 取证截图不许进 client/Assets/**（skill §1.8 第 6 条）
 #   历史目录 client/Assets/Screenshots/ 已迁 .ai-tmp/screenshots/，这里拦住它被误提交回来
 client/Assets/Screenshots/
+
+# ★ 本机引擎联调覆盖（只在本机存在，不进仓库）：
+#   client/Packages/ 下的 embedded 包指向工作区里的 clover-client-unity-engine，
+#   优先级高于 manifest.json 里的 git 依赖 ⇒ 本机改引擎源码即时生效、且不用联网克隆。
+#   删掉这个链接 = 回到「按 manifest 从 GitHub 拉取引擎」，外人 clone 后的行为不受影响。
+client/Packages/com.clover.unity-engine/
