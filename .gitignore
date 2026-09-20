@@ -1,0 +1,30 @@
+﻿
+# ★ AI 临时目录（skill §1.8）：一次性产物 / 探针 / 驱动 / 判据脚本 / 取证截图
+#   .ai-tmp/screenshots/ = 验收取证图（一次性，不进交付）
+.ai-tmp/
+# ★ 原版资源（skill §1.9）：下载 / 解包素材的唯一来源，不进版本库
+原版资源/
+
+# ★ Unity 工程生成物（scaffold/new-project.md §3 检查清单）
+client/Library/
+client/Temp/
+client/Logs/
+client/obj/
+client/Build/
+client/Builds/
+client/UserSettings/
+client/setting/
+client/MemoryCaptures/
+client/Recordings/
+client/.vsconfig
+client/.vs/
+client/.idea/
+*.csproj
+*.sln
+*.slnx
+*.unityproj
+*.userprefs
+
+# ★ 取证截图不许进 client/Assets/**（skill §1.8 第 6 条）
+#   历史目录 client/Assets/Screenshots/ 已迁 .ai-tmp/screenshots/，这里拦住它被误提交回来
+client/Assets/Screenshots/

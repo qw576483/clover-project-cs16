@@ -1,0 +1,25 @@
+# 二进制类型（scaffold/new-project.md §3：*.png/*.wav/*.unity/*.prefab 一律 binary）
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.bmp binary
+*.tga binary
+*.gif binary
+*.psd binary
+*.wav binary
+*.mp3 binary
+*.ogg binary
+*.ttf binary
+*.otf binary
+*.unity binary
+*.prefab binary
+*.asset binary
+*.mat binary
+*.anim binary
+*.controller binary
+*.dll binary
+*.so binary
+*.bytes binary
+
+# 随交付打包的原版素材（仅当用户本轮明说要随交付给，才走 lfs；skill §1.9 第 9 条）
+*.zip filter=lfs diff=lfs merge=lfs -text

@@ -1,0 +1,37 @@
+CS 1.6 de_dust2 —— 资源来源与转换说明（本项目非商用，只在《资源欠缺清单》层面记一行）
+====================================================================================
+1) 地图本体（几何/实体/内嵌贴图）
+   来源：https://archive.org/download/cs-109-de_dust2/cs-109-de_dust2.zip
+        （archive.org 条目 cs-109-de_dust2，1,086,336 字节）
+   本地：原版资源/解包产物/cs109_dust2.zip（1,086,336 字节 / MD5 81f71bbecf6914614bc23e3c794225b2）
+   落地：Assets/ThirdParty/Dust2/de_dust2.bsp  (2,057,288 字节, GoldSource BSP v30)
+   内容：worldspawn 几何 + 木箱(func_breakable×10) + 包点(func_bomb_target A/B)
+        + 买枪区(func_buyzone team1=T / team2=CT) + 出生点(info_player_deathmatch×20 T,
+        info_player_start×20 CT) + 光照(light_environment _light "255 255 128 70", pitch -60, angle 43)
+   方案：地图里 15 张主要墙面/岩石贴图**内嵌**在 BSP 的 miptex lump 里（自带 768 字节调色板，
+        紧跟 4 级 mip 之后 1 字节），已解码成 PNG（文字/涂鸦清晰可辨）。
+
+2) 未内嵌的贴图（BSP 只内嵌 15 张，其余 26 张来自编译期引用的 cs_dust.wad）
+   原版像素来源（**已在项目内**）：原版资源/cs16src/cs16game/app/cstrike/cs_dust.wad
+        （WAD3 / 28 lumps / 1,055,884 B；本脚本解析它的 miptex，按 BSP 里的名字写成同名 PNG
+          到 Assets/ThirdParty/Dust2/Textures/，如 SandCCrete.png / SandRoad.png / SandTrim.png / _0Sand.png）
+   说明（2026-09-19 agent-22 改）：此前这 26 张被"按角色"回落到 de_dust2_scene 素材包的同族沙漠 PNG，
+        其中 `SandCCrete`（A 点混凝土路面）被错映射成 box.png（木箱贴图）—— 即"A 点地面材质不对"。
+        现改为从 WAD 解原版 miptex；回落表只剩 WAD 里确实没有的：
+        `+0~fifties_lgt2` / `+a~fifties_lgt2` → white.png、`generic011` → box_x.png。
+   对照量测：WAD 的 -0SandRock 与 BSP 内嵌的 -0SandRock2 解出来是同一族沙岩
+        （RGB 均值 133.8/98.3/79.5 vs 133.5/93.6/76.3）⇒ 解码链正确。
+
+3) 天空盒（worldspawn skyname = des）—— 来源已统一到**原版本体**
+   来源（本体）：原版资源/cs16src/cs16game/app/cstrike/gfx/env/des{up,dn,ft,bk,rt,lf}.tga
+        （CS 1.6 本体 cstrike，256×256×32bpp TGA 2.0，每个 262,188 字节）
+   旧来源（社区镜像，已弃用为来源、只留作核对）：cs16-maps 里某 map 目录的
+        cstrike/gfx/env/des{up,dn,ft,bk,rt,lf}.tga（本项目内副本见
+        原版资源/cs16-maps/counter-strike/ka_matrix_dojo/cstrike/gfx/env/）
+   核对结论：本体那 6 个 TGA 与社区镜像的同名 TGA **逐字节相同**（6/6 文件 SHA256 一致）
+        ⇒ 本次不是"换了一张图"，是把来源口径统一到本体（像素不变）。
+   落地：Assets/ThirdParty/Dust2/Skybox/sky_*.png（TGA→PNG，256×256，RGB）
+
+转换脚本（**全部在项目内，可重跑**）：
+  · 地图几何/贴图/材质：原版资源/解包产物/dust2_build.py
+  · 天空盒 TGA→PNG 与 HUD 精灵抽取：原版资源/解包产物/cs16_asset_extract.py
