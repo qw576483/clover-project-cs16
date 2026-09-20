@@ -464,6 +464,14 @@ namespace Cs16.Module.Combat
             public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius) => true;
             public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius) => to;
             public float SampleGround(Vector3 pos, float maxDrop = 8f) => 0f;
+
+            /// <summary>假地图的地面 = y 0 的水平面（法线朝上 ⇒ 永远是可站立的缓面）。</summary>
+            public bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f)
+            {
+                point = new Vector3(pos.x, 0f, pos.z);
+                normal = Vector3.up;
+                return true;
+            }
             public Vector3 GetSpawnPoint(int index) => index % 2 == 0 ? SpawnT : SpawnCT;
 
             public Vector3[] Points(string marker)

@@ -111,6 +111,27 @@ namespace Cs16.Core
         public const float StepUpHeight = 0.45f;          // 可迈上的台阶高度
         public const float GroundCheckDistance = 0.12f;
 
+        /// <summary>
+        /// **可站立地面的法线阈值 = 0.7**（对应坡度 <b>acos(0.7) ≈ 45.573°</b>）：地面法线在"上轴"上的分量
+        /// 小于它 ⇒ 这个面**太陡**，不算地面（站不住、也不能沿它走上去）。
+        ///
+        /// <para><b>出处（原版 GoldSrc `pm_shared.c`，两处同阈值）</b>：</para>
+        /// <list type="number">
+        /// <item><c>PM_CatagorizePosition</c>：<c>if (tr.plane.normal[2] &lt; 0.7) pmove-&gt;onground = -1; // too steep</c>
+        /// —— 陡坡上不算"在地面"（于是没有地面摩擦、不能再跳，走 AirMove）；</item>
+        /// <item><c>PM_WalkMove</c>：<c>if (trace.plane.normal[2] &lt; 0.7) goto usedown;</c>
+        /// —— 下探后发现是陡坡就**放弃"上台阶"那条路径**，退回贴地滑动结果（即不会沿陡坡"迈上去"）。</item>
+        /// </list>
+        ///
+        /// <para><b>轴的口径</b>：原版那个 <c>normal[2]</c> 是"上轴"分量；本工程是 Unity 左手系、<b>y 向上</b>
+        /// ⇒ 对应 <c>normal.y</c>（<c>Module/Map/CsMap.TrySampleGround</c> 返回的就是世界法线，取 <c>.y</c> 比较）。</para>
+        ///
+        /// <para>⛔ 为什么必须有它：本工程的本地碰撞是"2D 位图（水平）+ 竖直射线（高度）"，位图**不带坡度信息**
+        /// ⇒ 删掉这条阈值，玩家能直接沿任意陡坡（岩石面 / 楔形坡的侧面）"走上去"，脚贴坡面而身体与
+        /// camera 陷进地形里 —— 用户报的"坡道会穿模"就是这个。</para>
+        /// </summary>
+        public const float MaxStandableSlopeNormalZ = 0.7f;
+
         // ---- 相机 ----
 
         /// <summary>

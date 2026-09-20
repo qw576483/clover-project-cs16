@@ -1,4 +1,5 @@
 using CloverEngine;
+using Cs16.Core;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.Events;
@@ -74,7 +75,34 @@ namespace Cs16.UI
                 return;
             }
             button.onClick.RemoveAllListeners();
+            AddClickSfx(button);            // UI 点击音（见 AddClickSfx 的注释）
             button.onClick.AddListener(action);
+        }
+
+        /// <summary>
+        /// 给按钮挂一条 **UI 点击音**（A 的 <c>sound/ui/buttonclick.wav</c> ⇒ 本工程
+        /// <c>Resources/Sound/SFX/sfx/menu_click.wav</c>）。
+        ///
+        /// <para><b>为什么放在这里</b>：这是本项目**唯一**的按钮绑定入口（<see cref="Bind"/>），
+        /// 每个面板的 <c>OnOpen</c> 都要走它；而 <c>Bind</c> 第一件事就是
+        /// <c>RemoveAllListeners()</c> ⇒ 点击音必须**紧跟其后**加，否则会被清掉。
+        /// 自己 <c>RemoveAllListeners()</c> 重绑的按钮（如 <c>OptionsPanel.WireCtrls</c>）
+        /// 要显式再调一次本方法。</para>
+        ///
+        /// <para>⛔ UI 层不许 using 任何 <c>Module</c> ⇒ 不能用 <c>Module/Audio</c> 的
+        /// <c>SfxService</c>（那是给游戏内音效的转发层），这里直接走引擎 <c>Game.Sound</c>；
+        /// 短名真源 = <see cref="ResPaths.SfxMenuClick"/>（Core 层，UI 可以引）。</para>
+        /// </summary>
+        protected static void AddClickSfx(Button button)
+        {
+            if (button == null) return;
+            button.onClick.AddListener(PlayClickSfx);
+        }
+
+        /// <summary>点击音的播放体（缺资源/缺 Sound 域时引擎自己会限频告警一次，这里不重复判）。</summary>
+        private static void PlayClickSfx()
+        {
+            Game.Sound?.PlaySFX(ResPaths.SfxMenuClick);
         }
 
         /// <summary>绑定滑块数值变化（同样必须在 <c>OnOpen</c> 里绑，理由见 <see cref="Bind"/>）。</summary>

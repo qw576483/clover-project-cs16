@@ -493,6 +493,7 @@ namespace Cs16.UI
                                 break;
                             }
                             btn.onClick.RemoveAllListeners();
+                            AddClickSfx(btn);       // 本分支自己 RemoveAllListeners ⇒ 点击音要显式补（见 CsPanelBase.AddClickSfx）
                             if (IsDialogButton(c.Name))
                             {
                                 // Ok / Cancel / Apply 由 BindDialogButtons 单独绑（同一个 OnOpen 里）
@@ -521,6 +522,7 @@ namespace Cs16.UI
                             var options = c.Options;
                             var index = 0;
                             btn.onClick.RemoveAllListeners();
+                            AddClickSfx(btn);       // 同上：自绑按钮要显式补点击音
                             btn.onClick.AddListener(() =>
                             {
                                 if (options == null || options.Length == 0) return;
@@ -601,6 +603,7 @@ namespace Cs16.UI
                             var hasReal = _realChecks.TryGetValue(key, out real);
                             var handler2 = real;
                             btn.onClick.RemoveAllListeners();
+                            AddClickSfx(btn);       // 同上：自绑按钮要显式补点击音
                             btn.onClick.AddListener(() =>
                             {
                                 row.SetState(!row.State);

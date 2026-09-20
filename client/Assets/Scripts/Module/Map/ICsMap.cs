@@ -38,6 +38,24 @@ namespace Cs16.Module.Map
         /// <summary>地面高度（向下探测）；找不到地面返回 float.NegativeInfinity。</summary>
         float SampleGround(Vector3 pos, float maxDrop = 8f);
 
+        /// <summary>
+        /// 向下探测地面**（含法线）**：<c>true</c> = 命中世界几何。
+        ///
+        /// <para>与 <see cref="SampleGround"/> 的区别只有"多给一个法线" —— 但那是**能不能判陡坡**的唯一依据：
+        /// 法线在**上轴**（本工程 = <c>y</c>，原版 GoldSrc = <c>z</c>）上的分量 &lt;
+        /// <see cref="CsConst.MaxStandableSlopeNormalZ"/>（0.7 ⇒ 45.573°）的面**不是地面**
+        /// （原版 <c>PM_CatagorizePosition</c> 的 <c>// too steep</c> 分支），
+        /// 详口径见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>。</para>
+        ///
+        /// <para>⛔ 判断陡坡必须用**世界法线**，不要用 <c>Vector3.Angle</c> 反算角度再去比角度（多一次三角函数、
+        /// 还引入一个角度阈值）—— 原版就是直接比这个分量。</para>
+        /// </summary>
+        /// <param name="pos">探测起点（通常 = 角色位置）。</param>
+        /// <param name="point">命中点（世界坐标）。</param>
+        /// <param name="normal">命中面的世界法线（已归一化）。</param>
+        /// <param name="maxDrop">向下最大探测距离（米）。</param>
+        bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f);
+
         /// <summary>出生点（索引循环取用；由烘焙时名为 Spawn* 的对象导出）。</summary>
         Vector3 GetSpawnPoint(int index);
         int SpawnPointCount { get; }

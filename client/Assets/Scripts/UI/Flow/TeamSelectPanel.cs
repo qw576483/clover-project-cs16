@@ -28,6 +28,15 @@ namespace Cs16.UI
     /// <b>按钮形态</b>：原版是"黑底 + 橙字 + 左对齐"的纯文本按钮（`.res` 里 6 个按钮全是
     /// `textAlignment west`），**不是**橙色大按钮网格（本面板上一版那样）。
     /// </para>
+    ///
+    /// <para>
+    /// ⛔ <b>`MapInfo` 那一块整块删掉（2026-09-20，用户要求）</b>：它原先复刻的是原版
+    /// <c>maps/de_dust2.txt</c> 的正文，里面带三行**外部站点署名**
+    /// （`*** GameHelper.com exclusive ***` / `by DaveJ (http://www.johnsto.co.uk/)` /
+    /// `textures by MacMan (MacManInfi@aol.com)`）—— 用户看到后明确要求"内容全部去掉，
+    /// 只保留一个 by clover-engine"。⇒ 本面板现在只留：标题 + 6 个原版按钮 + 底部居中
+    /// <c>by clover-engine</c>（skill §8 的品牌行）。⛔ 不要再把那段正文加回来。
+    /// </para>
     /// </summary>
     public class TeamSelectPanel : CsPanelBase
     {
@@ -36,8 +45,6 @@ namespace Cs16.UI
         private const float FrameX = 76f, FrameY = 0f, FrameW = 552f, FrameH = 448f;
         /// <summary>`joinTeam`（Label，`font "Title"`，`textAlignment west`）：`.res:49-63`。</summary>
         private const float TitleX = 0f, TitleY = 22f, TitleW = 500f, TitleH = 48f;
-        /// <summary>`MapInfo`（ControlName `HTML`，`autoResize 3`）：`.res:35-38`。</summary>
-        private const float MapX = 168f, MapY = 116f, MapW = 316f, MapH = 286f;
         /// <summary>6 个按钮共用的 `xpos / wide / tall`：`.res:86-89` 等（每个按钮都一样）。</summary>
         private const float BtnX = 0f, BtnW = 148f, BtnH = 20f;
 
@@ -69,33 +76,13 @@ namespace Cs16.UI
         /// <summary>`#Cstrike_Join_Team` = `SELECT TEAM`（`cstrike_english.txt:84`）。</summary>
         private const string TitleText = "SELECT TEAM";
 
-        /// <summary>
-        /// `MapInfo` 面板的正文 —— 逐字取自原版 `原版资源/cs16src/cs16game/app/cstrike/maps/de_dust2.txt`
-        /// （原版 `HTML` 控件读的就是这个文件；`autoResize 3` 让框随文本调整）。
-        /// </summary>
-        private const string MapInfoText =
-            "Dust II - Bomb/Defuse\n" +
-            "*** GameHelper.com exclusive ***\n" +
-            "by DaveJ (http://www.johnsto.co.uk/)\n" +
-            "textures by MacMan (MacManInfi@aol.com)\n" +
-            "\n" +
-            "Counter-Terrorists: Prevent Terrorists\n" +
-            "from bombing chemical weapon crates.\n" +
-            "Team members must defuse any bombs\n" +
-            "that threaten targeted areas.\n" +
-            "\n" +
-            "Terrorists: The Terrorist carrying the\n" +
-            "C4 must destroy one of the chemical\n" +
-            "weapon stashes.\n" +
-            "\n" +
-            "Other Notes: There are 2 chemical\n" +
-            "weapon stashes in the mission.";
-
         /// <summary>AUTO ASSIGN（原版 `jointeam 5`）在本工程里按对半随机挑边（见 <see cref="OnAutoAssign"/>）。</summary>
         private const int AutoAssignTeams = 2;
 
+        /// <summary>底部署名（skill §8 品牌硬约定：**逐字** `by clover-engine`）。</summary>
+        private const string SignatureText = "by clover-engine";
+
         [SerializeField] private Text _titleLabel;
-        [SerializeField] private Text _mapInfoText;
         /// <summary>6 个按钮的引用（`[SerializeField]` 才能进预制体 —— 数组元素是场景对象引用，可序列化）。</summary>
         [SerializeField] private Button[] _buttons;
 
@@ -107,7 +94,7 @@ namespace Cs16.UI
             // （`clientscheme.res:38` + `:101`）⇒ **Frame 本身完全透明，没有黑板**。
             // ⛔ 这里原先铺的是 `WindowBG "0 0 0 200"`（scheme:41）—— 那是"文本编辑框 / 聊天"的底色，
             //    不是 Frame 的；用户看到的"凭空多出一整块黑板"就是它。**不要**再补任何自创底板/边框。
-            // 这个节点仍要存在：它是 6 个按钮 / 标题 / MapInfo 的**坐标空间**（`.res` 的子控件坐标都相对它）。
+            // 这个节点仍要存在：它是 6 个按钮 / 标题的**坐标空间**（`.res` 的子控件坐标都相对它）。
             var frame = CsUiStyle.CreateBoxRect("TeamMenu", root,
                 ResPos(FrameX, FrameY), ResSize(FrameW, FrameH), CsUiStyle.ControlBg, true);
 
@@ -124,12 +111,13 @@ namespace Cs16.UI
                     ButtonTexts[i], ResPos(BtnX, ButtonY[i]), ResSize(BtnW, BtnH), null);
             }
 
-            // ── MapInfo（原版是 HTML；本工程没有 HTML 控件 ⇒ 用列表底 + 原文文本复刻同一块矩形）──
-            var mapBox = CsUiStyle.CreateBoxRect("MapInfo", frame.rectTransform,
-                ResPos(MapX, MapY), ResSize(MapW, MapH), CsUiStyle.ListBg);
-            _mapInfoText = CsUiStyle.CreateLabel("MapInfoText", mapBox.rectTransform, MapInfoText,
-                CsUiStyle.OriginalFontSize, new Vector2(8f, -8f), ResSize(MapW, MapH) - new Vector2(16f, 16f),
-                TextAnchor.UpperLeft, CsUiStyle.Text);
+            // ── 署名（skill §8 品牌硬约定）──
+            // ⛔ 这一块**原先**是原版 `MapInfo`（HTML 控件）的复刻：一块列表底 + 原版 `maps/de_dust2.txt`
+            //    的正文。用户 2026-09-20 明确要求把那段正文（含 GameHelper.com / johnsto.co.uk / aol.com
+            //    三行外部站点署名）**整块去掉**，只留 `by clover-engine` ⇒ 现在这里就是那一行。
+            // 必须用底部锚点：左上锚点 + 大负 y 会随画布高度变化掉出屏幕（MainMenuPanel 实测踩过）。
+            CsUiStyle.CreateBottomLabel("Signature", root, SignatureText, 22,
+                new Vector2(0f, 56f), new Vector2(600f, 32f));
 
             // 生成期（FlowSetup 造预制体）也设一次字体：动态字体不是工程资产、存不进 .prefab，
             // 因此 OnOpen 还会再设一次；这里只是为了运行期兜底搭布局那条路径不至于少字体。

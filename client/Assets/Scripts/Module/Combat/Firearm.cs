@@ -53,6 +53,8 @@ namespace Cs16.Module.Combat
         private readonly RaycastHit[] _hits = new RaycastHit[CsCombatTuning.MaxRayHits];
         private readonly List<CsHitInfo> _hitBuffer = new List<CsHitInfo>(16);
         private readonly List<Vector3> _tracerEnds = new List<Vector3>(16);
+        private readonly List<Vector3> _impactPoints = new List<Vector3>(16);
+        private readonly List<Vector3> _impactNormals = new List<Vector3>(16);
         private int _bufferOverflowCount;
 
         /// <summary>本发命中的角色（霰弹一发可能命中多个目标）。</summary>
@@ -60,6 +62,15 @@ namespace Cs16.Module.Combat
 
         /// <summary>各弹丸的终点（给弹道表现用）。</summary>
         public IReadOnlyList<Vector3> TracerEnds => _tracerEnds;
+
+        /// <summary>
+        /// 各弹丸**打在墙上**的落点 / 法线（给"弹痕 + 火星"用；打到角色身上的那一发不算）。
+        /// 只记每发弹丸**第一层**墙（穿透后的第二层不再留第二枚弹痕 —— 原版 decal 也只贴在入射面）。
+        /// </summary>
+        public IReadOnlyList<Vector3> ImpactPoints => _impactPoints;
+
+        /// <inheritdoc cref="ImpactPoints"/>
+        public IReadOnlyList<Vector3> ImpactNormals => _impactNormals;
 
         // ==================================================================
         //  散布（纯函数，便于自证）
@@ -126,6 +137,8 @@ namespace Cs16.Module.Combat
         {
             _hitBuffer.Clear();
             _tracerEnds.Clear();
+            _impactPoints.Clear();
+            _impactNormals.Clear();
 
             var pellets = req.Pellets > 0 ? req.Pellets : 1;
             var range = req.Range > 0f ? req.Range : FallbackRange;
@@ -192,6 +205,12 @@ namespace Cs16.Module.Combat
                 }
 
                 // 非角色碰撞体 = 一层墙
+                if (walls == 0)
+                {
+                    // 入射面 = 弹痕落点（穿透后的第二层不再记，与原版"decal 贴在入射面"一致）
+                    _impactPoints.Add(h.point);
+                    _impactNormals.Add(h.normal);
+                }
                 walls++;
                 end = h.point;
                 if (!canPenetrate || walls > CsCombatTuning.MaxPenetrationLayers) return end;

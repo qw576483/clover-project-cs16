@@ -423,6 +423,11 @@ namespace Cs16.Module.Combat
             var ends = _firearm.TracerEnds;
             for (var i = 0; i < ends.Count; i++) _fx.Tracer(eye, ends[i]);
 
+            // ---- 弹痕 + 火星（打在墙上的那些弹丸；打在人身上的不留痕）----
+            var impactPoints = _firearm.ImpactPoints;
+            for (var i = 0; i < impactPoints.Count; i++)
+                _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i]);
+
             // ---- 命中回传（伤害结算归 agent-03）----
             var hits = _firearm.Hits;
             for (var i = 0; i < hits.Count; i++)

@@ -1,34 +1,48 @@
 using System.Collections.Generic;
+using CloverEngine;
+using Cs16.Core;
 using Cs16.Module.Player;
 using UnityEngine;
 
 namespace Cs16.Module.Combat
 {
     /// <summary>
-    /// 枪口火焰 / 弹道 / 爆炸的**纯程序化**表现（不依赖预制体、贴图、也不做 <c>Shader.Find</c>）。
+    /// 枪口火焰 / 弹道 / 弹痕 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
+    ///
+    /// <para><b>2026-09-20 修正（用户报"开枪有黄色球 / 墙上没有弹痕"）</b>：
+    /// 上一版枪口火焰是 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
+    /// （原版是一张 <c>sprites/muzzleflash*.spr</c> 星形亮斑）；而且**完全没有弹痕**（原版打在墙上会留
+    /// <c>decals.wad</c> 的 <c>{shot*</c> 弹痕）。现在：</para>
+    /// <list type="bullet">
+    /// <item>枪口火焰 = <see cref="SpriteRenderer"/> 星形亮斑（面向相机）+ 一盏点光；</item>
+    /// <item>命中墙 = **弹痕贴片**（按命中法线贴面）+ 一记小火星；</item>
+    /// <item>贴图是**本项目程序化生成**的（原版 <c>.spr</c> / <c>decals.wad</c> 载体不在本仓库、
+    /// archive.org 又连不上 ⇒ 按载体降级链退一格，登记在 <c>client/资源欠缺清单.md</c>，
+    /// 拿到原版素材后**只换文件**，本类一行都不用改）。</item>
+    /// </list>
     ///
     /// <para><b>为什么不用引擎对象池（<c>Game.Pool</c>）</b>：引擎的对象池是"按预制体 key 实例化"
     /// （内部走 <c>Resources.Load&lt;GameObject&gt;(key)</c>），而本模块的产出路径里没有、也不该有预制体
-    /// （<c>Assets/Resources/**</c> 不归 agent-04 写）。key 缺失时引擎会**每次调用打一条 Error**，
-    /// 高频路径上等于刷屏；所以这里自带一个极小特效池（<c>SetActive</c> 复用），
-    /// 语义与对象池一致（取 / 还 / 上限），但没有资源依赖。</para>
+    /// （<c>Resources/UI/{类名}.prefab</c> 归 UI 生成器写）。key 缺失时引擎会**每次调用打一条 Error**，
+    /// 高频路径上等于刷屏；所以这里自带一个极小特效池（<c>SetActive</c> 复用），语义与对象池一致。</para>
     ///
-    /// <para><b>几何来源</b>：一律 <c>GameObject.CreatePrimitive</c>（Unity 内置网格 + 内置默认材质）。
-    /// 刻意避开 <c>Shader.Find("Unlit/...")</c> 这类运行时查找 —— 打包后内置 shader 可能没被包含，
-    /// 结果就是"代码没错、画面什么都没有"的静默失败。自建物件上的 <c>Collider</c> 立刻 <c>DestroyImmediate</c>
-    /// 掉：否则特效自己会被射线打中（子弹会打在"火焰"上）。</para>
+    /// <para><b>几何来源</b>：球/方块走 <c>GameObject.CreatePrimitive</c>（Unity 内置网格），
+    /// 贴片走 <c>SpriteRenderer</c>（着色器是 Unity 内置的 <c>Sprites/Default</c>，**一定**被打进包，
+    /// 不像 <c>Shader.Find</c> 那样有"打包后找不到、画面全空"的静默风险）。
+    /// 自建物件上的 <c>Collider</c> 立刻 <c>DestroyImmediate</c> 掉：否则特效自己会被射线打中。</para>
     /// </summary>
     internal sealed class CombatEffects
     {
         private const string RootName = "CsCombatFX";
 
         /// <summary>池中同类特效的软上限（超出即复用最久的一个，不会无限增长）。</summary>
-        private const int SoftPoolLimit = 96;
+        private const int SoftPoolLimit = 256;
 
         private enum Shape
         {
             Sphere = 0,
             Cube = 1,
+            Sprite = 2,
         }
 
         private sealed class EffectItem
@@ -36,6 +50,7 @@ namespace Cs16.Module.Combat
             public GameObject Go;
             public Transform Tr;
             public MeshRenderer Renderer;
+            public SpriteRenderer Sprite;
             public Light Light;
             public Shape Shape;
             public Color Color;
@@ -44,13 +59,25 @@ namespace Cs16.Module.Combat
             public float StartScale;
             public float EndScale;
             public bool Persistent;
+            /// <summary>每帧朝相机（枪口火焰 / 火星用；弹痕**不**朝相机，它贴在墙上）。</summary>
+            public bool Billboard;
+            /// <summary>是不是"弹痕"（弹痕有独立上限，满了复用最旧的一条）。</summary>
+            public bool Decal;
         }
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
-        private readonly List<EffectItem> _items = new List<EffectItem>(64);
+        private readonly List<EffectItem> _items = new List<EffectItem>(128);
         private Transform _root;
 
-        // ---- 颜色（"够显眼"优先，不做美术风格化，agent-07 有资源后可替换）----
+        // ---- 贴图（异步加载；缺资源时只 Warn 一次并退化成"点光 + 无贴片"，⛔ 绝不退回黄色球）----
+        private Sprite _sprFlash;
+        private Sprite _sprHole;
+        private Sprite _sprSpark;
+        private bool _spritesRequested;
+        private bool _spriteWarned;
+
+        // ---- 颜色 ----
+        /// <summary>枪口点光色（原版 spr 是暖白偏黄，照亮近处墙面）。</summary>
         private static readonly Color FlashColor = new Color(1f, 0.93f, 0.62f, 1f);
         private static readonly Color TracerColor = new Color(1f, 0.97f, 0.78f, 1f);
         private static readonly Color BlastColor = new Color(1f, 0.58f, 0.20f, 1f);
@@ -64,6 +91,8 @@ namespace Cs16.Module.Combat
             var go = new GameObject(RootName);
             Object.DontDestroyOnLoad(go);
             _root = go.transform;
+
+            RequestSprites();
         }
 
         /// <summary>销毁全部特效物件（比赛结束 / 模块销毁时）。</summary>
@@ -82,28 +111,94 @@ namespace Cs16.Module.Combat
             }
         }
 
+        /// <summary>三张特效精灵异步取一次（缺资源时只 Warn 一次，绝不每帧刷屏）。</summary>
+        private void RequestSprites()
+        {
+            if (_spritesRequested) return;
+            _spritesRequested = true;
+
+            var res = Game.Res;
+            if (res == null)
+            {
+                WarnSpriteOnce("Game.Res 为 null（CloverRes.Init 未执行？），枪口火焰 / 弹痕贴图不可用");
+                return;
+            }
+
+            res.LoadAsset<Sprite>(ResPaths.FxMuzzleFlash, s => _sprFlash = s);
+            res.LoadAsset<Sprite>(ResPaths.FxBulletHole, s => _sprHole = s);
+            res.LoadAsset<Sprite>(ResPaths.FxSpark, s => _sprSpark = s);
+        }
+
+        private void WarnSpriteOnce(string message)
+        {
+            if (_spriteWarned) return;
+            _spriteWarned = true;
+            _log.Warn("fx.sprite", message);
+        }
+
         /// <summary>
-        /// 枪口火焰：眼睛前方一点的一颗亮点 + 一盏点光。
-        /// 点光才是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
+        /// 枪口火焰：**一张星形亮斑贴片**（面向相机）+ 一盏点光。
+        /// 点光是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
+        /// ⛔ 不许退回"一颗球"（用户报的就是它）。
         /// </summary>
         public void MuzzleFlash(Vector3 eyePosition, Vector3 direction)
         {
             var dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
             var right = Vector3.Cross(Vector3.up, dir).normalized;
-            var pos = eyePosition + dir * 0.36f + right * 0.14f + Vector3.down * 0.10f;
+            // 落点 = 枪口稍前方（原版 viewmodel 的枪口就在这个位置附近：右下偏内）。
+            var pos = eyePosition + dir * 0.34f + right * 0.13f + Vector3.down * 0.09f;
 
-            var item = Acquire(Shape.Sphere, FlashColor, CsCombatTuning.MuzzleLightDuration);
+            var item = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.MuzzleFlashDuration);
             if (item == null) return;
 
             item.Tr.position = pos;
-            SetScale(item, CsCombatTuning.MuzzleFlashScale);
+            item.Sprite.sprite = _sprFlash;
+            item.Sprite.enabled = _sprFlash != null;
+            item.Billboard = true;
+            item.Tr.localScale = Vector3.one * CsCombatTuning.MuzzleFlashSize;
+            if (_sprFlash == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
 
             if (item.Light != null)
             {
+                // 点光**要**开：原版枪口火焰同时照亮近处墙面，是第一人称里最主要的"开枪了"读感。
+                item.Light.enabled = true;
                 item.Light.color = FlashColor;
                 item.Light.range = 8f;
                 item.Light.intensity = 4f;
             }
+        }
+
+        /// <summary>
+        /// 命中墙：**弹痕**（按命中面法线贴上去的贴片）+ 一记小火星。
+        /// <paramref name="normal"/> 必须是世界法线（<c>RaycastHit.normal</c>）。
+        /// </summary>
+        public void BulletImpact(Vector3 point, Vector3 normal)
+        {
+            if (normal.sqrMagnitude < 0.0001f) normal = Vector3.up;
+            normal.Normalize();
+
+            // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸按原版 decal 的观感（~7cm）----
+            var decal = AcquireDecal();
+            if (decal != null)
+            {
+                decal.Tr.position = point + normal * 0.01f;
+                decal.Tr.rotation = Quaternion.LookRotation(-normal, Vector3.up);
+                decal.Tr.localScale = Vector3.one * CsCombatTuning.DecalSize;
+                decal.Sprite.sprite = _sprHole;
+                decal.Sprite.enabled = _sprHole != null;
+                decal.Billboard = false;
+                if (_sprHole == null) WarnSpriteOnce($"弹痕贴图缺失：Resources/{ResPaths.FxBulletHole}.png（打墙不留痕）");
+            }
+
+            // ---- 火星：一记极短的白点（原版打在墙上会有一小撮灰/火星）----
+            var spark = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.SparkDuration);
+            if (spark == null) return;
+            spark.Tr.position = point + normal * 0.02f;
+            spark.Tr.rotation = Quaternion.LookRotation(-normal, Vector3.up);
+            spark.Tr.localScale = Vector3.one * CsCombatTuning.SparkSize;
+            spark.Sprite.sprite = _sprSpark;
+            spark.Sprite.enabled = _sprSpark != null;
+            spark.Billboard = true;
         }
 
         /// <summary>弹道（一条细长的亮条，从枪口到终点）。</summary>
@@ -171,15 +266,21 @@ namespace Cs16.Module.Combat
         /// <summary>烟雾体（半透做不了就先用淡灰实心球，够读）——由 GrenadeThrower 借用。</summary>
         public GameObject RentSmoke(float scale) => RentSphere(SmokeColor, scale);
 
-        /// <summary>每帧推进生命周期。</summary>
+        /// <summary>每帧推进生命周期 + 把"朝相机"的贴片转向相机。</summary>
         public void Tick(float dt)
         {
             if (dt < 0f) dt = 0f;
 
+            var cam = Camera.main;
             for (var i = 0; i < _items.Count; i++)
             {
                 var item = _items[i];
                 if (item.Persistent || item.Go == null || !item.Go.activeSelf) continue;
+
+                if (item.Billboard && cam != null)
+                {
+                    item.Tr.rotation = Quaternion.LookRotation(item.Tr.position - cam.transform.position, cam.transform.up);
+                }
 
                 item.Life -= dt;
                 if (item.Life <= 0f)
@@ -221,9 +322,58 @@ namespace Cs16.Module.Combat
             target.Life = life;
             target.MaxLife = life > 0f ? life : 1f;
             target.StartScale = target.EndScale = 0f;
-            if (target.Light != null) target.Light.enabled = true;
+            target.Billboard = false;
+            target.Decal = false;
+            if (target.Light != null) target.Light.enabled = shape != Shape.Sprite;
             target.Go.SetActive(true);
             return target;
+        }
+
+        /// <summary>取一枚贴片（火焰 / 火星 / 弹痕共用；颜色恒为白，靠贴图自己的颜色）。</summary>
+        private EffectItem AcquireSprite(Shape shape, Color color, float life)
+        {
+            var item = Acquire(shape, color, life);
+            if (item == null) return null;
+            if (item.Light != null) item.Light.enabled = false;
+            return item;
+        }
+
+        /// <summary>
+        /// 取一枚**弹痕**：超过 <see cref="CsCombatTuning.MaxDecals"/> 就复用"剩得最少"的那一枚
+        /// （= 最老的一条），这样连续扫射不会把池撑爆、也不会让最旧的弹痕永远不消失。
+        /// </summary>
+        private EffectItem AcquireDecal()
+        {
+            Init();
+            RequestSprites();
+
+            EffectItem oldest = null;
+            var decals = 0;
+            for (var i = 0; i < _items.Count; i++)
+            {
+                var item = _items[i];
+                if (item.Shape != Shape.Sprite || !item.Decal) continue;
+                decals++;
+                if (item.Persistent || item.Go == null || !item.Go.activeSelf)
+                {
+                    oldest = item;      // 已经有空闲的弹痕 ⇒ 直接用
+                    break;
+                }
+                if (oldest == null || item.Life < oldest.Life) oldest = item;
+            }
+
+            if (decals >= CsCombatTuning.MaxDecals && oldest != null)
+            {
+                oldest.Go.SetActive(true);
+                oldest.Life = CsCombatTuning.DecalDuration;
+                oldest.MaxLife = oldest.Life;
+                oldest.StartScale = oldest.EndScale = 0f;
+                return oldest;
+            }
+
+            var created = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.DecalDuration);
+            if (created != null) created.Decal = true;
+            return created;
         }
 
         private EffectItem Create(Shape shape, Color color)
@@ -235,31 +385,45 @@ namespace Cs16.Module.Combat
                 return null;
             }
 
-            var primitive = shape == Shape.Sphere ? PrimitiveType.Sphere : PrimitiveType.Cube;
-            var go = GameObject.CreatePrimitive(primitive);
-            if (go == null)
+            GameObject go;
+            MeshRenderer renderer = null;
+            SpriteRenderer sprite = null;
+
+            if (shape == Shape.Sprite)
             {
-                _log.Error("fx.create.fail", $"CreatePrimitive({primitive}) 失败，特效不可用");
-                return null;
+                go = new GameObject("FX_Sprite");      // 贴片走 SpriteRenderer：没有碰撞体、自带 Sprites/Default
+                sprite = go.AddComponent<SpriteRenderer>();
+                sprite.color = color;
+                sprite.enabled = false;                // 贴图到位前不显示（绝不画成白块）
+            }
+            else
+            {
+                var primitive = shape == Shape.Sphere ? PrimitiveType.Sphere : PrimitiveType.Cube;
+                go = GameObject.CreatePrimitive(primitive);
+                if (go == null)
+                {
+                    _log.Error("fx.create.fail", $"CreatePrimitive({primitive}) 失败，特效不可用");
+                    return null;
+                }
+                go.name = shape == Shape.Sphere ? "FX_Sphere" : "FX_Cube";
+
+                // 自建特效不能带碰撞体：否则弹道会打在"火焰/弹道"上（射线命中非角色碰撞体 = 一层墙）。
+                var collider = go.GetComponent<Collider>();
+                if (collider != null) Object.DestroyImmediate(collider);
+
+                renderer = go.GetComponent<MeshRenderer>();
+                if (renderer != null)
+                {
+                    renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                    renderer.receiveShadows = false;
+                    // 取一次 .material 会给本实例克隆一份材质（Unity 语义），随后改颜色不会影响别的物件。
+                    var mat = renderer.material;
+                    if (mat != null) mat.color = color;
+                }
             }
 
-            go.name = shape == Shape.Sphere ? "FX_Sphere" : "FX_Cube";
             go.transform.SetParent(_root, false);
             go.SetActive(false);
-
-            // 自建特效不能带碰撞体：否则弹道会打在"火焰/弹道"上（射线命中非角色碰撞体 = 一层墙）。
-            var collider = go.GetComponent<Collider>();
-            if (collider != null) Object.DestroyImmediate(collider);
-
-            var renderer = go.GetComponent<MeshRenderer>();
-            if (renderer != null)
-            {
-                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                renderer.receiveShadows = false;
-                // 取一次 .material 会给本实例克隆一份材质（Unity 语义），随后改颜色不会影响别的物件。
-                var mat = renderer.material;
-                if (mat != null) mat.color = color;
-            }
 
             var light = go.AddComponent<Light>();
             light.type = LightType.Point;
@@ -272,6 +436,7 @@ namespace Cs16.Module.Combat
                 Go = go,
                 Tr = go.transform,
                 Renderer = renderer,
+                Sprite = sprite,
                 Light = light,
                 Shape = shape,
                 Color = color,

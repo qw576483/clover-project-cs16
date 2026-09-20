@@ -333,6 +333,9 @@ namespace Cs16.Module.Map
         /// <item><b>格子中心</b>必须可走（中心在墙里 ⇒ 这就是墙，没得商量）；</item>
         /// <item>落点地面比当前脚下**高出不超过 <see cref="CsConst.StepUpHeight"/>**（0.45m）——
         /// 高过它就是一堵台沿，不许"神抬腿"迈上去；</item>
+        /// <item>落点地面**不是陡坡**（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）——
+        /// 原版 `PM_WalkMove` 的下探之后就是拿这个分量判的（`if (trace.plane.normal[2] &lt; 0.7) goto usedown;`），
+        /// 陡坡上不去（否则玩家会顺着陡面走上去、身体陷进地形）；</item>
         /// <item><b>膝盖高度</b>朝落点的射线必须通畅：挡住半径采样的只是相邻墙角的边，
         /// 不是一条拦在身前的墙。</item>
         /// </list>
@@ -344,8 +347,11 @@ namespace Cs16.Module.Map
         {
             if (!WalkableAt(target.x, target.z)) return false;
 
-            float ground = SampleGround(target);
-            if (!float.IsNegativeInfinity(ground) && ground - from.y > CsConst.StepUpHeight) return false;
+            // 陡坡不算地面（原版 PM_WalkMove：下探后 `if (trace.plane.normal[2] < 0.7) goto usedown;`
+            // ⇒ 放弃"迈上去"这条路径）。缺了它就会沿陡面走上去（= 用户报的"坡道穿模"）。
+            var hasGround = TrySampleGround(target, out var point, out var normal);
+            if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ) return false;
+            if (hasGround && point.y - from.y > CsConst.StepUpHeight) return false;
 
             var dir = new Vector3(target.x - from.x, 0f, target.z - from.z);
             float dist = dir.magnitude;
@@ -358,15 +364,28 @@ namespace Cs16.Module.Map
 
         /// <summary>向下取地面高度；找不到返回 <c>float.NegativeInfinity</c>（调用方判它）。</summary>
         public float SampleGround(Vector3 pos, float maxDrop = 8f)
+            => TrySampleGround(pos, out var point, out _, maxDrop) ? point.y : float.NegativeInfinity;
+
+        /// <summary>
+        /// 向下取地面**（含世界法线）**。法线是**陡坡判据的唯一来源**：上轴（本工程 = <c>y</c>）分量
+        /// &lt; <see cref="CsConst.MaxStandableSlopeNormalZ"/>（0.7 ⇒ 45.573°）⇒ 原版所谓的 "too steep"，
+        /// 那片地面**不算地面**（出处与后果见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>）。
+        /// </summary>
+        public bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f)
         {
             // 射线起点抬高一丁点（复用引擎的贴地判定距离），免得脚正好贴面时自交/漏检
             var origin = new Vector3(pos.x, pos.y + CsConst.GroundCheckDistance, pos.z);
             if (Physics.Raycast(origin, Vector3.down, out var hit, maxDrop + CsConst.GroundCheckDistance,
                                 GroundMask(), QueryTriggerInteraction.Ignore))
             {
-                return hit.point.y;
+                point = hit.point;
+                normal = hit.normal;
+                return true;
             }
-            return float.NegativeInfinity;
+
+            point = default;
+            normal = Vector3.up;
+            return false;
         }
 
         /// <summary>

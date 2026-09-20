@@ -82,6 +82,9 @@ namespace Cs16.Module.Flow
         /// <summary>本场是否已经在 Stage 站点开过局（用来区分"首次进图"与"从暂停恢复"）。</summary>
         private bool _stageBegun;
 
+        /// <summary>主菜单启动曲是否已经播过（原版口径：只在整个进程的**首次**主菜单播一次）。</summary>
+        private bool _startupMusicPlayed;
+
         public string CurrentState => Game.Fsm != null ? Game.Fsm.Current : null;
 
         /// <param name="match">比赛门面（<c>MatchModule.Match</c>）。</param>
@@ -196,6 +199,7 @@ namespace Cs16.Module.Flow
             {
                 Game.Logger?.Error(Tag, "Game.Scene 为 null，无法加载 Menu 场景；直接用面板兜底");
                 Game.UI.Open<MainMenuPanel>();
+                PlayStartupMusicOnce();
                 return;
             }
 
@@ -246,6 +250,7 @@ namespace Cs16.Module.Flow
             {
                 Game.Logger?.Warn(Tag, $"主菜单 {MenuFallbackDelay}s 内未就绪（CurrentScene={current}），兜底直接开面板");
                 Game.UI.Open<MainMenuPanel>();
+                PlayStartupMusicOnce();
                 return;
             }
 
@@ -259,6 +264,48 @@ namespace Cs16.Module.Flow
             _menuLoadRequested = false;
             Game.Logger?.Info(Tag, $"Menu 场景就绪：{SceneNames.Menu}");
             Game.UI.Open<MainMenuPanel>();
+            PlayStartupMusicOnce();
+        }
+
+        // ═══════════════════════════ 主菜单启动曲（原版 media/gamestartup.mp3）═══════════════════════════
+        //
+        // 原版口径（GoldSrc）：引擎在**主菜单首次出现**时播放 <gamedir>/media/gamestartup.mp3
+        // （CS 1.6 即 cstrike/media/gamestartup.mp3），**开始连接地图后停止**，回主菜单**不重播**；
+        // MP3 音量由设置里的 "MP3 Volume" 控制（本工程 = SoundGroup.BGM，见 CsPlayerSettingsStore）。
+        // 本工程沿用同名文件：Resources/Sound/BGM/gamestartup.mp3（引擎 PlayBGM 拼 Sound/BGM/{name}）。
+
+        /// <summary>
+        /// 播主菜单启动曲：**整个进程只播一次**（三个"打开主菜单"的路径都调用它，由 <see cref="_startupMusicPlayed"/>
+        /// 去重）。缺 <c>Game.Sound</c>（表现域未挂载）时只 Warn 一次，绝不静默。
+        /// </summary>
+        private void PlayStartupMusicOnce()
+        {
+            if (_startupMusicPlayed) return;
+            _startupMusicPlayed = true;
+
+            var sound = Game.Sound;
+            if (sound == null)
+            {
+                Game.Logger?.Warn(Tag, $"Game.Sound 为 null（表现域未挂载？），主菜单启动曲不会播放：{ResPaths.BgmGameStartup}");
+                return;
+            }
+
+            sound.PlayBGM(ResPaths.BgmGameStartup);
+            Game.Logger?.Info(Tag,
+                $"主菜单启动曲已播放：Sound/BGM/{ResPaths.BgmGameStartup}（原版 media/gamestartup.mp3 同名文件，音量走 SoundGroup.BGM）");
+        }
+
+        /// <summary>
+        /// 停主菜单启动曲：进图（原版 = 开始连接地图）时停。⛔ 回主菜单**不重播**（<see cref="PlayStartupMusicOnce"/>
+        /// 只认首次），与原版一致。
+        /// </summary>
+        private void StopStartupMusic()
+        {
+            var sound = Game.Sound;
+            if (sound == null) return;
+
+            sound.StopBGM();
+            Game.Logger?.Info(Tag, "进图：主菜单启动曲已停止");
         }
 
         // ═══════════════════════════════ 站点：ServerList / NewGame / Options ═══════════════════════════════
@@ -341,6 +388,7 @@ namespace Cs16.Module.Flow
                 $"GoStage: map={_pending.MapName} bots/队={_pending.BotsPerTeam} diff={_pending.BotDifficulty} " +
                 $"rounds/半场={_pending.RoundsPerHalf} money={_pending.StartMoney} ff={_pending.FriendlyFire} team={_pending.PlayerTeam}");
 
+            StopStartupMusic();                          // 原版：开始连接地图后主菜单音乐停
             Game.Fsm.Trigger(Trigger.Loading);          // → Loading 站点（自动开读条面板）
 
             StartMapLoad();

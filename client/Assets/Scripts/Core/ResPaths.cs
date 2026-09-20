@@ -50,6 +50,26 @@ namespace Cs16.Core
         /// </summary>
         public const string SoundSfxPrefix = "Sound/SFX/";
 
+        /// <summary>
+        /// 背景音乐短名（喂引擎 <c>Game.Sound.PlayBGM(clipName)</c>；引擎拼的是
+        /// <c>Sound/BGM/{clipName}</c>）——真实文件 <c>Resources/Sound/BGM/gamestartup.mp3</c>。
+        ///
+        /// <para>文件名 <c>gamestartup</c> 就是**原版 GoldSrc 约定的启动曲文件名**
+        /// （引擎在主菜单出现时读 <c>&lt;gamedir&gt;/media/gamestartup.mp3</c> 播放；本工程沿用同名文件，
+        /// 见 <c>Module/Flow/AppFlow</c> 的启动曲注释）。</para>
+        /// </summary>
+        public const string BgmGameStartup = "gamestartup";
+
+        /// <summary>
+        /// UI 点击音短名（喂引擎 <c>Game.Sound.PlaySFX(clipName)</c>）——真实文件
+        /// <c>Resources/Sound/SFX/sfx/menu_click.wav</c>（与其它音效同批由 <c>cs16_build.py</c> 从 A 的
+        /// <c>sound/**</c> 产出；引擎侧根前缀见 <see cref="SoundSfxPrefix"/>，喂给引擎的短名要带 <c>sfx/</c>）。
+        ///
+        /// <para>⚠️ UI 层**不许 using 任何 Module**，拿不到 <c>CsAudioTuning</c> ⇒ 这个短名只能放 Core，
+        /// 由 <c>UI/Flow/CsPanelBase</c> 的点击音用。⛔ 不要在 UI 里另抄一份字面量。</para>
+        /// </summary>
+        public const string SfxMenuClick = "sfx/menu_click";
+
         // ==================================================================
         //  HUD 图标 —— 落在 Resources/UI/Art/（原版位图精灵解出的 PNG）
         // ==================================================================
@@ -102,6 +122,24 @@ namespace Cs16.Core
         // 载体：`原版资源/cs16src/cs16game/app/cstrike/resource/background/800_{1,2,3}_{a,b,c,d}_loading.tga`
         // 共 12 张（24bpp TGA），按 `原版资源/.../valve/resource/backgroundlayout.txt` 的
         // `scaled` 坐标拼成 800×600。**已逐字节复制**进工程（SHA256 与源文件一致）。
+
+        // ==================================================================
+        //  程序化特效贴图 —— 落在 Resources/UI/Art/
+        // ==================================================================
+        //
+        // ⚠️ 这三张是**本项目程序化生成**的（`tools/probes/make-fx-sprites.py`，登记在
+        // `client/资源欠缺清单.md`）：原版枪口火焰是 `sprites/muzzleflash*.spr`、弹痕是
+        // `decals.wad` 的 `{shot*`，两者载体都不在本仓库、archive.org 又连不上（实测超时）。
+        // 拿到原版素材后**只换文件**（同名覆盖），代码一行都不用改。
+
+        /// <summary>枪口火焰精灵（真实文件 <c>Resources/UI/Art/fx_muzzleflash.png</c>，64×64）。</summary>
+        public const string FxMuzzleFlash = "UI/Art/fx_muzzleflash";
+
+        /// <summary>弹痕精灵（真实文件 <c>Resources/UI/Art/fx_bullethole.png</c>，32×32）。</summary>
+        public const string FxBulletHole = "UI/Art/fx_bullethole";
+
+        /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
+        public const string FxSpark = "UI/Art/fx_spark";
 
         /// <summary>
         /// 菜单背景拼图**目录前缀**（注意带尾斜杠；真实文件 <c>Resources/Background/*.tga</c>）。

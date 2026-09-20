@@ -121,8 +121,31 @@ namespace Cs16.Module.Combat
         //  表现（枪口火焰 / 弹道 / 手雷视觉）
         // ==================================================================
         public const float MuzzleFlashDuration = 0.045f;
-        public const float MuzzleFlashScale = 0.085f;
+
+        /// <summary>
+        /// 枪口火焰**贴片**的世界尺寸（米）= 0.30m。
+        /// 口径来自原版：`sprites/muzzleflash1.spr` 的原画布约 96×96，在 4:3、fov 90（水平）下
+        /// 贴片落在枪口前方 ~0.3m 处时约占屏幕 6~7%（≈0.3m）—— 本工程取同一量级；
+        /// ⛔ 原版 `.spr` 载体不在仓库 ⇒ 这个数是**本项目新增**（登记在验收表「允许的差异」）。
+        /// </summary>
+        public const float MuzzleFlashSize = 0.30f;
+
         public const float MuzzleLightDuration = 0.055f;
+
+        /// <summary>弹痕贴片的世界尺寸（米）= 0.075m（原版 decal 的观感量级：~7cm 的弹孔）。</summary>
+        public const float DecalSize = 0.075f;
+
+        /// <summary>弹痕存活时长（秒）。原版 decal 会留很久（受 decal 数量上限控制），这里给足 25s。</summary>
+        public const float DecalDuration = 25f;
+
+        /// <summary>同时存在的弹痕上限（超出复用最旧的一条）—— 防止长扫射把特效池撑满。</summary>
+        public const int MaxDecals = 64;
+
+        /// <summary>击中火星的存活时长（秒）。</summary>
+        public const float SparkDuration = 0.05f;
+
+        /// <summary>击中火星的世界尺寸（米）。</summary>
+        public const float SparkSize = 0.05f;
         public const float TracerDuration = 0.05f;
         public const float TracerThickness = 0.022f;
         public const float ExplosionVisualDuration = 0.28f;

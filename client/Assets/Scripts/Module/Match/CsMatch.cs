@@ -1680,8 +1680,27 @@ namespace Cs16.Module.Match
             if (Mathf.Abs(want.x) > 0.0001f && Mathf.Abs(got.x) < Mathf.Abs(want.x) * ratio) a.Velocity.x = 0f;
             if (Mathf.Abs(want.z) > 0.0001f && Mathf.Abs(got.z) < Mathf.Abs(want.z) * ratio) a.Velocity.z = 0f;
 
-            var groundY = _map.SampleGround(resolved, CsMatchConst.GroundProbeDrop);
-            if (!float.IsNegativeInfinity(groundY))
+            // ── ★ 陡坡闸门（原版口径，见 CsConst.MaxStandableSlopeNormalZ）──────────────────────
+            // 落点地面比脚下高出一个台阶、而且那片地面是**陡坡**（法线 y < 0.7 ≈ 45.573°）⇒ 这一帧的水平
+            // 位移不算数：原版在 `PM_WalkMove` 里就是这么退回去的（`if (trace.plane.normal[2] < 0.7) goto usedown;`）。
+            // 少了这一条，玩家会顺着任何陡面"走上去"（岩石坡 / 楔形坡的侧面），脚贴坡面而身体与 camera
+            // 陷进地形里 —— 用户报的"坡道会穿模"就是它。
+            var hasGround = _map.TrySampleGround(resolved, out var groundPoint, out var groundNormal,
+                                                 CsMatchConst.GroundProbeDrop);
+            if (hasGround && !IsStandableGround(groundNormal) && groundPoint.y > from.y + CsConst.StepUpHeight)
+            {
+                RateWarn("move.steep",
+                    $"{a.Name} 前方是陡坡（地面法线 y={groundNormal.y:F3} < {CsConst.MaxStandableSlopeNormalZ:F2}，" +
+                    $"≈45.6°）：水平位移已退回原位（原版 PM_WalkMove 的 usedown 口径，陡坡上不去）");
+                resolved = new Vector3(from.x, resolved.y, from.z);
+                a.Velocity.x = 0f;
+                a.Velocity.z = 0f;
+                hasGround = _map.TrySampleGround(resolved, out groundPoint, out groundNormal,
+                                                 CsMatchConst.GroundProbeDrop);
+            }
+
+            var groundY = hasGround ? groundPoint.y : float.NegativeInfinity;
+            if (hasGround)
             {
                 // 探测成功 ⇒ 记住这一列的地面高度 —— 它是下面"探测失败"分支唯一能依靠的软地板。
                 _lastGroundY[a.Id] = groundY;
@@ -1691,8 +1710,20 @@ namespace Cs16.Module.Match
                 if (touching && a.Velocity.y <= 0f)
                 {
                     resolved.y = groundY;
-                    a.Velocity.y = 0f;
-                    a.OnGround = true;
+                    if (IsStandableGround(groundNormal))
+                    {
+                        a.Velocity.y = 0f;
+                        a.OnGround = true;
+                    }
+                    else
+                    {
+                        // 陡坡：**不算站立**（原版 `PM_CatagorizePosition` 的 too steep ⇒ `onground = -1`：
+                        // 没有地面摩擦、也不能起跳），但位置**贴住坡面**（绝不穿进坡体），
+                        // 并按"竖直落速沿坡面分解"的水平分量往下滑（≈ 原版 AirMove + ClipVelocity 的沿坡滑落）。
+                        // ⛔ 这里**不清** `Velocity.y`：落速要留着当下一帧的下滑速度（越滑越快，与"站不住"一致）。
+                        a.OnGround = false;
+                        resolved = SlideOnSteepSlope(resolved, groundNormal, Mathf.Abs(a.Velocity.y), dt);
+                    }
                 }
                 else
                 {
@@ -1758,6 +1789,54 @@ namespace Cs16.Module.Match
                 // 一步跨过薄楼板，就再也探不到地面，直接又掉一次 —— 那就是"掉→拉回→再掉"的循环）。
                 SetSoftFloor(a.Id, back.y);
             }
+        }
+
+        /// <summary>
+        /// 该地面法线算不算"**可站立**的地面" = 原版口径的上轴分量
+        /// <c>≥ CsConst.MaxStandableSlopeNormalZ</c>（0.7 ⇒ 坡度 ≤ 45.573°）。
+        /// 出处与后果见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>。
+        /// </summary>
+        private static bool IsStandableGround(Vector3 normal) => normal.y >= CsConst.MaxStandableSlopeNormalZ;
+
+        /// <summary>
+        /// 贴在陡坡上时的**沿坡下滑**的水平位移 —— 本工程对原版
+        /// 「<c>PM_CatagorizePosition</c> 见陡坡 ⇒ <c>onground = -1</c> ⇒ 走 <c>PM_AirMove</c> +
+        /// <c>PM_ClipVelocity</c> 沿坡面滑落」的**位置级近似**（本工程的碰撞是"2D 位图 + 竖直射线"，
+        /// 没有原版那种按平面裁剪速度的能力 ⇒ 只能直接推位置）。
+        ///
+        /// <para><b>两个量都是推出来的，不是拍的</b>：</para>
+        /// <list type="bullet">
+        /// <item>方向 = 坡面法线的**水平分量**指向（法线朝坡外上方 ⇒ 其水平分量正指**下坡**方向）：<c>normalize(n.x, 0, n.z)</c>；</item>
+        /// <item>速率 = <c>|v_y| · n_y / √(1 − n_y²)</c> = <c>|v_y| / tanθ</c> —— 这正是"竖直落速 |v_y| 沿坡面分解后
+        /// 的**水平分量**"，也就是"贴着同一条坡面下滑"所必需的速率（速率给够才不会穿进坡体）。</item>
+        /// </list>
+        ///
+        /// <para>竖直方向不在这里动：调用方已经把 y 贴到坡面上，且**没有**清 <c>Velocity.y</c>
+        /// ⇒ 落速会一直累积（越滑越快），到坡底落到缓面时由常驻分支清零 —— 与"陡坡上站不住"一致。</para>
+        /// </summary>
+        private Vector3 SlideOnSteepSlope(Vector3 pos, Vector3 normal, float fallSpeed, float dt)
+        {
+            var hx = normal.x;
+            var hz = normal.z;
+            var hLen = Mathf.Sqrt(hx * hx + hz * hz);
+            if (hLen < 1e-4f)
+            {
+                // 非预期分支：法线几乎竖直（那是缓面，不该走到这里）—— 留痕并原地不动。
+                RateWarn("steep.nohoriz",
+                    $"坡度判据与法线不自洽：normal=({normal.x:F3},{normal.y:F3},{normal.z:F3}) 的水平分量≈0，已跳过下滑");
+                return pos;
+            }
+
+            var ny = Mathf.Clamp(normal.y, 0f, 1f);
+            var slideSpeed = fallSpeed * ny / hLen;
+            if (slideSpeed <= 0.0001f) return pos;
+
+            var down = new Vector3(hx / hLen, 0f, hz / hLen);
+            var to = new Vector3(pos.x + down.x * slideSpeed * dt, pos.y, pos.z + down.z * slideSpeed * dt);
+
+            // 下滑也要遵守水平碰撞（坡底有墙/箱子时不许滑进去）。
+            var slid = _map.ResolveMove(pos, to, CsConst.PlayerRadius);
+            return new Vector3(slid.x, pos.y, slid.z);
         }
 
         /// <summary>

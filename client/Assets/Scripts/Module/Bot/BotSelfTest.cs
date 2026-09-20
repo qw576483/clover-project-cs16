@@ -435,6 +435,19 @@ namespace Cs16.Module.Bot
                 return WalkableAt(pos.x, pos.z) ? 0f : float.NegativeInfinity;
             }
 
+            /// <summary>假地图的地面 = y 0 的水平面（法线朝上 ⇒ 永远是可站立的缓面；场外无地面）。</summary>
+            public bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f)
+            {
+                normal = Vector3.up;
+                if (!WalkableAt(pos.x, pos.z))
+                {
+                    point = default;
+                    return false;
+                }
+                point = new Vector3(pos.x, 0f, pos.z);
+                return true;
+            }
+
             public Vector3 GetSpawnPoint(int index)
             {
                 var basePos = index % 2 == 0 ? SpawnT : SpawnCt;
