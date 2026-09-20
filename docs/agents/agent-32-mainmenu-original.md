@@ -35,7 +35,7 @@
 ### 1.3 收尾
 
 - 改完**必须重跑** `Clover/CS16/生成流程场景与面板`（`Editor/Flow/FlowSetup.cs` 的 `Generate()`）重建 `MainMenuPanel.prefab`。
-- 一次 Play 采主菜单帧（1920×1080，`client/Assets/Screenshots/32_mainmenu.png`）+ 必要时拼进联络图。
+- 一次 Play 采主菜单帧（1920×1080，`<项目根>/.ai-tmp/screenshots/32_mainmenu.png`）+ 必要时拼进联络图。
 - 验收表：更新主菜单相关行（M2 等）的证据列；**把本片新增的无出处项登记进「允许的差异」**（用 agent-31 已占用的序号之后的下一个号，⛔ 不许插在中间）。
 
 ## 2. 判据（自己跑，原始输出贴回报）

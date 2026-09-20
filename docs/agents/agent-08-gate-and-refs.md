@@ -19,13 +19,13 @@
 按 `verify-template.md` 骨架的 **15 条** 落地，并适配本项目：
 
 - `$root` = 项目根（`Split-Path $PSScriptRoot -Parent`）；
-- 代码目录 = `client/Assets/Scripts`；截图目录 = `client/Assets/Screenshots`；
+- 代码目录 = `client/Assets/Scripts`；截图目录 = `<项目根>/.ai-tmp/screenshots`；
 - **第 15 条 `implGlobs` 必须覆盖本项目的实现面**（实现不只在 Scripts 下）：
   `client/Assets/Scripts/**/*.cs`、`client/Assets/Editor/**/*.cs`、`client/Assets/Resources/**`（prefab/asset/bytes/wav/png 等生成物不强求逐一对账，但 Editor 生成器脚本要在范围内）；
 - **必须 ASCII-only**：中文路径/关键词一律**码点拼**（模板第 114~120 行是样例）；
 - 输出格式保持模板口径：逐行 `PASS / FAIL / HUMAN-ONLY` + 末尾汇总 `FAIL=n HUMAN-ONLY=m` + `exit code`；
 - 第 3 条（验收表自洽）与第 12 条（每行标 `数值类`/`表现类`）**照模板实现**：行数用 `(?m)^\|\s*[A-Z]?\d+\s*\|` 统计；
-- 第 13 条（工程外产物）：`$wsRoot` = 工作区根（`full-dev`），`$rootName` = `clover-project-cs16`，短名 token = `cs16`；宿主产物目录照模板用 `$env:APPDATA` 探测，探不到就留空。
+- 第 13 条（工程外产物）：`$wsRoot` = 工作区根（`f-v2`），`$rootName` = `clover-project-cs16`，短名 token = `cs16`；宿主产物目录照模板用 `$env:APPDATA` 探测，探不到就留空。
 
 ### 1.2 修 `client/资源欠缺清单.md` 的失效引用
 

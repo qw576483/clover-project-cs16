@@ -57,7 +57,7 @@
 2. **生成器幂等**：重跑一次生成器，再跑第 1 条断言 ⇒ 结果不变；
 3. **一次编译**：`compile-check.ps1` ⇒ `csc exit=0`；编辑器 `recompile_status` 无错；
 4. **一次 Play + 一张联络图**：把"地面贴图比例（A 点）+ 三个槽位 + 第三人称构图"压进**一张**联络图，
-   放 `client/Assets/Screenshots/`；**只读这张汇总图**（读图前自检通道，读不到 ⇒ BLOCKED）；
+   放 `<项目根>/.ai-tmp/screenshots/`；**只读这张汇总图**（读图前自检通道，读不到 ⇒ BLOCKED）；
 5. **更新** `策划/验收表.md` 里**受影响的那些行**（P1 / G4 / D1 等）的证据与状态（⛔ 不许改判据/类别/行）；
 6. `tools/verify.ps1` ⇒ 除 `HUMAN-ONLY` 外无 FAIL（若 `evidence-freshness` 因你改了 `Dust2Builder.cs` 而报出**某几行**过期 ⇒ 按 §1.2 的同一次链把它们一并重采，**⛔ 不许全量重采**）。
 

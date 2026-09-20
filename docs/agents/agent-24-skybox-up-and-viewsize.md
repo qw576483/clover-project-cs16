@@ -45,7 +45,7 @@
 ## 2. 判据（自己跑，原始输出贴进回报）
 
 1. **邻接计算的完整输出**：8 种（`up`）/ 8 种（`dn`）各自的代价表 + 最优/次优比值 + 定案；
-2. （若改了 `Dust2Builder.cs`）一次编译 `compile-check.ps1` ⇒ `csc exit=0` + 一次 Play 的抬头帧（放 `client/Assets/Screenshots/`，命名 `24_sky_*.png`）；
+2. （若改了 `Dust2Builder.cs`）一次编译 `compile-check.ps1` ⇒ `csc exit=0` + 一次 Play 的抬头帧（放 `<项目根>/.ai-tmp/screenshots/`，命名 `24_sky_*.png`）；
 3. `策划/对照表.md` 与 `策划/外观差异清单.md` 的 A2 行更新后的原文；
 4. `tools/verify.ps1` ⇒ 除 `HUMAN-ONLY` 外无 FAIL（若因改了 `Dust2Builder.cs` 导致某行证据过期 ⇒ 只重采**那几行**，⛔ 不许全量重采）。
 

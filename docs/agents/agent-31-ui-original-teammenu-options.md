@@ -70,7 +70,7 @@
 ### 2.4 收尾
 
 - 改完**必须重跑** `Clover/CS16/生成流程场景与面板`（`Editor/Flow/FlowSetup.cs` 的 `Generate()`）重建 prefab（坐标写死在 `BuildLayout`，prefab 是快照）。
-- 一次 Play 采联络图：主菜单 / 选阵营 / 设置（各 1 帧，1920×1080），放 `client/Assets/Screenshots/`（命名 `31_*.png`）。
+- 一次 Play 采联络图：主菜单 / 选阵营 / 设置（各 1 帧，1920×1080），放 `<项目根>/.ai-tmp/screenshots/`（命名 `31_*.png`）。
 - 验收表：若**已有**这三个界面的行 ⇒ 更新其证据列；若**没有** ⇒ 新增行（每行标 `表现类`）+ 同步汇总数字（`acceptance-table` 会查自洽）。
 
 ## 3. 判据（自己跑，原始输出贴回报）

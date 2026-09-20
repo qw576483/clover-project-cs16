@@ -44,7 +44,7 @@
 2. **离线预演**（各一条断言，给原文）：A1 换算反算回 90.0°±0.05°；B1 新贴图尺寸=原版 miptex；C1 环代价 ≈42.77；
    D1 机位距离=2.8448 m 且射线命中墙时收缩到 ≥0.762 m；
 3. **一次 Play + 一次联络图**：把 A1/A2/B1/C1/D1/F1 的证据点压进**一张**联络图（每格烧「格号+状态+关键数值」），
-   放 `client/Assets/Screenshots/`；**你只读这张汇总图**（读图前先自检通道，读不到 ⇒ BLOCKED，⛔ 不许编）；
+   放 `<项目根>/.ai-tmp/screenshots/`；**你只读这张汇总图**（读图前先自检通道，读不到 ⇒ BLOCKED，⛔ 不许编）；
 4. **更新** `策划/验收表.md` 里**受影响的那些行**的证据与状态（⛔ 不许改判据/类别/行；⛔ 不许全量重采）；
 5. `powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify.ps1` ⇒ 除 `HUMAN-ONLY` 外无 FAIL
    （既有那条 `P1` 过期行**归主 agent**，你别动）。

@@ -17,7 +17,7 @@ HUMAN-ONLY  engine-credit
 client/Assets/Editor/MapGen/Dust2Builder.cs    09-19 15:01:44   ← P1 所述实现文件（这次改动过）
 client/Assets/Scenes/StageDust2.unity          09-19 15:15:35   ← 15:01 之后地图**真的重烘过**
 client/Assets/ThirdParty/Dust2/Materials/*.mat 09-19 15:15:2x~3x ← 整套材质同批重写
-client/Assets/Screenshots/05_ingame_ct.png     09-19 12:50:43   ← P1 现在引用的图（重烘之前那一帧）
+<项目根>/.ai-tmp/screenshots/05_ingame_ct.png     09-19 12:50:43   ← P1 现在引用的图（重烘之前那一帧）
 ```
 
 ## 1. 只做这三件
@@ -26,7 +26,7 @@ client/Assets/Screenshots/05_ingame_ct.png     09-19 12:50:43   ← P1 现在引
 
 - 进 Play 到 `StageDust2` 里，采**至少一帧能看清地图几何与贴图**的图（第三人称/第一人称均可，要求能看到沙色石墙、拱窗/木箱之类的原版贴图特征）——
   **mtime 必须 ≥ `StageDust2.unity` 的 15:15:35**（即重烘之后）；
-- 图放 `client/Assets/Screenshots/`（**沿用 `05_ingame_ct.png` 覆盖**，或新增一个更贴切的名字并同步改验收表引用——二选一，改完保持表内引用可达）；
+- 图放 `<项目根>/.ai-tmp/screenshots/`（**沿用 `05_ingame_ct.png` 覆盖**，或新增一个更贴切的名字并同步改验收表引用——二选一，改完保持表内引用可达）；
 - 更新 `策划/验收表.md` 的 `P1` 行证据列；
 - 编辑器用法（**都在 `client` 目录内执行**）：`unity status` 确认 `ready`；`unity command editor_play` 进 Play；
   用既有驱动脚本（`.ai-tmp/test/` 里的历史脚本可读可复用）走到游戏内；`unity command capture_game_view --source screen --save_path <绝对路径>`
@@ -60,7 +60,7 @@ client/Assets/Screenshots/05_ingame_ct.png     09-19 12:50:43   ← P1 现在引
 - ⛔ 不许改 `策划/策划案/**`、`tools/ai-skill/SKILL.md`、任何全局 skill（`constraints.md` 只许动 §1.3 那一行；`策划/验收表.md` 只许动 §1.1/§1.2 说的那些行）；
 - ⛔ 不许改文件 mtime 让闸门变绿（图的 mtime 必须是真采出来的）；
 - ⛔ 不许读别的 `clover-project-*` 工程；⛔ 不许开子 agent；
-- 一次性脚本只放 `.ai-tmp/test/`，用完删；证据图放 `client/Assets/Screenshots/`；不许产出交接/进度类 md。
+- 一次性脚本只放 `.ai-tmp/test/`，用完删；证据图放 `<项目根>/.ai-tmp/screenshots/`；不许产出交接/进度类 md。
 
 ## 4. 回报格式
 
