@@ -39,8 +39,9 @@ namespace Cs16.Module.Bot
         /// <summary>日志 tag（模块名，见《步骤文档》§6）。</summary>
         public const string Tag = "Bot";
 
-        [Tooltip("勾上时把每次难度统计也写到 Console（默认只写 Game.Logger）。")]
-        [SerializeField] private bool _verboseStats;
+        // 片AC（2026-09-21）：原 _verboseStats 开关只服务于 LogStats 里一条与上一行
+        // Game.Logger.Info 完全重复的 Debug.Log（允许的差异 #8 ①）。冗余行与只服务于它的
+        // 字段一并移除 —— hard-rule 非注释命中 8→7；日志一律走 Game.Logger（skill §8）。
 
         private readonly Dictionary<long, CsBotBrain> _brains = new Dictionary<long, CsBotBrain>(16);
         private readonly List<long> _removeScratch = new List<long>(16);
@@ -379,7 +380,6 @@ namespace Cs16.Module.Bot
                 var d = (CsBotDifficulty)i;
                 var line = _stats.Line(d);
                 Game.Logger.Info(Tag, line);
-                if (_verboseStats) Debug.Log($"[{Tag}] {line}");
             }
         }
 
