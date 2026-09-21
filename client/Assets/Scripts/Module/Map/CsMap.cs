@@ -327,8 +327,32 @@ namespace Cs16.Module.Map
             return point.y - pos.y <= CsConst.StepUpHeight;
         }
 
-        /// <summary>身体高度带复核：半径 9 点（中心 + 8 向）逐点调 <see cref="BodyHeightClearAt"/>。</summary>
+        /// <summary>
+        /// 身体高度带复核 = **整身体积（一次，中心）** + **9 点零宽射线**（中心 + 8 向）：
+        /// <list type="number">
+        /// <item><see cref="BodyVolumeBlocked"/>：以玩家半径的胶囊覆盖身高带 —— 抓"身体被实体占据"
+        /// （人在实心块柱内 / 身体插进墙）；</item>
+        /// <item><see cref="BodyHeightClearAt"/> ×9：抓"身高带上横着一堵墙/一个实体"。</item>
+        /// </list>
+        /// 两条缺一不可：① 只管"占据"，对"贴着墙站"不敏感（那条由 ② 与位图管）；
+        /// ② 只管"向下射线的首交点"，对"射线起点在实体内部"这种形态**天生看不见**（见
+        /// <see cref="BodyVolumeBlocked"/> 的注释）。
+        /// </summary>
         private bool BodyHeightClear(Vector3 pos, float radius)
+        {
+            // ⛔ 体积复核只能在**中心**判一次：9 点探针是零宽射线（与 BitmapClear 同形），
+            //    若在 9 个点上各加一颗半径 PlayerRadius 的球，等效半径会放大到 2×PlayerRadius
+            //    ⇒ 把"贴着墙能站"误杀成不能站。
+            if (BodyVolumeBlocked(pos)) return false;
+            return LegacyBodyHeightClear(pos, radius);
+        }
+
+        /// <summary>
+        /// **切片U 之前的**几何分支判据（9 点零宽向下射线），**原样保留、不进任何真实路径**：
+        /// 只作为 <see cref="BodyHeightClearForTest"/> 的"**改前口径**"对照 ——
+        /// 这样"改前 vs 改后"就是**同一份构建上的 A/B**（各跑一次），而不是拿旧日志比新日志。
+        /// </summary>
+        private bool LegacyBodyHeightClear(Vector3 pos, float radius)
         {
             if (!BodyHeightClearAt(pos.x, pos.y, pos.z)) return false;
 
@@ -366,10 +390,59 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
+        /// **整具玩家体积**复核（切片U 新增，修"人藏在实心块柱内仍被判通过"这个洞）：
+        /// 以 <see cref="CsConst.PlayerRadius"/> 为半径的胶囊，覆盖身高带
+        /// <c>[pos.y + GroundCheckDistance, pos.y + StandHeight]</c>；与任何世界几何重叠 ⇒ 判**挡**。
+        ///
+        /// <para><b>为什么单根向下射线挡不住这种形态</b>（= 本片修的洞）：
+        /// <see cref="BodyHeightClearAt"/> 的射线起点固定在 <c>feetY + StandHeight + BodyProbeLift</c>，
+        /// 人**站在实心块柱的足迹内**（脚面低于块顶）时，起点落在块**内部**；而 PhysX 默认
+        /// <c>Physics.queriesHitBackfaces = false</c> ⇒ "从实体内部朝外"的射线不给交点 ⇒
+        /// 射线一路穿到块底下的地面，首交点在脚面以下 ⇒ 被误判成"身高带是空的"
+        /// ⇒ **位图判挡之后，几何分支又把这一格放行了**（人钻进实心块柱）。
+        /// 体积检测求的是"**占据**"，与"起点在不在实体内部"无关，所以它能看见这种形态。</para>
+        ///
+        /// <para><b>⛔ 为什么"站在箱顶 / 台阶上"仍能站</b>：胶囊的两个端点各**内缩一个半径**
+        /// ⇒ 胶囊的**最低点**正好落在 <c>pos.y + GroundCheckDistance</c>、**最高点**正好落在
+        /// <c>pos.y + StandHeight</c> —— 与向下射线的"脚面容差 / 身高"逐字对齐。
+        /// 顶面正好在脚面高度（甚至高出一个 <see cref="CsConst.StepUpHeight"/>）的箱顶/台阶
+        /// 因此**不与该胶囊重叠**（最低点还差一个 GroundCheckDistance 才碰到脚面），
+        /// 可站性由 <see cref="BodyHeightClearAt"/> 的向下射线继续给（首交点 = 脚面 ⇒ 通）。</para>
+        ///
+        /// <para>层掩码 / trigger 口径与 <see cref="BodyHeightClearAt"/> 完全一致
+        /// （<see cref="GroundMask"/> + <c>QueryTriggerInteraction.Ignore</c>）——
+        /// 尤其重要：<c>Level/Blockers/Blocker_*</c> 那些盒子是 **trigger**（只服务烘焙），
+        /// 必须继续被忽略，否则整张图会被 811 个隐形盒判成不可站。</para>
+        /// </summary>
+        private bool BodyVolumeBlocked(Vector3 pos)
+        {
+            const float r = CsConst.PlayerRadius;
+            float lo = pos.y + CsConst.GroundCheckDistance + r;
+            float hi = pos.y + CsConst.StandHeight - r;
+            if (hi <= lo) return false;      // 身高带比两个半径还短：没有可判的体积（退化配置）
+            return Physics.CheckCapsule(new Vector3(pos.x, lo, pos.z), new Vector3(pos.x, hi, pos.z),
+                                        r, GroundMask(), QueryTriggerInteraction.Ignore);
+        }
+
+        /// <summary>
         /// 本地碰撞解算：**扫掠细分（≤0.25m）+ 分轴滑墙（先 X 后 Z）+ 台阶（≤ StepUpHeight）**。
         /// Y 分量原样跟随目标（重力/落地由调用方用 <see cref="SampleGround"/> 收尾）。
         /// </summary>
         public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius)
+            => ResolveMoveCore(from, to, radius, null);
+
+        /// <summary>
+        /// **测试入口**：与 <see cref="ResolveMove"/> 走**同一条实现**（不是复制体），
+        /// 额外把每一步的 <c>(i, want, curBefore, curAfter)</c> 交给 <paramref name="trace"/>。
+        /// 为什么要它：单看"终点"无法区分"被钳住"与"被跳过去"（切片U 实测：同一个 `to`，
+        /// 有的 d 停在墙面、有的 d 越过了 1.2m 厚的墙带 ⇒ 必须看每一步）。
+        /// </summary>
+        public Vector3 ResolveMoveTraceForTest(Vector3 from, Vector3 to,
+            Action<int, Vector3, Vector3, Vector3> trace, float radius = CsConst.PlayerRadius)
+            => ResolveMoveCore(from, to, radius, trace);
+
+        private Vector3 ResolveMoveCore(Vector3 from, Vector3 to, float radius,
+                                        Action<int, Vector3, Vector3, Vector3> trace)
         {
             if (!IsLoaded)
             {
@@ -378,7 +451,12 @@ namespace Cs16.Module.Map
             }
 
             // 解除卡死：起点本身就站不下（出生点贴墙 / 被挤进墙里）→ 能直接到目标就去，否则别乱动
-            if (!CanStand(from, radius)) return WalkableAt(to.x, to.z) ? to : from;
+            if (!CanStand(from, radius))
+            {
+                var free = WalkableAt(to.x, to.z) ? to : from;
+                trace?.Invoke(0, to, from, free);
+                return free;
+            }
 
             float dx = to.x - from.x;
             float dz = to.z - from.z;
@@ -390,7 +468,9 @@ namespace Cs16.Module.Map
             {
                 float t = (float)i / steps;
                 var want = new Vector3(from.x + dx * t, to.y, from.z + dz * t);
+                var prev = cur;
                 cur = StepOnce(cur, want, radius);
+                trace?.Invoke(i, want, prev, cur);
             }
             return new Vector3(cur.x, to.y, cur.z);
         }
@@ -521,6 +601,158 @@ namespace Cs16.Module.Map
             _groundRayMask = mask;
             return mask;
         }
+
+        // ==================================================================
+        //  测试入口（类型化；⛔ 不参与任何真实玩家路径）
+        // ==================================================================
+        //
+        // 为什么是 public 类型化入口而不是"驱动侧反射"：clover-engine skill §0.6 第 3 条
+        // （把高风险动作做成**专用、类型化**的入口，别藏在反射里），形状与
+        // `CombatModule.SetFireHeldForTest` / `PlayerMotor.ForceLookForTest` 一致。
+        // ⛔ 没有任何 Update / 事件会调它们；它们只把**已经存在的纯函数**暴露成可复现的入口。
+
+        /// <summary>
+        /// **测试入口**：解算一次并把「期望 vs 实际」写成一行日志（返回实际终点）。
+        /// 语义与 <see cref="ResolveMove"/> **逐字一致** —— 本方法只是它的类型化壳，
+        /// ⛔ 不改动 <see cref="ResolveMove"/> 的任何行为。
+        ///
+        /// <para><b>为什么必须有它</b>：走位验证过去靠"每回合 tp3 重定位 + 持续按住输入"驱动真实角色，
+        /// 而 <c>ResolveMove</c> 在 <c>Freeze</c>/<c>RoundEnd</c> 阶段根本不生效
+        /// （片S 实测：输入开着而位置冻在 tp3 点）⇒ 轨迹被回合重置污染、无法下结论。
+        /// 本入口直接对**纯函数**求解，与回合相位无关（数值类证据：秒级、可复跑）。</para>
+        /// </summary>
+        public Vector3 ResolveMoveForTest(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius)
+        {
+            var end = ResolveMove(from, to, radius);
+            Game.Logger?.Info(Tag,
+                "walkline | from=" + V(from) + " to=" + V(to) + " end=" + V(end) +
+                " |Δ|=" + F(Vector3.Distance(from, end)) + " want=" + F(Vector3.Distance(from, to)) +
+                " bitmap(from)=" + WalkableAt(from.x, from.z) +
+                " bitmap(to)=" + WalkableAt(to.x, to.z) +
+                " bitmap(end)=" + WalkableAt(end.x, end.z) +
+                " canStand(from)=" + CanStand(from, radius) +
+                " canStand(end)=" + CanStand(end, radius) +
+                " rayClear(end)=" + BodyHeightClearAt(end.x, end.y, end.z) +
+                " volBlocked(end)=" + BodyVolumeBlocked(end));
+            return end;
+        }
+
+        /// <summary>
+        /// **测试入口**：沿一条水平走线按步长逐点解算，**一次调用**把整张表写进日志（返回行数）。
+        /// <list type="bullet">
+        /// <item>逐点行：对每个 d（step, 2·step, … ≤ maxDist）单独解算
+        /// <c>ResolveMove(from, from + dir·d)</c> —— 判据 = "对着实心面推进，终点必须停在面外"；</item>
+        /// <item>串行行：每 0.1 m 连续推进（= <see cref="ResolveMove"/> 的真实逐帧用法），
+        /// 报最终落点与累计位移 —— 判据 = 累计位移 ≈ 起点到实心面的距离（不被放行穿进去）。</item>
+        /// </list>
+        /// </summary>
+        public int WalkLineForTest(Vector3 from, Vector3 dir, float maxDist, float step,
+                                   float radius = CsConst.PlayerRadius)
+        {
+            var flat = new Vector3(dir.x, 0f, dir.z);
+            if (flat.sqrMagnitude < 1e-6f)
+            {
+                // 非预期分支：方向近乎竖直 ⇒ 没有水平走线可算，必须留痕（否则表现为"一行都没出"）
+                Game.Logger?.Warn(Tag, "walkline | dir 的水平分量近似为 0，无走线可算（dir=" + V(dir) + "）");
+                return 0;
+            }
+            flat.Normalize();
+            if (step <= 0.01f) step = 0.1f;
+
+            Game.Logger?.Info(Tag, "walkline.header | from=" + V(from) + " dir=" + V(flat) +
+                                   " maxDist=" + F(maxDist) + " step=" + F(step) + " radius=" + F(radius) +
+                                   " loaded=" + IsLoaded);
+            int n = 0;
+            for (float d = step; d <= maxDist + 1e-4f; d += step)
+            {
+                ResolveMoveForTest(from, from + flat * d, radius);
+                n++;
+            }
+
+            // 串行推进（= 逐帧真实用法）：每 0.1 m 一步
+            const float micro = 0.1f;
+            int microSteps = Mathf.Max(1, Mathf.CeilToInt(maxDist / micro));
+            var cur = from;
+            float travelled = 0f;
+            for (int i = 0; i < microSteps; i++)
+            {
+                var prev = cur;
+                cur = ResolveMove(cur, cur + flat * micro, radius);
+                travelled += Vector3.Distance(prev, cur);
+            }
+            Game.Logger?.Info(Tag, "walkline.chained | start=" + V(from) + " end=" + V(cur) +
+                                   " travelled=" + F(travelled) + " micro=" + F(micro) +
+                                   " steps=" + microSteps + " volBlocked(end)=" + BodyVolumeBlocked(cur));
+            return n;
+        }
+
+        /// <summary>
+        /// **测试入口**：把"这一点能不能站"的**每一条判据**分别报出来（本片改前/改后的关键对照）：
+        /// 位图 9 点 → 落点地面高差 → 向下射线（<see cref="BodyHeightClearAt"/>，旧判据）
+        /// → 整身体积（<see cref="BodyVolumeBlocked"/>，本片新增）→ 最终 <see cref="CanStand"/>。
+        /// </summary>
+        public string BodyHeightDiagnoseForTest(Vector3 pos, float radius = CsConst.PlayerRadius)
+        {
+            bool bitmap = BitmapClear(pos, radius);
+            bool withinStep = GroundWithinStep(pos);
+            bool rayClear = BodyHeightClearAt(pos.x, pos.y, pos.z);
+            bool volBlocked = BodyVolumeBlocked(pos);
+            bool geomNow = BodyHeightClearForTest(pos, radius, out var geomLegacy);
+            bool standNow = bitmap && withinStep || geomNow;
+            bool standBefore = bitmap && withinStep || geomLegacy;
+            string line = "bodydiag | pos=" + V(pos) + " bitmapClear=" + bitmap +
+                          " groundWithinStep=" + withinStep +
+                          " rayClear(单点BodyHeightClearAt)=" + rayClear +
+                          " volumeBlocked(新BodyVolumeBlocked)=" + volBlocked +
+                          " geomLegacy(改前9点射线)=" + geomLegacy +
+                          " geomNow(改后=体积+9点)=" + geomNow +
+                          " canStandBefore=" + standBefore + " canStand=" + standNow +
+                          " canStand(实调)=" + CanStand(pos, radius) +
+                          " walkable=" + WalkableAt(pos.x, pos.z);
+            Game.Logger?.Info(Tag, line);
+            return line;
+        }
+
+        /// <summary>
+        /// **测试入口**：单独读"位图 9 点"这一条判据（供走线取证逐点采样，⛔ 不刷日志）。
+        /// </summary>
+        public bool BitmapClearForTest(Vector3 pos, float radius = CsConst.PlayerRadius)
+            => BitmapClear(pos, radius);
+
+        /// <summary>
+        /// **测试入口**：单独读 <see cref="BodyHeightClearAt"/>（**旧**判据：向下射线的首交点）。
+        /// 有了它，探针才能把"改前放行、改后判挡"这件事在**同一个点**上对照出来。
+        /// </summary>
+        public bool RayClearForTest(float x, float feetY, float z) => BodyHeightClearAt(x, feetY, z);
+
+        /// <summary>**测试入口**：单独读 <see cref="BodyVolumeBlocked"/>（**本片新增**的整身体积判据）。</summary>
+        public bool VolumeBlockedForTest(float x, float feetY, float z)
+            => BodyVolumeBlocked(new Vector3(x, feetY, z));
+
+        /// <summary>
+        /// **测试入口**：落点地面是否在当前脚高的一步台阶内（<see cref="GroundWithinStep"/>）。
+        /// 探针拿它与 <see cref="BitmapClearForTest"/> 组合，就能在同一份构建上复算
+        /// **改前 / 改后的 <see cref="CanStand"/>**（唯一权威 = 产品代码，⛔ 探针不抄公式）。
+        /// </summary>
+        public bool GroundWithinStepForTest(Vector3 pos) => GroundWithinStep(pos);
+
+        /// <summary>
+        /// **测试入口**：几何分支判据的**改前 / 改后**对照（**同一份构建内的 A/B**）。
+        /// <para><paramref name="legacy"/>（<c>out</c>）= 切片U 之前的口径：9 点零宽向下射线；</para>
+        /// <para>返回值 = 本片口径：整身体积（<see cref="BodyVolumeBlocked"/>）+ 9 点射线。</para>
+        /// </summary>
+        public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
+        {
+            legacy = LegacyBodyHeightClear(pos, radius);
+            return BodyHeightClear(pos, radius);
+        }
+
+        /// <summary>格式化为 Vector3（InvariantCulture —— 与全工程同口径，避免小数点变逗号）。</summary>
+        private static string V(Vector3 v) =>
+            "(" + F(v.x) + "," + F(v.y) + "," + F(v.z) + ")";
+
+        /// <summary>定点格式化（InvariantCulture）。</summary>
+        private static string F(float v) => v.ToString("F3", CultureInfo.InvariantCulture);
 
         // ==================================================================
         //  标记点
