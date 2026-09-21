@@ -3296,34 +3296,34 @@ D9	阻挡盒口径一致性（位图 vs geo vs 场景，逐条 AABB）	client/As
 D9	阻挡盒数 vs 规格声明	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	策划/策划案/CS1.6单机参考规格.md	811	脚本断言	D9 碰撞与可走
 D9	阻挡盒数（geo ≡ 场景 BoxCollider）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	811	脚本断言	D9 碰撞与可走
 D10	CsTeam 枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:4	3	脚本断言	D10 玩法逻辑
-D10	下包/拆包使用键	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:852	3	脚本断言	D10 玩法逻辑
-D10	丢枪	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:861	3	脚本断言	D10 玩法逻辑
-D10	买枪区判定	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:550	3	脚本断言	D10 玩法逻辑
+D10	下包/拆包使用键	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:909	3	脚本断言	D10 玩法逻辑
+D10	丢枪	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:918	3	脚本断言	D10 玩法逻辑
+D10	买枪区判定	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:607	3	脚本断言	D10 玩法逻辑
 D10	伤害模型	client/Assets/Scripts/Module/Match/CsDamage.cs	client/Assets/Scripts/Module/Match/CsDamage.cs:13	3	脚本断言	D10 玩法逻辑
 D10	冻结期禁移动	client/Assets/Scripts/Module/Player/PlayerMotor.cs	client/Assets/Scripts/Module/Player/PlayerMotor.cs:118	3	脚本断言	D10 玩法逻辑
-D10	切枪/切槽	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:749	3	脚本断言	D10 玩法逻辑
+D10	切枪/切槽	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:806	3	脚本断言	D10 玩法逻辑
 D10	半场交换	client/Assets/Scripts/Module/Match/CsRound.cs	client/Assets/Scripts/Module/Match/CsRound.cs:319	3	脚本断言	D10 玩法逻辑
-D10	受击结算	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:924	3	脚本断言	D10 玩法逻辑
+D10	受击结算	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:981	3	脚本断言	D10 玩法逻辑
 D10	命中部位枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:65	3	脚本断言	D10 玩法逻辑
 D10	回合流程（Freeze→Live→RoundEnd）	client/Assets/Scripts/Module/Match/CsRound.cs	client/Assets/Scripts/Module/Match/CsRound.cs:178	3	脚本断言	D10 玩法逻辑
 D10	回合阶段枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:12	3	脚本断言	D10 玩法逻辑
-D10	开火事件消费	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:956	3	脚本断言	D10 玩法逻辑
+D10	开火事件消费	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1013	3	脚本断言	D10 玩法逻辑
 D10	开火统计日志	client/Assets/Scripts/Module/Combat/CombatSelfTest.cs	client/Assets/Scripts/Module/Combat/CombatSelfTest.cs:24	3	脚本断言	D10 玩法逻辑
-D10	强制结束回合	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1188	3	脚本断言	D10 玩法逻辑
-D10	换弹	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:740	3	脚本断言	D10 玩法逻辑
-D10	换阵营	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1143	3	脚本断言	D10 玩法逻辑
+D10	强制结束回合	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1245	3	脚本断言	D10 玩法逻辑
+D10	换弹	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:797	3	脚本断言	D10 玩法逻辑
+D10	换阵营	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1200	3	脚本断言	D10 玩法逻辑
 D10	暂停	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:219	3	脚本断言	D10 玩法逻辑
-D10	机器人难度切换	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1030	3	脚本断言	D10 玩法逻辑
+D10	机器人难度切换	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1087	3	脚本断言	D10 玩法逻辑
 D10	步行/蹲伏/跳跃采集	client/Assets/Scripts/Module/Player/PlayerMotor.cs	client/Assets/Scripts/Module/Player/PlayerMotor.cs:119	3	脚本断言	D10 玩法逻辑
-D10	添加/踢出机器人	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:979	3	脚本断言	D10 玩法逻辑
+D10	添加/踢出机器人	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1036	3	脚本断言	D10 玩法逻辑
 D10	灼弹 C4 下包/拆包/爆炸	client/Assets/Scripts/Module/Match/CsBomb.cs	client/Assets/Scripts/Module/Match/CsBomb.cs:12	3	脚本断言	D10 玩法逻辑
 D10	经济（起始/上限/连败递增）	client/Assets/Scripts/Module/Match/CsEconomy.cs	client/Assets/Scripts/Module/Match/CsEconomy.cs:46	3	脚本断言	D10 玩法逻辑
 D10	胜负原因枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:22	3	脚本断言	D10 玩法逻辑
-D10	能否买枪（分支）	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:578	3	脚本断言	D10 玩法逻辑
+D10	能否买枪（分支）	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:635	3	脚本断言	D10 玩法逻辑
 D10	脚步声门控	client/Assets/Scripts/Module/Audio/AudioModule.cs	client/Assets/Scripts/Module/Audio/AudioModule.cs:193	3	脚本断言	D10 玩法逻辑
-D10	观战切换目标	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:895	3	脚本断言	D10 玩法逻辑
+D10	观战切换目标	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:952	3	脚本断言	D10 玩法逻辑
 D10	赢得判定	client/Assets/Scripts/Module/Match/CsRound.cs	client/Assets/Scripts/Module/Match/CsRound.cs:197	3	脚本断言	D10 玩法逻辑
-D10	重开本回合/整场	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1095	3	脚本断言	D10 玩法逻辑
+D10	重开本回合/整场	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1152	3	脚本断言	D10 玩法逻辑
 D11	/  或 0@游戏内	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入
 D11	1/2/3/4/5@游戏内	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入
 D11	B@游戏内	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入

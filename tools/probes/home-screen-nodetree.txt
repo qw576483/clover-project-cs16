@@ -1,0 +1,11 @@
+# home-screen Text node tree (clover-engine skill section 8 brand gate)
+# screen=1920x1080
+# origin=top-left, y grows downward; bottom = y + h
+# activePanels=MainMenuPanel,
+# columns: TEXT <hierarchy path> | text='<raw text>' | fontSize=<n> | bestFit=<bool> | rect=<x>,<y>,<w>,<h>
+TEXT [UI]/Normal/MainMenuPanel(Clone)/Signature | text='by clover-engine' | fontSize=22 | bestFit=False | rect=660.0,992.0,600.0,32.0
+TEXT [UI]/Normal/MainMenuPanel(Clone)/Btn_NewGame | text='New Game' | fontSize=20 | bestFit=False | rect=72.0,144.0,465.8,63.0
+TEXT [UI]/Normal/MainMenuPanel(Clone)/Btn_FindServers | text='Find Servers' | fontSize=20 | bestFit=False | rect=72.0,207.0,465.8,63.0
+TEXT [UI]/Normal/MainMenuPanel(Clone)/Btn_Options | text='Options' | fontSize=20 | bestFit=False | rect=72.0,270.0,465.8,63.0
+TEXT [UI]/Normal/MainMenuPanel(Clone)/Btn_Quit | text='Quit' | fontSize=20 | bestFit=False | rect=72.0,333.0,465.8,63.0
+# texts.active=5

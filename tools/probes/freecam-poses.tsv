@@ -1,0 +1,40 @@
+# 判据资产（tools/probes/）：6 张自由相机图（`--source camera`，探针相机 Cs16ProbeCam）的**可复现机位台账**。
+#
+# 为什么存在：这 6 张图（验收表 D3/D5/D6/D7/D8 的几何旁证 + R7 的天空盒判据）原本是
+# `--source camera` 自由相机帧，**原机位坐标文件已不在盘**（`*-poses.txt` 不在 git 里，`.ai-tmp/` 被
+# 整目录 ignore ⇒ git 历史也捞不回）⇒ 上一棒如实登记为「缺载体」。缺载体 = 这 6 张图**判不了任何事**
+# （别人无法重新判定同一件事）。本台账把机位**按图的内容意图重定**并落盘，从此这 6 张图可复现。
+#
+# 坐标系（Unity 世界坐标；地图 = CS 1.6 官方 de_dust2 的 BSP 保真重建，见
+# `client/Assets/Editor/MapGen/Dust2Layout.cs`）：
+#   +x 指向 CT / A 点侧（Bombsite_A x∈[35.5,42.5]），+z 指向 A/B 点侧（T 出生点 z≈-46..-51，A 点 z≈30.5..38.5），
+#   +y 向上；原点 (0,0,0) 在中路走廊上（1 BSP unit = 0.0254 m）。
+# 欧拉角 = Unity `Transform.eulerAngles`（`LookAt` 的结果）：pitch = x（正 = 俯视）、yaw = y、roll = z = 0。
+#   换算口径（与 Unity 一致，可复核）：dir = normalize(look - pos)；pitch = -asin(dir.y)、yaw = atan2(dir.x, dir.z)。
+# FOV 58.72 = 原版 90° 水平视场在 16:9 下的**纵向等效**（`策划/对照表.md` A-03/A-04 的口径，与 24_bombsite_a 同）。
+#
+# 重采方式（⛔ 不许手改 png）：
+#   1) `.ai-tmp/test/af-poses.txt` 由本台账第 1/2..7 列生成（`名称 x,y,z,tx,ty,tz,fov`）；
+#   2) **Play 中、地图已生成** 时跑既有驱动：
+#      `powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp/drivers/w-capture.ps1 1280 720 af-poses.txt`
+#      （同名覆盖 `.ai-tmp/screenshots/<图名>.png`，1280×720 与原帧一致 ⇒ png 数不增）；
+#      机位摆放脚本 = `.ai-tmp/test/x-place-cam.cs`（既有：写 probe-cam.txt → eval_file 建/摆 Cs16ProbeCam）。
+#   3) 机位**先用数值检查再采**：`.ai-tmp/drivers/af-pose-check.cs`（Physics.CheckSphere 判"机位是否在实体里"、
+#      向下/向上射线取地面与顶棚、沿视线射线取"第一个挡住的实体距离"）⇒ 本轮据此淘汰了 4 个"机位贴墙
+#      （视线在 1.1~1.6 m 就被墙挡住）"的候选机位，改为下面这些 `lookHit ≥ 10 m` 的机位。
+#
+# 机位数值的**出处**：每个机位的锚点都取自已落盘的实测坐标 ——
+#   * `Bombsite_A` / `Route_T_Mid` / `Route_T_To_A` / `Route_CT_Mid` / `Route_T_To_B` 的点位真源 =
+#     `client/Assets/Resources/MapData/de_dust2_markers.bytes`（文本，每行 `标记名 x y z`，由
+#     `client/Assets/Editor/MapGen/Dust2Builder.cs` 的 `ExportMarkerResource` 生成，坐标来自 BSP 实体
+#     与真实位图 BFS 路径采样）；
+#   * 机位 = 锚点 + 台账里写明的偏移（高度 / 后退方向），并在 Play 里用上面那支检查脚本复核过；
+#     ⛔ 不是"随手换个机位糊" —— 台账就是"可复现"的判据载体。
+#
+# 图名	pos_x	pos_y	pos_z	look_x	look_y	look_z	euler_x	euler_y	euler_z	fov	锚点出处（真源）	说明
+60_bombsite_a	48.0	10.0	25.0	38.0	2.44	35.0	28.1	-45.0	0.0	58.72	de_dust2_markers.bytes:42-47 (Bombsite_A x[35.5,42.5] y=2.438 z[30.5,38.5])	对准 A 包点：机位 = A 点中心 (39,2.44,34.5) 的东南上方 (+9,+7.6,-9.5)，朝西北俯视 A 平台 + 箱堆 + 地面 A 标记（lookHit=8.0 m 可见深度，camInside=False）
+61_mid	-1.5	8.0	-18.0	-1.5	0.0	0.0	24.0	0.0	0.0	58.72	de_dust2_markers.bytes:89-92 (Route_T_Mid (-1.5,-24.5) → (-1.5,3.5))	对准中门：机位 = 中路走廊轴 (-1.5, ·) 上、z=-18 上方 8 m，沿走廊朝 +z 看（中门/走廊尽端在 z≈0）
+62_long_a	-1.5	5.0	-30.0	-1.5	0.0	-5.0	11.3	0.0	0.0	58.72	de_dust2_markers.bytes:77-78 (Route_T_To_A (-7.5,-47.5) → (-0.5,-22.5)：T→A 出生长点后的长直道段)	对准 A 大：机位 = T→A 路线的长直道段（x≈-1.5 走廊）上、z=-30 上方 5 m，沿走廊朝 +z 看长直道与尽端的箱子（本帧即"长直道"这一段；中门的正视图在 61）
+63_short_a	17.5	8.5	33.0	17.5	2.44	21.5	27.8	180.0	0.0	58.72	de_dust2_markers.bytes:103-105 (Route_CT_Mid (17.5,28.5) → (17.5,21.5)，y=2.438 = 抬高的小道平台)	对准 A 小（catwalk）：机位 = 抬高平台轴 x=17.5 上、z=33 上方 8.5 m，朝 -z 俯视小道平台与通往 A 的过门
+64_b_tunnels	2.8	-1.2	24.9	-7.8	-1.2	30.1	0.0	-63.9	0.0	58.72	de_dust2_markers.bytes:86-87 (Route_T_To_B (5.5,23.5) → (-10.5,31.5)，y≈-2.5..-3.25 = 地下 B 通道)	对准 B 通道：机位 = 通道中点 (-2.5,-2.9,27.5) 沿通道轴向后退 6 m（+5.3,+1.7,-2.6）、抬到 y=-1.2（通道地面 -3.25 + 2.05），朝通道轴向平视（groundY=-3.25 / lookHit=15.4 m 通视）
+24_sky_up	-1.5	0.0	0.0	-1.5	30.0	4.0	-82.4	0.0	0.0	58.72	de_dust2_markers.bytes:92,106 (Route_T_Mid (-1.5,3.5) / Route_CT_Mid (-1.5,5.5) 交汇处 = 中路地面)	朝天：机位 = 中路地面原点附近（groundY=-2.24），视线仰起 82.4°（几乎垂直向上，lookHit=clear）⇒ 画面 = `desup` 天空盒面 + 云

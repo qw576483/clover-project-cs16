@@ -700,6 +700,75 @@ if (-not (Test-Path $regPath)) {
   }
 }
 
+# --- 25) home-credit-rendered -- the brand line must be SEEN RENDERED ---------
+#  SKILL section 8 (brand): the judgement for `by clover-engine` is
+#  "seen rendered / runtime UI tree", NOT a source grep.  Check 10 above only
+#  proves the literal exists in the sources, so it ends in HUMAN-ONLY; this
+#  check closes that gap with the dump written by
+#  tools/probes/probe-home-nodetree.cs from a REAL Play session: every on-screen
+#  Text node's hierarchy path / text / font size / screen rect (screen origin =
+#  top-left, y grows downward, so "lowest on screen" = largest rect bottom).
+#  Verdict (all must hold, else FAIL):
+#    a) the dump declares the y-down origin and says the main menu was up;
+#    b) some on-screen text node reads exactly `by clover-engine` (case sensitive,
+#       whitespace stripped);
+#    c) that node IS the bottom-most text node on screen;
+#    d) the dump is at least as new as the panel source that renders it
+#       (an edited panel voids the dump -- SKILL 2.4 capture-then-freeze).
+#  No dump at all => HUMAN-ONLY (starting Play Mode needs a human-visible step),
+#  and the message says who can give it.
+$cCredit    = 'by clover-engine'
+$probeDump  = Join-Path $root 'tools\probes\home-screen-nodetree.txt'
+$brandPanel = Join-Path $codeDir 'UI\Flow\MainMenuPanel.cs'
+if (-not (Test-Path $probeDump)) {
+  $script:human++
+  Say 'HUMAN-ONLY' 'home-credit-rendered' ('missing ' + $probeDump + ' -- it is written by a REAL Play session: run tools/probes/probe-home-nodetree.cs through .ai-tmp/drivers/af-play.ps1 -Phase open then -Phase tree. Who can give it: whoever can let the Unity editor enter Play Mode on this machine')
+} else {
+  $dumpTxt = Read-Text $probeDump
+  $head = @(); $nodes = @()
+  foreach ($ln in @($dumpTxt -split "`r?`n")) {
+    if ($ln.StartsWith('#')) { $head += $ln; continue }
+    if (-not $ln.StartsWith('TEXT ')) { continue }
+    $m = [regex]::Match($ln, "text='(.*)' \| fontSize=([0-9]+) \| bestFit=([A-Za-z]+) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)")
+    if (-not $m.Success) { continue }
+    $pEnd = $ln.IndexOf(' | text=')
+    $nodes += [pscustomobject]@{
+      Path     = $ln.Substring(5, $pEnd - 5)
+      Text     = $m.Groups[1].Value
+      FontSize = [int]$m.Groups[2].Value
+      Bottom   = [double]$m.Groups[5].Value + [double]$m.Groups[7].Value
+    }
+  }
+  $headTxt = ($head -join "`n")
+  $problems = @()
+  if ($nodes.Count -eq 0) { $problems += 'the dump holds no TEXT line (nothing was on screen when it was taken)' }
+  if ($headTxt -notmatch 'origin=top-left') { $problems += 'the dump does not declare `origin=top-left` -- its rect column cannot be read as a screen rect' }
+  if ($headTxt -notmatch 'activePanels=[^\r\n]*MainMenuPanel') { $problems += 'the dump was NOT taken on the home screen (activePanels does not contain MainMenuPanel)' }
+  $ordered = @($nodes | Sort-Object Bottom -Descending)
+  $cCreditBare = ($cCredit -replace '\s', '')
+  $hit = @($nodes | Where-Object { ($_.Text -replace '\s', '') -ceq $cCreditBare })
+  if ($hit.Count -eq 0) {
+    $problems += ('no on-screen text node reads exactly "' + $cCredit + '" (case sensitive comparison after stripping whitespace)')
+  } elseif ($ordered.Count -gt 0 -and [math]::Abs($hit[0].Bottom - $ordered[0].Bottom) -gt 0.01) {
+    $problems += ('the signature IS rendered but is not the bottom-most text node: bottom-most = ' + $ordered[0].Path + ' text="' + $ordered[0].Text + '" bottom=' + $ordered[0].Bottom.ToString('F1') + '; signature bottom=' + $hit[0].Bottom.ToString('F1'))
+  }
+  if (Test-Path $brandPanel) {
+    $tDump = (Get-Item $probeDump).LastWriteTime
+    $tPanel = (Get-Item $brandPanel).LastWriteTime
+    if ($tDump -lt $tPanel) {
+      $problems += ('the dump (' + $tDump.ToString('MM-dd HH:mm') + ') is OLDER than the panel that renders the signature, ' + (Split-Path $brandPanel -Leaf) + ' (' + $tPanel.ToString('MM-dd HH:mm') + ') => re-take the dump')
+    }
+  } else { $problems += ('cannot judge freshness: ' + $brandPanel + ' is missing') }
+  if ($problems.Count -eq 0) {
+    $s = $hit[0]
+    Say 'PASS' 'home-credit-rendered' ($nodes.Count.ToString() + ' on-screen text node(s); bottom-most = ' + $s.Path + ' text="' + $s.Text + '" fontSize=' + $s.FontSize + ' bottom=' + $s.Bottom.ToString('F1') + '; dump is newer than MainMenuPanel.cs')
+  } else {
+    $script:fail++
+    Say 'FAIL' 'home-credit-rendered' ($problems.Count.ToString() + ' problem(s) in ' + (Split-Path $probeDump -Leaf))
+    $problems | ForEach-Object { Sub $_ }
+  }
+}
+
 Write-Output ''
 Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1} =====" -f $script:fail, $script:human)
 if ($script:fail -gt 0) { Write-Output 'RESULT: FAIL present -> the words done / delivered / verified must NOT be used' }

@@ -1398,19 +1398,29 @@ def _s(t):
 for i, r in enumerate(ENT_SORTED, 1):
     frag.append('| %d | %s | %s | %s | %s | %s |' % (i, r[0], _s(r[1]), r[5], _s(r[6]), _s(r[7])))
 frag += ['<!-- COVERAGE-END -->', '']
+# ⛔ 片段文件与下面注入用的 block 必须**逐字一致**（都从 BEGIN 标记开始、都不带前导/尾随空行）：
+#   旧写法 `'\n'.join(frag[4:])` 前面多一个空行（frag[4] 是空串、frag[5] 才是 BEGIN），
+#   而注入分支又把尾随换行 rstrip 掉了 ⇒ **每跑一次 --inject 就多插一个空行**（实测：验收表里
+#   BEGIN 标记前已堆了 35 个空行，等价于该分支跑了 35 次）⇒ 生成器**不可复现**（同一输入跑两次
+#   产出不同字节），"重跑生成器产出与盘上逐字节一致"这条判据根本立不住（SKILL §0.6：不可复现的
+#   生成器 = 判据失效）。现在统一成 strip('\n') + 单个换行结尾。
+_brand_block = '\n'.join(frag[4:]).strip('\n')
 with open(os.path.join(PLAN, '\u8986\u76d6\u77e9\u9635\u5224\u5b9a.fragment.md'), 'w', encoding='utf-8', newline='\n') as f:
-    f.write('\n'.join(frag[4:]))
+    f.write(_brand_block + '\n')
 
 if '--inject' in sys.argv:
     # 覆盖矩阵的**判定行**落 `策划/验收表.md`（规格文件放的是"要做成什么样"，判定表放的是"判成什么"）。
     spec_path = os.path.join(PLAN, '\u9a8c\u6536\u8868.md')
     txt = rd(spec_path)
     B, E = '<!-- COVERAGE-BEGIN -->', '<!-- COVERAGE-END -->'
-    block = '\n'.join(frag[4:])
+    # ⛔ block 取 `frag[4:]` 会带上一个**前导空行**（frag[4] == ''），而旧代码只 rstrip 尾部
+    #    ⇒ 每次注入都往 BEGIN 标记前多插一个空行 ⇒ 同输入两次产出不同字节（不可复现，见上）。
+    #    这里与片段文件用同一个 `_brand_block`：BEGIN…END、无前导/尾随空行 ⇒ 注入幂等。
+    block = _brand_block
     i, j = txt.find(B), txt.find(E)
     if i >= 0 and j > i:
         # ⛔ 不用 re.sub：替换串里带反斜杠时会被当成转义/反向引用（实测踩过），字符串切片最稳。
-        txt = txt[:i] + block.rstrip('\n') + txt[j + len(E):]
+        txt = txt[:i] + block + txt[j + len(E):]
     else:
         txt = txt.rstrip('\n') + '\n\n---\n\n' + '\n'.join(frag) + '\n'
     with open(spec_path, 'w', encoding='utf-8', newline='\n') as f:
