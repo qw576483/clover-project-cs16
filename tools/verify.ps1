@@ -502,6 +502,114 @@ if (-not (Test-Path $editorLog)) {
   }
 }
 
+# --- 20) coverage-matrix -- SKILL T0: "checked" must be a NUMBER -------------
+#  Source of the verdict rows = section G of the acceptance table (the coverage
+#  matrix written by tools/probes/enumerate-entities.py). Sections A-F hold the
+#  hand-written acceptance rows, the differences registry and this file's own
+#  self-check summary -- those are NOT verdict rows and must not be scored
+#  (same reasoning as check 3/12 above).
+#  Five sub-criteria: entity rows == verdict rows; zero blank verdicts;
+#  zero "mismatch"; all 12+3 dimensions present; and the mismatch rows are
+#  printed (they ARE this slice's product: a red list).
+$cListName = ([char[]]@(0x5B9E,0x4F53,0x6E05,0x5355) -join '') + '.tsv'      # entity list
+$cList     = Join-Path $planDir $cListName
+$cAgree    = ([char[]]@(0x4E00,0x81F4) -join '')                              # consistent
+# NOTE: the skill template writes this as (0x4E0D,0x81F4) = "not"+"dense" ("bu zhi"),
+# i.e. it DROPS 0x4E00 ("yi") -- copying it verbatim makes coverage-diff a permanent
+# false PASS. Three code points are needed for the real "mismatch" token.
+$cDis      = ([char[]]@(0x4E0D,0x4E00,0x81F4) -join '')                       # mismatch
+$cPend     = ([char[]]@(0x5F85,0x91C7) -join '')                              # to-be-captured (visual)
+$cAllowed  = ([char[]]@(0x5141,0x8BB8,0x7684,0x5DEE,0x5F02) -join '')         # allowed difference
+$dims = @()
+1..12 | ForEach-Object { $dims += ('D' + $_) }
+1..3  | ForEach-Object { $dims += ('S' + $_) }
+if (-not (Test-Path $cList)) {
+  $script:fail++
+  Say 'FAIL' 'coverage-rows' ('missing ' + $cListName + ' -- enumerate it with tools/probes/enumerate-entities.py, never by hand (T0)')
+} else {
+  $listRows = @([System.IO.File]::ReadAllLines($cList, [Text.Encoding]::UTF8) |
+                Where-Object { $_.Trim().Length -gt 0 -and $_ -notmatch '^\s*#' }).Count
+  $gRows = @()
+  if (Test-Path $specTable) {
+    $inG = $false
+    foreach ($ln in @((Read-Text $specTable) -split "`r?`n")) {
+      if ($ln.StartsWith('## ')) { $inG = ($ln -match '^##\s+G\.'); continue }
+      if ($inG -and $ln -match '^\s*\|\s*\d+\s*\|') { $gRows += $ln }
+    }
+  }
+  if ($gRows.Count -eq 0) {
+    $script:fail++
+    Say 'FAIL' 'coverage-rows' 'no verdict rows in acceptance section G -- run: python tools/probes/enumerate-entities.py --inject'
+  } elseif ($listRows -ne $gRows.Count) {
+    $script:fail++
+    Say 'FAIL' 'coverage-rows' ('entity rows = ' + $listRows + ' vs verdict rows = ' + $gRows.Count + ' -> rows were skipped (T0)')
+  } else {
+    Say 'PASS' 'coverage-rows' ('entity rows == verdict rows (' + $listRows + ')')
+  }
+  $blank = @($gRows | Where-Object { -not ($_.Contains($cAgree)) -and -not ($_.Contains($cDis)) -and -not ($_.Contains($cPend)) -and -not ($_.Contains($cAllowed)) })
+  if ($gRows.Count -gt 0) {
+    if ($blank.Count -gt 0) {
+      $script:fail++
+      Say 'FAIL' 'coverage-filled' ('' + $blank.Count + ' verdict row(s) with no verdict')
+      $blank | Select-Object -First 5 | ForEach-Object {
+        $bl = [string]$_
+        if ($bl.Length -gt 120) { $bl = $bl.Substring(0, 120) }
+        Sub $bl
+      }
+    } else {
+      Say 'PASS' 'coverage-filled' ('every verdict row carries a verdict (' + $gRows.Count + ' rows; ' + $cPend + ' counts as registered-but-visual)')
+    }
+    $bad = @($gRows | Where-Object { $_.Contains($cDis) })
+    if ($bad.Count -gt 0) {
+      $script:fail++
+      Say 'FAIL' 'coverage-diff' ('' + $bad.Count + ' row(s) marked mismatch -> not deliverable (T0); first 40:')
+      $bad | Select-Object -First 40 | ForEach-Object {
+        $cells = @(([string]$_).Split('|') | ForEach-Object { $_.Trim() })
+        $txt = [string]$_
+        if ($cells.Count -ge 6) { $txt = ($cells[1] + ' ' + $cells[2] + ' :: ' + $cells[4]) }
+        if ($txt.Length -gt 150) { $txt = $txt.Substring(0, 150) }
+        Sub $txt
+      }
+    } else {
+      Say 'PASS' 'coverage-diff' 'zero mismatch'
+    }
+  }
+  $listTxt = [System.IO.File]::ReadAllText($cList, [Text.Encoding]::UTF8)
+  $missDim = @($dims | Where-Object { $listTxt -notmatch ('\b' + $_ + '\b') })
+  if ($missDim.Count -gt 0) {
+    $script:fail++
+    Say 'FAIL' 'coverage-dimensions' ('missing dimension(s): ' + ($missDim -join ','))
+  } else {
+    Say 'PASS' 'coverage-dimensions' 'all 12+3 dimensions present in the entity list'
+  }
+}
+
+# --- 21) scale-tier -- SKILL T0: sampling density declared ONCE, never downgraded
+$cTier   = ([char[]]@(0x6863,0x4F4D) -join '')                                # tier
+$specDir = Join-Path $planDir (([char[]]@(0x7B56,0x5212,0x6848) -join ''))    # plan/spec dir
+$tierRx  = '\b(S|M|L)\s*(' + $cTier.Substring(0,1) + '|tier)'
+$tierHit = @()
+if (Test-Path $specDir) {
+  foreach ($f in @(Get-ChildItem $specDir -Filter *.md -File -ErrorAction SilentlyContinue)) {
+    $tx = [System.IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8)
+    if ($tx.Contains($cTier) -and ($tx -match $tierRx)) { $tierHit += $f.Name }
+  }
+}
+if ($tierHit.Count -gt 0) { Say 'PASS' 'scale-tier' ('declared in ' + ($tierHit -join ',')) }
+else { $script:fail++; Say 'FAIL' 'scale-tier' 'no tier (S/M/L) declared under plan/spec/*.md -- declare once, never downgrade (T0)' }
+
+# --- 22) impact-radius -- a BUG FIX must enumerate its blast radius ----------
+$irPath = Join-Path $root '.ai-tmp/test/impact-radius.tsv'
+if (-not (Test-Path $irPath)) {
+  Say 'HUMAN-ONLY' 'impact-radius' 'no .ai-tmp/test/impact-radius.tsv -- for a bug fix, list the blast radius (dim / cause chain / affected rows)'
+} else {
+  $irBad = @([System.IO.File]::ReadAllLines($irPath, [Text.Encoding]::UTF8) |
+             Where-Object { $_.Trim().Length -gt 0 -and $_ -notmatch '^\s*#' } |
+             Where-Object { ($_ -split "`t").Count -lt 3 })
+  if ($irBad.Count -eq 0) { Say 'PASS' 'impact-radius' 'every row lists dim / cause chain / affected rows' }
+  else { $script:fail++; Say 'FAIL' 'impact-radius' ('' + $irBad.Count + ' row(s) missing columns (dim / cause chain / affected rows)') }
+}
+
 Write-Output ''
 Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1} =====" -f $script:fail, $script:human)
 if ($script:fail -gt 0) { Write-Output 'RESULT: FAIL present -> the words done / delivered / verified must NOT be used' }

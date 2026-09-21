@@ -99,6 +99,23 @@ namespace Cs16.Core
         /// </summary>
         public const string HudStopwatchIcon = "UI/Art/stopwatch";
 
+        /// <summary>
+        /// 雷达**俯视底图**（真实文件 <c>Resources/UI/Art/overview_de_dust2.png</c>，128×128）。
+        ///
+        /// <para><b>为什么不是"原版那张 bmp"</b>：原版雷达底图 = <c>cstrike/overviews/de_dust2.bmp</c>
+        /// （787510 B = 1024×768×8bpp）+ <c>overviews/de_dust2.txt</c>（ZOOM/ORIGIN/ROTATED），
+        /// 这两份载体**在本机不在盘**（<c>原版资源/{cs16src,cs109,cs16-maps,解包产物}</c> 为空，
+        /// 见 <c>原版资源/清单.md</c>）。按载体降级链退到**级①原始数据**：由工程内的
+        /// <c>Assets/ThirdParty/Dust2/de_dust2_geo.bin</c>（= 原版 de_dust2 BSP 的几何）离线俯视
+        /// 栅格化而成，生成器 = <c>tools/probes/render-overview.py</c>
+        /// （判据资产，随仓库提交；口径 = 逐三角面按自身法线分"可站立面/竖直面/陡面"，
+        /// 俯视投影后按高度着色，A/B 点字母打在原版 <c>func_bomb_target</c> 的标记点质心上）。</para>
+        ///
+        /// <para>⛔ 不是手绘近似图、也不是网格截图；像素 100% 来自原版几何。拿到原版
+        /// <c>overviews/de_dust2.bmp</c> 后可**只换这个 PNG**（同名覆盖），代码一行不用改。</para>
+        /// </summary>
+        public const string RadarOverviewDust2 = "UI/Art/overview_de_dust2";
+
         // ==================================================================
         //  菜单贴图 —— 落在 Resources/UI/Art/（原版 GameUI 字标）
         // ==================================================================

@@ -1680,6 +1680,13 @@ namespace Cs16.Module.Match
             if (Mathf.Abs(want.x) > 0.0001f && Mathf.Abs(got.x) < Mathf.Abs(want.x) * ratio) a.Velocity.x = 0f;
             if (Mathf.Abs(want.z) > 0.0001f && Mathf.Abs(got.z) < Mathf.Abs(want.z) * ratio) a.Velocity.z = 0f;
 
+            // ── ★ 角色间水平推开（修「人物和人物能重合」）──────────────────────────────
+            // 世界几何的位移已经算完（上面那次 ResolveMove），这里再补**角色对角色**那一层：
+            // 两个角色的水平间距必须 ≥ 2×PlayerRadius（原版玩家包围盒口径，见 CsActorSeparation）。
+            // 必须放在"贴地/陡坡闸门"**之前** —— 下面那两段会按 resolved 重新探地面并可能回退水平位移，
+            // 推开的结果得先进入 resolved，才不会出现"推开了但地面判定又按旧点算"的错位。
+            resolved = SeparateFromOtherActors(a, resolved);
+
             // ── ★ 陡坡闸门（原版口径，见 CsConst.MaxStandableSlopeNormalZ）──────────────────────
             // 落点地面比脚下高出一个台阶、而且那片地面是**陡坡**（法线 y < 0.7 ≈ 45.573°）⇒ 这一帧的水平
             // 位移不算数：原版在 `PM_WalkMove` 里就是这么退回去的（`if (trace.plane.normal[2] < 0.7) goto usedown;`）。
@@ -1797,6 +1804,68 @@ namespace Cs16.Module.Match
         /// 出处与后果见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>。
         /// </summary>
         private static bool IsStandableGround(Vector3 normal) => normal.y >= CsConst.MaxStandableSlopeNormalZ;
+
+        // ---- 角色间推开的临时数组（每个 CsActor 一个圆；按帧复用，不在每帧路径上分配）----
+        private readonly CsActorSeparation.ActorCircle[] _sepScratch =
+            new CsActorSeparation.ActorCircle[CsMatchConst.MaxTeamSize * 2];
+
+        /// <summary>
+        /// **角色间水平推开**：把 <paramref name="pos"/> 推到与所有**同层**存活角色都不重叠
+        /// （水平间距 ≥ 2×<see cref="CsConst.PlayerRadius"/>），并保证推出去的结果**仍然守世界碰撞**。
+        ///
+        /// <para><b>为什么要有"同层"这一条</b>：竖直方向本工程是真几何（可以站在箱子顶、站在高低两层
+        /// 平台上）。若不分层，站在箱子顶上的角色会把箱子**下面**的人推开 —— 那是错的。
+        /// 判据用 <see cref="CsConst.StandHeight"/>：脚面高差 ≥ 一个身高 = 不是同一层。</para>
+        ///
+        /// <para><b>为什么推完还要再 ResolveMove 一次</b>：推开的几何方向只看"另一个角色在哪"，
+        /// 完全可能把人往墙里/箱子里推。再跑一次世界碰撞解算把它钳回可走区 ——
+        /// "不能重合"与"不能穿墙"两条同时成立，冲突时以世界优先（人被挤住），
+        /// 这正是原版"两个人挤在墙角"的表现。</para>
+        ///
+        /// <para>推不开（迭代上限内仍有重叠 = 被夹住）⇒ 打一条降频 Warn 并保留钳制结果。</para>
+        /// </summary>
+        private Vector3 SeparateFromOtherActors(CsActor a, Vector3 pos)
+        {
+            if (_actors.Count <= 1) return pos;
+
+            int count = 0;
+            for (int i = 0; i < _actors.Count; i++)
+            {
+                var o = _actors[i];
+                if (o == null || o == a || !o.IsAlive) continue;
+                if (Mathf.Abs(o.Position.y - pos.y) >= CsConst.StandHeight) continue;   // 不同层：不互相推
+                _sepScratch[count].Id = o.Id;
+                _sepScratch[count].X = o.Position.x;
+                _sepScratch[count].Z = o.Position.z;
+                count++;
+                if (count >= _sepScratch.Length) break;
+            }
+            if (count == 0) return pos;
+
+            bool pushed = CsActorSeparation.TryResolve(pos.x, pos.z, CsConst.PlayerRadius,
+                                                      _sepScratch, count, out var px, out var pz);
+            if (!pushed)
+            {
+                RateWarn("move.actorstuck",
+                    $"{a.Name} 被其他角色挤住（{count} 个同层角色，迭代 {CsActorSeparation.MaxIterations} 次仍有重叠）—— " +
+                    "按「挤住」处理：原地保留，不穿过去");
+            }
+
+            var want = new Vector3(px, pos.y, pz);
+            if ((want.x - pos.x) * (want.x - pos.x) + (want.z - pos.z) * (want.z - pos.z) < 0.000001f)
+                return pos;   // 推开的位移小于 1 mm：不必再解算世界碰撞（省一次扫掠）
+
+            var clamped = _map.ResolveMove(pos, want, CsConst.PlayerRadius);
+            if ((clamped.x - want.x) * (clamped.x - want.x) + (clamped.z - want.z) * (clamped.z - want.z) > 0.0001f)
+            {
+                // 非预期分支：推开方向被世界几何挡住（推开被钳回）—— 留痕，便于区分
+                // "两人挤在墙角"与"推开逻辑方向错了"。
+                RateWarn("move.actorpushblocked",
+                    $"{a.Name} 的角色间推开被世界几何钳回（想推到 ({want.x:F2},{want.z:F2})，" +
+                    $"实际 ({clamped.x:F2},{clamped.z:F2})）—— 两人挤在墙角/箱子旁");
+            }
+            return clamped;
+        }
 
         /// <summary>
         /// 贴在陡坡上时的**沿坡下滑**的水平位移 —— 本工程对原版

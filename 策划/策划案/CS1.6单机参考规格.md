@@ -1,5 +1,10 @@
 # 参考游戏规格：Counter-Strike 1.6（单机版）
 
+> **规模档位：L 档**（1:1 复刻 / 多系统 ⇒ **3-way + 全状态全边界 + 全因果交叉**）。
+> 判据表 = skill `patterns/full-coverage-audit.md` §9.5；**判一次，只许上调**，⛔ 不许因赶时间下调。
+> 落地：`策划/实体清单.tsv`（脚本枚举）+ `策划/状态矩阵.tsv` + `策划/验收表.md` §G（一行一实体判定），
+> 闸门 = `tools/verify.ps1` 的 `coverage-matrix` / `scale-tier` / `impact-radius`。
+>
 > 参考游戏 A = **Counter-Strike 1.6**（Valve，2003）。
 > 版本形态：**单机版（用户指定）** —— 不接 Clover 服务端，本地开图 + 机器人，与官方"New Game（本地监听服务器）"体验一致。
 > 本文件是**动工前的规格真源**，也是 `策划/验收表.md` 的来源。任何一项没做到 = 没做完。
@@ -14,7 +19,10 @@
 2. **素材口径**：**必须用 A 自己的原版素材**（解包自原版 CS 1.6 客户端 ISO）。⛔ 不用 KayKit / Poly Haven / 内置几何体之类的通用兜底素材。
    获取历程见 `策划/素材调研.md`；载体位置与复现步骤见 `原版资源/清单.md`。
 3. **地图口径**：几何**从原版 `de_dust2.bsp` 解析**（lump 几何 + 内嵌 miptex + 实体），
-   由 `Editor/MapGen/Dust2Builder.cs` 生成 21 个材质组与 218 个阻挡盒，并烘焙出 `de_dust2.bytes` 位图（127×145）；
+   由 `Editor/MapGen/Dust2Builder.cs` 生成 33 个材质组与 656 个阻挡盒，并写出 `de_dust2.bytes` 位图（127×145）；
+  > 数字口径（2026-09-21 切片F 回写）：阻挡盒**只**由 `tools/probes/rebuild-blockers.py` 产出（按"人体高度带"逐格判定后贪心合并），
+  > 且 `geo.bin` 阻挡盒数 == `.bytes` 头 `colliders` == `.bytes` 碰撞体段条数（**逐条 AABB 等价**）== 场景 `Blocker_*` 数 = **656**；
+  > 材质组 = `geo.bin` 的组数 = 场景 `Visual/*` 的 MeshFilter 节点数 = **33**。判据见 `tools/probes/geom-check.py`（A1/A2）。
    ⛔ **不许用"手工摆盒子"近似**（§0.5 禁写条款：参考物已有的东西只能解析搬运）。
    天空盒同样取原版本体 `gfx/env/des{ft,bk,lf,rt,up,dn}.tga`。
 
@@ -137,7 +145,7 @@
 | B Tunnels | B 通道（隧道） | T Spawn ↔ B Site |
 
 实现方式：**解析原版 `de_dust2.bsp`**（lump 几何 + 内嵌 miptex + 实体），由 `client/Assets/Editor/MapGen/Dust2Builder.cs`
-按材质批量生成 Mesh（**21 个材质组 / 242 张原版内嵌贴图**）+ **218 个阻挡盒**，再烘焙出 `de_dust2.bytes`（**127×145 位图**）供 `Game.Map.WalkableAt` 使用；
+按材质批量生成 Mesh（**33 个材质组 / 242 张原版内嵌贴图**）+ **656 个阻挡盒**，再写出 `de_dust2.bytes`（**127×145 位图**）供 `Game.Map.WalkableAt` 使用；
 天空盒取原版本体 `gfx/env/des{ft,bk,lf,rt,up,dn}.tga`。
 
 > 保真度目标：**几何来自原版 BSP 本体**（不是"搭一个像的"）；连通性与地标逐项可自证（`Clover/CS16/地图连通性自证（de_dust2）`），

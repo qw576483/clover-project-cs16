@@ -44,6 +44,21 @@ namespace Cs16.Module.Map
         /// <summary>8 向采样的对角系数（√2/2）。</summary>
         private const float DiagonalScale = 0.70710678f;
 
+        /// <summary>
+        /// 身体高度带射线的**起点抬升**（米）= <see cref="CsConst.GroundCheckDistance"/>：
+        /// 与 <see cref="TrySampleGround"/> 抬射线起点用的是同一个口径 ——
+        /// "脚正好贴面时避免自交 / 漏检"，所以直接复用那个常量，不再自造一个数值。
+        /// </summary>
+        private const float BodyProbeLift = CsConst.GroundCheckDistance;
+
+        /// <summary>
+        /// 身体高度带射线的**向下探测深度**（米）。必须够深到能穿过脚面：
+        /// 跳在半空时脚面以下是空的，第一个交点会比脚面**低**（射线长度不够就会打不到东西，
+        /// 从而把"正跨过矮墙"误判成"被挡"）。取 <see cref="SampleGround"/> 的默认探测深度（8 m），
+        /// 本图相邻层的落差（T 家比 CT 家高约 6.8 m）在这个范围内。
+        /// </summary>
+        private const float BodyProbeDrop = 8f;
+
         // ---- 标记点表 ----
         private Dictionary<string, Vector3[]> _markers;
         private Vector3[] _spawns;
@@ -255,7 +270,23 @@ namespace Cs16.Module.Map
             return m.WalkableAt(x, z);
         }
 
-        /// <summary>中心 + 8 向（半径 <paramref name="radius"/>）全可走才算站得下。</summary>
+        /// <summary>
+        /// 该点是否站得下 —— **两层判据**（第二层是本片新增，修"箱子能穿 / 矮障碍跳不过去"）：
+        /// <list type="number">
+        /// <item><b>位图路径</b>（原判据，走绝大多数帧）：中心 + 8 向位图全可走
+        /// **且**落点地面在当前脚高的一步台阶内（<see cref="CsConst.StepUpHeight"/>）。</item>
+        /// <item><b>几何路径</b>：位图说挡、或落点地面高出一整步时，按真实世界几何复核**身体高度带**
+        /// （<see cref="BodyHeightClear"/>）。</item>
+        /// </list>
+        ///
+        /// <para>⛔ **为什么必须有第二层**：位图是**单层 2D**（一格一位，没有高度），
+        /// 而"这一格能不能立足"本质上是**高度问题** —— 同一个格子在 y=0（地面）被箱子侧壁挡住、
+        /// 在 y=1.2（跳起来）却是通的；矮墙/扶手/箱子顶面在位图里一律只有"挡"或"通"一个答案。
+        /// 只按位图判会同时产生两个相反的错误：
+        /// ① 箱子顶面是朝上的面 ⇒ 箱子所在格判成"可走" ⇒ 站在地面的角色**直接走进箱子**（用户报"箱子能穿"）；
+        /// ② 矮障碍所在格判成"挡" ⇒ 跳起来也过不去（用户报"匪家楼梯扶手跳不过去"）。
+        /// 判据与对照数字见 <c>tools/probes/geom-check.py</c>。</para>
+        /// </summary>
         public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius)
         {
             if (!IsLoaded)
@@ -264,6 +295,13 @@ namespace Cs16.Module.Map
                 return true;
             }
 
+            if (BitmapClear(pos, radius) && GroundWithinStep(pos)) return true;
+            return BodyHeightClear(pos, radius);
+        }
+
+        /// <summary>中心 + 8 向（半径 <paramref name="radius"/>）位图全可走（原判据，单独抽出来复用）。</summary>
+        private bool BitmapClear(Vector3 pos, float radius)
+        {
             if (!WalkableAt(pos.x, pos.z)) return false;
 
             float d = radius * DiagonalScale;
@@ -275,6 +313,56 @@ namespace Cs16.Module.Map
                    WalkableAt(pos.x + d, pos.z - d) &&
                    WalkableAt(pos.x - d, pos.z + d) &&
                    WalkableAt(pos.x - d, pos.z - d);
+        }
+
+        /// <summary>
+        /// 落点地面是否在"当前脚高"的一步台阶内（<see cref="CsConst.StepUpHeight"/>）。
+        ///
+        /// <para>探不到地面（悬空 / 脚下是深坑）⇒ **不否决**：跳起、下落中间的帧就长这样
+        /// （此时该格该不该通由 <see cref="BodyHeightClear"/> 说话）。</para>
+        /// </summary>
+        private bool GroundWithinStep(Vector3 pos)
+        {
+            if (!TrySampleGround(pos, out var point, out _)) return true;
+            return point.y - pos.y <= CsConst.StepUpHeight;
+        }
+
+        /// <summary>身体高度带复核：半径 9 点（中心 + 8 向）逐点调 <see cref="BodyHeightClearAt"/>。</summary>
+        private bool BodyHeightClear(Vector3 pos, float radius)
+        {
+            if (!BodyHeightClearAt(pos.x, pos.y, pos.z)) return false;
+
+            float d = radius * DiagonalScale;
+            return BodyHeightClearAt(pos.x + radius, pos.y, pos.z) &&
+                   BodyHeightClearAt(pos.x - radius, pos.y, pos.z) &&
+                   BodyHeightClearAt(pos.x, pos.y, pos.z + radius) &&
+                   BodyHeightClearAt(pos.x, pos.y, pos.z - radius) &&
+                   BodyHeightClearAt(pos.x + d, pos.y, pos.z + d) &&
+                   BodyHeightClearAt(pos.x + d, pos.y, pos.z - d) &&
+                   BodyHeightClearAt(pos.x - d, pos.y, pos.z + d) &&
+                   BodyHeightClearAt(pos.x - d, pos.y, pos.z - d);
+        }
+
+        /// <summary>
+        /// 单点身体高度带复核：从**头顶上方**向下打一根射线，只看**第一个交点**。
+        /// <list type="bullet">
+        /// <item>第一交点在**脚面以下**（含 <see cref="CsConst.GroundCheckDistance"/> 容差）
+        /// ⇒ 身高带是空的：障碍的顶面比脚面低（人已经站在它上面 / 正跨过它）；</item>
+        /// <item>第一交点在**身高带之内** ⇒ 有一堵墙 / 一坨障碍挡在身体高度上。</item>
+        /// </list>
+        ///
+        /// <para>这条对"地面"和"箱子顶面"**同样成立**（都朝上、都在脚面高度）⇒
+        /// "站在箱子顶上"与"站在地上"走同一条判据，**不需要给箱子开特例**。</para>
+        ///
+        /// <para>打不到任何世界面（该列一个世界几何都没有）⇒ 保守判**挡**：这一格没有可站立的世界几何。</para>
+        /// </summary>
+        private bool BodyHeightClearAt(float x, float feetY, float z)
+        {
+            var origin = new Vector3(x, feetY + CsConst.StandHeight + BodyProbeLift, z);
+            float len = CsConst.StandHeight + BodyProbeLift + BodyProbeDrop;
+            if (!Physics.Raycast(origin, Vector3.down, out var hit, len, GroundMask(), QueryTriggerInteraction.Ignore))
+                return false;
+            return hit.point.y <= feetY + CsConst.GroundCheckDistance;
         }
 
         /// <summary>

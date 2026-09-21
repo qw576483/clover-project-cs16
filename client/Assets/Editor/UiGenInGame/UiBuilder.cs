@@ -89,6 +89,19 @@ namespace Cs16.EditorTools
 
                 // 血量 / 护甲图标（原版 640hud7.spr 的 cross / suit_full / suithelmet_full，
                 // hud.txt:121/135/137；见 CsHudTheme 的"HUD 图标"一节）—— 同样是"解出原版像素再复制进工程"。
+                // 雷达底图（本片新增）：`Resources/UI/Art/overview_de_dust2.png`。
+                // 它**不是**从原版 spr/bmp 解出的（那两份载体本机不在盘），而是由原版地图几何
+                // 离线俯视栅格化生成 —— 生成命令写在下面的 hint 里；导入设置仍必须是 Sprite，
+                // 否则运行期 `Game.Res.LoadAsset<Sprite>` 取不到、雷达只有点没有地图。
+                var radarSprite = EnsureHudIconSprite(ResPaths.RadarOverviewDust2,
+                    "python tools/probes/render-overview.py --size 128 " +
+                    "--out client/Assets/Resources/UI/Art/overview_de_dust2.png");
+                if (radarSprite == null)
+                {
+                    Debug.LogError($"{LogTag} 缺雷达底图 sprite：雷达会只有框和点、没有地图" +
+                                   "（原因见上面那条 Error；**不许用占位图顶替**）");
+                }
+
                 var healthIconSprite = EnsureHudIconSprite(ResPaths.HudHealthIcon);
                 var armorIconSprite = EnsureHudIconSprite(ResPaths.HudArmorIcon);
                 var armorHelmetIconSprite = EnsureHudIconSprite(ResPaths.HudArmorHelmetIcon);
@@ -146,6 +159,7 @@ namespace Cs16.EditorTools
                 ResPaths.HudHealthIcon,
                 ResPaths.HudArmorIcon,
                 ResPaths.HudArmorHelmetIcon,
+                ResPaths.RadarOverviewDust2,
             };
             for (var i = 0; i < hudIcons.Length; i++)
             {
@@ -166,13 +180,14 @@ namespace Cs16.EditorTools
         /// （<c>python 原版资源/解包产物/cs16_asset_extract.py</c> 产出并复制进工程），
         /// 本方法只负责"导入设置 + 取引用" —— 素材缺失时报 Error 而不是造一个占位图。</para>
         /// </summary>
-        private static Sprite EnsureHudIconSprite(string resourcePath)
+        private static Sprite EnsureHudIconSprite(string resourcePath, string hint = null)
         {
             var path = HudIconPngPath(resourcePath);
             if (!File.Exists(path))
             {
-                Debug.LogError($"{LogTag} 缺 HUD 图标 PNG：{path} —— " +
-                               "请先在项目根跑 `python 原版资源/解包产物/cs16_asset_extract.py`（不许用占位图顶替）");
+                Debug.LogError($"{LogTag} 缺 HUD 图标 PNG：{path} —— " + (hint ??
+                               "请先在项目根跑 `python 原版资源/解包产物/cs16_asset_extract.py`") +
+                               "（不许用占位图顶替）");
                 return null;
             }
 

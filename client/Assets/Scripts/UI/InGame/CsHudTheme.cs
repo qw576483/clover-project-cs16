@@ -140,28 +140,81 @@ namespace Cs16.UI
         public const float MessageLifetime = 6f;
 
         /// <summary>
-        /// 雷达边长（像素，参考分辨率 1920x1080）。
+        /// 雷达边长 = <b>128 px</b>（参考分辨率 1920×1080，1:1 绘制）。
         ///
-        /// <para>⛔ <b>agent-11 未改动本值</b>：原版 <c>hud.txt:183</c> 给的是
-        /// <c>radar 640 radar640 0 0 128 128</c>（@640 基准），要换算到 1080p 必须知道"640 基准 → 1080p"的换比率；
-        /// 本片用原版截图反推过（见回报"雷达"一行）：640 基准的两个元素里，
-        /// <c>divider</c>（2×40 @640 → 实测 2×67）与 <c>stopwatch</c>（24×24 @640 → 实测约 23×25）**互相矛盾**，
-        /// 反推不出可信比率 ⇒ 按任务书"写不出就回报，别硬凑"保持现状并回报（仍登记为对照表 U-06 的差）。</para>
+        /// <para><b>取值与出处（本片定案，替换旧值 200）</b>：原版 <c>sprites/hud.txt:183</c>
+        /// 的行是 <c>radar 640 radar640 0 0 128 128</c> —— 名字 <c>radar</c>、**分辨率档 `640`**、
+        /// 精灵 <c>radar640</c>、源矩形 <c>0 0 128 128</c>。<c>hud.txt</c> 的"分辨率档"列就是
+        /// GoldSrc 选精灵表的判据（屏幕宽 &gt; 640 就用 `640` 那一档），所以 1920×1080 下用的仍是
+        /// <c>radar640.spr</c> 的 <b>原始 128×128</b> 像素。</para>
         ///
-        /// <para>⛔ <b>agent-13 再测一次 = 确认截图这条路上拿不到（BLOCKED，不许硬凑）</b>：
-        /// 用 FFT 把"<c>radar640.spr</c> 的圆盘掩膜内绿度均值 − 周围 256×256 背景绿度"扫遍
-        /// <c>原版资源/cs16-maps/screenshots_to_conv/*.bmp</c> 全 31 张**全图**（不是只看左上角），
-        /// 每张的最高分落点都在画面中部随机位置、分数量级 2.7~22.7（纯噪声），
-        /// <b>没有任何一张在左上角出现自洽的圆盘命中</b>；左上角 340×340 逐像素看过也**没有雷达**。
-        /// 同时核对了 <c>radar640.spr</c> 本体：128×128、调色板是 <c>(0, G, 0)</c> 的绿色圆盘
-        /// （非黑 bbox 127×127，非黑像素 12881/16384，G 取值 1..228）—— 若它被画在屏上，
-        /// 加法混合会让该处出现一块很扎眼的绿盘，扫描必然命中。
-        /// ⇒ 结论：这 31 张是**旁观/自由视角**机位，画面里只有右上角那一块常显 HUD，**没有雷达**
-        /// （与 <c>原版资源/解包产物/原版HUD布局.md</c> §3.1 / BLOCKED-D4 一致）。
-        /// 因此本值**保持 200f 不动**，仍登记为对照表 U-06 的差（+72）——
-        /// 要落 1080p 值，需要一份**第一人称、HUD 打开**的原版截图（任何分辨率）。</para>
+        /// <para><b>"要不要按分辨率放大"= 有实测判据（本片复核）</b>：同一批原版 1920×1080 截图里
+        /// 秒表元素的 ink 实测 <b>23×25</b>（<c>策划/验收表.md</c> H15 / 对照表 U-34；
+        /// 载体重测口径见 <c>CsHudTheme</c> 秒表一节），而 <c>hud.txt:127</c> 给它的源矩形是
+        /// <b>24×24</b> ⇒ **640 档精灵在 1080p 上就是 1:1、不按屏幕缩放**。旧注释说
+        /// "divider(2×40→实测2×67) 与 stopwatch 互相矛盾、反推不出比率" —— 那条 <c>divider</c>
+        /// 指的不是 <c>hud.txt</c> 的 <c>divider</c>（那把是血量/护甲之间的分隔符，不在右上角），
+        /// 右上角那条 <b>2×67</b> 竖线是另一个元素（对照表 U-35，色 <c>(96,58,2)</c>，
+        /// 与 hud.txt 的 <c>divider</c> 无关）⇒ 矛盾是拿错元素比出来的，1:1 这条主张成立。</para>
+        ///
+        /// <para>因此雷达边长 = <b>128</b>（原版源矩形的原生像素，不换算）。
+        /// 对照表 U-06 的"差 +72"、验收表差异 #14 随之消除。</para>
+        ///
+        /// <para>⚠️ **仍无载体可证的两项**（登记在验收表「允许的差异」）：① 雷达**在屏幕上的落点**
+        /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）；② 原版 <c>radar640.spr</c> 与
+        /// <c>overviews/de_dust2.bmp</c> **本机不在盘** ⇒ 底图由原版几何离线生成
+        /// （<c>tools/probes/render-overview.py</c> → <c>Resources/UI/Art/overview_de_dust2.png</c>），
+        /// 圆盘底框与 <c>cl_radartype</c> 两型未复刻。</para>
         /// </summary>
-        public const float RadarSize = 200f;
+        public const float RadarSize = 128f;
+
+        /// <summary>
+        /// 雷达框左上角距屏幕左/上边缘的偏移（px）。
+        ///
+        /// <para>⚠️ <b>本项目取值</b>：原版雷达在屏幕上的绝对落点写在 <c>cstrike/cl_dlls/client.dll</c>
+        /// 里（与 HUD 那一排同样未反汇编，见对照表 F-04 / BLOCKED-1），且项目内原版截图全是
+        /// 旁观机位、画面里没有雷达 ⇒ 无像素可量。本值只保证"在左上角、不贴边"，⛔ 不是原版值。</para>
+        /// </summary>
+        public static readonly Vector2 RadarTopLeftOffset = new Vector2(24f, -14f);
+
+        /// <summary>
+        /// 雷达**底图**的着色（含整体透明度）。
+        ///
+        /// <para>原版雷达是把俯视图**半透明**压在 3D 画面上（点/图都能透出后面的世界）；
+        /// 具体 alpha 无载体可证 ⇒ 取 0.75，只调"能看清地图"这一件事。⛔ 不谎称原版值。</para>
+        /// </summary>
+        public static readonly Color RadarMapTint = new Color(1f, 1f, 1f, 0.75f);
+
+        // ─────────────── 雷达点色（任务书 A 侧判据：玩家 = 绿点，队友 = 黄 / 绿点，北向固定）───────────────
+        //
+        // 出处 = 本片任务书 §3① 的 A 侧原版判据原文「玩家 = 绿点，队友 = 黄/蓝点，**北向固定不旋转**」。
+        // 绿这一支还有第二个旁证：原版 `radar640.spr` 的调色板是 `(0, G, 0)`（纯绿族，
+        // G 取值 1..228，见上面 RadarSize 注释）⇒ 绿是原版雷达自己的颜色。
+        // ⚠️ **逐通道 RGB 本机不可证**（原版点色写在 `client.dll` 里，未反汇编；项目内原版截图没有雷达）
+        // ⇒ 这三支色按上面那句判据取"绿/黄/蓝"三色，登记在验收表「允许的差异」。
+
+        /// <summary>自己 = 绿点（任务书 A 侧判据；原版雷达精灵调色板同为纯绿族）。</summary>
+        public static readonly Color RadarSelf = new Color32(0x28, 0xE6, 0x28, 0xFF);
+
+        /// <summary>同队队友 = 黄点（任务书 A 侧判据「队友 = 黄点」；黄取原版 HUD 文字色 <c>#FFB000</c>，出处同 <see cref="TextHud"/>）。</summary>
+        public static readonly Color RadarMate = new Color32(0xFF, 0xB0, 0x00, 0xFF);
+
+        /// <summary>**异队**（雷达可见的敌人）= 蓝点（任务书 A 侧判据「队友 = 黄/蓝点」的另一支；快照只上报视线可见的敌人）。</summary>
+        public static readonly Color RadarOther = new Color32(0x50, 0x9B, 0xFF, 0xFF);
+
+        /// <summary>已安放的炸弹 = 红点（原版雷达上炸弹会闪；闪烁周期见 <c>CsRadarWidget.BombBlinkPeriod</c>）。</summary>
+        public static readonly Color RadarBomb = new Color32(0xFF, 0x38, 0x28, 0xFF);
+
+        // 点尺寸（px）。⚠️ **本项目取值**（原版点尺寸写在 client.dll / overview bmp 里，本机不可证）；
+        // 按 128 px 雷达的可读性给，比例与原实现一致（自己 &gt; 队友 &gt; 观察者）。
+        /// <summary>自己那一颗的边长（px）。</summary>
+        public const float RadarSelfDotPx = 7f;
+        /// <summary>队友/敌人那一颗的边长（px）。</summary>
+        public const float RadarMateDotPx = 5f;
+        /// <summary>观察者那一颗的边长（px）。</summary>
+        public const float RadarSpecDotPx = 4f;
+        /// <summary>炸弹那一颗的边长（px）。</summary>
+        public const float RadarBombDotPx = 7f;
 
         // ═══════════════════════ 右上角比分 / 回合计时块（对照表 V-01~V-03）═══════════════════════
         //
