@@ -233,19 +233,28 @@ public static class BodyHeightWalkline
     }
 
     /// <summary>
-    /// 身体带内的最小水平净空：在 <c>y+0.3</c>（下段，贴脚的上沿）与 <c>y+0.9</c>（中段）
-    /// **两个高度**各打 8 向 2 m 射线取最小 —— ⛔ 只量一个高度会漏掉"贴着台沿/箱沿"那种
-    /// 只占身高带**下段**的实体（那正是体积判据要抓的一类）。
+    /// 身体带内的最小水平净空：在 <c>y+0.3 / y+0.9 / y+1.5</c>（下段 / 中段 / 上段）
+    /// **三个高度**各打 **16 向**（22.5° 间隔）2 m 射线取最小。
+    /// <list type="bullet">
+    /// <item>⛔ 只量一个高度会漏掉"贴着台沿/箱沿"那种只占身高带**某一段**的实体
+    /// （那正是体积判据要抓的一类）；</item>
+    /// <item>⛔ 45° 间隔（8 向）会**假报大净空** —— 切片V 实测：点 (-42.000,0.813,4.000)
+    /// 的箱侧面 <c>SandCrtLrgSd.png</c> 在 <b>deg 157.5°</b> 处只有 <b>0.287 m</b>（&lt; PlayerRadius 0.36），
+    /// 而 8 向采样最近只落在 deg 135° = <b>0.376 m</b>（&gt; 0.36）⇒ 该点被误报成
+    /// "净空够却翻转 = 可疑"。<b>22.5° 采样后该点恢复为「本来就站不下」</b>
+    /// （几何证据：<c>tools/probes/bodyvolume-point.txt</c> 的同名点条；产品代码未改）。</item>
+    /// </list>
     /// </summary>
     private static float MinWallDistance(Vector3 p)
     {
         var min = 2.0f;
-        for (var k = 0; k < 2; k++)
+        var hs = new[] { 0.3f, 0.9f, 1.5f };
+        for (var k = 0; k < hs.Length; k++)
         {
-            var o = new Vector3(p.x, p.y + (k == 0 ? 0.3f : 0.9f), p.z);
-            for (var i = 0; i < 8; i++)
+            var o = new Vector3(p.x, p.y + hs[k], p.z);
+            for (var i = 0; i < 16; i++)
             {
-                var a = i * Mathf.PI / 4f;
+                var a = i * Mathf.PI / 8f;
                 var d = new Vector3(Mathf.Cos(a), 0f, Mathf.Sin(a));
                 if (Physics.Raycast(o, d, out var h, 2f, ~0, QueryTriggerInteraction.Ignore))
                     min = Mathf.Min(min, h.distance);

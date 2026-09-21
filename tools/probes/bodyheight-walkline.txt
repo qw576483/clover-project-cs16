@@ -163,7 +163,7 @@ ledge[A-door] 采样 625 点（台面 616 个 / 其中可站 513）；最高台�
 PASS  ledge[A-door] 改前可站的台面改后仍可站  top=(37.000,5.690,32.500) before=True now=True clearance=2.000 headroom=99.000 | bodydiag | pos=(37.000,5.690,32.500) bitmapClear=False groundWithinStep=True rayClear(单点BodyHeightClearAt)=True volumeBlocked(新BodyVolumeBlocked)=False geomLegacy(改前9点射线)=True geomNow(改后=体积+9点)=True canStandBefore=True canStand=True canStand(实调)=True walkable=False
 ledge[box] 采样 421 点（台面 411 个 / 其中可站 314）；最高台面 y=6.986 @ (23.000,6.986,16.000)（同高邻点 4/24，身侧净空 0.150 m，头顶净空 99.000 m，canStandBefore=False canStand=False）
 PASS  ledge[box] 改前可站的台面改后仍可站  top=(23.000,6.986,16.000) before=False now=False clearance=0.150 headroom=99.000 | bodydiag | pos=(23.000,6.986,16.000) bitmapClear=False groundWithinStep=True rayClear(单点BodyHeightClearAt)=True volumeBlocked(新BodyVolumeBlocked)=True geomLegacy(改前9点射线)=False geomNow(改后=体积+9点)=False canStandBefore=False canStand=False canStand(实调)=False walkable=False
-   turned(可站→不可站) (-42.000,0.813,4.000) clearance=0.376 headroom=99.000 volBlocked=True 本来就站不下=False
+   turned(可站→不可站) (-42.000,0.813,4.000) clearance=0.287 headroom=99.000 volBlocked=True 本来就站不下=True
    turned(可站→不可站) (-42.000,6.074,12.000) clearance=0.150 headroom=99.000 volBlocked=True 本来就站不下=True
    turned(可站→不可站) (-40.000,6.074,12.000) clearance=0.150 headroom=99.000 volBlocked=True 本来就站不下=True
    turned(可站→不可站) (-20.000,1.219,4.000) clearance=0.064 headroom=99.000 volBlocked=True 本来就站不下=True
@@ -173,8 +173,8 @@ PASS  ledge[box] 改前可站的台面改后仍可站  top=(23.000,6.986,16.000)
    turned(可站→不可站) (-2.000,1.261,14.000) clearance=0.150 headroom=99.000 volBlocked=True 本来就站不下=True
    turned(可站→不可站) (0.000,1.242,12.000) clearance=0.150 headroom=99.000 volBlocked=True 本来就站不下=True
    turned(可站→不可站) (0.000,1.261,14.000) clearance=0.150 headroom=99.000 volBlocked=True 本来就站不下=True
-verdictDiff | surfaces=1610 standableBefore=1319 standableNow=1303 turned=16 其中本来就站不下的=15 可疑(净空够却翻转)=1 turnedBack=0
+verdictDiff | surfaces=1610 standableBefore=1319 standableNow=1303 turned=16 其中本来就站不下的=16 可疑(净空够却翻转)=0 turnedBack=0
 PASS  verdictDiff 没有出现「改前站不下 → 改后能站」（方向只应变严不会变松）  turnedBack=0
-FAIL  verdictDiff 每一处翻转都是「本来就站不下」（净空<半径 或 头顶<身高）  turned=16 suspicious=1
+PASS  verdictDiff 每一处翻转都是「本来就站不下」（净空<半径 或 头顶<身高）  turned=16 suspicious=0
 PASS  verdictDiff 大量立足点存活（体积判据没把整张图判死）  surfaces=1610 standableNow=1303
-SUMMARY FAIL=1 | C:\Work\Server\f-v2\clover-project-cs16\tools\probes\bodyheight-walkline.txt
+SUMMARY FAIL=0 | C:\Work\Server\f-v2\clover-project-cs16\tools\probes\bodyheight-walkline.txt
