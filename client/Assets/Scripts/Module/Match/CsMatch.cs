@@ -359,6 +359,40 @@ namespace Cs16.Module.Match
                 $"测试入口 SetHalfTimeSwapForTest({enabled})：本局半场换边已{(enabled ? "打开" : "关掉")}（离线取证驱动专用）");
         }
 
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用，不改变真实玩家行为**：把**本局运行时**的"半场回合数"改小
+        /// （<paramref name="roundsPerHalf"/>）并同时设定"半场换边"（<paramref name="halfTimeSwap"/>），
+        /// 只写 <see cref="Cfg"/> 这个本局副本。
+        ///
+        /// <para><b>为什么必须有它</b>：`42_matchend.png`（验收表 H13）要的是**非平局**结算画面。
+        /// 生产配置是 <c>RoundsPerHalf=15 / CsConst.MaxRounds=30 / HalfTimeSwap=true</c> ⇒ 打满全场
+        /// 必然 15 : 15，`EndMatchInternal` 只能给平局；而"关换边后真打 30 回合"在取证窗口内**打不完**
+        /// （实测：每回合约 8 s，40 次驱动调用只推进到第 26 回合）。
+        /// 关键点：胜负阈值 <c>CsRound.WinTarget = Cfg.RoundsPerHalf + 1</c> **读的就是本局 config**
+        /// （见 <c>CsRound.cs</c> 的 <c>WinTarget</c>）。把它设成 1 ⇒ 阈值 = 2 ⇒ 任意一方先赢 2 回合
+        /// 即 <c>IsMatchOver</c> 成立 ⇒ <c>EndMatchInternal</c> 按比分高者给出**非平局**结算
+        /// （2 回合定胜负，且 <c>MaxRounds=30</c> 的上限根本用不到，无需改 <c>CsConst</c>）。</para>
+        ///
+        /// <para><b>为什么同时关换边</b>：<c>BeginRoundInternal</c> 在 <c>roundNumber == Cfg.RoundsPerHalf + 1</c>
+        /// 时触发 <c>SwapHalves</c>（阵营 + **比分**互换）。<c>RoundsPerHalf=1</c> ⇒ 第 2 回合就会换边
+        /// ⇒ 比分被互换后再结算可能掩盖既定胜方。故本入口把本局换边一并关掉，
+        /// 使"先赢 2 回合的一方"就是最终胜方。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
+        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；⛔ 不改 <c>ICsMatch</c> 签名 ——
+        /// 驱动侧经具体类型 <see cref="CsMatch"/> 取用。</para>
+        /// </summary>
+        public void SetShortMatchForTest(int roundsPerHalf, bool halfTimeSwap)
+        {
+            if (_cfg == null) return;
+            _cfg.RoundsPerHalf = roundsPerHalf;
+            _cfg.HalfTimeSwap = halfTimeSwap;
+            Game.Logger.Info(Tag,
+                $"测试入口 SetShortMatchForTest(roundsPerHalf={roundsPerHalf}, halfTimeSwap={halfTimeSwap})：" +
+                $"本局半场回合数={_cfg.RoundsPerHalf}（胜负阈值={(roundsPerHalf > 0 ? roundsPerHalf : CsConst.RoundsPerHalf) + 1}）、" +
+                $"换边已{(halfTimeSwap ? "打开" : "关掉")}（离线取证驱动专用）");
+        }
+
         // ==================================================================
         //  内部访问器（供 CsRound / CsEconomy / CsBomb / CsDamage / CsInventory 使用）
         // ==================================================================
