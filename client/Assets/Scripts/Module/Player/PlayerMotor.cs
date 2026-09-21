@@ -71,6 +71,23 @@ namespace Cs16.Module.Player
             _look.Reset(yaw, Mathf.Clamp(pitch, -CsCombatTuning.PitchLimit, CsCombatTuning.PitchLimit));
         }
 
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：把视角直接对齐到 (yaw, pitch) —— 语义与
+        /// <see cref="ForceLook"/> **完全一致**（出生 / 观战接管时模拟自己也在用它）。
+        ///
+        /// <para><b>为什么必须有它</b>：离线驱动没有鼠标层，只能靠它把"朝哪儿开枪"变成可复现的输入。
+        /// 旧做法是驱动侧<b>反射</b>调用 internal 的 <see cref="ForceLook"/> —— 脆弱、且是绕过类型系统的后门；
+        /// 按 clover-engine skill §0.6 第 3 条改成这个 public 类型化入口
+        /// （与 <c>CombatModule.SetFireHeldForTest</c> 同一形状）。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// 真实玩家路径仍只由 <see cref="ApplyMouseLook"/> 按鼠标位移累加。</para>
+        /// </summary>
+        public void ForceLookForTest(float yaw, float pitch)
+        {
+            ForceLook(yaw, pitch);
+        }
+
         // ==================================================================
         //  每帧：采集 → 填 CsInputState
         // ==================================================================

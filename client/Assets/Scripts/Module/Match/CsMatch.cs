@@ -316,6 +316,27 @@ namespace Cs16.Module.Match
         }
 
         // ==================================================================
+        //  测试入口（类型化；**只给离线取证驱动用**，⛔ 不在真实玩家链路上）
+        // ==================================================================
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：在 <paramref name="center"/> 处引爆 C4 —— 语义与
+        /// <c>CsBomb</c> 倒计时引爆时走的 <see cref="CsDamage.ApplyBombExplosion"/> **完全一致**
+        /// （同一条业务伤害落地：会经 <c>OnKilled</c> ⇒ 本地玩家阵亡进观战）。
+        ///
+        /// <para><b>为什么必须有它</b>：<c>Damage</c> 是 internal 字段，离线驱动（编进独立程序集）拿不到它，
+        /// 旧做法是在驱动侧<b>反射</b>取字段再调 —— 脆弱、且是绕过类型系统的后门。
+        /// 按 clover-engine skill §0.6 第 3 条改成这个 public 类型化入口
+        /// （与 <c>CombatModule.SetFireHeldForTest</c> 同一形状）。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// 真实爆炸仍只由 <c>CsBomb</c> 的 35s 倒计时触发。</para>
+        /// </summary>
+        public void ApplyBombExplosionForTest(Vector3 center)
+        {
+            Damage.ApplyBombExplosion(center);
+        }
+
+        // ==================================================================
         //  内部访问器（供 CsRound / CsEconomy / CsBomb / CsDamage / CsInventory 使用）
         // ==================================================================
         /// <summary>

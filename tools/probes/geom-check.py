@@ -44,7 +44,8 @@ BYTES_FILES = [
 ]
 BITMAP = BYTES_FILES[1]                       # 运行期真正读的那份
 CSCONST = os.path.join(ASSETS, 'Scripts', 'Core', 'CsConst.cs')
-SEPARATION_REPORT = os.path.join(ROOT, '.ai-tmp', 'test', 'actor-separation-check.txt')
+# 切片R：报告已从一次性目录 .ai-tmp/test/ 提升为**判据资产** tools/probes/（D9 行的离线断言证据）。
+SEPARATION_REPORT = os.path.join(HERE, 'actor-separation-check.txt')
 
 # ---- 采样口径：与 tools/probes/rebuild-blockers.py 一致（同一份判据的两半必须同采样）----
 SAMPLE = 0.25

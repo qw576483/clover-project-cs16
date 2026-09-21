@@ -136,8 +136,12 @@ function Invoke-Checks {
   # --- 3) acceptance table: table-body row count (aggregate must equal it) --
   if ($specTxt.Length -gt 0) {
     $rows = ([regex]::Matches($specTxt, '(?m)^\|\s*[A-Z]?\d+\s*\|')).Count
-    $script:human++
-    Say 'PASS' 'acceptance-table' "$($accRows.Count) acceptance rows (of $rows digit-keyed rows); the summary numbers inside that file must equal the acceptance count - human cross-check"
+    # Item 3 used to end in "human cross-check" and bump $script:human, i.e. a HUMAN-ONLY
+    # verdict with nothing behind it.  Item 23 (acceptance-sums) now computes the very
+    # comparison this sentence promises: every aggregate the file states about itself is
+    # reconciled against the table BODY.  So the cross-check is no longer dangling -- it is
+    # delegated to item 23 (a rule that cannot be tested red is not a gate; SKILL 0.6).
+    Say 'PASS' 'acceptance-table' "$($accRows.Count) acceptance rows (of $rows digit-keyed rows); the summary numbers inside that file must equal the acceptance count - cross-checked by item 23 (acceptance-sums), which reconciles every aggregate against the table body"
   } else {
     $script:fail++
     Say 'FAIL' 'acceptance-table' ("missing: " + $specTable)

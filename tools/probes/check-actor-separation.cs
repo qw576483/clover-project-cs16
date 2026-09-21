@@ -21,8 +21,10 @@ using Cs16.Module.Map;
 
 public static class ActorSeparationCheck
 {
+    // 切片R：报告是**判据资产**（D9 行离线断言的证据，删了就不能复核同一件事）⇒ 落 tools/probes/，
+    // 不再放一次性目录 .ai-tmp/test/（skill §8）。读取方 tools/probes/geom-check.py 的口径同步。
     private const string OutPath =
-        @"C:\Work\Server\f-v2\clover-project-cs16\.ai-tmp\test\actor-separation-check.txt";
+        @"C:\Work\Server\f-v2\clover-project-cs16\tools\probes\actor-separation-check.txt";
 
     private static readonly StringBuilder Sb = new StringBuilder();
     private static int _pass;

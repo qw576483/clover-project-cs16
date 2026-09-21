@@ -1172,7 +1172,7 @@ S2_MEASURED = {
         'gfxDriver=440.5MB\uff1bget_performance_stats \u540c\u523b totalAllocatedBytes=1006196726 / totalReservedBytes=1869230080 / '
         'monoUsedBytes=142008320 / monoHeapBytes=262082560'),
     '\u573a\u666f\u52a0\u8f7d\u8017\u65f6': (
-        '\u8bfb\u6761\u94fe\u539f\u6587\uff08\u540c\u4e00 Play\uff0c\u89c1 p-s2-console\uff09\uff1a`[\u6d41\u7a0b] \u8bfb\u6761\u5f00\u59cb\uff1ascene=StageDust2 map=de_dust2` 15:42:05.387 '
+        '\u8bfb\u6761\u94fe\u539f\u6587\uff08\u540c\u4e00 Play\uff09\uff1a`[\u6d41\u7a0b] \u8bfb\u6761\u5f00\u59cb\uff1ascene=StageDust2 map=de_dust2` 15:42:05.387 '
         '\u2192 `[\u6d41\u7a0b] \u573a\u666f\u52a0\u8f7d\u5b8c\u6210\uff1aStageDust2` 15:42:05.708 = **0.321s**\uff0c'
         '\u5230\u300c\u9009\u9635\u8425\u9762\u677f\u5df2\u6253\u5f00\u300d15:42:05.712 = 0.325s\uff1b'
         '\u53e6\u5916\u6d4b\u5230\u4e00\u6b21**\u51b7\u5730\u56fe**\u52a0\u8f7d\uff1a`[\u5730\u56fe] \u52a0\u8f7d\u5730\u56fe\u6570\u636e` 15:41:32.671 \u2192 `[\u5730\u56fe] \u5730\u56fe\u6570\u636e\u5c31\u7eea` 15:41:33.502 = **0.831s**\uff08\u540c\u4e00\u4f1a\u8bdd\u5185\u518d\u6b21\u8fdb\u56fe\u5219\u547d\u4e2d\u300c\u540c\u540d\u8df3\u8fc7\u91cd\u590d\u52a0\u8f7d\u300d\uff09'),
