@@ -67,13 +67,66 @@ def stats(im, name):
         name, w, h, mean, pct(0.05), pct(0.50), pct(0.95), rms, ss / n, frms))
 
 
+def region_stats(im, box):
+    """区域取色（切片Z 加）：给一个像素框，回**平均 RGB** + 平均亮度 + RMS。
+
+    用途：整图统计会被天空/墙/箱子摊平，判「地面石板偏不偏土黄」必须只看地面那一块。
+    参数形如 --region slab:260,880,660,1050（切片Z 的机位 w10-final-A 里该框 = 前景石板路）。
+    """
+    x0, y0, x1, y1 = box
+    x0 = max(0, min(im.size[0], x0)); x1 = max(0, min(im.size[0], x1))
+    y0 = max(0, min(im.size[1], y0)); y1 = max(0, min(im.size[1], y1))
+    px = im.load()
+    n = 0; sr = sg = sb = 0; s = 0.0; s2 = 0.0
+    for y in range(y0, y1):
+        for x in range(x0, x1):
+            p = px[x, y]
+            l = lum(p)
+            sr += p[0]; sg += p[1]; sb += p[2]
+            s += l; s2 += l * l
+            n += 1
+    if n == 0:
+        return None
+    mr, mg, mb = sr / n, sg / n, sb / n
+    mean = s / n
+    rms = max(0.0, s2 / n - mean * mean) ** 0.5
+    return mr, mg, mb, mean, rms
+
+
 def main():
-    args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    print("file\twxh\tmeanLum\tp05\tp50\tp95\tRMS对比度\t平均饱和度\t远景带RMS")
+    regions = []
+    args = []
+    a = sys.argv[1:]
+    i = 0
+    while i < len(a):
+        if a[i] == "--region":
+            spec = a[i + 1]
+            name, coords = spec.split(":", 1)
+            regions.append((name, tuple(int(v) for v in coords.split(","))))
+            i += 2
+        elif a[i].startswith("--"):
+            i += 1
+        else:
+            args.append(a[i]); i += 1
+    hdr = "file\twxh\tmeanLum\tp05\tp50\tp95\tRMS对比度\t平均饱和度\t远景带RMS"
+    for name, _ in regions:
+        hdr += "\t[%s]R\t[%s]G\t[%s]B\t[%s]Lum\t[%s]RMS" % (name, name, name, name, name)
+    print(hdr)
     for p in args:
         im = Image.open(p).convert("RGB")
         n = p.replace("\\", "/").split("/")[-1]
+        row = []
+        import io as _io
+        buf = _io.StringIO()
+        _stdout = sys.stdout
+        sys.stdout = buf
         stats(im, n)
+        sys.stdout = _stdout
+        row.append(buf.getvalue().rstrip("\n"))
+        for _, box in regions:
+            r = region_stats(im, box)
+            row.append("" if r is None else "%.0f\t%.0f\t%.0f\t%.1f\t%.1f" % r)
+        print("\t".join(row))
 
 
 if __name__ == "__main__":

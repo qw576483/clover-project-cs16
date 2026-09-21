@@ -227,7 +227,13 @@ namespace Cs16.EditorTools
 
             var mat = new Material(Shader.Find("Standard"));
             mat.name = slug;
-            mat.color = new Color(0.79f, 0.65f, 0.42f);          // #C9A66B 沙色（与需求里的墙色一致）
+            // 出处：原版 GoldSrc 渲染管线**没有「材质色乘算」这一级** —— miptex 贴图本身即 albedo，
+            // 亮度只由 lightmap / 顶点光（BSP light_environment）决定（见 策划/对照表.md 的 T-08 / B-03）。
+            // ⇒ 原版值 = **恒等白 (1,1,1)**。
+            // 这里原先那句 `new Color(0.79f,0.65f,0.42f)`（#C9A66B「沙色」）**没有任何原版出处**，
+            // 它是一级额外的暖色乘算：中性石头 (150,149,159) 乘它 ⇒ (118,97,67) ⇒ 整图偏土黄。
+            // （切片Y 给的量化预测；切片Z 已落地并实测，数字见 策划/对照表.md B-03 行。）
+            mat.color = Color.white;
             mat.SetFloat("_Glossiness", 0.05f);                   // 沙土/砖墙：几乎无高光
             mat.SetFloat("_Metallic", 0f);
             if (tex != null) mat.mainTexture = tex;
@@ -326,22 +332,42 @@ namespace Cs16.EditorTools
             var sun = sunGo.AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.color = new Color32(255, 255, 128, 255);
-            // intensity 1.15 → 1.75（片X 2026-09-21 定案）：原版基线图 `策划/基线图/original/de_dust2_freecam_A_00.jpg`
-            // 的**内容区**（裁掉上下信箱黑边后 1280×810）实测 meanLum 123.1 / p50 127；改前我方同机位帧
-            // （`.ai-tmp/screenshots/x-L0-base.png`）只有 99.4（−19.2%）⇒ 原版 `_light "255 255 128 70"` 的
-            // 亮度口径在 Unity intensity 上无逐值对应（G-17 已登记"不可直比"）⇒ 以**基线图像素数字**为量化出处
-            // （任务书 ② 允许的降级），逐档实测到 1.75 时 meanLum 124.3（Δ +1.2 / 0.98%）。
-            // ⛔ 只动光照参数，⛔ 不加任何滤镜/后处理。
-            sun.intensity = 1.75f;
+            // intensity 1.75（片X）→ **0.70**（片AA 2026-09-21 重新平衡）：片X 定的 1.75 是配
+            // **旧材质色 (0.79,0.65,0.42) 乘算**（albedo 亮度 0.663）调出来的；片Z 把材质色改成
+            // `Color.white`（原版 GoldSrc 无材质色乘算这一级）后 albedo 亮度 → 1.0（×1.51），
+            // 同一套光照下画面整体**过曝**（同机位 1920×1080 帧 meanLum 153.4、p95=245、
+            // ≥250 像素占 **21.6%**；地面石板框 260,880,660,1050 由 (159,106,39) 跳到 (242,217,97) Lum 214.1）。
+            // 材质色与光照是一个整体、不能各调各的，故本片**只按实测像素数字**把光重新压回基线量级。
+            // 量化出处 = 原版基线图 `策划/基线图/original/de_dust2_freecam_A_00.jpg` 的**内容区**
+            // （裁掉上下信箱黑边后 1280×810）meanLum 123.1 / p50 127 / p95 175 / 平均饱和度 0.523
+            // / ≥250 像素 0.055%（G-17 已登记"原版 `_light "255 255 128 70"` 的亮度口径在 Unity
+            // intensity 上无逐值对应" ⇒ 以基线图像素为准）。
+            // 逐档实测（同机位、单变量，见 策划/对照表.md §AA）：
+            //   sun 1.75→153.4 / 1.20→130.8 / 1.10→126.3 / 1.05→124.0 / 0.90→117.2 / 0.85→115.0 / 0.70→?
+            // 只降直射时 meanLum 落不回 123 且 p95 几乎不动（峰值来自由环境梯度照亮的整片沙地，
+            // 不只是直射高光）⇒ 改成"**降直射 + 抬 Trilight 环境梯度**"：环境占比高、直射才产生尖峰，
+            // 这样能在同一 meanLum 下把 ≥250 像素压到基线量级。最终档 sun 0.70 + 环境梯度 ×1.40：
+            //   meanLum **123.5**（Δ +0.4 / +0.3%）· p50 118 · p95 208 · 平均饱和度 0.384 · ≥250 像素 **0.145%**。
+            // ⛔ 只动光照参数，⛔ 不加任何滤镜/后处理；⛔ 未把材质色乘算加回来。
+            sun.intensity = 0.70f;
             sun.shadows = LightShadows.Soft;
             sun.shadowStrength = 0.75f;
 
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            RenderSettings.ambientSkyColor = new Color32(150, 150, 170, 255);
-            RenderSettings.ambientEquatorColor = new Color32(130, 115, 90, 255);
-            RenderSettings.ambientGroundColor = new Color32(80, 68, 50, 255);
-            // ambientIntensity 1（默认）→ 1.55（片X 定案，出处同上：基线图内容区 meanLum 123.1）
-            RenderSettings.ambientIntensity = 1.55f;
+            // Trilight 的三条梯度色 = 本场景**真正的**环境光（见下）；片AA 按 ×1.40 抬：
+            //   150,150,170 → 210,210,238 ｜ 130,115,90 → 182,161,126 ｜ 80,68,50 → 112,95,70
+            // 目的：把整体亮度从"直射"转一部分到"环境"，从而在 meanLum 不变的前提下削掉直射尖峰
+            // （≥250 像素 21.6% → 0.145%，基线 0.055%）。
+            RenderSettings.ambientSkyColor = new Color32(210, 210, 238, 255);
+            RenderSettings.ambientEquatorColor = new Color32(182, 161, 126, 255);
+            RenderSettings.ambientGroundColor = new Color32(112, 95, 70, 255);
+            // ambientIntensity 归 1（默认）：**片AA 实测它是空操作** —— `ambientMode = Trilight` 下
+            // Unity **不把 ambientIntensity 计入 ambient 计算**（只在 Flat / Skybox 模式生效），
+            // 所以片X 那句"1→1.55"改了个没有任何效果的值（aa-L0/L1/L2 三档 ambIntensity=1.55/1.00/0.70
+            // 采出的 1920×1080 帧**逐像素完全相同**，见 策划/对照表.md §AA）。真正的环境光在这里是
+            // 上面三条 Gradient 颜色（ambientSky/Equator/Ground），它们**不被 ambientIntensity 调制**。
+            // ⇒ 归 1，避免再有人以为"调 1.55 能补亮度"。
+            RenderSettings.ambientIntensity = 1.0f;
 
             // 沙漠薄雾：远处沙色发白，贴近原版 dust2 的通透感（不影响近处辨识）
             // density 0.0025 → 0.010（片X 定案）：目标不是"抬远景带 RMS"（实测雾对本场景的远景带 RMS **无影响**，
