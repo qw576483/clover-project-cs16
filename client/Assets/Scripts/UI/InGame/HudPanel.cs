@@ -84,7 +84,6 @@ namespace Cs16.UI
         private bool _subscribed;
         private bool _visible;
         private bool _warnedRefs;
-        private bool _warnedCamera;
         /// <summary>秒表图标已经向资源模块发过一次请求（避免每次 OnUpdate/OnOpen 重复请求）。</summary>
         private bool _stopwatchRequested;
         /// <summary>秒表图标缺失/加载失败已经报过一次（防刷屏）。</summary>
@@ -107,8 +106,6 @@ namespace Cs16.UI
         private string _selfName;
         /// <summary>`Map:` 行上一次打过日志的地图名（变了才再打）。</summary>
         private string _loggedMapName;
-        private float _lastHealth = CsConst.MaxHealth;
-        private float _lastDamageTime;
         private float _minX, _maxX, _minZ, _maxZ;
         private bool _haveBounds;
 
@@ -858,7 +855,6 @@ namespace Cs16.UI
             _killFeed?.Refresh(true, CsHudSnapshot.KillFeed);
             _spectator?.Refresh(CsHudSnapshot.IsSpectating, CsHudSnapshot.SpectateName);
             _damage?.Refresh(CsHudSnapshot.DamageIndicatorTime, CsHudSnapshot.DamageFromYaw);
-            ObserveLocalDamage();
 
             if (_flashOverlay != null)
             {
@@ -873,43 +869,18 @@ namespace Cs16.UI
             }
         }
 
-        /// <summary>
-        /// 本地玩家的受伤数字：快照里没有"这次掉了多少血"，但**血量差**就是它
-        /// （<see cref="CsHudSnapshot.Health"/> 每帧更新，掉血即受击）。
-        /// 用 <see cref="CsHudSnapshot.DamageIndicatorTime"/> 的"回跳"识别新的一次受击。
-        /// </summary>
-        private void ObserveLocalDamage()
-        {
-            var t = CsHudSnapshot.DamageIndicatorTime;
-            if (t > _lastDamageTime + 0.0005f)
-            {
-                var dmg = Mathf.RoundToInt(_lastHealth - CsHudSnapshot.Health);
-                if (dmg > 0) ShowDamageNumber(dmg);
-            }
-
-            _lastDamageTime = t;
-            _lastHealth = CsHudSnapshot.Health;
-        }
-
-        private void ShowDamageNumber(int damage)
-        {
-            var cam = UIFactory.UICamera();
-            if (cam == null)
-            {
-                if (!_warnedCamera)
-                {
-                    _warnedCamera = true;
-                    Game.Logger?.Warn(Tag, "没有可用相机，受伤飘字（Game.UI.FloatText）跳过（屏幕边缘红框仍然会显示）");
-                }
-                return;
-            }
-
-            // 伤害来源相对朝向写在 DamageFromYaw（正 = 右侧）：把飘字放到该方位前方 2.5m，
-            // 于是它会落在屏幕对应的一侧边缘 —— 正是 CS 1.6 里"哪边挨枪"的观感。
-            var rot = cam.transform.rotation * Quaternion.Euler(0f, CsHudSnapshot.DamageFromYaw, 0f);
-            var pos = cam.transform.position + rot * Vector3.forward * 2.5f;
-            Game.UI?.FloatText(pos, $"-{damage}", CsHudTheme.Danger, CsConst.DamageNumberTime);
-        }
+        // ⛔ 切片N 下架：这里原有 ObserveLocalDamage / ShowDamageNumber 一对方法，把"本地掉血"
+        //    渲染成屏幕上的 `-<数字>` 飘字（Game.UI.FloatText），时长取 CsConst.DamageNumberTime。
+        //    它们**并非 A（CS 1.6）的行为** —— 原版 HUD 里没有"伤害数字"这一项（依据：`策划/对照表.md`
+        //    §4 把原版 HUD 元素逐条出处化（U-01~U-37，引到 `hud.txt:110~183`），其中只有 hitmarker
+        //    （`hud.txt:179` 的 `d_headshot`）与击杀条，**没有伤害数字**；`策划/验收表.md` B 段我方 HUD
+        //    项清单与 `client/资源欠缺清单.md` 的"A 有/我方缺"对账里同样没有它）。
+        //    ⚠️ 原版硬载体（`cstrike/sprites/hud.txt` / `原版资源/解包产物/`）本机不在盘
+        //    （`原版资源/清单.md` 实测为空）⇒ 拿不到 hud.txt 原文级直证；故本条按「本项目新增、
+        //    与原版无关」登记在 `策划/差异登记.tsv`，并在此按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。
+        //    受击的**方向**反馈仍在（屏幕边缘红框 = CsDamageIndicatorWidget，见下面 RefreshWidgets
+        //    里 `_damage?.Refresh(...)` 那一行），其时长常量已改名 CsConst.DamageIndicatorTime。
+        //    若要恢复，请先给出原版出处的 file:line（当前载体里没有）。
 
         private void UpdateRadarBounds()
         {
@@ -1090,8 +1061,6 @@ namespace Cs16.UI
         private void OnMatchStarted()
         {
             _stats.Reset("新比赛开始");
-            _lastHealth = CsConst.MaxHealth;
-            _lastDamageTime = 0f;
             ClearMessages();
         }
 

@@ -10,7 +10,7 @@
 本项目：**Counter-Strike 1.6（单机版）的 1:1 复刻** —— Unity 6 客户端在 `client/`，**形态 = 单机**（没有 `server/`，不调 `CloverNet.Init`，`Game.Net` 恒为 null）。
 参考游戏 A = **CS 1.6**（Valve 2003）；规格真源 = `策划/策划案/CS1.6单机参考规格.md`；验收 = `策划/验收表.md`；原版值对照 = `策划/对照表.md`。
 
-**怎么跑**：① Unity Hub 打开 `client/` → 点 Play；② 离线编译检查（不启编辑器，几十秒）：`powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1`；③ 一键复检闸门：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify.ps1`。
+**怎么跑**：① Unity Hub 打开 `client/` → 点 Play；② 离线编译检查（不启编辑器，几十秒，**判据资产**）：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` —— ⚠️ **必须在工作区根（`clover-project-cs16` 的父目录）执行**：脚本里 `$projRoot = 'clover-project-cs16'` 是**相对路径**；③ 一键复检闸门：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify.ps1`；④ 派活留痕：把片名与 scope 写进 `.ai-tmp/test/current-slice.txt` 后跑 `python tools/probes/append-dispatch.py`（scope 必须是**项目根相对**路径，否则闸门第 15 条对不上）。
 
 ## 索引
 

@@ -162,7 +162,7 @@ namespace Cs16.Module.Match
             if (victim != _m.Local) return;
             if (attacker == null || attacker.Id == victim.Id) return;
 
-            CsHudSnapshot.DamageIndicatorTime = CsConst.DamageNumberTime;
+            CsHudSnapshot.DamageIndicatorTime = CsConst.DamageIndicatorTime;
 
             var to = attacker.Position - victim.Position;
             var ang = Mathf.Atan2(to.x, to.z) * Mathf.Rad2Deg - victim.Yaw;

@@ -27,6 +27,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 # ⛔ 不许在 tools/probes/ 里留 __pycache__（skill §8 工程卫生）：下面会用 importlib 载入
 #    geom-check.py，默认会写出 tools/probes/__pycache__/*.pyc ⇒ 显式关掉字节码落盘。
 sys.dont_write_bytecode = True
+# ⛔ Windows 控制台默认 GBK 编码：判定文本里一旦出现 GBK 之外的字符（实测：切片L 给 S3「语言」
+#    行的判决文本里含 `⇒`），末尾那几行 print 就会抛 UnicodeEncodeError。
+#    写盘全部发生在 print 之前 ⇒ 产物不受影响，但脚本会留下 traceback 并以非零码退出（会被
+#    上层驱动误判成"枚举失败"，进而掩盖真正的失败）。故显式把 stdout 切到 UTF-8 + errors=replace。
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
 ROOT = os.path.dirname(os.path.dirname(HERE))
 ASSETS = os.path.join(ROOT, 'client', 'Assets')
 PLAN = os.path.join(ROOT, '\u7b56\u5212')          # 策划
@@ -1052,8 +1060,38 @@ for p in NUM_FILES:
                     '\u539f\u7248\u540c\u91cf\u7684\u8fb9\u754c\u884c\u4e3a\uff08\u51fa\u5904\uff1a%s\uff09' % ev, '\u5e38\u91cf=%s' % val,
                     K_CONSIST if v == K_CONSIST else (K_PENDING if v == K_ALLOWED else K_MISMATCH), rel(p))
 
+# ── 切片N（S1）：装备类**没有第一人称模型** ⇒ 旧判据对它们不成立 ──────────────────
+# 旧判据把 CsWeapons 里**所有** id 都当"有 viewmodel 的武器"，要求 vm_<id>.controller 存在。
+# 实测（切片M 查实、本片按主 agent 裁决落地）：Defuser / Vest / VestHelm 是**被动装备** ——
+# A（CS 1.6）里它们既不能"手持"、也没有第一人称动作。依据（**工程内可复核**，不靠印象）：
+#   ① 原版 mdl 的导出产物 `client/Assets/Editor/Views/ModelData/*.cs16anim` 共 38 个，
+#      逐个数 = 29 个 `vm_*` + 9 个 `player_*`，**装备类命中 0 个**（没有 vm_defuser /
+#      vm_vest / vm_vesthelm 的导出）；
+#   ② 盘上 `vm_*.controller` 同样只有 29 个（`client/Assets/Resources/Art/Anim/`），
+#      与该导出集合逐个同名 ⇒ 缺的这 3 个正是"原版本来就没有"，不是本工程的缺口。
+# ⇒ 判据改成对装备成立的那条：**A 也无此 viewmodel ⇒ 一致**（与 A 一致，不是不一致）。
+# ⛔ 不许去 `Editor/Views` 生成这三个控制器 —— 那等于造 A 没有的素材（skill §0 铁律 1），
+#    而且原版载体 `原版资源/cs16src` 已空、连出处都拿不到。
+# 装备名单与 D8 段**同源**（复用 `D8_EQUIPMENT`，见上）⇒ ⛔ 不按"名字像装备"猜。
+S1_PASSIVE_EQUIPMENT = D8_EQUIPMENT
+MODELDATA = os.path.join(ASSETS, 'Editor', 'Views', 'ModelData')
+CS16ANIM = sorted(glob.glob(os.path.join(MODELDATA, '*.cs16anim')))
+CS16ANIM_VM = [os.path.basename(x)[:-len('.cs16anim')] for x in CS16ANIM
+               if os.path.basename(x).startswith('vm_')]
+CS16ANIM_EQUIP = [x for x in CS16ANIM_VM
+                  if x[len('vm_'):] in frozenset(w.lower() for w in S1_PASSIVE_EQUIPMENT)]
+VM_CTRLS = sorted(glob.glob(os.path.join(ANIM_DIR, 'vm_*.controller')))
+
 # 武器表：每把枪的 id 是否有 fire/reload clip + viewmodel 控制器
 for wid in WEAPON_IDS:
+    if wid in S1_PASSIVE_EQUIPMENT:
+        add('S1', '武器/%s' % wid, rel(CS_WEAPONS), rel(MODELDATA), 3, T_SCRIPT, K_CONSIST,
+            'id=%s：被动装备 ⇒ A 也无第一人称模型 ⇒ 一致（依据：原版 mdl 导出 .cs16anim 共 %d 个 = '
+            '%d 个 vm_* + %d 个 player_*，装备类命中 %d 个；盘上 vm_*.controller 同样 %d 个；'
+            '⛔ 不生成 vm_%s.controller —— 那是造 A 没有的素材）'
+            % (wid, len(CS16ANIM), len(CS16ANIM_VM), len(CS16ANIM) - len(CS16ANIM_VM),
+               len(CS16ANIM_EQUIP), len(VM_CTRLS), wid.lower()))
+        continue
     ctrl = os.path.join(ANIM_DIR, 'vm_%s.controller' % wid)
     add('S1', '\u6b66\u5668/%s' % wid, rel(CS_WEAPONS), rel(CS_WEAPONS), 3, T_SCRIPT,
         K_CONSIST if os.path.exists(ctrl) else '%s(\u6ca1\u6709 vm_%s.controller)' % (K_MISMATCH, wid), 'id=%s' % wid)
@@ -1260,6 +1298,31 @@ DIF = [
      'Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；'
      '策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36',
      '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
+    # ── 切片N（S1 装备 viewmodel 判据 + 伤害飘字下架）新增的登记 ─────────────────────
+    ('切片N（S1）：Defuser / Vest / VestHelm **没有第一人称 viewmodel / AnimatorController**',
+     '它们是**被动装备** —— A（CS 1.6）里既不能"手持"、也没有第一人称动作 ⇒ **原版本身就没有**'
+     '这三个 v_ 模型。旧判据把 CsWeapons 里所有 id 都当武器、要求 vm_<id>.controller 存在，'
+     '对它们不成立；要满足它只能去 Editor/Views **生成**这三个控制器 = 造 A 没有的素材'
+     '（skill §0 铁律 1）⇒ 判据已改为「A 也无此 viewmodel ⇒ 一致」',
+     'tools/probes/enumerate-entities.py（S1 段的 S1_PASSIVE_EQUIPMENT 分支）；'
+     '依据 = client/Assets/Editor/Views/ModelData/*.cs16anim 共 38 个（29 个 vm_* + 9 个 player_*，'
+     '装备类 0 命中）+ client/Assets/Resources/Art/Anim 的 29 个 vm_*.controller；Core/CsWeapons.cs:83-85',
+     '不消除（与 A 一致的行为差异）'),
+    ('切片N：**下架了本项目新增的"伤害数字飘字"**（HudPanel 的 ShowDamageNumber / ObserveLocalDamage）',
+     'A（CS 1.6）的 HUD **没有伤害数字项**（原版 HUD 只有 hitmarker 与击杀提示）⇒ 屏幕上的 '
+     '`-<数字>` 飘字属本项目自行新增的命中反馈文本，按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。'
+     '留下的只有**受击方向指示器**（屏幕边缘红框，A 有这条反馈）⇒ 那个被两处共用的时长常量'
+     '随之由 DamageNumberTime 改名为 DamageIndicatorTime（含全部引用点）',
+     'client/Assets/Scripts/UI/InGame/HudPanel.cs（删除处留了注释与依据）；'
+     'Core/CsConst.cs（原注释即写「本项目新增」）；'
+     '策划/对照表.md §4「界面元素坐标/尺寸/颜色」——原版 HUD 元素已逐条出处化（U-01~U-37，'
+     '引用到 hud.txt:110/120/121/122/127/131/135/137/179/183 等），**其中没有任何"伤害数字"项**；'
+     '策划/验收表.md B 段——我方 HUD 项清单 H1~H15 里也没有它（H9 = 命中标记 hitmarker）；'
+     'client/资源欠缺清单.md——A 有 / 我方缺 的逐项对账里同样没有这项。'
+     '⚠️ 如实说明：**原版硬载体（cstrike/sprites/hud.txt 与 原版资源/解包产物/）本机不在盘**'
+     '（`原版资源/清单.md` 实测：cs16src/ 与 解包产物/ 为空）⇒ 拿不到 hud.txt 原文级的"无此项"直证，'
+     '本项按任务书退路登记为「本项目新增、与原版无关」',
+     '不消除（A 本来就没有；若将来要加回，必须先给出原版出处的 file:line）'),
 ]
 
 # ============================================================================

@@ -101,7 +101,7 @@ namespace Cs16.UI
             if (Root.gameObject.activeSelf != visible) Root.gameObject.SetActive(visible);
             if (!visible) return;
 
-            var t = Mathf.Clamp01(timeLeft / Mathf.Max(0.0001f, CsConst.DamageNumberTime));
+            var t = Mathf.Clamp01(timeLeft / Mathf.Max(0.0001f, CsConst.DamageIndicatorTime));
             var alpha = MaxAlpha * t;
             SetAlpha(Top, alpha);
             SetAlpha(Bottom, alpha);

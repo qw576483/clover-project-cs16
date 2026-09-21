@@ -237,8 +237,16 @@ namespace Cs16.Core
         // 出处：原版命中标记的**形态** = `hud.txt:179` 的 `d_headshot` 36×16（见 `策划/对照表.md` U-09）；
         // **0.25s 这个显示时长本项目新增**（原版命中标记的时长在 `client.dll` 里、未解出 ⇒ 不给 file:line）。
         public const float HitMarkerTime = 0.25f;
-        // 出处：**本项目新增**（A = CS 1.6 没有伤害数字飘字；这是本工程为"打中敌人"加的命中反馈文本）。
-        public const float DamageNumberTime = 0.8f;
+        // 语义 = **受击方向指示器**（屏幕边缘那道红框，哪边挨枪亮哪边）的显示时长；
+        // `CsDamageIndicatorWidget` 拿它做 alpha 归一（剩余时间/总时长 ⇒ 渐隐）。
+        // 出处：**本项目新增**（原版这一排 HUD 的时长写在 `client.dll` 里、未解出 —— 见
+        // `策划/对照表.md` 的 HUD BLOCKED 条目与 `策划/差异登记.tsv`）⇒ 取本工程自定值 0.8s，
+        // ⛔ 不给一个并不存在的 file:line。
+        // 切片N：本常量原名 `DamageNumberTime`（**一个名字两处用**：伤害数字飘字 + 受击方向指示器）。
+        // 伤害数字飘字**不是 A 的行为**（CS 1.6 的 HUD 没有伤害数字项）⇒ 已按 skill §0 铁律 1
+        // 「A 没有 ⇒ 不加」整链下架（`UI/InGame/HudPanel.cs` 的 ObserveLocalDamage/ShowDamageNumber），
+        // 于是本常量只剩"受击方向指示器时长"这一个语义 ⇒ 随之改名（含全部引用点）。
+        public const float DamageIndicatorTime = 0.8f;
 
         // ---- 地图 / 场景 ----
         // 出处：原版地图文件名 `maps/de_dust2.bsp`（规格 §3 / §5；工程内的原版载体 =
