@@ -30,10 +30,25 @@ func_illusionary / func_breakable / func_bomb_target / func_buyzone / info_targe
 只改 `de_dust2_geo.bin` 的 **blocker 段**（mesh / marker 段一个字节都不动）+ 两份 `.bytes` 的
 **位图段与碰撞体段**（出生点段逐字节透传）。
 
+### ④ 位图规则：`∃f` → **基层 ∀**（2026-09-21 切片 S 改；这是"箱子/模型能穿"的根因）
+位图是**单层 2D**（一格一位），而真实 dust2 是多层地图。旧规则
+`该格可走 ⟺ ∃ f，使 [f+0.10, f+1.75] 这段人体带里没有近垂直面`
+里的 `∃`（**存在**）在多层的图上会整列漏判：**箱顶 / 楼板 / 岩顶自己就是"地面候选"**，
+它们那一层的人体带当然是空的 ⇒ 整个格柱被判"可走"，而玩家实际走在**下面那层** ⇒
+贴着箱子/墙走过去就**穿进去**（用户报的"箱子能穿""A 门贴边穿""细小差距"）。
+实测（2026-09-21，`tools/probes/collision-mesh-gap.py`）：现役位图有 **582 格**
+"位图说可走、人在该格**最低可站面**上却被实心几何挡住"。
+
+新规则：**只判玩家实际站得到的那一层** = 该格**最低地面候选 ± 一个台阶**（`CsConst.StepUpHeight`），
+这一层内的候选必须 **∀** 都通：
+    该格可走 ⟺ ∀ f ≤ f0 + 0.45（f0 = 该格最低地面候选），
+                `[f+0.10, f+1.75]` 里没有被"墙"穿过；
+                顶面只比脚面高一个台阶（ytop ≤ f+0.45）的面算**台阶**，不算墙。
+为什么不用更严的 ∀f（所有层）：实测会把 CT 出生点 / 包点所在格判成阻挡 ——
+它们的**头顶 5.7m 处**有楼板/女儿墙（那是另一层），与脚下那层无关。
+
 逐格判「这一格到底该不该挡」，规则取自原版口径（人只能站在法线 y ≥ 0.7 的面上，见
-`CsConst.MaxStandableSlopeNormalZ`）+ "挡住人的是**穿过人体高度带**的墙"：
-    对每一格，枚举该格里的**地面候选**（朝上的面 y = f）：
-        该格可走 ⟺ ∃ f，使 `[f+0.10, f+1.75]` 这段"人体带"里**没有**近垂直面（|n.y| < 0.3）
+`CsConst.MaxStandableSlopeNormalZ`）+ "挡住人的是**穿过人体高度带**的墙"。
 
 ⚠️ 本判据的**已知边界**（登记在 `策划/差异登记.tsv`，由 `enumerate-entities.py` 产出）：
 它是**单层 2D** 判据 ⇒ 表达不了"侧面进不去、顶面可站"（箱子）与"低矮障碍可跳过"。
@@ -71,7 +86,11 @@ BAND_LOW = 0.10          # 人体带下沿（相对地面，米）
 BAND_HIGH = 1.75         # 人体带上沿（相对地面，米）—— 1.8m 站立高度留一点余量
 FLOOR_MIN_NY = 0.7       # 原版可站立坡面阈值（CsConst.MaxStandableSlopeNormalZ，出处见那里）
 WALL_MAX_NY = 0.30       # |n.y| < 它 = 近垂直面（墙）
-SAMPLE = 0.25            # 三角面在 XZ 上的采样步长（米）
+SAMPLE = 0.25            # 线段光栅化步长 / 采样步长（米）
+STEP_UP = 0.45           # CsConst.StepUpHeight：顶面只比脚面高这一个数 ⇒ 是"台阶"，能迈过去
+GRID = 4                 # 每格 (GRID+1)x(GRID+1) 采样点（含格边界）
+UV = [i / float(GRID) for i in range(GRID + 1)]
+THIN_XZ = 0.125          # 三角面在 XZ 上的"平均厚度"小于它 ⇒ 按线段光栅化（垂直墙面/薄板）
 
 
 def backup(path):
@@ -173,6 +192,94 @@ def tri_normal(a, b, c):
     return (nx / L, ny / L, nz / L)
 
 
+def sample_geometry(src, ox, oz, cell, W, D):
+    """把渲染几何铺进格子。返回 (floors, walls, kinds)。
+
+    ⛔ 2026-09-21（切片 S）换掉的旧口径：旧版按三角面**包围盒**铺点 `(i+0.5)/n`
+    ——① 点不保证落在面内、② 细长/贴格边的面会整格漏采、③ 地面取**整面的 min y**
+    （一条横跨 20 格的大斜地面，20 格全都拿到同一个"最低点"）。
+    新口径：按**格**铺 (GRID+1)x(GRID+1) 点（含格边界 = "边界带"），点的归属**按点坐标**算
+    （边界上的点只算给它的那一格，不会重复计到邻格）；XZ 上退化成线/极细的面
+    （垂直墙面、薄板）改为**线段光栅化**（这类面 2026-09-21 实测被旧口径整片漏掉）；
+    地面取**该点局部 y**（斜坡/斜面每格各自的地面高）。
+
+    floors[(ix,iz)] = {该格内地面候选的局部 y}
+    walls [(ix,iz)] = [(局部 ylo, 局部 yhi, 整面 ytop)]  —— ytop 用于判"是台阶还是墙"
+    """
+    floors = defaultdict(set)
+    walls = defaultdict(list)
+    kinds = defaultdict(int)
+    for grp in src['groups']:
+        V = grp['verts']; I = grp['idx']
+        for k in range(0, len(I), 3):
+            a, b, c = V[I[k]], V[I[k + 1]], V[I[k + 2]]
+            ny = tri_normal(a, b, c)[1]
+            ax, az = a[0], a[2]; bx, bz = b[0], b[2]; cx, cz = c[0], c[2]
+            ymin_t = min(a[1], b[1], c[1]); ymax_t = max(a[1], b[1], c[1])
+            area2 = (bx - ax) * (cz - az) - (cx - ax) * (bz - az)
+            per = (((bx - ax) ** 2 + (bz - az) ** 2) ** 0.5 +
+                   ((cx - bx) ** 2 + (cz - bz) ** 2) ** 0.5 +
+                   ((ax - cx) ** 2 + (az - cz) ** 2) ** 0.5)
+            if per <= 1e-9:
+                continue                                   # XZ 上是"点"：没有足迹
+            thick = abs(area2) / per
+
+            if thick < THIN_XZ:
+                # ── 垂直墙面 / 薄板：线段光栅化（最长边当脊线）──
+                best, bl = None, -1.0
+                for (p, q) in ((a, b), (b, c), (c, a)):
+                    L = ((q[0] - p[0]) ** 2 + (q[2] - p[2]) ** 2) ** 0.5
+                    if L > bl:
+                        best, bl = (p, q), L
+                p, q = best
+                ns = max(1, int(bl / SAMPLE) + 1)
+                keys = set()
+                for i in range(ns + 1):
+                    t = i / float(ns)
+                    key = (int((p[0] + (q[0] - p[0]) * t - ox) // cell),
+                           int((p[2] + (q[2] - p[2]) * t - oz) // cell))
+                    if 0 <= key[0] < W and 0 <= key[1] < D:
+                        keys.add(key)
+                for key in keys:                           # 一个 (面, 格) 只记一条
+                    if ny >= FLOOR_MIN_NY:                 # ★ 水平薄条也是"地面"，不是墙
+                        floors[key].add(round(min(a[1], b[1], c[1]), 2))
+                        kinds['floor'] += 1
+                    elif abs(ny) < FLOOR_MIN_NY:
+                        walls[key].append((round(ymin_t, 3), round(ymax_t, 3),
+                                           round(ymax_t, 3), grp['name']))
+                        kinds['wall' if abs(ny) < WALL_MAX_NY else 'steep'] += 1
+                continue
+
+            # ── 有 XZ 面积的面：按格铺点 + 面内判定（点必然在面内）──
+            ix0 = int((min(ax, bx, cx) - ox) // cell); ix1 = int((max(ax, bx, cx) - ox) // cell)
+            iz0 = int((min(az, bz, cz) - oz) // cell); iz1 = int((max(az, bz, cz) - oz) // cell)
+            loc = defaultdict(list)
+            for ix in range(max(0, ix0), min(W - 1, ix1) + 1):
+                for iz in range(max(0, iz0), min(D - 1, iz1) + 1):
+                    for u in UV:
+                        px = ox + (ix + u) * cell
+                        for v in UV:
+                            pz = oz + (iz + v) * cell
+                            # 归属按点坐标：格边界上的点只算给"它的"那一格
+                            if (int((px - ox) // cell), int((pz - oz) // cell)) != (ix, iz):
+                                continue
+                            w0 = ((bx - px) * (cz - pz) - (cx - px) * (bz - pz)) / area2
+                            w1 = ((cx - px) * (az - pz) - (ax - px) * (cz - pz)) / area2
+                            w2 = 1.0 - w0 - w1
+                            if w0 < -1e-9 or w1 < -1e-9 or w2 < -1e-9:
+                                continue
+                            loc[(ix, iz)].append(a[1] * w0 + b[1] * w1 + c[1] * w2)
+            for key, ys in loc.items():
+                if ny >= FLOOR_MIN_NY:
+                    floors[key].add(round(min(ys), 2))
+                    kinds['floor'] += 1
+                elif abs(ny) < FLOOR_MIN_NY:
+                    walls[key].append((round(min(ys), 3), round(max(ys), 3),
+                                       round(ymax_t, 3), grp['name']))
+                    kinds['wall' if abs(ny) < WALL_MAX_NY else 'steep'] += 1
+    return floors, walls, kinds
+
+
 def main():
     g = load(GEO)
     # ── 判据要跑在**含门贴图面**的几何上（基线 = 摘除之前那版）：那才是原版的实心世界几何 ──
@@ -199,39 +306,18 @@ def main():
           % (cell, ox, oz, W, D, pb_abs, pt_abs, len(g['blockers'])))
 
     # ── 逐格收集：地面候选 y、穿过人体带的墙 ────────────────────────────
-    floors = defaultdict(set)            # (ix,iz) -> {y}
-    walls = defaultdict(list)            # (ix,iz) -> [(ylo,yhi)]
-    tri_by_kind = defaultdict(int)
+    floors, walls, tri_by_kind = sample_geometry(src, ox, oz, cell, W, D)
+    print("  几何采样命中（每格 %dx%d 含边界 + 线段光栅化）：floor=%d wall=%d steep=%d"
+          % (GRID + 1, GRID + 1, tri_by_kind['floor'], tri_by_kind['wall'], tri_by_kind['steep']))
 
-    for gi, grp in enumerate(src['groups']):
-        V = grp['verts']; I = grp['idx']
-        for k in range(0, len(I), 3):
-            a, b, c = V[I[k]], V[I[k + 1]], V[I[k + 2]]
-            ny = tri_normal(a, b, c)[1]
-            xs = (a[0], b[0], c[0]); zs = (a[2], b[2], c[2]); ys = (a[1], b[1], c[1])
-            x0, x1 = min(xs), max(xs); z0, z1 = min(zs), max(zs)
-            nx_s = max(1, int((x1 - x0) / SAMPLE) + 1)
-            nz_s = max(1, int((z1 - z0) / SAMPLE) + 1)
-            for i in range(nx_s):
-                for j in range(nz_s):
-                    t = (i + 0.5) / nx_s; s = (j + 0.5) / nz_s
-                    px = x0 + (x1 - x0) * t; pz = z0 + (z1 - z0) * s
-                    ix = int((px - ox) // cell); iz = int((pz - oz) // cell)
-                    if ix < 0 or iz < 0 or ix >= W or iz >= D:
-                        continue
-                    if ny >= FLOOR_MIN_NY:
-                        floors[(ix, iz)].add(round(min(ys), 2))
-                        tri_by_kind['floor'] += 1
-                    elif abs(ny) < WALL_MAX_NY:
-                        walls[(ix, iz)].append((min(ys), max(ys)))
-                        tri_by_kind['wall'] += 1
-                    else:
-                        tri_by_kind['steep'] += 1
-
-    print("  三角面采样命中：floor=%d wall=%d steep=%d"
-          % (tri_by_kind['floor'], tri_by_kind['wall'], tri_by_kind['steep']))
-
-    # ── 逐格判定 ──────────────────────────────────────────────────────────
+    # ── 逐格判定：**只看"基层"** ──────────────────────────────────────────
+    # 位图是**单层 2D**（一格一位），而地图是多层。旧口径 `∃f`（**存在**某层地面，
+    # 其人体带上没有墙 ⇒ 整格可走）在多层的图上会漏：箱顶/楼板/岩顶自身就是"地面候选"，
+    # 它们那层的带当然是空的 ⇒ 整列被判可走，而玩家实际走在**下面那层** ⇒ 直接穿进去。
+    # 实测（2026-09-21）：现役位图有 582 格"位图说可走、人在该格最低可站面上却被实心几何挡住"，
+    # 用户报的"箱子能穿 / A 门贴边穿"就在这批里。
+    # 新口径：只判玩家**实际站得到的那一层** = 最低地面候选 ± 一个台阶（CsConst.StepUpHeight），
+    # 这一层里 ∀ 个候选都必须通。顶面只比脚面高一个台阶的面算**台阶**（能迈过去），不算墙。
     blocked = []
     reason = defaultdict(int)
     for iz in range(D):
@@ -242,11 +328,17 @@ def main():
                 reason['no-floor'] += 1
                 continue
             ws = walls.get((ix, iz)) or []
-            ok = False
-            for f in sorted(fs):
+            f0 = min(fs)
+            ok = True
+            for f in fs:
+                if f > f0 + STEP_UP:
+                    continue          # 不在"基层"（玩家站不到那层）⇒ 不参与这条判据
                 lo, hi = f + BAND_LOW, f + BAND_HIGH
-                if not any(w0 < hi and w1 > lo for (w0, w1) in ws):
-                    ok = True
+                for (w0, w1, ytop, _name) in ws:
+                    if w0 < hi and w1 > lo and ytop > f + STEP_UP:
+                        ok = False
+                        break
+                if not ok:
                     break
             if ok:
                 continue
@@ -255,7 +347,7 @@ def main():
 
     print("  新位图：可走=%d 阻挡=%d（原有 blocker %d 个）"
           % (W * D - len(blocked), len(blocked), len(g['blockers'])))
-    print("  阻挡原因：无地面（实心/图外）%d，人体带里被墙穿过 %d" % (reason['no-floor'], reason['wall-in-band']))
+    print("  阻挡原因：无地面（实心/图外）%d，基层人体带里被墙穿过 %d" % (reason['no-floor'], reason['wall-in-band']))
 
     # ── 关注点体检 ────────────────────────────────────────────────────────
     def probe(title, wx0, wz0, wx1, wz1):
