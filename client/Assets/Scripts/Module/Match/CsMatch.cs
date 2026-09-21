@@ -336,6 +336,29 @@ namespace Cs16.Module.Match
             Damage.ApplyBombExplosion(center);
         }
 
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：把**本局运行时**的"半场换边"开关设成
+        /// <paramref name="enabled"/>（只改 <see cref="Cfg"/> 这个本局副本）。
+        ///
+        /// <para><b>为什么必须有它</b>：生产默认是 <c>RoundsPerHalf=15 / MaxRounds=30 / HalfTimeSwap=true</c>
+        /// —— 第 16 回合会 <c>SwapHalves()</c>（阵营互换 + **比分互换**，"比分跟着人走"），
+        /// 于是一场打满 30 回合的比赛**必然**收在 15 : 15，<c>EndMatchInternal</c> 只能给出
+        /// "平局"（<c>CsRound.IsMatchOver</c> 的 16 胜阈值在两边都拿不到）⇒ `42_matchend.png`
+        /// 这条取证只能采到 <c>Draw!</c>，采不到"赢方 + 比分"的非平局结算。
+        /// 关掉换边后，把 16 胜阈值安排在第 30 回合达成即可采到非平局。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
+        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；⛔ 不改 <c>ICsMatch</c> 签名 ——
+        /// 驱动侧经具体类型 <see cref="CsMatch"/> 取用。</para>
+        /// </summary>
+        public void SetHalfTimeSwapForTest(bool enabled)
+        {
+            if (_cfg == null) return;
+            _cfg.HalfTimeSwap = enabled;
+            Game.Logger.Info(Tag,
+                $"测试入口 SetHalfTimeSwapForTest({enabled})：本局半场换边已{(enabled ? "打开" : "关掉")}（离线取证驱动专用）");
+        }
+
         // ==================================================================
         //  内部访问器（供 CsRound / CsEconomy / CsBomb / CsDamage / CsInventory 使用）
         // ==================================================================
