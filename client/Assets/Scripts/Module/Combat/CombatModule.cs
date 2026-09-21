@@ -50,6 +50,10 @@ namespace Cs16.Module.Combat
         private bool _autoReload = true;
         private int _unmatchedShotCount;
 
+        // ---- 「上一把武器」（Q = 原版 lastinv）跟踪；纯本模块内部状态，不动任何契约 ----
+        private string _lastSeenWeapon;
+        private string _previousWeapon;
+
         /// <summary>准星扩散 0~1（同时写进 <c>CsHudSnapshot.CrosshairSpread</c> 供 HUD 读）。</summary>
         public float CrosshairSpread => _crosshair.Value;
 
@@ -115,6 +119,13 @@ namespace Cs16.Module.Combat
             _preWeapon = local.ActiveWeapon;
             _preNextFireTime = local.NextFireTime;
 
+            // ---- 维护「上一把武器」：手持武器一变，就把变之前那一把记下来（供 Q = lastinv）----
+            if (_lastSeenWeapon != null && _lastSeenWeapon != local.ActiveWeapon)
+            {
+                _previousWeapon = _lastSeenWeapon;
+            }
+            _lastSeenWeapon = local.ActiveWeapon;
+
             var def = local.ActiveDef;
 
             if (inputAllowed)
@@ -150,6 +161,45 @@ namespace Cs16.Module.Combat
                 else if (input.GetKeyDown(GameKey.Num3)) match.SwitchSlot(3);
                 else if (input.GetKeyDown(GameKey.Num4)) match.SwitchSlot(4);
                 else                 if (input.GetKeyDown(GameKey.Num5)) match.SwitchSlot(5);
+            }
+
+            // ---- Q / G / M：原版 CS 1.6 config.cfg 的**默认绑定**
+            //      （`bind "q" "lastinv"` / `bind "g" "drop"` / `bind "m" "chooseteam"`）----
+            // 出处：原版默认绑定表（策划/策划案/CS1.6单机参考规格.md 的游戏内按键段）
+            //       + 本工程落点 = 本模块的本地输入采集（与 R / 1-5 / E 同一处）。
+            if (inputAllowed)
+            {
+                // Q：切回上一把武器（原版 lastinv）。上一把由上面的"手持武器变化"跟踪给出。
+                if (input.GetKeyDown(GameKey.Q))
+                {
+                    if (!string.IsNullOrEmpty(_previousWeapon) && _previousWeapon != local.ActiveWeapon)
+                    {
+                        match.SwitchWeapon(_previousWeapon);
+                        _log.Info("input.lastinv", $"Q 切回上一把武器：{_previousWeapon}（原版 lastinv）");
+                    }
+                    else
+                    {
+                        _log.Info("input.lastinv", "Q 切回上一把武器：还没有可切的上一把（原版 lastinv）");
+                    }
+                }
+
+                // G：丢下当前武器（原版 drop）。
+                if (input.GetKeyDown(GameKey.G))
+                {
+                    var dropId = local.ActiveWeapon;
+                    match.DropActiveWeapon();
+                    _log.Always($"G 丢下当前武器：{(string.IsNullOrEmpty(dropId) ? "（无）" : dropId)}（原版 drop）");
+                }
+
+                // M：换阵营（原版 chooseteam）。
+                // ⚠️ 原版 chooseteam 是**打开阵营菜单**；本工程局内没有"再开一次 TeamMenu"的流程入口，
+                //    因此等价为"直接换到另一边"并如实写日志 —— 差异登记见 策划/差异登记.tsv / 验收表「允许的差异」。
+                if (input.GetKeyDown(GameKey.M))
+                {
+                    var other = local.Team == CsTeam.T ? CsTeam.CT : CsTeam.T;
+                    Game.Event.Emit(Events.ChangeTeam, other);
+                    _log.Always($"M 换阵营 → {other}（原版 chooseteam；本工程无局内阵营菜单，等价为直接换边）");
+                }
             }
         }
 

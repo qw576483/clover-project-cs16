@@ -208,6 +208,41 @@ for base in ASSET_ROOT_LIST:
             continue
         D1_FILES.append(p)
 
+# ── 切片H：原版素材**已按原版复制进工程、但本工程暂未接**的那些（四要素登记在
+#    策划/差异登记.tsv + 验收表「允许的差异」）—— 本表按 K_ALLOWED 记，不再判 不一致。
+#    ⛔ 只登记"原版确实有对应物、本片明说不做"的项；拿它兜"工程里凭空多出来的东西" = 伪造。
+#    ⛔ 音效那几条属 D8（音效事件接线），本片不做（任务书 §2 明令）。
+D1_UNREF_ALLOWED = {
+    'client/Assets/Resources/Sound/SFX/sfx/bomb_beep_fast.wav':
+        '原版 C4 快速蜂鸣音；本工程只接了常规蜂鸣（音效事件接线属 D8 片）',
+    'client/Assets/Resources/Sound/SFX/sfx/dryfire.wav':
+        '原版空仓击发音（没子弹时扣扳机）；本工程空仓只打日志不发音（属 D8 片）',
+    'client/Assets/Resources/Sound/SFX/sfx/flash_explode.wav':
+        '原版闪光弹爆音；本工程闪光只做全屏致盲表现（属 D8 片）',
+    'client/Assets/Resources/Sound/SFX/sfx/hit_wall.wav':
+        '原版弹着墙音；本工程弹痕只有视觉、无着弹音（属 D8 片）',
+    'client/Assets/Resources/Sound/SFX/sfx/knife_hit.wav':
+        '原版刀命中音；本工程刀命中走 ReportHit 只结算伤害（属 D8 片）',
+    'client/Assets/Resources/UI/Art/logo_game.tga':
+        '原版 GameUI 字标；已登记在验收表「允许的差异」#37（本片不使用，留给主菜单片接 ResPaths）',
+    'client/Assets/ThirdParty/Dust2/Textures/SandRoadTgtA.png':
+        '原版 de_dust2 包点贴花（TgtA）；本工程几何只用 33 个主材质组，未做贴花层',
+    'client/Assets/ThirdParty/Dust2/Textures/_1Sand.png':
+        '原版 de_dust2 沙地细节层贴图；本工程未做 detail 层',
+    'client/Assets/ThirdParty/Dust2/Textures/_1SandRock2.png':
+        '原版 de_dust2 沙岩细节层贴图；本工程未做 detail 层',
+    'client/Assets/ThirdParty/Dust2/Textures/_1csSandWall.png':
+        '原版 de_dust2 沙墙细节层贴图；本工程未做 detail 层',
+    'client/Assets/ThirdParty/Dust2/Textures/_2SandRock2.png':
+        '原版 de_dust2 沙岩细节层贴图；本工程未做 detail 层',
+    'client/Assets/ThirdParty/Dust2/Textures/_3Sand.png':
+        '原版 de_dust2 沙地细节层贴图；本工程未做 detail 层',
+    'client/Assets/ThirdParty/Dust2/Textures/black.png':
+        '原版 de_dust2 通用黑贴图（BSP 里的辅助/黑面）；本工程几何未引用它',
+    'client/Assets/ThirdParty/Dust2/Textures/wall_g.png':
+        '原版 de_dust2 墙面贴图（770×380 非 POT）；本工程几何组里没有它',
+}
+
 for p in D1_FILES:
     r = rel(p)
     base = os.path.splitext(os.path.basename(p))[0]
@@ -225,6 +260,10 @@ for p in D1_FILES:
         ref = ref or ('sfx/' + base) in DERIVED_CLIPS
     if ref:
         v, ev = K_CONSIST, '\u88ab\u5f15\u7528\uff08guid/\u77ed\u540d\u547d\u4e2d\u4ee3\u7801\u6216\u8d44\u4ea7\u6587\u672c\uff09'
+    elif r in D1_UNREF_ALLOWED:
+        # \u5df2\u767b\u8bb0\u7684\u539f\u7248\u672a\u63a5\u7d20\u6750\uff1a\u7ed3\u8bba = \u5141\u8bb8\u7684\u5dee\u5f02\uff08\u8bc1\u636e\u6307\u5411 \u5dee\u5f02\u767b\u8bb0.tsv\uff09
+        v, ev = '%s(\u2192 \u5dee\u5f02\u767b\u8bb0.tsv \u7b2c D1 \u6bb5)' % K_ALLOWED, \
+                'guid=%s / basename=%s \u5747\u672a\u547d\u4e2d\uff1b%s' % (guid or '-', base, D1_UNREF_ALLOWED[r])
     else:
         v, ev = ('%s(\u672a\u88ab\u4efb\u4f55\u5f15\u7528\u70b9\u5f15\u7528\uff1a\u6587\u4ef6\u5728\u76d8\u4e0a\u4f46\u65e0\u4eba\u8bfb)' % K_MISMATCH), \
                 'guid=%s / basename=%s \u5747\u672a\u547d\u4e2d' % (guid or '-', base)
@@ -922,9 +961,20 @@ INPUTS = [
     ('Enter', '\u63a7\u5236\u53f0', '\u63d0\u4ea4\u547d\u4ee4', r'GameKey\.Enter'),
     ('\u9f20\u6807\u70b9\u51fb', '\u83dc\u5355/\u9762\u677f', '\u6309\u94ae\u70b9\u51fb', r'GameKey\.MouseLeft|GetMouseButton|onClick|Button'),
 ]
+# \u5207\u7247H\uff1a\u5f15\u64ce GameKey \u679a\u4e3e\u91cc\u6ca1\u6709 BackQuote\uff08\u5951\u7ea6\u7f3a\u53e3\uff0c\u4e0d\u8bb8\u6539\uff09\u21d2 \u300c~\u300d\u8fd9\u4e00\u884c\u7684\u7ed3\u8bba = \u5141\u8bb8\u7684\u5dee\u5f02\uff08\u5dee\u5f02 #3\uff09\uff0c
+# \u800c\u4e0d\u662f\u300c\u672a\u5b9e\u73b0\u300d\u2014\u2014 \u672c\u5de5\u7a0b\u5df2\u7528 / \u6216 0 \u4ee3\u66ff\uff08\u540c\u4e00\u884c\u4e0b\u9762\u90a3\u6761\u547d\u4e2d\uff09\u3002
+D11_ALLOWED = {
+    '`~': '\u5f15\u64ce GameKey \u65e0 BackQuote\uff08\u5951\u7ea6\u7f3a\u53e3\uff09\uff1b\u672c\u5de5\u7a0b\u7528\u300c/\u300d\u6216\u300c0\u300d\u5f00\u63a7\u5236\u53f0\uff08\u9a8c\u6536\u8868\u5141\u8bb8\u7684\u5dee\u5f02#3\uff09',
+}
 for key, ctx, tgt, pat in INPUTS:
     hit = re.search(pat, codeText)
-    v = K_CONSIST if hit else '%s(\u6e90\u7801\u91cc\u6ca1\u6709\u8be5\u7ed1\u5b9a)' % K_MISMATCH
+    if hit:
+        v = K_CONSIST
+    elif key in D11_ALLOWED:
+        v = '%s(\u2192 \u5dee\u5f02\u767b\u8bb0.tsv)' % K_ALLOWED
+        tgt = tgt + '\uff1b' + D11_ALLOWED[key]
+    else:
+        v = '%s(\u6e90\u7801\u91cc\u6ca1\u6709\u8be5\u7ed1\u5b9a)' % K_MISMATCH
     add('D11', '%s@%s' % (key, ctx), '\u811a\u672c\u7ed1\u5b9a\u8868', 'Core/CsConst.cs + Module/**', 2, T_SCRIPT, v, tgt)
     sta('D11', '%s@%s' % (key, ctx), '\u70b9\u51fb/\u6309\u4f4f/\u8fde\u6309', '-\u3001\u957f\u6309',
         '\u539f\u7248\u9ed8\u8ba4\u7ed1\u5b9a\uff08\u51fa\u5904\uff1a%s:36-44\uff09' % SPEC, tgt, K_CONSIST if hit else K_MISMATCH, 'Module/**')
@@ -1081,9 +1131,29 @@ DIF = [
     ('de_dust2.bsp func_breakable \u6728\u7bb1\uff08\u00d710\uff09\u672a\u5b9e\u73b0\u53ef\u7834\u574f',
      '\u5de5\u7a0b\u628a\u7bb1\u5b50\u5f53\u9759\u6001\u51e0\u4f55\uff08box.png / box_x.png\uff09\uff0c\u6ca1\u6709\u53d7\u51fb\u788e\u88c2\u903b\u8f91',
      'Assets/ThirdParty/Dust2/de_dust2.bsp\uff08entity lump\uff09', '\u5b9e\u73b0 func_breakable \u540e'),
-    ('Assets/Scenes/SampleScene.unity \u7559\u5728\u5de5\u7a0b\u91cc\u4f46\u65e0\u4efb\u4f55\u5f15\u7528',
-     'Unity \u6a21\u677f\u81ea\u5e26\u573a\u666f\uff0c\u672a\u767b\u8bb0\u5230 Build Settings \u4e5f\u672a\u88ab\u4ee3\u7801\u5f15\u7528',
-     'Assets/Scenes/SampleScene.unity', '\u5220\u9664\u6216\u8f6c\u4e3a\u544a\u77e5\u7528\u6d4b\u8bd5\u573a\u666f'),
+    # \u5207\u7247H \u5df2\u6d88\u9664\uff1aUnity \u6a21\u677f\u6b8b\u7559\u573a\u666f SampleScene.unity\uff08+\u672a\u4f7f\u7528\u7684 reload_unused.wav\uff09
+    # \u5df2\u6309\u300c\u4e0d\u8be5\u8fdb\u5de5\u7a0b\u7684\u79fb\u51fa Assets/\u300d\u79fb\u5230 \u539f\u7248\u8d44\u6e90/_moved-out-from-assets/\u3002
+    # \u767b\u8bb0\u662f\u300c\u5141\u8bb8\u7684\u5dee\u5f02\u300d\u4e0d\u662f\u7f3a\u9677\u6863\u6848\uff1a\u4fee\u597d\u4e86\u5c31\u5220\u6389\u8fd9\u6761\u3002
+    ('\u5df2\u79fb\u51fa\u5de5\u7a0b\uff08\u5207\u7247H\uff09\uff1aAssets/Scenes/SampleScene.unity\u3001Resources/Sound/SFX/sfx/reload_unused.wav',
+     'Unity \u6a21\u677f\u81ea\u5e26\u573a\u666f\uff08\u672a\u767b\u8bb0 Build Settings\u3001\u65e0\u4ee3\u7801\u5f15\u7528\uff09\u4e0e\u4e00\u4e2a\u540d\u5b57\u5c31\u662f unused \u7684\u901a\u7528\u6362\u5f39\u97f3'
+     '\uff08\u672c\u5de5\u7a0b\u6362\u5f39\u97f3\u6309\u6b66\u5668\u9010\u628a\u62fc\u540d\uff09\u2014\u2014 \u4e24\u8005\u90fd\u4e0d\u5c5e\u4e8e\u53c2\u8003\u7269\u7684\u5fc5\u5907\u5f15\u7528\uff0c\u4e0d\u5e94\u8fdb\u5de5\u7a0b',
+     'Assets/Scenes/SampleScene.unity\uff1bAssets/Resources/Sound/SFX/sfx/reload_unused.wav',
+     '\u5df2\u6d88\u9664\uff082026-09-21 \u5207\u7247H \u79fb\u51fa\u5230 \u539f\u7248\u8d44\u6e90/_moved-out-from-assets/\uff09'),
+    # ── \u5207\u7247H\uff08D1 \u7ea2\u884c\uff09\uff1a\u4e0a\u9762 D1_UNREF_ALLOWED \u91cc\u90a3\u4e9b\u539f\u7248\u672a\u63a5\u7d20\u6750 ──
+    ('\u539f\u7248\u97f3\u6548\u5df2\u590d\u5236\u8fdb\u5de5\u7a0b\u4f46\u672a\u63a5\u4e8b\u4ef6\uff085 \u6761\uff1adryfire / hit_wall / knife_hit / flash_explode / bomb_beep_fast\uff09',
+     '\u539f\u7248 CS \u5bf9\u5e94\u65f6\u523b\u90fd\u6709\u97f3\uff08\u7a7a\u4ed3\u6263\u65cb\u3001\u5f39\u7740\u5899\u3001\u5200\u547d\u4e2d\u3001\u95ea\u5149\u7206\u3001C4 \u5feb\u8702\u9e23\uff09\uff1b'
+     '\u672c\u5de5\u7a0b\u90a3\u4e9b\u65f6\u523b\u53ea\u6709\u8868\u73b0/\u53ea\u6253\u65e5\u5fd7\u3001\u65e0\u58f0\u3002\u63a5\u7ebf\u5c5e\u300c\u97f3\u6548\u4e8b\u4ef6\u300d\u7ef4\u5ea6\uff08D8\uff09\uff0c\u672c\u7247\uff08\u5207\u7247H\uff09\u4efb\u52a1\u4e66\u660e\u4ee4\u4e0d\u505a D8',
+     'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,flash_explode,bomb_beep_fast}.wav\uff1b\u5bf9\u7167 tools/probes/enumerate-entities.py \u7684 D8 \u6bb5',
+     '\u4e0b\u4e00\u4e2a\u300c\u97f3\u6548\u4e8b\u4ef6\u300d\u7247\u9010\u4e2a\u63a5\u5230\u5f00\u706b/\u547d\u4e2d/\u4e0b\u5305\u5206\u652f\u540e'),
+    ('\u539f\u7248 de_dust2 \u8d34\u56fe\uff088 \u5f20\uff1aSandRoadTgtA / _1Sand / _1SandRock2 / _1csSandWall / _2SandRock2 / _3Sand / black / wall_g\uff09\u5df2\u590d\u5236\u4f46\u51e0\u4f55\u672a\u5f15\u7528',
+     '\u672c\u5de5\u7a0b\u51e0\u4f55\u53ea\u7528 geo.bin \u7684 33 \u4e2a\u4e3b\u6750\u8d28\u7ec4\uff1b\u8fd9 8 \u5f20\u5c5e\u539f\u7248\u7684\u8d34\u82b1\u5c42\uff08TgtA\uff09\u4e0e\u7ec6\u8282\u5c42\uff08detail\uff09\u8d34\u56fe\uff0c\u672c\u5de5\u7a0b\u672a\u5b9e\u73b0\u90a3\u4e24\u5c42'
+     '\uff08\u7ecf\u5b9e\u6d4b\uff1a8 \u5f20\u7684 guid \u5728\u5168\u5de5\u7a0b\u4efb\u4f55 .mat/.prefab/.unity/.asset \u91cc\u90fd 0 \u6b21\u547d\u4e2d\uff09',
+     'client/Assets/ThirdParty/Dust2/Textures/\uff1b\u539f\u7248 de_dust2.bsp \u7684 miptex \u76ee\u5f55\uff08tools/probes/bsp-entities.py \u53ef\u91cd\u6570\uff09',
+     '\u8865\u8d34\u82b1/\u7ec6\u8282\u5c42\uff0c\u6216\u5728\u300c\u53ea\u590d\u5236\u88ab\u5f15\u7528\u7684\u90a3\u51e0\u4e2a\u300d\u539f\u5219\u4e0b\u628a\u5b83\u4eec\u79fb\u51fa client/Assets/'),
+    ('\u539f\u7248 GameUI \u5b57\u6807 logo_game.tga \u5df2\u590d\u5236\u4f46\u672a\u4f7f\u7528',
+     '\u4efb\u52a1\u4e66\u628a\u300c\u600e\u4e48\u7528\u300d\u5212\u7ed9\u4e3b\u83dc\u5355\u7247\uff1b\u672c\u7247\u53ea\u8d1f\u8d23\u628a\u5b83\u4ece\u539f\u7248\u642c\u8fdb\u5de5\u7a0b\uff08\u89c1\u9a8c\u6536\u8868\u300c\u5141\u8bb8\u7684\u5dee\u5f02\u300d#37\uff09',
+     'client/Assets/Resources/UI/Art/logo_game.tga\uff1b\u6e90 = \u539f\u7248\u8d44\u6e90/cs16src/cs16game/app/cstrike/resource/logo_game.tga',
+     '\u4e3b\u83dc\u5355\u7247\u628a\u5b83\u63a5\u8fdb ResPaths \u5e76\u4e0a\u5c4f\u540e'),
 ]
 
 # ============================================================================

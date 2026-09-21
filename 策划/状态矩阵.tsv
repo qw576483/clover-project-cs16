@@ -1199,7 +1199,6 @@ D8	client/Assets/Resources/Sound/SFX/sfx/p228_reload.wav	事件→clip 触发	�
 D8	client/Assets/Resources/Sound/SFX/sfx/p90_fire.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/p90_fire.wav
 D8	client/Assets/Resources/Sound/SFX/sfx/p90_reload.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/p90_reload.wav
 D8	client/Assets/Resources/Sound/SFX/sfx/pain.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/pain.wav
-D8	client/Assets/Resources/Sound/SFX/sfx/reload_unused.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=False	不一致	client/Assets/Resources/Sound/SFX/sfx/reload_unused.wav
 D8	client/Assets/Resources/Sound/SFX/sfx/round_start.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/round_start.wav
 D8	client/Assets/Resources/Sound/SFX/sfx/round_start2.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/round_start2.wav
 D8	client/Assets/Resources/Sound/SFX/sfx/scout_fire.wav	事件→clip 触发	事件数≥1	每个 wav 都必须有一个事件触发点（出处：skill D8 口径）	代码命中=True	一致	client/Assets/Resources/Sound/SFX/sfx/scout_fire.wav
@@ -1353,12 +1352,12 @@ D11	Enter/Space/Esc@启动画面	点击/按住/连按	-、长按	原版默认绑
 D11	Enter@控制台	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	提交命令	一致	Module/**
 D11	Escape@暂停态	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	继续游戏	一致	Module/**
 D11	Escape@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	暂停菜单	一致	Module/**
-D11	G@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	丢当前武器（原版默认）	不一致	Module/**
+D11	G@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	丢当前武器（原版默认）	一致	Module/**
 D11	H@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	H 菜单	一致	Module/**
-D11	M@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	换阵营（原版默认）	不一致	Module/**
+D11	M@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	换阵营（原版默认）	一致	Module/**
 D11	MouseLeft@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	开火	一致	Module/**
 D11	MouseRight@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	开镜/次要功能	一致	Module/**
-D11	Q@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	上一把武器（原版默认）	不一致	Module/**
+D11	Q@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	上一把武器（原版默认）	一致	Module/**
 D11	R@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	换弹	一致	Module/**
 D11	Shift@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	慢走（无声）	一致	Module/**
 D11	Space@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	跳跃	一致	Module/**
@@ -1366,7 +1365,7 @@ D11	Space@观战	点击/按住/连按	-、长按	原版默认绑定（出处：�
 D11	Tab@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	记分板（按住）	一致	Module/**
 D11	W/A/S/D@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	移动	一致	Module/**
 D11	Z/X/C@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	无线电	一致	Module/**
-D11	`~@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	控制台（原版默认）	不一致	Module/**
+D11	`~@游戏内	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	控制台（原版默认）；引擎 GameKey 无 BackQuote（契约缺口）；本工程用「/」或「0」开控制台（验收表允许的差异#3）	不一致	Module/**
 D11	交叉 D11×上下文 输入×上下文掩蔽	交叉状态	-	游戏中 vs 菜单中 vs 输入框聚焦	地域研判	一致	patterns/full-coverage-audit.md §4
 D11	数字键@买枪菜单	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	分类选择	一致	Module/**
 D11	数字键@无线电菜单	点击/按住/连按	-、长按	原版默认绑定（出处：策划/策划案/CS1.6单机参考规格.md:36-44）	选项选择	一致	Module/**
