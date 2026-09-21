@@ -55,6 +55,7 @@ namespace Cs16.Module.Combat
         private readonly List<Vector3> _tracerEnds = new List<Vector3>(16);
         private readonly List<Vector3> _impactPoints = new List<Vector3>(16);
         private readonly List<Vector3> _impactNormals = new List<Vector3>(16);
+        private readonly List<string> _impactMaterials = new List<string>(16);
         private int _bufferOverflowCount;
 
         /// <summary>本发命中的角色（霰弹一发可能命中多个目标）。</summary>
@@ -71,6 +72,15 @@ namespace Cs16.Module.Combat
 
         /// <inheritdoc cref="ImpactPoints"/>
         public IReadOnlyList<Vector3> ImpactNormals => _impactNormals;
+
+        /// <summary>
+        /// 各弹丸打在墙上那一点的**材质名**（与 <see cref="ImpactPoints"/> 一一对应）。
+        /// 来源：命中碰撞体所在物体的 <c>MeshRenderer.sharedMaterial.name</c>
+        /// （= BSP 贴图组名，如 <c>csSandWallDJ1</c>）；阻挡盒没有 MeshRenderer ⇒ 退到节点名
+        /// （<c>Blocker_*</c>）。切片K（D8）用它做 <c>hit_wall</c> 的"按材质分流"
+        /// （分类口径见 <c>CsAudioTuning.ClassifyImpact</c>）。
+        /// </summary>
+        public IReadOnlyList<string> ImpactMaterials => _impactMaterials;
 
         // ==================================================================
         //  散布（纯函数，便于自证）
@@ -139,6 +149,7 @@ namespace Cs16.Module.Combat
             _tracerEnds.Clear();
             _impactPoints.Clear();
             _impactNormals.Clear();
+            _impactMaterials.Clear();
 
             var pellets = req.Pellets > 0 ? req.Pellets : 1;
             var range = req.Range > 0f ? req.Range : FallbackRange;
@@ -210,6 +221,7 @@ namespace Cs16.Module.Combat
                     // 入射面 = 弹痕落点（穿透后的第二层不再记，与原版"decal 贴在入射面"一致）
                     _impactPoints.Add(h.point);
                     _impactNormals.Add(h.normal);
+                    _impactMaterials.Add(ImpactMaterialName(h.collider));
                 }
                 walls++;
                 end = h.point;
@@ -218,6 +230,20 @@ namespace Cs16.Module.Combat
 
             // 穿完了也没打到人（或全被跳过）
             return end;
+        }
+
+        /// <summary>
+        /// 取命中物的**材质名**（给 <c>hit_wall</c> 的材质分流用）：
+        /// 优先 MeshRenderer 的 sharedMaterial（= <c>de_dust2_geo.bin</c> 的贴图组名，与
+        /// <c>ThirdParty/Dust2/Textures/*.png</c> 同名）；阻挡盒（只有 BoxCollider）没有 MeshRenderer
+        /// ⇒ 退到它自己的节点名（<c>Blocker_*</c>）。返回 null 时分类落 <c>unknown</c>。
+        /// </summary>
+        private static string ImpactMaterialName(Collider collider)
+        {
+            if (collider == null) return null;
+            var renderer = collider.GetComponent<MeshRenderer>();
+            if (renderer != null && renderer.sharedMaterial != null) return renderer.sharedMaterial.name;
+            return collider.gameObject != null ? collider.gameObject.name : null;
         }
 
         /// <summary>对缓冲前 count 项按距离做插入排序（小数组，避免 Array.Sort 的委托分配）。</summary>

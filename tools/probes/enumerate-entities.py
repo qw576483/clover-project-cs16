@@ -725,10 +725,30 @@ for p in wavs:
         '\u6bcf\u4e2a wav \u90fd\u5fc5\u987b\u6709\u4e00\u4e2a\u4e8b\u4ef6\u89e6\u53d1\u70b9\uff08\u51fa\u5904\uff1askill D8 \u53e3\u5f84\uff09',
         '\u4ee3\u7801\u547d\u4e2d=%s' % ref, K_CONSIST if ref else K_MISMATCH, rel(p))
 
+# ── 切片K（D8）：装备类**不是武器**，旧判据对它们不成立 ─────────────────────────
+# 旧判据把 CsWeapons 里**所有** id 串都当武器，要求每把都有 <id>_fire.wav / <id>_reload.wav。
+# 实测：Defuser / Vest / VestHelm 是**被动装备** —— A（CS 1.6）里它们既不是"手持并开火"的东西，
+# 也没有换弹动作 ⇒ **原版本身就没有这两个采样**。按旧判据"补齐"只能靠**造两个 wav**，
+# 那是伪造素材（skill §0.1 ① 不许东拼西凑）⇒ 判据改成对装备成立的两条：
+#   ① 装备在 CsWeapons 里确有定义（id + 价格 ⇒ 能买能用）；
+#   ② "无开火 / 换弹音"= 与 A 一致的行为 ⇒ 记 K_ALLOWED 并指向 策划/差异登记.tsv。
+# ⛔ 只对这三个 id 生效（名单写死，不按"名字像装备"猜）；武器那 28 把的判据一个字没动。
+D8_EQUIPMENT = frozenset(('Defuser', 'Vest', 'VestHelm'))
+
 WEAPON_IDS = [m.group(1) for m in re.finditer(r'public const string (\w+)\s*=\s*"', rd(CS_WEAPONS))]
 WEAPON_IDS = [w for w in WEAPON_IDS if w not in ('Knife',) or True]
 for wid in WEAPON_IDS:
     low = wid.lower()
+    if wid in D8_EQUIPMENT:
+        defined = re.search(r'public const string\s+%s\s*=' % re.escape(wid), rd(CS_WEAPONS)) is not None
+        add('D8', '\u88c5\u5907\u97f3\u6548/%s' % wid, rel(CS_WEAPONS), rel(CS_AUDIO_T), 2, T_SCRIPT,
+            K_ALLOWED if defined else '%s(装备在 CsWeapons 里查不到定义)' % K_MISMATCH,
+            'id=%s\uff1a\u88ab\u52a8\u88c5\u5907 \u21d2 \u65e0 <id>_fire.wav / <id>_reload.wav\uff08\u4e0e A \u4e00\u81f4\uff09' % wid)
+        for s in ('\u5f00\u706b\u97f3', '\u6362\u5f39\u97f3'):
+            sta('D8', '\u88c5\u5907\u97f3\u6548/%s' % wid, s, '-',
+                '\u539f\u7248\u88ab\u52a8\u88c5\u5907\uff08Defuser/Vest/VestHelm\uff09\u6ca1\u6709\u5f00\u706b\u4e0e\u6362\u5f39\u52a8\u4f5c \u21d2 \u65e0\u5bf9\u5e94\u91c7\u6837',
+                '\u672a\u63a5\uff08\u4e0e A \u4e00\u81f4\uff1a\u539f\u7248\u4e5f\u6ca1\u6709\uff09', K_ALLOWED, rel(CS_WEAPONS))
+        continue
     need = [s for s in ('%s_fire.wav' % low, '%s_reload.wav' % low)]
     have = [s for s in need if os.path.exists(os.path.join(SOUND_DIR, 'SFX', 'sfx', s))]
     add('D8', '\u6b66\u5668\u4e8b\u4ef6/%s' % wid, 'Sound/SFX/sfx/', rel(CS_WEAPONS), 2, T_SCRIPT,
@@ -1154,6 +1174,51 @@ DIF = [
      '\u4efb\u52a1\u4e66\u628a\u300c\u600e\u4e48\u7528\u300d\u5212\u7ed9\u4e3b\u83dc\u5355\u7247\uff1b\u672c\u7247\u53ea\u8d1f\u8d23\u628a\u5b83\u4ece\u539f\u7248\u642c\u8fdb\u5de5\u7a0b\uff08\u89c1\u9a8c\u6536\u8868\u300c\u5141\u8bb8\u7684\u5dee\u5f02\u300d#37\uff09',
      'client/Assets/Resources/UI/Art/logo_game.tga\uff1b\u6e90 = \u539f\u7248\u8d44\u6e90/cs16src/cs16game/app/cstrike/resource/logo_game.tga',
      '\u4e3b\u83dc\u5355\u7247\u628a\u5b83\u63a5\u8fdb ResPaths \u5e76\u4e0a\u5c4f\u540e'),
+    # ── 切片K（S1 出处补齐 + D8 音效事件接线）新增的登记 ──────────────────────────
+    ('切片K：dryfire / hit_wall / knife_hit / bomb_beep_fast / round_start2 这 5 条 wav 的'
+     '**原版源文件名映射未记录**',
+     '它们确是原版 CS 1.6 的音效（空仓击发 / 弹着 / 刀命中 / C4 快蜂鸣 / 备用回合开始），'
+     '但 `client/资源欠缺清单.md:37` 第 11 项只记了 c4_beep1 / c4_plant / c4_disarm / c4_explode1 / '
+     'hegrenade-1 / flashbang-1 / radio/bombpl / radio/bombdef 这 8 条映射；'
+     '原版 sound/ 树（`原版资源/cs16src`）已空 ⇒ 无法把短名逐条对回原版文件名',
+     'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,bomb_beep_fast,round_start2}.wav（在盘）；'
+     'client/资源欠缺清单.md:37；原版资源/清单.md（cs16src 已空）',
+     '用户补回 CS 1.6 客户端本体（原版资源/cs16src）后逐条对账'),
+    ('切片K：hit_wall 的「按材质分流」只落到一条采样，且刀「砍空」没有独立采样',
+     '原版打沙 / 打木箱 / 打金属是**不同采样**，刀砍中人与砍空也是两条采样；'
+     '盘上只有 hit_wall.wav（打墙）与 knife_hit.wav（刀命中）各一条 ⇒ '
+     '材质分类（CsAudioTuning.ClassifyImpact）已做、日志可逐类核对，但各材质现在落同一 clip；'
+     '刀砍空（CsInventory.RaycastActor 返回 null）无音',
+     'Module/Audio/CsAudioTuning.cs（ClassifyImpact / HitWall / KnifeHit）；'
+     'Module/Combat/CombatModule.cs（弹着音挂点）；Module/Match/CsDamage.cs（刀命中挂点）',
+     '拿到原版按材质的弹着采样与刀挥空采样后，只改 CsAudioTuning 的分类→短名映射'),
+    ('C4 蜂鸣的「加速档分界 10s」与两档间隔（1.0s / 0.25s）无原版出处',
+     '原版 C4 蜂鸣节奏写在 `mp.dll` 的 C4 逻辑里（不是 cvar，`settings.scr` / `server.cfg` 都查不到），'
+     '而 `mp.dll` 不在盘（`原版资源/cs16src` 已空）⇒ 该分界只能按本工程自己的口径统一'
+     '（CsConst.BombBeepIntervalSlow/Fast 的 10s 注释 + CsAudioTuning.BombBeepFastBelow）',
+     'Core/CsConst.cs（BombBeepIntervalSlow / BombBeepIntervalFast）；'
+     'Module/Audio/CsAudioTuning.cs（BombBeepFastBelow）',
+     '解出 mp.dll 的 C4 蜂鸣节奏后'),
+    ('CsBotConst 的绝大多数阈值无原版出处（**本项目新增**）',
+     'A = CS 1.6 本体**不含机器人 AI**（官方 bot 属 Condition Zero / PodBot，不在本工程的载体范围）⇒ '
+     '"bot 手感阈值"在 A 里没有对应量；规格 §2.4 只给三档的反应时间 / 瞄准误差（±6° / ±3° / ±1.2°）'
+     '与行为特征，不含这些阈值。三条有对应量却取不到载体的（瞄胸高度比例 / 脚步噪声阈值 / 预瞄节奏）'
+     '见下面两条与 CsBotConst 各行的注释',
+     'Module/Bot/CsBotConst.cs（66 行逐条注释已标"本项目新增"或指到定义真源）；'
+     '策划/策划案/CS1.6单机参考规格.md:113-118（§2.4 三档表）；Module/Match/CsTypes.cs:148（CsBotProfile）',
+     '若主 agent 决定改为「逐条对齐 PodBot / CZ bot 源码」则另开片'),
+    ('脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）',
+     '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件属 `原版资源/cs16src`、已空；'
+     '② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），'
+     '本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值',
+     'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76',
+     '用户补回原版载体（原版资源/cs16src）后对账脚步节拍；落地音属"A 本来就没有"，不消除'),
+    ('切片K（D8）：Defuser / Vest / VestHelm 三个被动装备没有开火 / 换弹音',
+     '它们不是武器：原版 CS 1.6 里既没有"手持并开火"、也没有换弹动作 ⇒ **原版也没有**这两个采样。'
+     '旧判据（D8 的"每个 id 都要有 <id>_fire.wav / <id>_reload.wav"）把它们当武器，'
+     '要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"',
+     'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85',
+     '不消除（与 A 一致的行为差异）'),
 ]
 
 # ============================================================================

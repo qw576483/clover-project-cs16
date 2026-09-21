@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Audio;
 using Cs16.Module.CameraRig;
 using Cs16.Module.Match;
 using Cs16.Module.Player;
@@ -49,6 +50,9 @@ namespace Cs16.Module.Combat
 
         private bool _autoReload = true;
         private int _unmatchedShotCount;
+
+        /// <summary>切片K（D8）：上一次空仓击发音的时刻（秒，<c>Time.time</c>）——见 <see cref="CanFire"/>。</summary>
+        private float _lastDryfireTime = -999f;
 
         // ---- 「上一把武器」（Q = 原版 lastinv）跟踪；纯本模块内部状态，不动任何契约 ----
         private string _lastSeenWeapon;
@@ -249,6 +253,14 @@ namespace Cs16.Module.Combat
                 var ammo = local.GetAmmo(def.Id);
                 if (ammo.inMag <= 0)
                 {
+                    // 切片K（D8）：空仓扣扳机 = 原版 dryfire（盘上 sfx/dryfire.wav 此前无人挂事件）。
+                    // 这里就是"弹匣为空"的唯一分支（模拟侧同样拦在这里 ⇒ 没有第二处）。
+                    // 按时间闸限速：按住左键时本分支**每帧**都会走到，不加闸就是每帧一响。
+                    if (now - _lastDryfireTime >= CsAudioTuning.DryfireMinInterval)
+                    {
+                        _lastDryfireTime = now;
+                        _audio.Play(CsAudioTuning.Dryfire);
+                    }
                     _log.Info("fire.empty." + def.Id, $"{def.DisplayName} 弹匣为空（按 R 换弹）");
                     return false;
                 }
@@ -475,8 +487,23 @@ namespace Cs16.Module.Combat
 
             // ---- 弹痕 + 火星（打在墙上的那些弹丸；打在人身上的不留痕）----
             var impactPoints = _firearm.ImpactPoints;
+            var impactMaterials = _firearm.ImpactMaterials;
             for (var i = 0; i < impactPoints.Count; i++)
+            {
                 _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i]);
+
+                // 切片K（D8）：打中**非角色**碰撞体 ⇒ 弹着音（原版 hit_wall，盘上 sfx/hit_wall.wav 此前无人挂事件）。
+                // "按材质分流"落在 CsAudioTuning.ClassifyImpact：先按命中物的材质名/节点名分类
+                // （沙 / 木箱 / 门板 / 混凝土 / 金属 / 未知），再播 hit_wall。
+                // ⚠️ 盘上**只有一条** hit_wall.wav（原版按材质分的多条弹着采样不在盘）⇒ 各类现在落同一 clip，
+                //    但"分类"是真的、且逐类可在日志核对；缺口已登记 策划/差异登记.tsv。
+                var matName = i < impactMaterials.Count ? impactMaterials[i] : null;
+                var cls = CsAudioTuning.ClassifyImpact(matName);
+                _audio.PlayAt(CsAudioTuning.HitWall, impactPoints[i]);
+                _log.Info("hitwall." + cls,
+                    $"弹着音 hit_wall（落点 {impactPoints[i]}）：命中材质「{matName ?? "null"}」→ 分类 {cls}" +
+                    "（原版按材质分流的多条采样不在盘，见 策划/差异登记.tsv）");
+            }
 
             // ---- 命中回传（伤害结算归 agent-03）----
             var hits = _firearm.Hits;

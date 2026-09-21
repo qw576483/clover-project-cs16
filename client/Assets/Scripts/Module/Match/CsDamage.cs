@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Audio;
 using UnityEngine;
 
 namespace Cs16.Module.Match
@@ -25,6 +26,14 @@ namespace Cs16.Module.Match
         private readonly HashSet<long> _explosionHit = new HashSet<long>();
         private readonly Collider[] _overlap = new Collider[64];
 
+        /// <summary>
+        /// 切片K（D8）：本模块的**事件音**出口（刀命中 / 闪光弹爆炸 —— 这两件事只在模拟内部结算，
+        /// 表现层看不到）。复用音频层那份唯一的转发闸门 <see cref="SfxService"/>
+        /// （问引擎"在不在" → 转发 <c>Game.Sound</c>，闸门与限频都在引擎那一层），
+        /// ⛔ 这里不另起一套探测 / 计数（`结构规则.md` §4.4：已有能力不准平行再起一套）。
+        /// </summary>
+        private readonly SfxService _sfx = new SfxService("Match");
+
         internal CsDamage(CsMatch m)
         {
             _m = m;
@@ -48,6 +57,17 @@ namespace Cs16.Module.Match
                 return;
             }
             if (victim == null || !victim.IsAlive) return;
+
+            // 切片K（D8）：刀命中（盘上 sfx/knife_hit.wav 此前无人挂事件）。
+            // 位置在"确实是命中（victim 非空）"之后 —— 刀砍空气（CsInventory.RaycastActor 返回 null）
+            // 会走进来的 victim==null 早退，因此不会误响。
+            // 只在**本地玩家出刀命中**时播（机器人的刀命中不给本地播，避免与刀声混淆）。
+            if (def.Class == CsWeaponClass.Knife && shooter != null && shooter == _m.Local)
+            {
+                _sfx.PlayAt(CsAudioTuning.KnifeHit, point);
+                _m.RateInfo("sfx.knife_hit",
+                    $"刀命中音 knife_hit @ {point}（命中 {victim.Name} 的 {box}）");
+            }
 
             var dmg = def.Damage * HitboxMultiplier(box);
 
@@ -285,6 +305,12 @@ namespace Cs16.Module.Match
         {
             var radius = CsMatchConst.FlashRadius;
             var list = _m.ActorList;
+
+            // 切片K（D8）：闪光弹爆炸音（盘上 sfx/flash_explode.wav 此前无人挂事件）。
+            // 挂在"手雷确实炸了"这一处（<c>CsInventory</c> 的闪光弹分支调用本函数），
+            // 与"有没有致盲到人"无关：原版爆炸音对附近所有人响。
+            _sfx.PlayAt(CsAudioTuning.FlashExplode, center);
+            _m.RateInfo("sfx.flash_explode", $"闪光弹爆炸音 flash_explode @ {center}");
 
             var affected = 0;
             for (var i = 0; i < list.Count; i++)

@@ -10,6 +10,16 @@ namespace Cs16.Module.Bot
     /// 只写 <c>Module/Bot/**</c>）。这里集中放"机器人手感/阈值"类数值，目的与 <see cref="CsConst"/> 一致 ——
     /// **业务代码里不出现裸数字，改一处即可调平衡**。交付回报里已列出"建议收敛进 CsConst"的清单。</para>
     ///
+    /// <para><b>出处口径（切片K 逐条补）</b>：本文件 66 条的出处分三类，逐条写在各自注释里 ——
+    /// ① **规格条款**：<c>策划/策划案/CS1.6单机参考规格.md</c> §2.4 的机器人三档表（反应时间 / 瞄准误差 /
+    /// 行为特征）；② **本工程另有定义处的那个文件**（<c>CsBotProfile</c> 三档表在
+    /// <c>Module/Match/CsTypes.cs:148</c>；<c>CsMarkers.BombsiteRadius</c> 在 <c>Module/Map/ICsMap.cs:83</c>；
+    /// <c>CsMatch.DefuseRadius/PickupRadius</c> 在 <c>Module/Match/CsMatch.cs</c>）；
+    /// ③ **本项目新增**（A = CS 1.6 本体**不含机器人 AI** —— 官方 bot 属 Condition Zero / PodBot，
+    /// 不在本工程的载体范围内，所以"bot 手感阈值"在 A 里**没有对应量**，只能自定并如实标注）。
+    /// ⛔ 其中**确有一个原版对应量、但载体拿不到**的三组（瞄胸高度比例 / 脚步噪声阈值 / C4 无关）已单独登记
+    /// <c>策划/差异登记.tsv</c>，不许当成"有出处"。</para>
+    ///
     /// <para><b>与 <see cref="CsConst"/> / <see cref="CsBotProfile"/> 的分工</b>（避免双重生效）：
     /// 三档难度参数（反应时间 / 瞄准误差 / 转视角速度 / 连发节奏 / 视野 / 偏好距离 / 买枪档位 / 爆头率 /
     /// 重决策间隔）**一律只从 <see cref="CsBotProfile.For"/> 取**，本文件里不许再写第二套；
@@ -27,45 +37,76 @@ namespace Cs16.Module.Bot
         /// （丢视野时间 &gt; 它）之后再看，才算"重新首次看见"。
         /// 旧写法用的是另一个更短的阈值（0.5s）：只要视野断续超过 0.5s，
         /// 反应计时就被清零重来 —— 于是"断续可见"的目标**永远过不了反应门槛**（也就永远不开枪）。</para>
+        ///
+        /// <para>出处：**本项目新增**（bot 感知记忆时长，A 无 bot AI ⇒ 无原版对应量；
+        /// 规格 §2.4 只规定三档的"反应时间 / 瞄准误差 / 行为"，不含记忆时长）。</para>
         /// </summary>
         public const float TargetMemorySeconds = 2f;
-        /// <summary>交战中的"贴脸"距离（米）：小于它时放弃下包/拆包先应战。</summary>
+
+        /// <summary>交战中的"贴脸"距离（米）：小于它时放弃下包/拆包先应战。
+        /// 出处：**本项目新增**（bot 交战取舍阈值；A 无 bot AI，规格 §2.4 未给该阈值）。</summary>
         public const float EnemyTooCloseRange = 5f;
-        /// <summary>判定"跑动出声"的水平速度阈值（米/秒）。低于它 = 慢走/站定，不出声。</summary>
+
+        /// <summary>判定"跑动出声"的水平速度阈值（米/秒）。低于它 = 慢走/站定，不出声。
+        /// 出处：**本项目新增**（bot 听觉阈值）。⚠️ 原版对应的"脚步噪声判定"在服务端 <c>mp.dll</c>
+        /// （按 <c>mp_footsteps</c> 开关 + 速度档判定），该载体不在盘（<c>原版资源/cs16src</c> 已空，
+        /// 见 <c>client/资源欠缺清单.md:76</c>）⇒ 已登记 <c>策划/差异登记.tsv</c>。</summary>
         public const float RunNoiseSpeed = 2.5f;
-        /// <summary>听觉记忆时长（秒）。</summary>
+
+        /// <summary>听觉记忆时长（秒）。出处：**本项目新增**（bot 听觉模型参数，A 无 bot AI）。</summary>
         public const float NoiseMemorySeconds = 2f;
-        /// <summary>噪声环形缓冲容量（条）。</summary>
+
+        /// <summary>噪声环形缓冲容量（条）。出处：**本项目新增**（bot 听觉模型的实现容量，A 无 bot AI）。</summary>
         public const int NoiseCapacity = 24;
-        /// <summary>同一个 actor 的跑动噪声最小间隔（秒）。</summary>
+
+        /// <summary>同一个 actor 的跑动噪声最小间隔（秒）。出处：**本项目新增**（防刷同一噪声，A 无 bot AI）。</summary>
         public const float RunNoiseInterval = 0.4f;
-        /// <summary>同一个 actor 的枪声噪声最小间隔（秒）。</summary>
+
+        /// <summary>同一个 actor 的枪声噪声最小间隔（秒）。出处：**本项目新增**（同上）。</summary>
         public const float GunshotNoiseInterval = 0.1f;
 
         // ==================== 导航 ====================
-        /// <summary>路点到达半径（米）：进入它就推进到下一个路点。</summary>
+        /// <summary>路点到达半径（米）：进入它就推进到下一个路点。
+        /// 出处：**本项目新增**（导航实现参数；原版无 bot 导航，A 无 bot AI）。</summary>
         public const float WaypointArriveRadius = 2.5f;
-        /// <summary>默认目标点到达半径（米）。</summary>
+
+        /// <summary>默认目标点到达半径（米）。出处：**本项目新增**（同 <see cref="WaypointArriveRadius"/>）。</summary>
         public const float DefaultObjectiveRadius = 2f;
-        /// <summary>包点/买枪区半径 —— 复用地图契约里的值，保证与模拟的判定口径一致。</summary>
+
+        /// <summary>包点/买枪区半径 —— 复用地图契约里的值，保证与模拟的判定口径一致。
+        /// 出处：<c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius = 7f</c>
+        /// （**逐值搬自该处**，不是另定一个数）。</summary>
         public const float SiteRadius = CsMarkers.BombsiteRadius;
-        /// <summary>避障前探距离（米）。</summary>
+
+        /// <summary>避障前探距离（米）。出处：**本项目新增**（避障实现参数，A 无 bot AI）。</summary>
         public const float ProbeDistance = 1.4f;
+
         /// <summary>
         /// 避障前探的**近端**采样距离（米）。必须同时确认这一段也可走，不能只看 <see cref="ProbeDistance"/> 处的那个格子：
         /// 面前一堵 1m 厚的墙时，"1.4m 处的格子"落在**墙的另一侧**（那格是可走的），只看它就会认定"前方畅通"，
         /// 机器人于是顶着墙推 —— 每帧位移 0，被判卡住。这是"卡住日志里换向却原地不动"的头号成因。
+        ///
+        /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI）。</para>
         /// </summary>
         public const float ProbeClearance = 0.7f;
-        /// <summary>避障偏角的保持时长（秒）：带惯性，避免左右抖动。</summary>
+
+        /// <summary>避障偏角的保持时长（秒）：带惯性，避免左右抖动。
+        /// 出处：**本项目新增**（避障实现参数，A 无 bot AI）。</summary>
         public const float ProbeHoldSeconds = 0.5f;
-        /// <summary>卡住检测间隔（秒）。</summary>
+
+        /// <summary>卡住检测间隔（秒）。出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float StuckCheckInterval = 0.5f;
-        /// <summary>一个检测周期内位移小于它就判定"卡住"（米）。</summary>
+
+        /// <summary>一个检测周期内位移小于它就判定"卡住"（米）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float StuckMoveEpsilon = 0.15f;
-        /// <summary>同一条"路点不可走"日志的最小间隔（秒）。</summary>
+
+        /// <summary>同一条"路点不可走"日志的最小间隔（秒）。
+        /// 出处：**本项目新增**（日志降频参数，A 无 bot AI）。</summary>
         public const float StuckWarnCooldown = 3f;
-        /// <summary>避障试探的偏角序列（度，先小后大）。</summary>
+
+        /// <summary>避障试探的偏角序列（度，先小后大）。
+        /// 出处：**本项目新增**（避障实现参数，A 无 bot AI）。</summary>
         public static readonly float[] AvoidAngles =
         {
             25f, -25f, 50f, -50f, 75f, -75f, 100f, -100f, 125f, -125f, 160f, -160f,
@@ -73,64 +114,108 @@ namespace Cs16.Module.Bot
 
         // ==================== 导航自恢复（卡住 → 逃逸 / 换目标）====================
         /// <summary>逃逸方向的保持时长（秒）。必须明显长于 <see cref="ProbeHoldSeconds"/>：
-        /// 偏角只保持一小会儿、每帧重掷 = 原地反复换向；保持足够久，机器人才会真的沿新方向位移出去。</summary>
+        /// 偏角只保持一小会儿、每帧重掷 = 原地反复换向；保持足够久，机器人才会真的沿新方向位移出去。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeHoldSeconds = 1.2f;
-        /// <summary>逃逸候选方向的"跑道"探测步长（米）。</summary>
+
+        /// <summary>逃逸候选方向的"跑道"探测步长（米）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeRunwayStep = 0.7f;
-        /// <summary>跑道探测最远距离（米）：沿该方向连续可走的长度越长，越优先选它。</summary>
+
+        /// <summary>跑道探测最远距离（米）：沿该方向连续可走的长度越长，越优先选它。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeRunwayMax = 4.2f;
-        /// <summary>逃逸候选方向的扫描步长（度）：从期望方向向两侧各扫 180°。</summary>
+
+        /// <summary>逃逸候选方向的扫描步长（度）：从期望方向向两侧各扫 180°。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeSweepStepDegrees = 30f;
-        /// <summary>逃逸扫描的步数（度/步 × 步数 = 覆盖半圈）。</summary>
+
+        /// <summary>逃逸扫描的步数（度/步 × 步数 = 覆盖半圈）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const int EscapeSweepSteps = 6;
-        /// <summary>连续判定"卡住"达到这次数就**重新选目标**（而不是继续跳过路点/原地换向）。</summary>
+
+        /// <summary>连续判定"卡住"达到这次数就**重新选目标**（而不是继续跳过路点/原地换向）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const int StuckReplanStreak = 2;
+
         /// <summary>
         /// "这个方向走不动"的记忆时长（秒）：卡住时把当时提交的方向记下来，这段时间内不再往它推。
         /// 必要性：<see cref="ICsMap.WalkableAt"/> 说"前方可走"、物理却一步不动的情况真实存在
         /// （贴墙挤压 / 被几何卡住），没有这份记忆，"换向"就会永远换回同一个方向。
+        ///
+        /// <para>出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</para>
         /// </summary>
         public const float BlockedDirMemorySeconds = 2.5f;
-        /// <summary>判定"同一方向"的夹角容差（度）：与失败方向夹角 ≤ 它就算同一个方向。</summary>
+
+        /// <summary>判定"同一方向"的夹角容差（度）：与失败方向夹角 ≤ 它就算同一个方向。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float BlockedDirDegrees = 35f;
-        /// <summary>同一条"卡住"原因：首个日志 + 之后每这么多次各记一条（防刷屏）。</summary>
+
+        /// <summary>同一条"卡住"原因：首个日志 + 之后每这么多次各记一条（防刷屏）。
+        /// 出处：**本项目新增**（日志降频参数；工程内同款 = <see cref="LogRateEvery"/>）。</summary>
         public const int StuckWarnEvery = 50;
+
         /// <summary>
         /// 同一条"卡住"原因的**两次日志之间的最小间隔**（秒）。
         ///
         /// <para>主 agent 实测：8 个机器人 × 每 0.5s 一次判定，即使按次数降频（每 10 次一条）
         /// 也仍然每秒刷出 1~2 条"卡住"（日志里能看到"第 70 次"）；现场日志量级要求必须压下来。
         /// 所以次数阈值之外再加一道时间闸：≤ 每 <see cref="StuckWarnMinInterval"/> 秒一条（每个 bot / 每种原因各自计时）。</para>
+        ///
+        /// <para>出处：**本项目新增**（日志降频参数，A 无 bot AI）。</para>
         /// </summary>
         public const float StuckWarnMinInterval = 15f;
-        /// <summary>巡逻点/换路目标必须离当前位置至少这么远（米），否则等于没换目标。</summary>
+
+        /// <summary>巡逻点/换路目标必须离当前位置至少这么远（米），否则等于没换目标。
+        /// 出处：**本项目新增**（导航实现参数，A 无 bot AI）。</summary>
         public const float MinPatrolDistance = 6f;
-        /// <summary>守点（到达目标后原地警戒）的最短时长（秒）。</summary>
+
+        /// <summary>守点（到达目标后原地警戒）的最短时长（秒）。
+        /// 出处：**本项目新增**（导航实现参数，A 无 bot AI）。</summary>
         public const float CampHoldSeconds = 2.5f;
+
         /// <summary>守点时长 = <c>profile.RepathInterval</c> × 它（再与 <see cref="CampHoldSeconds"/> 取下限）。
-        /// ⇒ Easy 4.8s / Normal 3.0s / Hard 2.5s：三档"多久换一次目标"肉眼可辨。</summary>
+        /// ⇒ Easy 4.8s / Normal 3.0s / Hard 2.5s：三档"多久换一次目标"肉眼可辨。
+        /// 出处：倍数**本项目新增**；被乘的 <c>RepathInterval</c> 真源 =
+        /// <c>Module/Match/CsTypes.cs:148</c> 的 <c>CsBotProfile.For</c>（Easy 1.6 / Normal 1.0 / Hard 0.5）。</summary>
         public const float ObjectiveHoldScale = 3f;
-        /// <summary>按 <c>profile.RepathInterval</c> 检查"朝目标是否有进展"时，距离缩短小于它就算没进展（米）。</summary>
+
+        /// <summary>按 <c>profile.RepathInterval</c> 检查"朝目标是否有进展"时，距离缩短小于它就算没进展（米）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float RepathProgressEpsilon = 0.5f;
-        /// <summary>连续几轮"没进展"才真的重排路线（防止把走顺的路线反复重排成来回蹭）。</summary>
+
+        /// <summary>连续几轮"没进展"才真的重排路线（防止把走顺的路线反复重排成来回蹭）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const int RepathStallStreak = 2;
-        /// <summary>"重新选目标"里"换一条路线"与"去巡逻"的交替粒度（每这么多次换目标交替一次优先项）。</summary>
+
+        /// <summary>"重新选目标"里"换一条路线"与"去巡逻"的交替粒度（每这么多次换目标交替一次优先项）。
+        /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const int ReplanAlternatePeriod = 2;
+
         /// <summary>
         /// "目标 = C4 本身（守包）"的伪路线名：**不是地图标记**，只用于日志。
         /// 用它时必须先 <see cref="BotNavigator.ClearRoute"/>（无路线）—— 否则重寻路会拿它去查标记、打 Error。
-        /// </summary>
+        /// 出处：**本项目新增**（本工程日志用伪路线名，不是 <c>de_dust2</c> 的标记定义）。</summary>
         public const string BombGuardRoute = "(守包-C4)";
 
         // ==================== 交战 ====================
-        /// <summary>近身换手枪的距离（米）：任务书 §4.2「距离 &lt; 3m → 倾向换手枪」。</summary>
+        /// <summary>近身换手枪的距离（米）：任务书 §4.2「距离 &lt; 3m → 倾向换手枪」。
+        /// 出处：**本项目新增**（阈值来自本片/前片任务书 §4.2；⚠️ 该任务书**不在工程内**、
+        /// 规格 <c>策划/策划案/CS1.6单机参考规格.md</c> §2.4 未给该阈值 ⇒ 只能标"本项目新增"）。</summary>
         public const float MeleeSwitchRange = 3f;
-        /// <summary>换回主武器的距离（米）：与上面组成滞回，避免来回切枪。</summary>
+
+        /// <summary>换回主武器的距离（米）：与上面组成滞回，避免来回切枪。
+        /// 出处：**本项目新增**（滞回上界，与 <see cref="MeleeSwitchRange"/> 配套）。</summary>
         public const float MeleeBackRange = 6f;
-        /// <summary>两次换枪之间的最小间隔（秒）。</summary>
+
+        /// <summary>两次换枪之间的最小间隔（秒）。出处：**本项目新增**（交战实现参数，A 无 bot AI）。</summary>
         public const float WeaponSwitchCooldown = 1.5f;
-        /// <summary>距离 &gt; 偏好距离 × 它时推进；否则站定（远距离蹲下）。</summary>
+
+        /// <summary>距离 &gt; 偏好距离 × 它时推进；否则站定（远距离蹲下）。
+        /// 出处：**本项目新增**（倍数；被乘的"偏好距离"真源 = <c>CsBotProfile.For</c> 三档表，
+        /// <c>Module/Match/CsTypes.cs:148</c>）。</summary>
         public const float AdvanceRangeFactor = 1.5f;
+
         /// <summary>
         /// 开火角度门限 = AimErrorDegrees × 它 + AimGateExtraDegrees。
         ///
@@ -139,76 +224,143 @@ namespace Cs16.Module.Bot
         /// （22 次交战 0 发：目标一直在动 ⇒ 瞄点每帧变 ⇒ 朝向差总是差几度 ⇒ 门限永远过不去，扳机永远不扣）。
         /// CS 的真实玩家是**边转边打**的；放宽后 Hard 仍最严（≈12°）、Easy 最松（≈26°），
         /// 三档的"准/不准"差异由 <c>AimErrorDegrees</c> 继续承担。</para>
+        ///
+        /// <para>出处：**本项目新增**（门限系数，A 无 bot AI；被乘的 <c>AimErrorDegrees</c> 真源 =
+        /// 规格 §2.4 三档瞄准误差 ±6° / ±3° / ±1.2°，落在 <c>CsBotProfile.For</c>）。</para>
         /// </summary>
         public const float AimGateErrorScale = 3f;
-        /// <summary>开火角度门限的固定附加值（度）。</summary>
+
+        /// <summary>开火角度门限的固定附加值（度）。
+        /// 出处：**本项目新增**（门限项，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
         public const float AimGateExtraDegrees = 8f;
-        /// <summary>开火角度门限下限（度）。</summary>
+
+        /// <summary>开火角度门限下限（度）。
+        /// 出处：**本项目新增**（门限钳制下限，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
         public const float AimGateMinDegrees = 12f;
-        /// <summary>开火角度门限上限（度）。</summary>
+
+        /// <summary>开火角度门限上限（度）。
+        /// 出处：**本项目新增**（门限钳制上限，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
         public const float AimGateMaxDegrees = 30f;
-        /// <summary>瞄头时的额外误差比例（倍 AimErrorDegrees）：对应规格 §2.4「瞄头更难点中」。</summary>
+
+        /// <summary>瞄头时的额外误差比例（倍 AimErrorDegrees）。出处：行为口径见规格 §2.4 的 Hard 行
+        /// 「精准、会点射/爆头倾向」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
+        /// **比例值本身本项目新增**（A 无 bot AI，没有"瞄头误差倍数"这个量）。</summary>
         public const float HeadAimExtraErrorScale = 0.4f;
-        /// <summary>瞄头额外误差的重采样间隔（秒），与模拟内部误差同节奏。</summary>
+
+        /// <summary>瞄头额外误差的重采样间隔（秒），与模拟内部误差同节奏。
+        /// 出处：**本项目新增**（重采样节奏；与模拟内部瞄准误差刷新同周期，见 <c>CsMatch</c> 的 bot 瞄准更新）。</summary>
         public const float AimWobbleRefreshSeconds = 0.35f;
-        /// <summary>"这一轮瞄不瞄头"的重掷间隔（秒）：不逐帧掷，避免抖动。</summary>
+
+        /// <summary>"这一轮瞄不瞄头"的重掷间隔（秒）：不逐帧掷，避免抖动。
+        /// 出处：**本项目新增**（重掷节奏，A 无 bot AI）。</summary>
         public const float HeadshotRollSeconds = 1.2f;
-        /// <summary>瞄胸时的高度比例（占角色身高的比例）。</summary>
+
+        /// <summary>瞄胸时的高度比例（占角色身高的比例）。
+        /// 出处：**本项目新增**。⚠️ 原版**有**对应量（玩家模型三组 hitbox 的高度偏移，写在
+        /// <c>mp.dll</c> / mdl 的 hitbox 表里），但载体不在盘（<c>原版资源/cs16src</c> 已空，
+        /// 见 <c>client/资源欠缺清单.md:76</c>）⇒ 已登记 <c>策划/差异登记.tsv</c>，不许当"有出处"。</summary>
         public const float ChestHeightRatio = 0.78f;
-        /// <summary>预瞄提前量的最大秒数（按难度插值：Normal 0 → Hard 满值）。</summary>
+
+        /// <summary>预瞄提前量的最大秒数（按难度插值：Normal 0 → Hard 满值）。
+        /// 出处：行为口径见规格 §2.4 的 Hard 行「会预瞄」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
+        /// **上限秒数本项目新增**（A 无 bot AI）。</summary>
         public const float PredictSecondsMax = 0.12f;
-        /// <summary>预瞄力度归一化的速度下界（度/秒）—— 取 <see cref="CsBotProfile"/> 三档里 Normal 的 AimSpeedDegrees。</summary>
+
+        /// <summary>预瞄力度归一化的速度下界（度/秒）—— 取 <see cref="CsBotProfile"/> 三档里 Normal 的 AimSpeedDegrees。
+        /// 出处：<c>Module/Match/CsTypes.cs:185</c>（<c>CsBotProfile.For(Normal)</c> 的 <c>AimSpeedDegrees = 300f</c>）。</summary>
         public const float PredictSkillSpeedLo = 300f;
-        /// <summary>预瞄力度归一化的速度上界（度/秒）—— 取三档里 Hard 的 AimSpeedDegrees。</summary>
+
+        /// <summary>预瞄力度归一化的速度上界（度/秒）—— 取三档里 Hard 的 AimSpeedDegrees。
+        /// 出处：<c>Module/Match/CsTypes.cs:171</c>（<c>CsBotProfile.For(Hard)</c> 的 <c>AimSpeedDegrees = 520f</c>）。</summary>
         public const float PredictSkillSpeedHi = 520f;
-        /// <summary>未给瞄准点时的兜底注视距离（米）。</summary>
+
+        /// <summary>未给瞄准点时的兜底注视距离（米）。
+        /// 出处：**本项目新增**（瞄准实现参数，A 无 bot AI）。</summary>
         public const float AimFallbackDistance = 10f;
-        /// <summary>"开火被抑制"诊断日志的每-bot 最小间隔（秒）—— 首次必打（这是"哪一条恒假"的证据）。</summary>
+
+        /// <summary>"开火被抑制"诊断日志的每-bot 最小间隔（秒）—— 首次必打（这是"哪一条恒假"的证据）。
+        /// 出处：**本项目新增**（诊断日志降频参数）。</summary>
         public const float FireDiagInterval = 2f;
-        /// <summary>"视线只被角色受体挡住"（按 CS 语义放行）日志的每-bot 最小间隔（秒）。</summary>
+
+        /// <summary>"视线只被角色受体挡住"（按 CS 语义放行）日志的每-bot 最小间隔（秒）。
+        /// 出处：**本项目新增**（诊断日志降频参数）。</summary>
         public const float SightActorBlockLogInterval = 10f;
 
         // ==================== 炸弹 ====================
-        /// <summary>CT 停下拆包的距离（米）。必须 ≤ 模拟内部允许的拆包半径，否则按 E 会被判"离炸弹太远"。</summary>
+        /// <summary>CT 停下拆包的距离（米）。必须 ≤ 模拟内部允许的拆包半径，否则按 E 会被判"离炸弹太远"。
+        /// 出处：上界 = <c>Module/Match/CsMatch.cs</c> 的 <c>CsMatch.DefuseRadius = 1.5f</c>
+        /// （对照表里它对应原版 <c>func_bomb_target</c> 的触发范围）；**1.2 这个具体值本项目新增**
+        /// （严格小于上界，留出判定余量）。</summary>
         public const float DefuseStopRadius = 1.2f;
-        /// <summary>停下捡 C4 的距离（米）。</summary>
+
+        /// <summary>停下捡 C4 的距离（米）。
+        /// 出处：上界 = <c>Module/Match/CsMatch.cs</c> 的 <c>CsMatch.PickupRadius = 1.2f</c>；
+        /// **1.0 这个具体值本项目新增**。</summary>
         public const float PickupStopRadius = 1.0f;
-        /// <summary>炸弹剩余时间 ≤ 拆包所需 + 它时，优先拆包（Hard 的"拆包果断"）。</summary>
+
+        /// <summary>炸弹剩余时间 ≤ 拆包所需 + 它时，优先拆包（Hard 的"拆包果断"）。
+        /// 出处：行为口径见规格 §2.4 的 Hard 行「拆包果断」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
+        /// **余量秒数本项目新增**。</summary>
         public const float DefuseUrgencyMargin = 2f;
+
         /// <summary>
         /// 已下包后，"眼前有多近的敌人才值得先打、而不是先去拆包"（米）。
         /// 超过它就一律先冲包点 —— 官方 CT 的行为是"下包即刻回防"，站在远处对枪等于把回合送掉。
+        ///
+        /// <para>出处：行为口径见规格 §2.4 的 Hard 行「拆包果断」；**距离值本项目新增**（A 无 bot AI）。</para>
         /// </summary>
         public const float DefuseOverFightRange = 15f;
-        /// <summary>守点时每次挪窝后的停留时长（秒）。</summary>
+
+        /// <summary>守点时每次挪窝后的停留时长（秒）。
+        /// 出处：**本项目新增**（守点实现参数，A 无 bot AI）。</summary>
         public const float CampRepositionSeconds = 2.5f;
-        /// <summary>守点时可以在守点周围多大半径内挪窝（米）——"会换位"的范围。</summary>
+
+        /// <summary>守点时可以在守点周围多大半径内挪窝（米）——"会换位"的范围。
+        /// 出处：行为口径见规格 §2.4 的 Hard 行「会换位」；**半径值本项目新增**。</summary>
         public const float CampRepositionRadius = 6f;
+
         /// <summary>
         /// 只有 <c>id % 它 == 0</c> 的 T 会去捡掉落的 C4（4 人一队时通常只有 1 个人去，避免全队扑向同一个点）。
+        /// 出处：**本项目新增**（分工实现参数，A 无 bot AI）。
         /// </summary>
         public const long BombHunterModulo = 4L;
 
         // ==================== 买枪 ====================
-        /// <summary>买枪失败后的重试间隔（秒）。</summary>
+        /// <summary>买枪失败后的重试间隔（秒）。出处：**本项目新增**（买枪实现参数，A 无 bot AI）。</summary>
         public const float BuyRetryInterval = 0.5f;
-        /// <summary>一个冻结期最多尝试几轮买枪（防刷屏、防呆循环）。</summary>
+
+        /// <summary>一个冻结期最多尝试几轮买枪（防刷屏、防呆循环）。
+        /// 出处：**本项目新增**（买枪实现参数，A 无 bot AI）。</summary>
         public const int MaxBuyAttempts = 3;
-        /// <summary>进入冻结期多久还没站进买枪区就告警（秒）。</summary>
+
+        /// <summary>进入冻结期多久还没站进买枪区就告警（秒）。
+        /// 出处：**本项目新增**（诊断告警参数）。</summary>
         public const float BuyZoneWarnDelay = 1.5f;
-        /// <summary>Hard 档买 AWP 的概率（任务书 §4.2：30%）。</summary>
+
+        /// <summary>Hard 档买 AWP 的概率（任务书 §4.2：30%）。
+        /// 出处：**本项目新增**（概率值来自本片/前片任务书 §4.2；⚠️ 该任务书**不在工程内**，
+        /// 规格 §2.4 的 Hard 行只写「会买最好枪」、未给概率 ⇒ 只能标"本项目新增"）。</summary>
         public const float AwpChanceTier2 = 0.30f;
 
         // ==================== 统计 / 日志 ====================
-        /// <summary>命中率统计日志间隔（秒）：验收表 B1~B3 要的就是这条。</summary>
+        /// <summary>命中率统计日志间隔（秒）：验收表 B1~B3 要的就是这条。
+        /// 出处：**本项目新增**（验收表 B1~B3 要求的统计口径 + 日志降频参数）。</summary>
         public const float StatsLogInterval = 30f;
-        /// <summary>伤害事件归属给"某个 bot 打中"的时间窗（秒）。</summary>
+
+        /// <summary>伤害事件归属给"某个 bot 打中"的时间窗（秒）。
+        /// 出处：**本项目新增**（伤害归属实现参数，A 无 bot AI；归属逻辑见 <c>CsBotBrain</c> 的命中归属）。</summary>
         public const float HitAttributionWindow = 0.4f;
-        /// <summary>状态切换日志的每 bot 最小间隔（秒）。</summary>
+
+        /// <summary>状态切换日志的每 bot 最小间隔（秒）。
+        /// 出处：**本项目新增**（日志降频参数）。</summary>
         public const float StateLogMinInterval = 2f;
-        /// <summary>每 tick 单 actor 的射击次数估算上限（防假时钟/暂停把估值放大）。</summary>
+
+        /// <summary>每 tick 单 actor 的射击次数估算上限（防假时钟/暂停把估值放大）。
+        /// 出处：**本项目新增**（实现防护参数，A 无 bot AI）。</summary>
         public const int MaxShotEstimatePerTick = 8;
-        /// <summary>通用日志降频：首次 + 每 N 次。</summary>
+
+        /// <summary>通用日志降频：首次 + 每 N 次。
+        /// 出处：**本项目新增**（日志降频口径；工程内同款 = <c>Module/Audio/CsAudioTuning.LogRateEvery</c>）。</summary>
         public const int LogRateEvery = 50;
     }
 }

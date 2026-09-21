@@ -55,6 +55,9 @@ namespace Cs16.Module.Audio
 
         // ---- 炸弹蜂鸣 ----
         private float _beepTimer;
+
+        /// <summary>切片K（D8）：当前 C4 蜂鸣是不是"加速档"（用于只在档位变化时打一条日志）。</summary>
+        private bool _beepFast;
         private bool _wasPlanted;
 
         // ---- 换弹（只看本地玩家与机器人各自的那一次）----
@@ -95,7 +98,10 @@ namespace Cs16.Module.Audio
             // 开局前把"一定会用到"的音效先探一遍，避免第一条声音被吃在加载里。
             _sfx.Prewarm(CsAudioTuning.RoundStart, CsAudioTuning.Step[0], CsAudioTuning.Land,
                 CsAudioTuning.HitFlesh, CsAudioTuning.Death[0], CsAudioTuning.BombBeep,
-                CsAudioTuning.BombPlant, CsAudioTuning.BombExplode, CsAudioTuning.WinT, CsAudioTuning.WinCT);
+                CsAudioTuning.BombPlant, CsAudioTuning.BombExplode, CsAudioTuning.WinT, CsAudioTuning.WinCT,
+                // 切片K（D8）：新增接线的 5 条一并预热（首播不再吃在加载里）
+                CsAudioTuning.BombBeepFast, CsAudioTuning.FlashExplode, CsAudioTuning.HitWall,
+                CsAudioTuning.Dryfire, CsAudioTuning.KnifeHit);
 
             _ready = true;
             _log.Always("音效模块就绪：脚步/落地、换弹、命中反馈、死亡、回合开始结束、炸弹蜂鸣（枪声归 agent-04）");
@@ -450,16 +456,29 @@ namespace Cs16.Module.Audio
             }
 
             var left = _match.BombTimeLeft;
-            var interval = left <= CsAudioTuning.BombBeepFastBelow
-                ? CsConst.BombBeepIntervalFast
-                : CsConst.BombBeepIntervalSlow;
+
+            // 切片K（D8）：加速档**换 clip**（原版快蜂鸣是另一条采样 ⇒ bomb_beep_fast.wav），
+            // 不再是"同一个音只靠间隔区分"。分界值与 CsConst 的 BombBeepIntervalSlow/Fast 同一处口径
+            // （见 CsAudioTuning.BombBeepFastBelow 的注释）。
+            var fast = left <= CsAudioTuning.BombBeepFastBelow;
+            var interval = fast ? CsConst.BombBeepIntervalFast : CsConst.BombBeepIntervalSlow;
             if (interval <= 0.01f) interval = 1f;
+
+            if (fast != _beepFast)
+            {
+                // 只在**档位变化**时打一条（蜂鸣本身可到 4 次/秒，逐次打会刷屏）。
+                _beepFast = fast;
+                _log.Info("bomb.beep.档位",
+                    $"C4 蜂鸣档位切换 → {(fast ? "加速档" : "普通档")}（剩余 {left:F1}s，" +
+                    $"分界 {CsAudioTuning.BombBeepFastBelow:F0}s），clip = " +
+                    (fast ? CsAudioTuning.BombBeepFast : CsAudioTuning.BombBeep));
+            }
 
             _beepTimer += dt;
             if (_beepTimer < interval) return;
             _beepTimer = 0f;
 
-            _sfx.PlayAt(CsAudioTuning.BombBeep, _match.BombPosition);
+            _sfx.PlayAt(fast ? CsAudioTuning.BombBeepFast : CsAudioTuning.BombBeep, _match.BombPosition);
         }
 
         // ==================================================================

@@ -4,6 +4,8 @@
 
 地图 **de_dust2**；复刻范围按六类系统：**A 启动菜单 · B HUD · C 玩法 · D 机器人 · E 地图 · F 资源**。
 
+> **本工程尚未完成**：仍在开发中，功能与画面都在变 —— 下面的截图、范围与说明只反映当前进度，不等于最终形态。
+
 ## 实机画面
 
 | 主菜单 | 队伍选择 |
@@ -41,4 +43,5 @@
 |---|---|
 | [clover-client-unity-engine](https://github.com/qw576483/clover-client-unity-engine) | 客户端引擎（本工程的运行底座） |
 | [clover-doc](https://github.com/qw576483/clover-doc) | 框架文档 |
-| [clover-tools](https://github.com/qw576483/clover-tools) | 打表工具、AI 交付 skill |
+| [clover-tools](https://github.com/qw576483/clover-tools) | 打表工具 |
+| [clover-ai-skill](https://github.com/qw576483/clover-ai-skill) | AI 交付 skill（本工程按它的规范做） |
