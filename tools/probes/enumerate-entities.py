@@ -11,7 +11,7 @@
 产出：
     策划/实体清单.tsv         维度	实体	载体/路径	出处	状态数	判据类型	归属片
     策划/状态矩阵.tsv         维度	实体	状态/事件	边界值	期望表现(出处)	实测	结论	证据
-    策划/差异登记.tsv         是什么	为什么	出处	何时消除
+    策划/差异登记.tsv         编号	为什么	出处	何时消除
     策划/覆盖矩阵判定.md      一行 = 一个实体的判定行（含 `#` 头；`--inject` 时写进验收表）
 
 ⛔ 本脚本**只判**：几何 / 碰撞 / 坐标 / 数值 / 引用是否指对 / 状态是否存在。
@@ -1289,181 +1289,70 @@ for dim, nm, note, vt, vd in CROSS:
 #  差异登记（四要素）
 # ============================================================================
 DIF = [
-    # 切片G 已消除的那条（雷达底图由旧 geo 栅格化）**从登记里删除** —— 本片已重出：
-    # render-overview.py 修 blocker stride 20→24 后重跑，底图与现 geo 一致（差异 #14 同片消除）。
-    # 登记是"允许的差异"，不是"曾经的缺陷"档案：修好了还留着，会让"零不一致"永远打折。
-    # 切片F 已消除的两条（门板网格为空 / 阻挡盒口径 218 vs 660）**从登记里删除** ——
-    # 登记是"允许的差异"，不是"曾经的缺陷"档案：修好了还留着，会让"零不一致"永远打折。
-    ('\u4f4d\u56fe\uff08CloverMap v1\uff09\u662f\u5355\u5c42 2D\uff1a\u7bb1\u5b50\u6240\u5728\u683c\u8bb0\u4e3a\u201c\u53ef\u8d70\u201d\uff08\u7bb1\u9876\u662f\u671d\u4e0a\u7684\u9762\uff09',
-     '\u683c\u5f0f\u5c42\u6ca1\u6709\u9ad8\u5ea6\uff08FlagHeightField \u9884\u7559\u4f46 V1 \u89e3\u7801\u5668\u62d2\u7edd\uff09\u21d2 \u4e00\u683c\u4e00\u4f4d\uff0c\u8868\u8fbe\u4e0d\u4e86\u201c\u540c\u4e00\u683c\u5728 y=0 \u88ab\u6321\u3001\u5728 y=1.2 \u901a\u7545\u201d\uff1b'
-     '\u5e26\u6765\u7684\u8fb9\u754c\uff1a\u7bb1\u5b50\u8fdb\u4e0d\u53bb\uff08\u5df2\u7531 CsMap.CanStand \u7684\u201c\u5730\u9762\u4e00\u6b65\u95f8\u95e8\u201d\u62e6\u4f4f\uff09\uff0c'
-     '\u4f46\u4f4d\u56fe\u672c\u8eab\u4ecd\u4e0d\u80fd\u5355\u72ec\u56de\u7b54\u201c\u80fd\u4e0d\u80fd\u7a7f\u201d',
-     'Assets/Scripts/Module/Map/CsMap.cs\uff08CanStand/BodyHeightClear\uff09\uff1b'
-     'Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs:30\uff08FlagHeightField\uff09',
-     '\u5f15\u64ce\u5f00\u51fa V2 \u9ad8\u5ea6\u573a\uff08FlagHeightField\uff09\u540e'),
-    ('\u6295\u63b7\u7269\u4e0e\u89d2\u8272\u4e4b\u95f4\u4e0d\u4e92\u76f8\u6321/\u63a8\u5f00',
-     '\u672c\u7247\u53ea\u628a\u201c\u89d2\u8272\u5bf9\u89d2\u8272\u201d\u8fd9\u4e00\u5c42\u505a\u51fa\u6765\uff08CsActorSeparation \u53ea\u6536 CsActor\uff09\uff1b'
-     '\u539f\u7248\u6295\u63b7\u7269\u662f MOVETYPE_BOUNCE \u5b9e\u4f53\uff0c\u4e0e\u89d2\u8272\u662f\u5426\u4e92\u76f8\u963b\u6321\u672c\u673a\u53d6\u4e0d\u5230\u53ef\u4fe1\u51fa\u5904\uff08\u539f\u7248 mp.dll \u672a\u5728\u76d8\uff09',
-     'Assets/Scripts/Module/Map/CsActorSeparation.cs\uff08\u53ea\u6536 actor\uff09\uff1bModule/Match/CsInventory.cs\uff08\u6295\u63b7\u7269\u843d\u70b9\uff09',
-     '\u89e3\u51fa\u539f\u7248\u6295\u63b7\u7269\u7684 solid/movetype \u540e'),
-    ('\u96f7\u8fbe\u5e95\u56fe\u975e\u539f\u7248 overviews/de_dust2.bmp',
-     '\u539f\u7248 overviews/de_dust2.bmp + .txt \u672c\u673a\u4e0d\u5728\u76d8\uff08\u964d\u7ea7\u94fe\u9000\u5230\u7ea7\u2460\uff1a\u7531\u5de5\u7a0b\u5185 de_dust2_geo.bin \u79bb\u7ebf\u4fef\u89c6\u6805\u683c\u5316\uff09',
-     'Core/ResPaths.cs:117 / tools/probes/render-overview.py', '\u62ff\u5230\u539f\u7248 overviews \u540e\u540c\u540d\u8986\u76d6 PNG'),
-    ('\u67aa\u53e3\u706b\u7130/\u5f39\u75d5/\u706b\u661f \u7cbe\u7075\u4e3a\u7a0b\u5e8f\u751f\u6210',
-     '\u539f\u7248 sprites/muzzleflash*.spr \u4e0e decals.wad \u4e0d\u5728\u76d8\uff08archive.org \u4e0d\u53ef\u8fbe\uff09',
-     'Core/ResPaths.cs:147-159 / tools/probes/make-fx-sprites.py', '\u62ff\u5230\u539f\u7248\u7d20\u6750\u540e\u540c\u540d\u8986\u76d6'),
-    ('\u63a7\u5236\u53f0\u7528 / \u6216 0 \u4ee3\u66ff ~',
-     '\u5f15\u64ce GameKey \u679a\u4e3e\u91cc\u6ca1\u6709 BackQuote\uff08\u5951\u7ea6\u7f3a\u53e3\uff09',
-     '\u7b56\u5212/\u9a8c\u6536\u8868.md \u5141\u8bb8\u7684\u5dee\u5f02#3', '\u5f15\u64ce\u8865 GameKey.BackQuote'),
-    ('ZoomFov=40 \u65e0\u51fa\u5904\uff1bRoundEndTime=5s \u4e3a\u672c\u9879\u76ee\u81ea\u5b9a',
-     'CS \u5f00\u955c FOV \u7531 cstrike/cl_dlls/client.dll \u4e0b\u53d1\uff0cHLSDK \u91cc\u6ca1\u6709\u8be5\u5b9e\u73b0\uff1b\u56de\u5408\u7ed3\u7b97\u65f6\u957f\u672a\u89e3\u51fa',
-     'Core/CsConst.cs:163 / Core/CsConst.cs:57\uff1b\u5bf9\u7167\u8868 A-05', '\u89e3\u51fa client.dll \u5bf9\u5e94\u5e38\u91cf\u540e'),
-    ('de_dust2.bsp func_breakable \u6728\u7bb1\uff08\u00d710\uff09\u672a\u5b9e\u73b0\u53ef\u7834\u574f',
-     '\u5de5\u7a0b\u628a\u7bb1\u5b50\u5f53\u9759\u6001\u51e0\u4f55\uff08box.png / box_x.png\uff09\uff0c\u6ca1\u6709\u53d7\u51fb\u788e\u88c2\u903b\u8f91',
-     'Assets/ThirdParty/Dust2/de_dust2.bsp\uff08entity lump\uff09', '\u5b9e\u73b0 func_breakable \u540e'),
-    # \u5207\u7247H \u5df2\u6d88\u9664\uff1aUnity \u6a21\u677f\u6b8b\u7559\u573a\u666f SampleScene.unity\uff08+\u672a\u4f7f\u7528\u7684 reload_unused.wav\uff09
-    # \u5df2\u6309\u300c\u4e0d\u8be5\u8fdb\u5de5\u7a0b\u7684\u79fb\u51fa Assets/\u300d\u79fb\u5230 \u539f\u7248\u8d44\u6e90/_moved-out-from-assets/\u3002
-    # \u767b\u8bb0\u662f\u300c\u5141\u8bb8\u7684\u5dee\u5f02\u300d\u4e0d\u662f\u7f3a\u9677\u6863\u6848\uff1a\u4fee\u597d\u4e86\u5c31\u5220\u6389\u8fd9\u6761\u3002
-    ('\u5df2\u79fb\u51fa\u5de5\u7a0b\uff08\u5207\u7247H\uff09\uff1aAssets/Scenes/SampleScene.unity\u3001Resources/Sound/SFX/sfx/reload_unused.wav',
-     'Unity \u6a21\u677f\u81ea\u5e26\u573a\u666f\uff08\u672a\u767b\u8bb0 Build Settings\u3001\u65e0\u4ee3\u7801\u5f15\u7528\uff09\u4e0e\u4e00\u4e2a\u540d\u5b57\u5c31\u662f unused \u7684\u901a\u7528\u6362\u5f39\u97f3'
-     '\uff08\u672c\u5de5\u7a0b\u6362\u5f39\u97f3\u6309\u6b66\u5668\u9010\u628a\u62fc\u540d\uff09\u2014\u2014 \u4e24\u8005\u90fd\u4e0d\u5c5e\u4e8e\u53c2\u8003\u7269\u7684\u5fc5\u5907\u5f15\u7528\uff0c\u4e0d\u5e94\u8fdb\u5de5\u7a0b',
-     'Assets/Scenes/SampleScene.unity\uff1bAssets/Resources/Sound/SFX/sfx/reload_unused.wav',
-     '\u5df2\u6d88\u9664\uff082026-09-21 \u5207\u7247H \u79fb\u51fa\u5230 \u539f\u7248\u8d44\u6e90/_moved-out-from-assets/\uff09'),
-    # ── \u5207\u7247H\uff08D1 \u7ea2\u884c\uff09\uff1a\u4e0a\u9762 D1_UNREF_ALLOWED \u91cc\u90a3\u4e9b\u539f\u7248\u672a\u63a5\u7d20\u6750 ──
-    ('\u539f\u7248\u97f3\u6548\u5df2\u590d\u5236\u8fdb\u5de5\u7a0b\u4f46\u672a\u63a5\u4e8b\u4ef6\uff085 \u6761\uff1adryfire / hit_wall / knife_hit / flash_explode / bomb_beep_fast\uff09',
-     '\u539f\u7248 CS \u5bf9\u5e94\u65f6\u523b\u90fd\u6709\u97f3\uff08\u7a7a\u4ed3\u6263\u65cb\u3001\u5f39\u7740\u5899\u3001\u5200\u547d\u4e2d\u3001\u95ea\u5149\u7206\u3001C4 \u5feb\u8702\u9e23\uff09\uff1b'
-     '\u672c\u5de5\u7a0b\u90a3\u4e9b\u65f6\u523b\u53ea\u6709\u8868\u73b0/\u53ea\u6253\u65e5\u5fd7\u3001\u65e0\u58f0\u3002\u63a5\u7ebf\u5c5e\u300c\u97f3\u6548\u4e8b\u4ef6\u300d\u7ef4\u5ea6\uff08D8\uff09\uff0c\u672c\u7247\uff08\u5207\u7247H\uff09\u4efb\u52a1\u4e66\u660e\u4ee4\u4e0d\u505a D8',
-     'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,flash_explode,bomb_beep_fast}.wav\uff1b\u5bf9\u7167 tools/probes/enumerate-entities.py \u7684 D8 \u6bb5',
-     '\u4e0b\u4e00\u4e2a\u300c\u97f3\u6548\u4e8b\u4ef6\u300d\u7247\u9010\u4e2a\u63a5\u5230\u5f00\u706b/\u547d\u4e2d/\u4e0b\u5305\u5206\u652f\u540e'),
-    ('\u539f\u7248 de_dust2 \u8d34\u56fe\uff088 \u5f20\uff1aSandRoadTgtA / _1Sand / _1SandRock2 / _1csSandWall / _2SandRock2 / _3Sand / black / wall_g\uff09\u5df2\u590d\u5236\u4f46\u51e0\u4f55\u672a\u5f15\u7528',
-     '\u672c\u5de5\u7a0b\u51e0\u4f55\u53ea\u7528 geo.bin \u7684 33 \u4e2a\u4e3b\u6750\u8d28\u7ec4\uff1b\u8fd9 8 \u5f20\u5c5e\u539f\u7248\u7684\u8d34\u82b1\u5c42\uff08TgtA\uff09\u4e0e\u7ec6\u8282\u5c42\uff08detail\uff09\u8d34\u56fe\uff0c\u672c\u5de5\u7a0b\u672a\u5b9e\u73b0\u90a3\u4e24\u5c42'
-     '\uff08\u7ecf\u5b9e\u6d4b\uff1a8 \u5f20\u7684 guid \u5728\u5168\u5de5\u7a0b\u4efb\u4f55 .mat/.prefab/.unity/.asset \u91cc\u90fd 0 \u6b21\u547d\u4e2d\uff09',
-     'client/Assets/ThirdParty/Dust2/Textures/\uff1b\u539f\u7248 de_dust2.bsp \u7684 miptex \u76ee\u5f55\uff08tools/probes/bsp-entities.py \u53ef\u91cd\u6570\uff09',
-     '\u8865\u8d34\u82b1/\u7ec6\u8282\u5c42\uff0c\u6216\u5728\u300c\u53ea\u590d\u5236\u88ab\u5f15\u7528\u7684\u90a3\u51e0\u4e2a\u300d\u539f\u5219\u4e0b\u628a\u5b83\u4eec\u79fb\u51fa client/Assets/'),
-    ('\u539f\u7248 GameUI \u5b57\u6807 logo_game.tga \u5df2\u590d\u5236\u4f46\u672a\u4f7f\u7528',
-     '\u4efb\u52a1\u4e66\u628a\u300c\u600e\u4e48\u7528\u300d\u5212\u7ed9\u4e3b\u83dc\u5355\u7247\uff1b\u672c\u7247\u53ea\u8d1f\u8d23\u628a\u5b83\u4ece\u539f\u7248\u642c\u8fdb\u5de5\u7a0b\uff08\u89c1\u9a8c\u6536\u8868\u300c\u5141\u8bb8\u7684\u5dee\u5f02\u300d#37\uff09',
-     'client/Assets/Resources/UI/Art/logo_game.tga\uff1b\u6e90 = \u539f\u7248\u8d44\u6e90/cs16src/cs16game/app/cstrike/resource/logo_game.tga',
-     '\u4e3b\u83dc\u5355\u7247\u628a\u5b83\u63a5\u8fdb ResPaths \u5e76\u4e0a\u5c4f\u540e'),
-    # ── 切片K（S1 出处补齐 + D8 音效事件接线）新增的登记 ──────────────────────────
-    ('切片K：dryfire / hit_wall / knife_hit / bomb_beep_fast / round_start2 这 5 条 wav 的'
-     '**原版源文件名映射未记录**',
-     '它们确是原版 CS 1.6 的音效（空仓击发 / 弹着 / 刀命中 / C4 快蜂鸣 / 备用回合开始），'
-     '但 `client/资源欠缺清单.md:37` 第 11 项只记了 c4_beep1 / c4_plant / c4_disarm / c4_explode1 / '
-     'hegrenade-1 / flashbang-1 / radio/bombpl / radio/bombdef 这 8 条映射；'
-     '原版 sound/ 树（`原版资源/cs16src`）已空 ⇒ 无法把短名逐条对回原版文件名',
-     'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,bomb_beep_fast,round_start2}.wav（在盘）；'
-     'client/资源欠缺清单.md:37；原版资源/清单.md（cs16src 已空）',
-     '用户补回 CS 1.6 客户端本体（原版资源/cs16src）后逐条对账'),
-    ('切片K：hit_wall 的「按材质分流」只落到一条采样，且刀「砍空」没有独立采样',
-     '原版打沙 / 打木箱 / 打金属是**不同采样**，刀砍中人与砍空也是两条采样；'
-     '盘上只有 hit_wall.wav（打墙）与 knife_hit.wav（刀命中）各一条 ⇒ '
-     '材质分类（CsAudioTuning.ClassifyImpact）已做、日志可逐类核对，但各材质现在落同一 clip；'
-     '刀砍空（CsInventory.RaycastActor 返回 null）无音',
-     'Module/Audio/CsAudioTuning.cs（ClassifyImpact / HitWall / KnifeHit）；'
-     'Module/Combat/CombatModule.cs（弹着音挂点）；Module/Match/CsDamage.cs（刀命中挂点）',
-     '拿到原版按材质的弹着采样与刀挥空采样后，只改 CsAudioTuning 的分类→短名映射'),
-    ('C4 蜂鸣的「加速档分界 10s」与两档间隔（1.0s / 0.25s）无原版出处',
-     '原版 C4 蜂鸣节奏写在 `mp.dll` 的 C4 逻辑里（不是 cvar，`settings.scr` / `server.cfg` 都查不到），'
-     '而 `mp.dll` 不在盘（`原版资源/cs16src` 已空）⇒ 该分界只能按本工程自己的口径统一'
-     '（CsConst.BombBeepIntervalSlow/Fast 的 10s 注释 + CsAudioTuning.BombBeepFastBelow）',
-     'Core/CsConst.cs（BombBeepIntervalSlow / BombBeepIntervalFast）；'
-     'Module/Audio/CsAudioTuning.cs（BombBeepFastBelow）',
-     '解出 mp.dll 的 C4 蜂鸣节奏后'),
-    ('CsBotConst 的绝大多数阈值无原版出处（**本项目新增**）',
-     'A = CS 1.6 本体**不含机器人 AI**（官方 bot 属 Condition Zero / PodBot，不在本工程的载体范围）⇒ '
-     '"bot 手感阈值"在 A 里没有对应量；规格 §2.4 只给三档的反应时间 / 瞄准误差（±6° / ±3° / ±1.2°）'
-     '与行为特征，不含这些阈值。三条有对应量却取不到载体的（瞄胸高度比例 / 脚步噪声阈值 / 预瞄节奏）'
-     '见下面两条与 CsBotConst 各行的注释',
-     'Module/Bot/CsBotConst.cs（66 行逐条注释已标"本项目新增"或指到定义真源）；'
-     '策划/策划案/CS1.6单机参考规格.md:113-118（§2.4 三档表）；Module/Match/CsTypes.cs:148（CsBotProfile）',
-     '若主 agent 决定改为「逐条对齐 PodBot / CZ bot 源码」则另开片'),
-    ('脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）',
-     '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件属 `原版资源/cs16src`、已空；'
-     '② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），'
-     '本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值',
-     'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76',
-     '用户补回原版载体（原版资源/cs16src）后对账脚步节拍；落地音属"A 本来就没有"，不消除'),
-    ('切片K（D8）：Defuser / Vest / VestHelm 三个被动装备没有开火 / 换弹音',
-     '它们不是武器：原版 CS 1.6 里既没有"手持并开火"、也没有换弹动作 ⇒ **原版也没有**这两个采样。'
-     '旧判据（D8 的"每个 id 都要有 <id>_fire.wav / <id>_reload.wav"）把它们当武器，'
-     '要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"',
-     'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85',
-     '不消除（与 A 一致的行为差异）'),
-    # ── 切片L（S1 出处补齐）新增的登记 ────────────────────────────────────────────
-    ('切片L（S1）：操作 / 表现层的可调旋钮没有原版出处（CsCombatTuning 全 31 条；'
-     'CsMatch / CsViewTuning / CsConst 里标「本项目新增」的那些）',
-     '这些量（后坐力时间常数 / 散布倍率 / 准星扩散 / bob / 开镜过渡 / 受击晃动 / 枪口火焰时长 / 各类实现容量上限）'
-     '在 A 里对应的是**客户端手感**，原版把它们写死在 `cstrike/cl_dlls/client.dll` 与 `mp.dll` 的逐武器代码里'
-     '（不是 cvar、也不是数据表 —— 见 `策划/对照表.md` §6 BLOCKED-1 / BLOCKED-2）；'
-     '本机原版载体 `原版资源/cs16src` 已空（`原版资源/清单.md`）⇒ 拿不到 `文件:偏移` 级出处，'
-     '只能取本工程自定值并逐条如实标注',
-     'client/Assets/Scripts/Module/Combat/CsCombatTuning.cs（31 条逐行已标「本项目新增」+ 该条与 A 的关系）；'
-     'Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；'
-     '策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36',
-     '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
-    # ── 切片N（S1 装备 viewmodel 判据 + 伤害飘字下架）新增的登记 ─────────────────────
-    ('切片N（S1）：Defuser / Vest / VestHelm **没有第一人称 viewmodel / AnimatorController**',
-     '它们是**被动装备** —— A（CS 1.6）里既不能"手持"、也没有第一人称动作 ⇒ **原版本身就没有**'
-     '这三个 v_ 模型。旧判据把 CsWeapons 里所有 id 都当武器、要求 vm_<id>.controller 存在，'
-     '对它们不成立；要满足它只能去 Editor/Views **生成**这三个控制器 = 造 A 没有的素材'
-     '（skill §0 铁律 1）⇒ 判据已改为「A 也无此 viewmodel ⇒ 一致」',
-     'tools/probes/enumerate-entities.py（S1 段的 S1_PASSIVE_EQUIPMENT 分支）；'
-     '依据 = client/Assets/Editor/Views/ModelData/*.cs16anim 共 38 个（29 个 vm_* + 9 个 player_*，'
-     '装备类 0 命中）+ client/Assets/Resources/Art/Anim 的 29 个 vm_*.controller；Core/CsWeapons.cs:83-85',
-     '不消除（与 A 一致的行为差异）'),
-    ('切片N：**下架了本项目新增的"伤害数字飘字"**（HudPanel 的 ShowDamageNumber / ObserveLocalDamage）',
-     'A（CS 1.6）的 HUD **没有伤害数字项**（原版 HUD 只有 hitmarker 与击杀提示）⇒ 屏幕上的 '
-     '`-<数字>` 飘字属本项目自行新增的命中反馈文本，按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。'
-     '留下的只有**受击方向指示器**（屏幕边缘红框，A 有这条反馈）⇒ 那个被两处共用的时长常量'
-     '随之由 DamageNumberTime 改名为 DamageIndicatorTime（含全部引用点）',
-     'client/Assets/Scripts/UI/InGame/HudPanel.cs（删除处留了注释与依据）；'
-     'Core/CsConst.cs（原注释即写「本项目新增」）；'
-     '策划/对照表.md §4「界面元素坐标/尺寸/颜色」——原版 HUD 元素已逐条出处化（U-01~U-37，'
-     '引用到 hud.txt:110/120/121/122/127/131/135/137/179/183 等），**其中没有任何"伤害数字"项**；'
-     '策划/验收表.md B 段——我方 HUD 项清单 H1~H15 里也没有它（H9 = 命中标记 hitmarker）；'
-     'client/资源欠缺清单.md——A 有 / 我方缺 的逐项对账里同样没有这项。'
-     '⚠️ 如实说明：**原版硬载体（cstrike/sprites/hud.txt 与 原版资源/解包产物/）本机不在盘**'
-     '（`原版资源/清单.md` 实测：cs16src/ 与 解包产物/ 为空）⇒ 拿不到 hud.txt 原文级的"无此项"直证，'
-     '本项按任务书退路登记为「本项目新增、与原版无关」',
-     '不消除（A 本来就没有；若将来要加回，必须先给出原版出处的 file:line）'),
-    # ── 切片P：修前/修后 2x2 合成图**采不到**（修前帧已不存在）⇒ 登记为允许的差异 ────────
-    # 判据原文（验收表 F 段 R1 角色模型 / R2 viewmodel）要求「修前 / 修后 2x2 并排图」。修前诊断帧
-    # `80_fix_pre_char_invisible` / `81_fix_pre_vm_nogun` 是 bug 现场抓的；`AnimSetup.Fill` 的
-    # 按值传参修好后蒙皮 bindpose 再也不会全零 ⇒ 同形态的修前帧不可能复现。
-    # ⛔ 不许"临时改回旧实现"去复现（拿工程当道具），⛔ 不许用别的图冒充 ⇒ 按允许的差异登记，
-    # 判据换成「修后帧 + 逐骨骼/包围盒数值（bindposes 逐个非零、脚底 y 与 CsActor.Position.y 对齐）」。
-    ('修前/修后 2x2 合成图 92_fix_before_after_2x2 采不到（修前帧不可复现）',
-     '修前帧 80_fix_pre_char_invisible / 81_fix_pre_vm_nogun 是 bug 现场抓的诊断图；'
-     'bug 修好后（AnimSetup.Fill 按值传参 ⇒ 蒙皮 bindpose 全零 ⇒ 几何塌成一点）同形态的修前帧再也出不了。'
-     '拿别的图冒充或临时改回旧实现去"复现"都属伪造 ⇒ 改为「修后帧 93_fix_post_char_closeup / 97_fix_post_char_front '
-     '+ 逐骨骼/包围盒数值」作为判据',
-     'client/Assets/Editor/Views/AnimSetup.cs（Fill 的修复处）；'
-     '策划/验收表.md「允许的差异」新增行；R1/R2 行的旧图名已按「不可采」改写',
-     '不消除（修前态本就不可复现；若将来又出现同类蒙皮 bug，则在现场重采 2x2）'),
-    # ── 切片AB：§G D2「低矮障碍」残留 5 格 ────────────────────────────────────────
-    # 判定公式**一个字没改**（T0：宁可登记为差异，不许放水）：残留 5 格逐格查明原因，分三类。
-    ('§G D2「低矮障碍（含楼梯扶手/台阶沿）」残留 5 格不达标（判据未放宽，逐格已查明）',
-     '用户报的那一处（匪家矮墙/台阶沿 cell(20,27)，h=0.81 m）本片已通过：'
-     '全图 71 处候选里地面挡 71/71、跳起站得住 67/71、横跨窗口全 OK（h=0.81 m 的 65 格矮墙/台阶沿里 63 格通过，'
-     '另 2 格是下面的"箱堆"口径问题）。'
-     '残留 5 格分三类，**都不是**"位图判挡 + '
-     '顶面够得着却站不上去"的隐形墙形态：'
-     '(a) cell(82,86)/(23,123)：顶面够得着，但身高带里**真有实体**（沙子混凝土台上压着箱子，真顶面 2.44 m；'
-     '军械箱上再叠一箱，真顶面 5.28 m - 来路 3.25 m = 2.03 m）⇒ 原版同样上不去 —— 这是"什么才算矮障碍"的'
-     '**候选分类口径**问题，不是实现缺口；'
-     '(b) cell(51,108)：军械箱顶（高差 1.13 m）逼近跳跃峰值 1.1445 m ⇒ 时间窗 0.073 s × 5.4 m/s = 0.39 m '
-     '< 需跨 1.72 m，一次跳跃不可能**横跨**；本行"边界：恰好在跳跃可达高度上"一条已定案'
-     '「顶面高差 ≤ 可达高度 ⇒ 能跳过去」，两条口径自相矛盾（横跨比"顶面够得着"更严，且原版 GoldSrc '
-     '起跳不改变水平速度、同样跨不过去）；'
-     '(c) cell(118,52)/(118,53)：SandTrim 收边条（顶面 6.96 m / 来路 6.50 m），外侧是图外虚空 ⇒ 9 点探针有 3 个'
-     '落点所在子区域**没有任何世界几何**，运行时按保守口径判挡（切片U/S 特意保留，⛔ 本片不碰）。',
-     '判据 tools/probes/geom-check.py（A5：候选 / 来路判挡 / 顶面可站 / 横跨可达，+ probe_kind_9 把'
-     '"外侧虚空"与"真有实体"分开）；运行时口径 client/Assets/Scripts/Module/Map/CsMap.cs:260-425'
-     '（CanStand 两层判据 / BodyHeightClearAt 的保守判挡 / 9 点半径采样）；'
-     '逐格数字见 geom-check 报告 A5 段与 策划/状态矩阵.tsv（本片回写）',
-     '主 agent 裁决「候选分类口径」后：(a)(b) 两格在收紧为「只收格内真顶面 ≤ 可达高度的格」+'
-     '「横跨窗口降级为信息行（判据 = 顶面高差 ≤ 跳跃可达高度）」时归零；'
-     '(c) 两格属运行时保守口径，需把站立判定改成原版单点口径（另开片，⛔ 本片未改引擎/未改该调用链）'),
+    # 片AD（2026-09-21）：真源收敛为单一作者 —— 首列为编号，与验收表「允许的差异」段逐条一一对应（62 行）。
+    # 编号 1-22 / 25-48 = 原验收表行（其中 3/18/44/45/46/48 由下面的真源文本提供）；49-64 = 真源独有、已补进验收表段。
+    ('1', 'Find Servers 列表为空', '单机版没有局域网对局可发现；面板与 `Game.LanBrowser` 链路本身是通的', '`UI/Flow/ServerListPanel.cs`', '做联机版时接真实 LAN 广播'),
+    ('2', 'Quit 未在自动化里真触发', '自动化在编辑器内跑，真 `Application.Quit()` 会把编辑器一起关掉', '`Module/Flow/AppFlow` 的 `QuitGame` 分支', '打包成独立 exe 后手测'),
+    ('3', '控制台用 / 或 0 代替 ~', '引擎 GameKey 枚举里没有 BackQuote（契约缺口）', '策划/验收表.md 允许的差异#3', '引擎补 GameKey.BackQuote'),
+    ('4', '机器人"刚丢视野后仍开火"≤ 反应时间 + 1 tick', '目标反复进出视野，每 tick 恰好不可见会让扳机永不扣（曾 22 次交战 0 发）；宽限只瞄最后所见位置', '`Module/Bot/CsBotBrain.cs` 开火门限段', '机器人能稳定维持可见窗口后取消'),
+    ('5', 'H 菜单不显示"当前机器人数量/难度"', '`CsHudSnapshot` 没有 BotCount/BotDifficulty 字段（契约缺口）', '`Core/CsHudSnapshot.cs`', '契约补两个字段'),
+    ('6', '机器人三档在 30 s 实机小窗里准度不单调', '三档 `VisionRange`(32/40/48) 与 `PreferredRange`(12/16/22) 不同 ⇒ 小样本下几何效应盖过瞄准误差；离线 45 s 判据连续两次 PASS 且单调', '`Module/Match/CsTypes.cs`', '拉长自检窗口 ≥45 s'),
+    ('7', '机器人**自然对局**命中率 5.6~9%', '双方沿路线推进，交火距离常 33~79 m 且多掩体；同代码贴身交战 43~65%', '`CsBotBrain` 目标选择 + `Dust2Builder` 路线点', '调 `Route_*` 让推进线与防守位相交'),
+    ('8', '`Debug.Log` 仍在 1 处（原 2 处；① 已消除）', '① ~~`BotModule.cs:382` 在 `_verboseStats` 调试开关内（默认关）~~ → **已消除（片AC 2026-09-21）**：该行与上一行的 `Game.Logger.Info` 完全重复，冗余 `Debug.Log` 与只服务于它的 `_verboseStats` 字段一并移除（hard-rule 非注释命中 8→7）；② `BotSelfTest.cs` 是自检宿主，`Game` 未 Launch 时无 Logger', '`Module/Bot/BotModule.cs`、`BotSelfTest.cs`', '① 已消除；② 属自检工具，不消除'),
+    ('9', '`Object.Instantiate` 仍在 3 处', '都是"预制体 → 场景实例"，不是池化：引擎 `Game.Pool` 管"同一对象复用"，角色/viewmodel 每次进图要新建', '`Module/View/ViewModule.cs`、`ViewModelRig.cs`', '可加视图池（收益仅"换局少一次实例化"）'),
+    ('10', '9-blend 瞄准序列只取正中一路（blend 4）', '原版按瞄准方向做 2 维插值；布局实测为 `[blend][bone]`（`hlsdk` 878 行），blend4 双手最正前对称。剩余 8 路未插值', '`cs16_anim.py` 导出逻辑', '实现 2 维 blend 插值'),
+    ('11', '角色腿的命中盒合并挂根骨', '原版左右腿是两个 hitbox，本工程契约只有 4 个命中盒（头/胸/腹/腿）', '`CsHitboxProxy` 挂骨映射', '契约扩成 5 个命中盒'),
+    ('12', '死亡序列按 actorId 取一条，**播完才隐藏**', '原版 `death1..3` 随机取一条；我方按 `actorId % 3` 固定取一条（可复现）。**"播完才隐藏"在状态名修复后成立**（agent-17 实测：`ActorView.PlayDeath` 走 `ResolveState`，状态名不匹配时它 `return; SetShown(false)` ⇒ 旧版是**立即隐藏**；修好后实机时间线：`death2 clipLen=1.367 fps=30`，`shown=True` 一路保持到 `norm=0.902`（t=1269ms），序列在≈1.40s 播完，`shown=False` 出现在 t=1524ms）', '`ActorView.cs`（`PlayDeath` / `OnClipFinished`）', '引入随机（会牺牲可复现性）'),
+    ('13', '切枪/落地**角色**序列不存在', '原版角色模型 group0 的 111 条序列里**没有** `draw`/`land`（切枪动画只在 `v_*` 上）⇒ 不是我方缺，是 A 没有', '`cs16_anim.py` 实测标签表', '无需消除（A 也没有）'),
+    ('14', '~~雷达尺寸未落 1080p 真值~~ → **已消除（2026-09-21 重出）**：`RadarSize` 已为 `128`，且**生成器重生成 `HudPanel.prefab`** 才使其生效（旧预制体停在 200f，只改常量不生效）', '旧判据「需第一人称 HUD 原版截图」被 `hud.txt:183` 取代：`radar 640 radar640 0 0 128 128` + GoldSrc 分辨率档判据（屏幕宽>640 用 640 档、该档精灵 1:1 不缩放）⇒ 1080p 真值 = 128×128；实机 `screenRect x[24..152] y[938..1066]`、`scaleFactor=1.0000`', '`原版资源/cs16src/cs16game/app/cstrike/sprites/hud.txt:183`；代码 `CsHudTheme.RadarSize`；`Editor/UiGenInGame/UiBuilder.cs`（重出入口）', '已消除'),
+    ('15', '秒表图标内圈与截图不完全一致', '原版截图 ink 23×25 / 本体精灵 ink 17×22，且中心行内圈一个是空心环一个是实心盘（两个载体不是同一版贴图）', '`CsHudTheme.cs` 注释', '拿到社区包同版 `640hud7.spr` 或由人裁决以本体为准'),
+    ('16', 'HUD 血量/金钱/弹药那排的绝对坐标未对齐', '原版把坐标写死在 `cl_dlls/client.dll`（二进制），已穷尽反汇编未定位；31 张截图是旁观机位、无这排', '`原版资源/解包产物/原版HUD布局.md` BLOCKED-D1', '同上（需第一人称 HUD 截图）或继续反汇编 `client.dll`'),
+    ('17', '未实现的服务器管理 cvar', '`mp_tkpunish`(0) / `mp_limitteams`(2) / `mp_winlimit`(0) / `mp_timelimit`(0) / `mp_autokick`(1) / `mp_forcecamera`(0) / `mp_fadetoblack`(0) / `decalfrequency`(30)；单机 + bot 场景下默认值多数不触发行为', '`原版资源/解包产物/原版数值表.md` §1', '逐条实现（默认 0 的项实现后行为不变）'),
+    ('18', 'ZoomFov=40 无出处；RoundEndTime=5s 为本项目自定', 'CS 开镜 FOV 由 cstrike/cl_dlls/client.dll 下发，HLSDK 里没有该实现；回合结算时长未解出', 'Core/CsConst.cs:163 / Core/CsConst.cs:57；对照表 A-05', '解出 client.dll 对应常量后'),
+    ('19', '观战/第一人称机位**未复现原版 `viewsize` 补偿**', '原版在 `view->origin[2] -= 1` 之后还会按 `viewsize` 补偿（110→+1 / 100→+2 / 90→+1 / 80→+0.5 unit，`view.cpp:667-684`），而原版默认 `viewsize` 从项目内载体解不出（CS 侧 HUD 实现在 `client.dll`）⇒ agent-22 只落了确定的那一项（`view.cpp:665` 的 −1 unit = y −0.0254 m），**不编** viewsize', '`client/Assets/Scripts/Module/View/CsViewTuning.cs`（ViewModelLocalPosition 的注释）；`HLSDK/cl_dll/view.cpp:665`（已实现）/ `:667-684`（未实现）', '解出默认 `viewsize`，或原版第一人称截图能定案 viewmodel 占比'),
+    ('20', '`CsViewTuning.PositionSmoothTau = 0f` 无原版出处', '原版客户端确实做位置插值（`ViewInterp` 环形缓冲），但它的口径是"`Length(delta) < 64` 才插值"的**位置回放**，换算不出可写进代码的指数平滑 tau ⇒ 取 0（直接用模拟的权威位置）', '`client/Assets/Scripts/Module/View/CsViewTuning.cs`（PositionSmoothTau 的注释）；`HLSDK/cl_dll/view.cpp:719-785`', '按原版语义实现 `ViewInterp`（位置回放而非指数平滑）'),
+    ('21', '`CsViewTuning.AnimMoveSpeedEpsilon = 0.15f` 无原版出处', '原版按速度选动画档位的阈值在服务端 `cstrike/dlls/mp.dll` 里（`HLSDK/cl_dll/` 没有 CS 的角色动画选择），本项目未反汇编出该阈值 ⇒ 0.15 m/s 是项目新增的判定门限', '`client/Assets/Scripts/Module/View/CsViewTuning.cs`（AnimMoveSpeedEpsilon 的注释）', '从 `mp.dll` 反汇编出选序列的速度阈值'),
+    ('22', 'HUD 血量/护甲图标已是**原版位图**，但着色取纯白', '三张图标精灵是 GoldSrc 的加性灰阶遮罩（调色板逐项 `(i,i,i)`），本身不带颜色；原版渲染时的调制值取不到（原版 HUD 那一排的坐标与颜色写在 `client.dll`，且项目内 31 张原版 1920×1080 截图全是旁观机位、没有这排）⇒ 取"无调制"（白），**不编**颜色', '`client/Assets/Scripts/UI/InGame/CsHudTheme.cs`（HudIconTint 的注释）；`策划/对照表.md` F-04 [BLOCKED]', '拿到一张第一人称 + HUD 打开的原版截图'),
+    ('25', '原版 `jointeam 3`（VIP）落到 CT', '本工程阵营契约 `CsTeam` 只有 `Spectator / T / CT`（`Core/CsEnums.cs`），**没有 VIP 阵营**；原版 `teammenu.res:121-139` 的 `vipbutton` 文案是 `#Cstrike_VIP_Team`（`&3 VIP`）、命令 `jointeam 3`。VIP 属 CT 一侧 ⇒ 落到 CT 并打一条 Warn（`TeamSelectPanel.OnCommand`）', '`原版资源/cs16src/cs16game/app/cstrike/resource/ui/teammenu.res:121-139` + `client/Assets/Scripts/Core/CsEnums.cs`（`CsTeam`）', '契约扩出 VIP 阵营（要改 `Core`，不在本片范围）'),
+    ('26', '原版 `AUTO ASSIGN` 用**对半随机**代替"分配到人数少的一方"', '原版 `jointeam 5` 由服务器按两队人数分配；本工程是**单机版**（无真人计数）⇒ 取随机并打日志说明', '`teammenu.res:141-159`（`#Cstrike_Team_AutoAssign`）', '做联机版、或从 `CsHudSnapshot` 读到两侧人数后按原版语义分配'),
+    ('27', '~~选阵营 Frame 的底色取 `WindowBG "0 0 0 200"`~~ → **已消除（2026-09-20 实现者本片）**：`TeamMenu` 底色改为原版 `ControlBG "0 0 0 0"`（**全透明**，那块"凭空多出来的黑板"就是旧的 WindowBG）', '原判断有误：Frame 的默认底色有载体 —— `clientscheme.res:101` 的 `BgColor "ControlBG"` 就是"所有控件的默认底色"，而 `:38` 是 `ControlBG "0 0 0 0"`（全透明）；`WindowBG "0 0 0 200"`（`:41`，行尾注释自己写着 `background color of text edit panes (chat, text entries, etc.)`）是**文本框/聊天**的底，不是 Frame 的', '`clientscheme.res:38`（ControlBG）、`:101`（BgColor）、`:41`（WindowBG，反例）；代码 `UI/Flow/CsUiStyle.cs`（新增 `ControlBg`）+ `UI/Flow/TeamSelectPanel.cs`', '已消除（实测 `TeamMenu(Image) color=(0,0,0,0) rgba8=(0,0,0,0)`；图 `33_teamselect.png`）'),
+    ('28', '**Options 页签条（7 个页签）坐标无载体出处**', '本包**缺 `OptionsDialog.res`**（它在 GameUI 静态库里，不在两张 ISO 的资源目录里）⇒ 页签条按「原版配色 + 原版字体 + 就近对齐」重建。⚠️ 页签**文案**本身有出处（`gameui_english.txt:97/98/99/100/101/41/44`），**只有坐标是新增**', '缺载体（实测 `原版资源/cs16src/cs16game/app/{cstrike,valve}/resource/` 下无 `optionsdialog.res`）；文案出处 `gameui_english.txt:97-101,41,44`', '拿到 GameUI 的 `OptionsDialog.res`，或用原版 640×480 实机图量化页签条'),
+    ('29', '子页整体落点 / 对话框标题 / `Ok·Cancel·Apply` 的归属为**本项目就近对齐**', '同上缺 `OptionsDialog.res`：子页在该对话框里的原点未知 ⇒ 页原点取 `teammenu.res` 的 Frame 左边距（76 设计 px → 171 画布 px）；那三个按钮的坐标取自 `optionssubmultiplayer.res:3-68`（原版把对话框级按钮就写在该子页里），本片只建一次、跨页可见', '缺载体：同 #28；坐标出处 `optionssubmultiplayer.res:3-68`', '同 #28'),
+    ('30', '原版控件类型在本工程**没有对应实现** ⇒ 用近邻控件代替', '引擎（E-core-16 下沉后）只有 `Slider / InputField / Selector / ToggleRow / Button / Text / Image`：VGUI 的 `ComboBox`（下拉）→"点击循环"按钮、`HTML` → 纯色块 + 原文文本、`ListPanel` → 纯色块 + 按键表文本、`ImagePanel` → 纯色块。**位置/尺寸仍逐字取自 `.res`**', '`clover-client-unity-engine/Runtime/Presentation/UIWidgetControls.cs`（引擎现有控件清单）', '引擎补下拉 / 列表 / HTML 控件后'),
+    ('31', '原版有、本工程**无对应实现**的选项：只复刻控件 + 留一条日志', '逐条：`Windowed` / `DetailTextures` / `Brightness` / `Gamma` / `Renderer` / `Resolution` / `AspectRatio` / `ColorDepth` / `MouseLook` / `MouseFilter` / `Joystick` / `JoystickLook` / `Auto-Aim` / `voice_modenable` / `MicBoost` / `VoiceReceive` / `#GameUI_MicrophoneVolume` / `TestMicrophone` / `ContentlockButton` / `Defaults` / `ChangeKeyButton` / `ClearKeyButton` / `Player model` / `SpraypaintList` / `SpraypaintColor` / `High Quality Models` / `Primary Color Slider` / `Secondary Color Slider`。点/拖任一都会打一条 `Info`（⛔ 不许静默"点了没反应"）', '各控件在 `optionssub*.res` 的行号见 `OptionsPanel.cs` 控件表注释', '逐条实现（多数项在单机语义下本就没有行为）'),
+    ('32', '原版 `HEV suit volume` 承载本工程的**主音量**', 'CS 里没有 HEV 护甲语音（该项是 HL1 遗留），而本工程原来就有的"主音量"设置需要一只滑杆 ⇒ 复用它承载，滑杆位置/标签仍与原版逐字一致', '`optionssubaudio.res:19-34`（Suit Slider）+ `CsPlayerSettingsStore`（MasterVolume / ApplyToEngine）', '原版口径下无需消除（HL1 的 HEV 音量在 CS 里本就不生效）'),
+    ('33', '勾选框用**同色小方块**表达"已勾选"', '原版勾选字形来自 **Marlett** 字体（`clientscheme.res:483-492`），本工程没有该字体；方框边色仍取原版 `CheckButtonBorder1/2`（→ `BorderDark/Bright`）、勾色取 `CheckButtonCheck`（→ `BrightControlText`）。方框边长 16 / 文案起点 24 是**本项目新增**（原版由 Marlett 字模决定，无像素值可引）；**方框四条边由本项目凑齐** —— 原版边框由 VGUI 内部绘制（`clientscheme.res:177-179` 只给 `CheckButtonBorder1/2` 两个**颜色**、没给"怎么画"），早先只画左右两条竖边 ⇒ 视觉退化成"一竖条"，2026-09-20 补上上下两条横边（同色）', '`clientscheme.res:177-179`（勾选框配色）/`:483-492`（Marlett）', '拿到 Marlett 字体或改用位图勾'),
+    ('34', '原版字体带**CJK 回退族**', '原版 menu 全英文、没有中文；本工程面板里有中文（如"（本项目新增）"）⇒ `CreateDynamicFontFromOSFont(new[]{"Verdana","Microsoft YaHei",…})`，首选族仍是原版声明的 Verdana', '`clientscheme.res:229`（`"name" "Verdana"`）；主族来源见 `CsUiStyle.OriginalFont` 注释', '面板界面全英文后（本工程无此计划）'),
+    ('35', '按钮 / 勾选框的 **1 设计 px 边框**未画；按钮文字内缩取 0', '原版的边框与文字内缩由 VGUI 内部绘制（`Borders/ButtonBorder` 只给了四条边的颜色，没给"uGUI 里怎么画"）⇒ 本片只落 `ButtonBG` 底色 + 左对齐（`textAlignment west`）。⚠️ 这不是"忘了"，是**载体只到颜色为止**', '`clientscheme.res:740-778`（ButtonBorder）/`:740-742`（inset 0 0 0 0）', '拿到原版实机图后量化边框宽度与文字内缩像素'),
+    ('36', '未做（原版有）：`Sound Quality` 下拉 / 选兵种 `classmenu_*.res`', '① 原版音质档位的标签是 HL1 的玩笑串（`GameUI_High "Horrible"` / `GameUI_Low "Even worse"`），本工程也没有音质档位 ⇒ 该控件与其标签**未建**（按任务书"可以比原版少"）；② 选兵种任务书明说允许本片不做', '`gameui_english.txt:63-64`；`原版资源/cs16src/cs16game/app/cstrike/resource/ui/classmenu_ct.res`、`classmenu_ter.res`', '需要时再补（音质档位先要有引擎侧的档位概念）'),
+    ('37', '`game_menu.tga` / `logo_game.tga` 已复制进工程但**本片不使用**', '任务书把"怎么用"划给 agent-32（主菜单片），避免两片抢同一处；本片只负责把它们从原版搬进工程', '源 = `原版资源/cs16src/cs16game/app/cstrike/resource/game_menu.tga`（26540 B）、`logo_game.tga`（65580 B）→ `client/Assets/Resources/UI/Art/`（字节数逐一相同）', '已消除（`game_menu.tga` 随主菜单片使用而消除；`logo_game.tga` 部分随 #46 消除）'),
+    ('38', '选阵营 `.res` 里 `visible=0` 的控件不建；`MapInfo`（`HTML`）用纯色块 + 原文文本复刻', '`SysMenu`（`teammenu.res:17-30`）与 `mapname`（`:65-81`）在原版就是隐藏的（`visible 0`）⇒ 建了反而与原来的画面不一致；`MapInfo` 的 `HTML` 控件本工程没有 ⇒ 用列表底 + `maps/de_dust2.txt` 原文文本占同一块矩形（`:31-44`）', '`teammenu.res:17-30`、`:65-81`、`:31-44`；文本出处 `原版资源/cs16src/cs16game/app/cstrike/maps/de_dust2.txt`', '无需消除（原版本就不可见 / 文本已是原版原文）'),
+    ('39', '~~主菜单背景为纯深色、无原版背景贴图~~ → **已消除（2026-09-20 实现者本片）**：主菜单与读条两屏的底都换成**原版 12 块 TGA 拼图**（逐字节复制 + 逐块按原坐标摆放），纯色 `#1B1B1B` 只保留为"贴图缺失时的兜底层"', '原判断"载体里没有主菜单背景"被推翻：`valve/resource/` 下**同时**有 `backgroundlayout.txt`（不带 loading 的那份 = 通用背景布局）与 `backgroundloadinglayout.txt`（内容逐字相同），它描述的 12 块 `resource/background/800_{1,2,3}_{a,b,c,d}_loading.tga` 就是这一屏背景的贴图与布局（256×3+32=800、256+256+88=600 与文件头 `resolution 800 600` 自洽）', '`原版资源/cs16src/cs16game/app/valve/resource/backgroundlayout.txt:3-16`、`原版资源/cs16src/cs16game/app/cstrike/resource/background/800_*_loading.tga`（12 张，24bpp）；代码 `UI/Flow/CsMenuBackground.cs`、`Core/ResPaths.cs`、`Editor/Flow/FlowSetup.cs`', '已消除（运行时逐块 `mismatch=0`、12/12 就绪；图 `33_mainmenu.png` / `33_loading.png`）'),
+    ('40', '主菜单**菜单项之间无间隙**（步进 = 项高）', '原版各项紧邻排列，**间隙值在载体里没有**（`trackerscheme.res` 的 `InGameDesktop` 块只给了 `MenuItemHeight` 与 `GameMenuInset`）⇒ 取"步进 = 项高"这一**可从载体推出**的摆法（⛔ 没编一个间隙值）', '`原版资源/cs16src/cs16game/app/platform/resource/trackerscheme.res:164-173`；间隙值无出处', '拿到原版实机图后量化项间距'),
+    ('41', '主菜单底部 **`by clover-engine`** 署名为本项目新增', 'skill §8 品牌硬约定：每个游戏的首页画面底部必须有这一行（判据 = 实机截图 / 运行时节点树）；原版 `gamemenu.res` 局外四项里没有它', '原版 `gamemenu.res`（四项：NewGame/FindServers/Options/Quit）无此项；品牌出处 = 本项目 skill §8', '无需消除（品牌要求）'),
+    ('42', '主菜单**字标是按钮**（`game_menu.tga` 常态 + `game_menu_mouseover.tga` 悬停）', '原版两张同画布（207×32）贴图分别对应常态（金）与悬停（白）⇒ 落成 `Button(transition=SpriteSwap)`。⚠️ 原版该字标**是否可点**在载体里无从判断（`gamemenu.res` 无对应项）⇒ 本片让它不可点（`onClick=null` 未接回调）', '贴图 `cstrike/resource/game_menu.tga`、`game_menu_mouseover.tga`（各 26540 B，207×32/32bpp）', '拿到 GameUI 行为证据后定它可不可点'),
+    ('43', '**本表/`对照表` 里对 `CsHudTheme.cs` 的行号引用为「路径收敛前」基准**', '2026-09-20 把 4 个路径常量（原 `:96-99`）搬进 `Core/ResPaths.cs`，该文件其后行号**整体前移约 6 行**（`:303` 之后约 7 行）；`Dust2Layout.cs` 同理 +0/−1（删 2 行）、`MainMenuPanel.cs` −2（删 2 个常量并加 3 行注释）。⛔ 引用指向的**语义位置不变**，只是行号需按上述位移换算', '出处 = `Core/ResPaths.cs` 与各文件当前内容（`refs-reachable` 闸门只校验"文件可达"，不校行号）', '下次有人顺手校一遍行号时消除（一次性机械活，无功能影响）'),
+    ('44', '原版音效已复制进工程但未接事件（5 条：dryfire / hit_wall / knife_hit / flash_explode / bomb_beep_fast）', '原版 CS 对应时刻都有音（空仓扣旋、弹着墙、刀命中、闪光爆、C4 快蜂鸣）；本工程那些时刻只有表现/只打日志、无声。接线属「音效事件」维度（D8），本片（切片H）任务书明令不做 D8', 'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,flash_explode,bomb_beep_fast}.wav；对照 tools/probes/enumerate-entities.py 的 D8 段', '下一个「音效事件」片逐个接到开火/命中/下包分支后'),
+    ('45', '原版 de_dust2 贴图（8 张：SandRoadTgtA / _1Sand / _1SandRock2 / _1csSandWall / _2SandRock2 / _3Sand / black / wall_g）已复制但几何未引用', '本工程几何只用 geo.bin 的 33 个主材质组；这 8 张属原版的贴花层（TgtA）与细节层（detail）贴图，本工程未实现那两层（经实测：8 张的 guid 在全工程任何 .mat/.prefab/.unity/.asset 里都 0 次命中）', 'client/Assets/ThirdParty/Dust2/Textures/；原版 de_dust2.bsp 的 miptex 目录（tools/probes/bsp-entities.py 可重数）', '补贴花/细节层，或在「只复制被引用的那几个」原则下把它们移出 client/Assets/'),
+    ('46', '原版 GameUI 字标 logo_game.tga 已复制但未使用', '任务书把「怎么用」划给主菜单片；本片只负责把它从原版搬进工程（见验收表「允许的差异」#37）', 'client/Assets/Resources/UI/Art/logo_game.tga；源 = 原版资源/cs16src/cs16game/app/cstrike/resource/logo_game.tga', '主菜单片把它接进 ResPaths 并上屏后'),
+    ('47', '`Q` / `G` / `M` 三键**在切片H 才补上绑定**；`M`（原版 `chooseteam`）的**行为等价为"直接换到另一边"**而非打开阵营菜单', '三键的原版默认绑定有出处（`bind "q" "lastinv"` / `bind "g" "drop"` / `bind "m" "chooseteam"`，见 `策划/策划案/CS1.6单机参考规格.md` §1 游戏内按键段）⇒ 有出处故补绑定（落点 `Module/Combat/CombatModule.cs` 的 `FillInput`）。但**本工程局内没有"再开一次 TeamMenu"的流程入口** ⇒ `M` 只能等价成直接换边（H 菜单「换阵营」就是这条链），已如实打日志，**不编一个不存在的阵营菜单**', '绑定出处 = `策划/策划案/CS1.6单机参考规格.md`；落点 = `client/Assets/Scripts/Module/Combat/CombatModule.cs`（`FillInput`）；判据 = `tools/probes/enumerate-entities.py` 的 D11 段', '工程做出局内阵营菜单后把 `M` 改回"打开菜单"（届时本行删除）'),
+    ('48', '修前/修后 2x2 合成图 92_fix_before_after_2x2 采不到（修前帧不可复现）', '修前帧 80_fix_pre_char_invisible / 81_fix_pre_vm_nogun 是 bug 现场抓的诊断图；bug 修好后（AnimSetup.Fill 按值传参 ⇒ 蒙皮 bindpose 全零 ⇒ 几何塌成一点）同形态的修前帧再也出不了。拿别的图冒充或临时改回旧实现去"复现"都属伪造 ⇒ 改为「修后帧 93_fix_post_char_closeup / 97_fix_post_char_front + 逐骨骼/包围盒数值」作为判据', 'client/Assets/Editor/Views/AnimSetup.cs（Fill 的修复处）；策划/验收表.md「允许的差异」新增行；R1/R2 行的旧图名已按「不可采」改写', '不消除（修前态本就不可复现；若将来又出现同类蒙皮 bug，则在现场重采 2x2）'),
+    ('49', '位图（CloverMap v1）是单层 2D：箱子所在格记为“可走”（箱顶是朝上的面）', '格式层没有高度（FlagHeightField 预留但 V1 解码器拒绝）⇒ 一格一位，表达不了“同一格在 y=0 被挡、在 y=1.2 通畅”；带来的边界：箱子进不去（已由 CsMap.CanStand 的“地面一步闸门”拦住），但位图本身仍不能单独回答“能不能穿”', 'Assets/Scripts/Module/Map/CsMap.cs（CanStand/BodyHeightClear）；Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs:30（FlagHeightField）', '引擎开出 V2 高度场（FlagHeightField）后'),
+    ('50', '投掷物与角色之间不互相挡/推开', '本片只把“角色对角色”这一层做出来（CsActorSeparation 只收 CsActor）；原版投掷物是 MOVETYPE_BOUNCE 实体，与角色是否互相阻挡本机取不到可信出处（原版 mp.dll 未在盘）', 'Assets/Scripts/Module/Map/CsActorSeparation.cs（只收 actor）；Module/Match/CsInventory.cs（投掷物落点）', '解出原版投掷物的 solid/movetype 后'),
+    ('51', '雷达底图非原版 overviews/de_dust2.bmp', '原版 overviews/de_dust2.bmp + .txt 本机不在盘（降级链退到级①：由工程内 de_dust2_geo.bin 离线俯视栅格化）', 'Core/ResPaths.cs:117 / tools/probes/render-overview.py', '拿到原版 overviews 后同名覆盖 PNG'),
+    ('52', '枪口火焰/弹痕/火星 精灵为程序生成', '原版 sprites/muzzleflash*.spr 与 decals.wad 不在盘（archive.org 不可达）', 'Core/ResPaths.cs:147-159 / tools/probes/make-fx-sprites.py', '拿到原版素材后同名覆盖'),
+    ('53', 'de_dust2.bsp func_breakable 木箱（×10）未实现可破坏', '工程把箱子当静态几何（box.png / box_x.png），没有受击碎裂逻辑', 'Assets/ThirdParty/Dust2/de_dust2.bsp（entity lump）', '实现 func_breakable 后'),
+    ('54', '已移出工程（切片H）：Assets/Scenes/SampleScene.unity、Resources/Sound/SFX/sfx/reload_unused.wav', 'Unity 模板自带场景（未登记 Build Settings、无代码引用）与一个名字就是 unused 的通用换弹音（本工程换弹音按武器逐把拼名）—— 两者都不属于参考物的必备引用，不应进工程', 'Assets/Scenes/SampleScene.unity；Assets/Resources/Sound/SFX/sfx/reload_unused.wav', '已消除（2026-09-21 切片H 移出到 原版资源/_moved-out-from-assets/）'),
+    ('55', '切片K：dryfire / hit_wall / knife_hit / bomb_beep_fast / round_start2 这 5 条 wav 的**原版源文件名映射未记录**', '它们确是原版 CS 1.6 的音效（空仓击发 / 弹着 / 刀命中 / C4 快蜂鸣 / 备用回合开始），但 `client/资源欠缺清单.md:37` 第 11 项只记了 c4_beep1 / c4_plant / c4_disarm / c4_explode1 / hegrenade-1 / flashbang-1 / radio/bombpl / radio/bombdef 这 8 条映射；原版 sound/ 树（`原版资源/cs16src`）已空 ⇒ 无法把短名逐条对回原版文件名', 'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,bomb_beep_fast,round_start2}.wav（在盘）；client/资源欠缺清单.md:37；原版资源/清单.md（cs16src 已空）', '用户补回 CS 1.6 客户端本体（原版资源/cs16src）后逐条对账'),
+    ('56', '切片K：hit_wall 的「按材质分流」只落到一条采样，且刀「砍空」没有独立采样', '原版打沙 / 打木箱 / 打金属是**不同采样**，刀砍中人与砍空也是两条采样；盘上只有 hit_wall.wav（打墙）与 knife_hit.wav（刀命中）各一条 ⇒ 材质分类（CsAudioTuning.ClassifyImpact）已做、日志可逐类核对，但各材质现在落同一 clip；刀砍空（CsInventory.RaycastActor 返回 null）无音', 'Module/Audio/CsAudioTuning.cs（ClassifyImpact / HitWall / KnifeHit）；Module/Combat/CombatModule.cs（弹着音挂点）；Module/Match/CsDamage.cs（刀命中挂点）', '拿到原版按材质的弹着采样与刀挥空采样后，只改 CsAudioTuning 的分类→短名映射'),
+    ('57', 'C4 蜂鸣的「加速档分界 10s」与两档间隔（1.0s / 0.25s）无原版出处', '原版 C4 蜂鸣节奏写在 `mp.dll` 的 C4 逻辑里（不是 cvar，`settings.scr` / `server.cfg` 都查不到），而 `mp.dll` 不在盘（`原版资源/cs16src` 已空）⇒ 该分界只能按本工程自己的口径统一（CsConst.BombBeepIntervalSlow/Fast 的 10s 注释 + CsAudioTuning.BombBeepFastBelow）', 'Core/CsConst.cs（BombBeepIntervalSlow / BombBeepIntervalFast）；Module/Audio/CsAudioTuning.cs（BombBeepFastBelow）', '解出 mp.dll 的 C4 蜂鸣节奏后'),
+    ('58', 'CsBotConst 的绝大多数阈值无原版出处（**本项目新增**）', 'A = CS 1.6 本体**不含机器人 AI**（官方 bot 属 Condition Zero / PodBot，不在本工程的载体范围）⇒ "bot 手感阈值"在 A 里没有对应量；规格 §2.4 只给三档的反应时间 / 瞄准误差（±6° / ±3° / ±1.2°）与行为特征，不含这些阈值。三条有对应量却取不到载体的（瞄胸高度比例 / 脚步噪声阈值 / 预瞄节奏）见下面两条与 CsBotConst 各行的注释', 'Module/Bot/CsBotConst.cs（66 行逐条注释已标"本项目新增"或指到定义真源）；策划/策划案/CS1.6单机参考规格.md:113-118（§2.4 三档表）；Module/Match/CsTypes.cs:148（CsBotProfile）', '若主 agent 决定改为「逐条对齐 PodBot / CZ bot 源码」则另开片'),
+    ('59', '脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）', '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件属 `原版资源/cs16src`、已空；② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值', 'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76', '用户补回原版载体（原版资源/cs16src）后对账脚步节拍；落地音属"A 本来就没有"，不消除'),
+    ('60', '切片K（D8）：Defuser / Vest / VestHelm 三个被动装备没有开火 / 换弹音', '它们不是武器：原版 CS 1.6 里既没有"手持并开火"、也没有换弹动作 ⇒ **原版也没有**这两个采样。旧判据（D8 的"每个 id 都要有 <id>_fire.wav / <id>_reload.wav"）把它们当武器，要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"', 'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
+    ('61', '切片L（S1）：操作 / 表现层的可调旋钮没有原版出处（CsCombatTuning 全 31 条；CsMatch / CsViewTuning / CsConst 里标「本项目新增」的那些）', '这些量（后坐力时间常数 / 散布倍率 / 准星扩散 / bob / 开镜过渡 / 受击晃动 / 枪口火焰时长 / 各类实现容量上限）在 A 里对应的是**客户端手感**，原版把它们写死在 `cstrike/cl_dlls/client.dll` 与 `mp.dll` 的逐武器代码里（不是 cvar、也不是数据表 —— 见 `策划/对照表.md` §6 BLOCKED-1 / BLOCKED-2）；本机原版载体 `原版资源/cs16src` 已空（`原版资源/清单.md`）⇒ 拿不到 `文件:偏移` 级出处，只能取本工程自定值并逐条如实标注', 'client/Assets/Scripts/Module/Combat/CsCombatTuning.cs（31 条逐行已标「本项目新增」+ 该条与 A 的关系）；Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36', '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
+    ('62', '切片N（S1）：Defuser / Vest / VestHelm **没有第一人称 viewmodel / AnimatorController**', '它们是**被动装备** —— A（CS 1.6）里既不能"手持"、也没有第一人称动作 ⇒ **原版本身就没有**这三个 v_ 模型。旧判据把 CsWeapons 里所有 id 都当武器、要求 vm_<id>.controller 存在，对它们不成立；要满足它只能去 Editor/Views **生成**这三个控制器 = 造 A 没有的素材（skill §0 铁律 1）⇒ 判据已改为「A 也无此 viewmodel ⇒ 一致」', 'tools/probes/enumerate-entities.py（S1 段的 S1_PASSIVE_EQUIPMENT 分支）；依据 = client/Assets/Editor/Views/ModelData/*.cs16anim 共 38 个（29 个 vm_* + 9 个 player_*，装备类 0 命中）+ client/Assets/Resources/Art/Anim 的 29 个 vm_*.controller；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
+    ('63', '切片N：**下架了本项目新增的"伤害数字飘字"**（HudPanel 的 ShowDamageNumber / ObserveLocalDamage）', 'A（CS 1.6）的 HUD **没有伤害数字项**（原版 HUD 只有 hitmarker 与击杀提示）⇒ 屏幕上的 `-<数字>` 飘字属本项目自行新增的命中反馈文本，按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。留下的只有**受击方向指示器**（屏幕边缘红框，A 有这条反馈）⇒ 那个被两处共用的时长常量随之由 DamageNumberTime 改名为 DamageIndicatorTime（含全部引用点）', 'client/Assets/Scripts/UI/InGame/HudPanel.cs（删除处留了注释与依据）；Core/CsConst.cs（原注释即写「本项目新增」）；策划/对照表.md §4「界面元素坐标/尺寸/颜色」——原版 HUD 元素已逐条出处化（U-01~U-37，引用到 hud.txt:110/120/121/122/127/131/135/137/179/183 等），**其中没有任何"伤害数字"项**；策划/验收表.md B 段——我方 HUD 项清单 H1~H15 里也没有它（H9 = 命中标记 hitmarker）；client/资源欠缺清单.md——A 有 / 我方缺 的逐项对账里同样没有这项。⚠️ 如实说明：**原版硬载体（cstrike/sprites/hud.txt 与 原版资源/解包产物/）本机不在盘**（`原版资源/清单.md` 实测：cs16src/ 与 解包产物/ 为空）⇒ 拿不到 hud.txt 原文级的"无此项"直证，本项按任务书退路登记为「本项目新增、与原版无关」', '不消除（A 本来就没有；若将来要加回，必须先给出原版出处的 file:line）'),
+    ('64', '§G D2「低矮障碍（含楼梯扶手/台阶沿）」残留 5 格不达标（判据未放宽，逐格已查明）', '用户报的那一处（匪家矮墙/台阶沿 cell(20,27)，h=0.81 m）本片已通过：全图 71 处候选里地面挡 71/71、跳起站得住 67/71、横跨窗口全 OK（h=0.81 m 的 65 格矮墙/台阶沿里 63 格通过，另 2 格是下面的"箱堆"口径问题）。残留 5 格分三类，**都不是**"位图判挡 + 顶面够得着却站不上去"的隐形墙形态：(a) cell(82,86)/(23,123)：顶面够得着，但身高带里**真有实体**（沙子混凝土台上压着箱子，真顶面 2.44 m；军械箱上再叠一箱，真顶面 5.28 m - 来路 3.25 m = 2.03 m）⇒ 原版同样上不去 —— 这是"什么才算矮障碍"的**候选分类口径**问题，不是实现缺口；(b) cell(51,108)：军械箱顶（高差 1.13 m）逼近跳跃峰值 1.1445 m ⇒ 时间窗 0.073 s × 5.4 m/s = 0.39 m < 需跨 1.72 m，一次跳跃不可能**横跨**；本行"边界：恰好在跳跃可达高度上"一条已定案「顶面高差 ≤ 可达高度 ⇒ 能跳过去」，两条口径自相矛盾（横跨比"顶面够得着"更严，且原版 GoldSrc 起跳不改变水平速度、同样跨不过去）；(c) cell(118,52)/(118,53)：SandTrim 收边条（顶面 6.96 m / 来路 6.50 m），外侧是图外虚空 ⇒ 9 点探针有 3 个落点所在子区域**没有任何世界几何**，运行时按保守口径判挡（切片U/S 特意保留，⛔ 本片不碰）。', '判据 tools/probes/geom-check.py（A5：候选 / 来路判挡 / 顶面可站 / 横跨可达，+ probe_kind_9 把"外侧虚空"与"真有实体"分开）；运行时口径 client/Assets/Scripts/Module/Map/CsMap.cs:260-425（CanStand 两层判据 / BodyHeightClearAt 的保守判挡 / 9 点半径采样）；逐格数字见 geom-check 报告 A5 段与 策划/状态矩阵.tsv（本片回写）', '主 agent 裁决「候选分类口径」后：(a)(b) 两格在收紧为「只收格内真顶面 ≤ 可达高度的格」+「横跨窗口降级为信息行（判据 = 顶面高差 ≤ 跳跃可达高度）」时归零；(c) 两格属运行时保守口径，需把站立判定改成原版单点口径（另开片，⛔ 本片未改引擎/未改该调用链）'),
 ]
 
 # ============================================================================
@@ -1487,7 +1376,7 @@ write_tsv(os.path.join(PLAN, '\u72b6\u6001\u77e9\u9635.tsv'),
           '\u7ef4\u5ea6\t\u5b9e\u4f53\t\u72b6\u6001/\u4e8b\u4ef6\t\u8fb9\u754c\u503c\t\u671f\u671b\u8868\u73b0(\u51fa\u5904)\t\u5b9e\u6d4b\t\u7ed3\u8bba\t\u8bc1\u636e',
           STA_SORTED)
 write_tsv(os.path.join(PLAN, '\u5dee\u5f02\u767b\u8bb0.tsv'),
-          '\u662f\u4ec0\u4e48\t\u4e3a\u4ec0\u4e48\t\u51fa\u5904\t\u4f55\u65f6\u6d88\u9664', DIF)
+          '\u7f16\u53f7\t\u662f\u4ec0\u4e48\t\u4e3a\u4ec0\u4e48\t\u51fa\u5904\t\u4f55\u65f6\u6d88\u9664', DIF)
 
 # 覆盖矩阵判定片段（一行 = 一个实体）
 frag = ['## G. \u8986\u76d6\u77e9\u9635\u5224\u5b9a\uff08\u811a\u672c\u751f\u6210\uff1a\u4e00\u884c = \u4e00\u4e2a\u5b9e\u4f53\uff1b\u26d4 \u52ff\u624b\u6539\uff09', '',

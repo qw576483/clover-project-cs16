@@ -649,6 +649,57 @@ if (-not (Test-Path $sumsScript)) {
   }
 }
 
+# --- 24) differences: registry file and table section must be ONE row set -----
+#  The acceptance table's "allowed differences" section and the four-element
+#  registry (ce hua / cha yi deng ji .tsv) describe the same rows: the section is a
+#  projection of the registry. Before this check they could drift in silence -- on
+#  2026-09-21 the section had 46 rows while the registry had 22, i.e. 24 differences
+#  had never been screened by the "four elements present" rule of item 4. A rule that
+#  cannot be tested red is not a gate (SKILL 0.6). This one matches rows by their
+#  leading id, so it fails loudly AND prints exactly which ids exist on only one side.
+$cRegName = ([char[]]@(0x5DEE,0x5F02,0x767B,0x8BB0) -join '') + '.tsv'   # cha yi deng ji
+$regPath  = Join-Path $planDir $cRegName
+if (-not (Test-Path $regPath)) {
+  $script:fail++
+  Say 'FAIL' 'differences-source-of-truth' ('missing the registry: ' + $regPath)
+} elseif (-not (Test-Path $specTable)) {
+  $script:fail++
+  Say 'FAIL' 'differences-source-of-truth' ('missing the acceptance table: ' + $specTable)
+} else {
+  $regIds = @(); $regDup = @()
+  foreach ($line in @([System.IO.File]::ReadAllLines($regPath, [Text.Encoding]::UTF8))) {
+    if ($line.Trim().Length -eq 0) { continue }
+    if ($line.TrimStart().StartsWith('#')) { continue }
+    $cells = @($line -split "`t")
+    if ($cells.Count -lt 2) { continue }
+    $idTxt = $cells[0].Trim()
+    if ($idTxt -match '^\d+$') {
+      $iv = [int]$idTxt
+      if ($regIds -contains $iv) { $regDup += $iv } else { $regIds += $iv }
+    }
+  }
+  $secIds = @(); $secDup = @()
+  foreach ($r in @(Get-SectionLines (Read-Text $specTable) $cDiffSec)) {
+    $m = [regex]::Match($r.TrimStart(), '^\|\s*(\d+)\s*\|')
+    if ($m.Success) {
+      $iv = [int]$m.Groups[1].Value
+      if ($secIds -contains $iv) { $secDup += $iv } else { $secIds += $iv }
+    }
+  }
+  $onlyReg = @($regIds | Where-Object { $secIds -notcontains $_ } | Sort-Object)
+  $onlySec = @($secIds | Where-Object { $regIds -notcontains $_ } | Sort-Object)
+  if (($regIds.Count -eq $secIds.Count) -and ($onlyReg.Count -eq 0) -and ($onlySec.Count -eq 0) -and ($regDup.Count -eq 0) -and ($secDup.Count -eq 0)) {
+    Say 'PASS' 'differences-source-of-truth' ("registry rows = section rows = $($regIds.Count); every id matches on both sides")
+  } else {
+    $script:fail++
+    Say 'FAIL' 'differences-source-of-truth' ("registry rows = $($regIds.Count) vs section rows = $($secIds.Count) -> the two lists drifted")
+    if ($onlyReg.Count -gt 0) { Sub ('only in registry: ' + ($onlyReg -join ',')) }
+    if ($onlySec.Count -gt 0) { Sub ('only in section: ' + ($onlySec -join ',')) }
+    if ($regDup.Count -gt 0) { Sub ('duplicate id(s) in registry: ' + ($regDup -join ',')) }
+    if ($secDup.Count -gt 0) { Sub ('duplicate id(s) in section: ' + ($secDup -join ',')) }
+  }
+}
+
 Write-Output ''
 Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1} =====" -f $script:fail, $script:human)
 if ($script:fail -gt 0) { Write-Output 'RESULT: FAIL present -> the words done / delivered / verified must NOT be used' }
