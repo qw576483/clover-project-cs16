@@ -88,6 +88,42 @@ namespace Cs16.Module.Combat
             _autoReload = autoReload;
         }
 
+        // ==================================================================
+        //  测试入口（类型化；**只给离线取证驱动用**，⛔ 不在真实玩家输入链路上）
+        // ==================================================================
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：把「本帧左键按住」这一位直接置位 ——
+        /// 语义与 <see cref="FillInput"/> 里按真实鼠标写 <c>_fireRequested = true</c> 的那一行**完全一致**。
+        ///
+        /// <para><b>为什么必须有它</b>：离线驱动只能通过 <see cref="ICsMatch.SetLocalInput"/> 下发
+        /// <c>cmd.Fire</c>，而那**只让模拟开火**（扣弹 / 推 <c>NextFireTime</c> / 记一条枪声记录）；
+        /// 本模块要不要射线（枪口火焰 / 弹痕 / 命中回传）取决于它自己那个由**真实鼠标**置位的
+        /// <c>_fireRequested</c>（原因见 <c>IsLocalShot</c> 的注释：不拿别人的射击记录去射线 ⇒ 防双份伤害）。
+        /// 驱动没有鼠标层 ⇒ 弹匣照扣、却一条弹痕都不画（切片P 实测：glock18 20→16 发、控制台 0 条
+        /// <c>hitwall.*</c>）。切片P 于是用**反射**写这个私有位 —— 脆弱、且是「绕过类型系统的后门」；
+        /// 切片Q 按 skill §0.6 第 3 条（把高风险动作做成**专用、类型化的入口**，让 harness 有可拦截的钩子）
+        /// 改成这个 public 方法，驱动侧的反射已删。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法**只在被显式调用时生效** —— 没有任何 Update /
+        /// 事件会调它，真实玩家路径仍然只由 <see cref="FillInput"/> 按鼠标置位。
+        /// 调用时序由驱动保证：order −150 落在 <c>PlayerModule.Update(−200)</c> 的
+        /// <see cref="FillInput"/> 覆盖**之后**、模拟 Tick（order 0）消费**之前**。</para>
+        /// </summary>
+        public void SetFireHeldForTest(bool held)
+        {
+            if (held != _fireHeldForTest)
+            {
+                _fireHeldForTest = held;
+                _log.Info("fire.testheld", held
+                    ? "测试入口 SetFireHeldForTest(true)：本帧视为按住左键（离线驱动专用）"
+                    : "测试入口 SetFireHeldForTest(false)：本帧左键松开");
+            }
+            _fireRequested = held;
+        }
+
+        /// <summary>测试入口的上一状态（只为「状态变化时打一条日志」，不参与任何判定）。</summary>
+        private bool _fireHeldForTest;
+
         private void OnDestroy()
         {
             _nades.Dispose();

@@ -610,6 +610,41 @@ if (-not (Test-Path $irPath)) {
   else { $script:fail++; Say 'FAIL' 'impact-radius' ('' + $irBad.Count + ' row(s) missing columns (dim / cause chain / affected rows)') }
 }
 
+# --- 23) acceptance-table aggregates must equal the table body ---------------
+#  Check 3 above is deliberately left as it was; what changes is that its verdict is
+#  no longer HUMAN-ONLY: tools/probes/check-acceptance-sums.py counts the table BODY
+#  (rows / per-section rows / status tally / allowed-difference rows) and compares every
+#  aggregate the file states about itself against that count.  SKILL 0.6: a rule that
+#  cannot be tested red is not a gate -- and on 2026-09-21 this entry found 8 stale
+#  aggregates out of 21 (68 vs 72 ok, 4 vs 0 blocked, 36 vs 46 differences ...), i.e. the
+#  old wording really was hiding a drift.
+#  Python is used because the parse is markdown-structure work; the script is a 判据资产
+#  (tools/probes/) and prints an ASCII-only PASS/FAIL with the per-claim detail.
+$sumsScript = Join-Path $root 'tools\probes\check-acceptance-sums.py'
+if (-not (Test-Path $sumsScript)) {
+  $script:fail++
+  Say 'FAIL' 'acceptance-sums' ('missing ' + $sumsScript + ' -- the acceptance aggregates are unverifiable')
+} elseif ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+  $script:fail++
+  Say 'FAIL' 'acceptance-sums' 'python is not on PATH -- cannot run check-acceptance-sums.py'
+} else {
+  $sumTmp = Join-Path $tmpRoot 'verify-acceptance-sums.txt'
+  & python $sumsScript | Set-Content -Encoding UTF8 $sumTmp
+  $sumRc = $LASTEXITCODE
+  $sumOut = @(Get-Content $sumTmp -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 })
+  $sumFirst = if ($sumOut.Count -gt 0) { $sumOut[0] } else { '(no output)' }
+  $sumLast = if ($sumOut.Count -gt 0) { $sumOut[$sumOut.Count - 1] } else { '(no output)' }
+  if ($sumRc -eq 0) {
+    Say 'PASS' 'acceptance-sums' $sumLast
+    Sub $sumFirst
+  } else {
+    $script:fail++
+    Say 'FAIL' 'acceptance-sums' $sumLast
+    Sub $sumFirst
+    $sumOut | Where-Object { $_ -match '^\s*BAD\s' } | ForEach-Object { Sub $_ }
+  }
+}
+
 Write-Output ''
 Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1} =====" -f $script:fail, $script:human)
 if ($script:fail -gt 0) { Write-Output 'RESULT: FAIL present -> the words done / delivered / verified must NOT be used' }
