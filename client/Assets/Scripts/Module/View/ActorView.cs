@@ -134,6 +134,8 @@ namespace Cs16.Module.View
                 _colliders[i].gameObject.layer = layer;
             }
 
+            EnsureAlwaysAnimate();
+
             if (!_proxiesChecked)
             {
                 _proxiesChecked = true;
@@ -309,6 +311,40 @@ namespace Cs16.Module.View
             }
             _anim.Play(st, 0f);
             _overrideState = st;
+        }
+
+        /// <summary>
+        /// 角色模型同样必须**恒更新蒙皮与骨骼变换**（与 <c>ViewModelRig.EnsureAlwaysAnimate</c> 同一根因）。
+        ///
+        /// <para>实测：<c>player_T.cs16anim</c> 的网格**绑定姿态** bbox = x∈[-0.1947,+0.2722]、
+        /// y∈[0.0000,1.8000]、z∈[-0.9111,+0.8997]；而它自己 <c>idle1</c> 轨道第 0 帧蒙皮出来的姿态 =
+        /// x∈[-0.4540,+0.2410]、y∈[0.0000,+1.6150]、z∈[-0.3610,+0.6620] —— **绑定盒不覆盖渲染姿态**
+        /// （x 方向差了 0.26 m）。用绑定盒当"看不看得见 / 要不要更新"的判据，就会把姿态卡住或被裁掉。</para>
+        /// </summary>
+        private void EnsureAlwaysAnimate()
+        {
+            var fixedSmr = 0;
+            for (var i = 0; i < _renderers.Length; i++)
+            {
+                var smr = _renderers[i] as SkinnedMeshRenderer;
+                if (smr == null || smr.updateWhenOffscreen) continue;
+                smr.updateWhenOffscreen = true;
+                fixedSmr++;
+            }
+            var anims = GetComponentsInChildren<Animator>(true);
+            var fixedAnim = 0;
+            for (var i = 0; i < anims.Length; i++)
+            {
+                if (anims[i] == null || anims[i].cullingMode == AnimatorCullingMode.AlwaysAnimate) continue;
+                anims[i].cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                fixedAnim++;
+            }
+            if (fixedSmr > 0 || fixedAnim > 0)
+            {
+                _log.Info("actor.cullfix",
+                    $"角色视图「{name}」：已修正 {fixedSmr} 个 SkinnedMeshRenderer.updateWhenOffscreen " +
+                    $"与 {fixedAnim} 个 Animator.cullingMode（绑定包围盒不得当可见性判据）");
+            }
         }
 
         /// <summary>挂上头顶名牌（**必须在 <see cref="Bind"/> 之后**：名牌的渲染不计入身高实测）。</summary>

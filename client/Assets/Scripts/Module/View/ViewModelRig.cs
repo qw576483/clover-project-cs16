@@ -245,9 +245,52 @@ namespace Cs16.Module.View
                 if (cols[i] != null) Destroy(cols[i]);
             }
 
+            EnsureAlwaysAnimate(_model, key);
             SetupAnimator();
             _log.Info("viewmodel.attach",
                 $"第一人称武器模型切换 → {key}（共 {cols.Length} 个多余碰撞体已移除）");
+        }
+
+        /// <summary>
+        /// **必须恒更新蒙皮与骨骼变换**（本项目实测缺陷的运行时兜底）。
+        ///
+        /// <para>根因：<c>.cs16anim</c> 网格的顶点是**绑定姿态**坐标，而渲染姿态由动画决定 ——
+        /// 以 v_* 视模型为例（实测）：绑定姿态 bbox = x∈[-0.9087,-0.1160]、y∈[-0.0469,+0.1763]、
+        /// z∈[-0.1272,+0.1374]（**把相机原点夹在里面**）；而 idle 姿态 = x∈[-0.0260,+0.2390]、
+        /// y∈[-0.2860,-0.0620]、z∈[-0.0870,+0.7050]。两者**完全不重合**。</para>
+        ///
+        /// <para>Unity 用 <c>SkinnedMeshRenderer.localBounds</c>（= 绑定姿态包围盒）同时做
+        /// ① 视锥剔除 ② 蒙皮更新开关；Animator 默认的 <c>CullUpdateTransforms</c> 又拿"看不见"来决定
+        /// 更不更新骨骼。一旦被判成不可见 ⇒ 骨骼**停在绑定姿态** ⇒ 画出来是**巨大到失真的手臂/枪**
+        /// （实测绑定姿态有顶点投影到视口 x=155 —— 155 倍屏宽）。</para>
+        ///
+        /// <para>在**实例化时**把两个开关都设成"恒更新"，于是盘上**已烘好的旧预制体**也一并修好，
+        /// 不必重跑生成器（生成器侧同样已改，见 <c>Editor/Views/AnimSetup.cs</c>）。</para>
+        /// </summary>
+        private void EnsureAlwaysAnimate(GameObject model, string key)
+        {
+            var fixedSmr = 0;
+            var smrs = model.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            for (var i = 0; i < smrs.Length; i++)
+            {
+                if (smrs[i] == null || smrs[i].updateWhenOffscreen) continue;
+                smrs[i].updateWhenOffscreen = true;
+                fixedSmr++;
+            }
+            var fixedAnim = 0;
+            var anims = model.GetComponentsInChildren<Animator>(true);
+            for (var i = 0; i < anims.Length; i++)
+            {
+                if (anims[i] == null || anims[i].cullingMode == AnimatorCullingMode.AlwaysAnimate) continue;
+                anims[i].cullingMode = AnimatorCullingMode.AlwaysAnimate;
+                fixedAnim++;
+            }
+            if (fixedSmr > 0 || fixedAnim > 0)
+            {
+                _log.Info("viewmodel.cullfix",
+                    $"第一人称武器 {key}：已修正 {fixedSmr} 个 SkinnedMeshRenderer.updateWhenOffscreen " +
+                    $"与 {fixedAnim} 个 Animator.cullingMode（绑定姿态不得当可见性判据 ⇒ 否则巨大失真）");
+            }
         }
 
         // ==================================================================

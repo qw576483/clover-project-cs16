@@ -216,7 +216,17 @@ namespace Cs16.EditorTools
                 smr.sharedMesh = mesh;
                 smr.bones = bones;
                 smr.rootBone = bones.Length > 0 ? bones[0] : null;
-                smr.updateWhenOffscreen = false;
+                // ★ 必须 true（本项目实测缺陷）：`mesh.bounds` 是**绑定/ref 姿态**的包围盒，而渲染姿态
+                //   由动画决定 —— 两者可以完全不重合。以 v_* 视模型为例（实测 `.cs16anim`）：
+                //     绑定姿态 bbox  x∈[-0.9087,-0.1160]  y∈[-0.0469,+0.1763]  z∈[-0.1272,+0.1374]
+                //     idle 姿态 bbox x∈[-0.0260,+0.2390]  y∈[-0.2860,-0.0620]  z∈[-0.0870,+0.7050]
+                //   ⇒ 绑定姿态的包围盒把**相机原点夹在里面**（z 跨 0），而真正要画的几何全在它**右前方**。
+                //   `updateWhenOffscreen=false` 时 Unity 用这个错位的包围盒同时做两件事：
+                //   ① 视锥剔除 ② 蒙皮更新开关（配合 Animator 的 `CullUpdateTransforms`）——
+                //   一旦判成"看不见"，骨骼就**停在绑定姿态**，而绑定姿态的顶点落在相机平面上
+                //   （实测有一个顶点投影到视口 x=155，即 155 倍屏宽）⇒ 画出来就是**巨大到失真的手臂/枪**。
+                //   `true` 让 Unity 按真实蒙皮结果算包围盒，两个开关都不再依赖那个错位的值。
+                smr.updateWhenOffscreen = true;
                 smr.localBounds = mesh.bounds;
                 smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
                 smr.receiveShadows = true;
@@ -310,6 +320,13 @@ namespace Cs16.EditorTools
             var controller = BuildController(a, root.transform);
             var animator = root.AddComponent<Animator>();
             animator.applyRootMotion = false;
+            // ★ `AlwaysAnimate`（本项目实测缺陷的根治）：Unity 的 Animator 默认是
+            //   `CullUpdateTransforms` —— "看不见就不更新骨骼变换"。判"看得见"用的是渲染器**包围盒**，
+            //   而 .cs16anim 的绑定姿态包围盒把相机原点夹在中间（见 AttachSkin 的注释，视模型尤其严重）：
+            //   一旦被误判成不可见，骨骼就停在绑定姿态，而绑定姿态投影出来是巨大失真的手臂/枪。
+            //   角色模型同理（绑定 bbox x∈[-0.1947,+0.2722] 不含 idle1 的 x∈[-0.4540,+0.2410]）。
+            //   ⇒ 这两类模型都必须恒更新变换，不能让"包围盒猜可见性"决定姿态。
+            animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
             if (controller != null) animator.runtimeAnimatorController = controller;
             else Debug.LogError($"[AnimSetup] {a.Key} 的 AnimatorController 生成失败 —— 该模型不会播放任何动画");
         }
