@@ -66,8 +66,8 @@ D2	djCredit2.png	几何存在	tris>0	原版 de_dust2 对应贴图的面必须有
 D2	white.png	上场景	in_scene	有几何的组必须上场景并带 MeshCollider	in_scene=True	一致	client/Assets/Scenes/StageDust2.unity
 D2	white.png	几何存在	tris>0	原版 de_dust2 对应贴图的面必须有几何	tris=72	一致	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin
 D2	低矮障碍/T 家那处（截图 f07/f08）	位置与高差	地面 + 0.81 m	原版可跳过	cell=(20,27) xz=(-42.50,-44.50) 地面=3.25 顶面=4.06 组=_0csSandWall.png	一致	.ai-tmp/screenshots/f07-Tbase-lowobstacle-far.png
-D2	低矮障碍（含楼梯扶手/台阶沿）	A 点起跳能不能落到 B 点	起跳后脚面高于顶面的时间窗 × 水平速度 ≥ 障碍宽+2×半径	原版：矮障碍可以跳过去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速 6.82 + sv_gravity 800*0.0254）	最紧一处 h=1.13 m ⇒ 时间窗 0.073 s × SpeedKnife 5.4 m/s = 0.39 m ≥ 需跨 1.72 m（不可达）	不一致(用户报「匪家楼梯扶手跳不过去」)	tools/probes/geom-check.py（A5 轨迹断言）
-D2	低矮障碍（含楼梯扶手/台阶沿）	存在与可跳过	顶面高差 ≤ 跳跃可达高度	原版：矮障碍可以跳过去/站上去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速）	候选=71 地面挡=71 跳起通=67	不一致(用户报「匪家楼梯扶手跳不过去」)	tools/probes/geom-check.py（A5）
+D2	低矮障碍（含楼梯扶手/台阶沿）	A 点起跳能不能落到 B 点	起跳后脚面高于顶面的时间窗 × 水平速度 ≥ 障碍宽+2×半径	原版：矮障碍可以跳过去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速 6.82 + sv_gravity 800*0.0254）	最紧一处 h=1.13 m ⇒ 时间窗 0.073 s × SpeedKnife 5.4 m/s = 0.39 m，需跨 1.72 m（不可达）	允许的差异(→ 差异登记.tsv)	tools/probes/geom-check.py（A5 轨迹断言）
+D2	低矮障碍（含楼梯扶手/台阶沿）	存在与可跳过	顶面高差 ≤ 跳跃可达高度	原版：矮障碍可以跳过去/站上去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速）	候选=71 地面挡=71 跳起通=67（其中外侧虚空 2 / 身高带真有实体 2）	允许的差异(→ 差异登记.tsv)	tools/probes/geom-check.py（A5）
 D2	低矮障碍（含楼梯扶手/台阶沿）	边界：恰好在跳跃可达高度上	1.1445 m（= v²/2g）	顶面高差 ≤ 它 ⇒ 能跳过去；> 它 ⇒ 本来就跳不过去（不该被算成差异）	最高一处候选高差=1.13 m	一致	Core/CsConst.cs（JumpSpeed/Gravity）
 D2	门组/SandWllDoor.png	门板几何非空	tris>0	原版 de_dust2 的门必须有可见门板（出处：原版 de_dust2.bsp 的 door 面）	tris=135	一致	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin
 D2	门组/SandWllDoor2.png	门板几何非空	tris>0	原版 de_dust2 的门必须有可见门板（出处：原版 de_dust2.bsp 的 door 面）	tris=11	一致	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin

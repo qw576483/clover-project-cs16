@@ -425,10 +425,69 @@ def box_stats(geo, bm, gate, geom_all, const):
     return out
 
 
-def low_obstacle_cells(geo, bm, gate, geom_nocrate, const):
-    """位图判挡、但顶面高差 ∈ (一步台阶, 跳跃可达高度] 的格 ⇒ 原版能跳过去。"""
+def probe_kind(geom, const, x, z, feet_y):
+    """单点身体带复核的**分类版**（数值口径与 <see cref="Gate.clear_at"/> 逐字相同，
+    只是把"为什么判挡"说出来）：'ok' / 'solid'（第一交点在身高带里 ⇒ **真有实体**挡路）/
+    'void'（该点所在子区域**没有任何世界几何** ⇒ 按保守口径判挡，**不是**有实体）/ 'deep'。
+
+    为什么要分类：`clear_at` 把"外侧是图外虚空"与"上面压着箱子"都返回 False，
+    而这两件事的性质完全不同 —— 前者是本工程运行时的**保守口径**（切片U/S 定案，登记为差异即可），
+    后者是**真的上不去**（原版也上不去）。不分类就会把两种东西混成一条红行。
+    """
+    lift = const['GroundCheckDistance']; drop = 8.0
+    probe_top = feet_y + const['StandHeight'] + lift
+    y, _ = geom.first_up_face_y(x, z, probe_top)
+    if y is None:
+        y2, _ = geom.first_up_face_y(x, z, 1.0e9)
+        return 'void' if y2 is None else 'above'
+    if y < probe_top - (const['StandHeight'] + lift + drop):
+        return 'deep'
+    return 'ok' if y <= feet_y + const['GroundCheckDistance'] else 'solid'
+
+
+def probe_kind_9(geom, const, x, z, feet_y):
+    """中心 + 8 向半径的 9 点分类（与 <see cref="Gate.clear_9"/> 同 9 点）：
+    有实体挡路 ⇒ 'solid'（优先报）；否则只要有一点是 void/deep ⇒ 'void'；全通 ⇒ 'ok'。"""
+    r = const['PlayerRadius']; d = r * 0.70710678
+    pts = [(x, z), (x + r, z), (x - r, z), (x, z + r), (x, z - r),
+           (x + d, z + d), (x + d, z - d), (x - d, z + d), (x - d, z - d)]
+    kinds = [probe_kind(geom, const, px, pz, feet_y) for (px, pz) in pts]
+    if all(k == 'ok' for k in kinds):
+        return 'ok'
+    if any(k == 'solid' for k in kinds):
+        return 'solid'
+    return 'void'
+
+
+def low_obstacle_cells(geo, bm, gate, geom_world, const):
+    """**位图判挡、且顶面高差 ∈ (一步台阶, 跳跃可达高度]** 的格 ⇒ 原版能跳上去/站上去。
+
+    ⛔ 2026-09-21（切片AB 定稿）三条口径，**全部用运行时同一套世界几何** `geom_world`
+    （= 全部渲染 MeshCollider；`Level/Blockers/Blocker_*` 是 trigger，已被 <see cref="Gate"/> 排除）：
+
+    ① **来路地面 g** = 该格 4 邻居里**位图可走**的格的最高地面（人从哪儿来）；
+    ② **顶面 top** = 中心点向下、**只取 g+可达高度+0.5 以内的那一层**（跳起来够得着的那个面）；
+    ③ **诊断（⛔ 不参与判定、不剔除候选）**：另算一格"本格真顶面 real"（该格足迹内最高的朝上面，
+       <see cref="up_face_by_cell"/> 栅格化，含箱子、不限高）。`real - g > 可达高度` 的那些格
+       是"格内还有更高的东西"（箱堆 / 叠箱 / 压条），**疑似不是矮障碍** —— 但这只是**线索**，
+       本片（切片AB）**没有**拿它改候选集：判据一律保持原样严格，这些格照旧计入候选、照旧要过
+       "来路判挡 / 顶面可站 / 横跨可达"三条。逐格数字交主 agent 裁决口径（见 `策划/差异登记.tsv`）。
+
+    为什么值得记这条线索（切片AB 的残留红格就在这批里）：
+      · cell(82,86)   真顶面 2.44 m（沙子混凝土台 + 一个箱子压在上面）—— ② 读成 0.81 m 的矮墙；
+      · cell(23,123)  真顶面 5.28 m（军械箱上又叠一个箱，来路 3.25 m ⇒ 高差 2.03 m）；
+      · cell(51,108)  真顶面 -0.27 m（军械箱顶再叠箱，来路 -1.74 m ⇒ 高差 1.47 m）—— ② 读成 1.13 m；
+      · cell(40,110)  真顶面 4.06 m（矮墙上方还有一道压条，来路 2.84 m ⇒ 高差 1.22 m）；
+      这 4 格在 9 点身体带复核里判挡的原因是**真有实体**（不是"外侧虚空"），原版同样上不去。
+    ⛔ ③ 用 <see cref="up_face_by_cell"/>（格足迹栅格化），⛔ **不是**玩家 9 点探针圈：
+      探针圈会外溢到邻格，把邻格更高的地面/上一级踏板算成本格顶面
+      （切片AB 实测：会让 9 格候选的高差从 0.81 抬到 0.90，凭空多出 9 处"跳不过去"的假红）。
+
+    返回 `(候选列表, 疑似非矮障碍的候选列表)`；候选元组 = (ix, iz, cx, cz, g, top, h, grp)。
+    """
     apex = const['JumpSpeed'] ** 2 / (2.0 * const['Gravity'])
-    out = []
+    real_all = up_face_by_cell(geo)      # ③：全几何、逐格足迹最高朝上面（与"箱子能不能穿"同一次栅格化口径）
+    out, suspicious = [], []
     for iz in range(bm['d']):
         for ix in range(bm['w']):
             if bm_walk(bm, ix, iz):
@@ -438,18 +497,25 @@ def low_obstacle_cells(geo, bm, gate, geom_nocrate, const):
             for (jx, jz) in ((ix, iz), (ix + 1, iz), (ix - 1, iz), (ix, iz + 1), (ix, iz - 1)):
                 if not bm_walk(bm, jx, jz):
                     continue
-                y, _ = geom_nocrate.first_up_face_y(*cell_center(geo, jx, jz), 100.0)
+                y, _ = geom_world.first_up_face_y(*cell_center(geo, jx, jz), 100.0)
                 if y is not None and (g is None or y > g):
                     g = y
             if g is None:
                 continue
-            top, grp = geom_nocrate.first_up_face_y(cx, cz, g + apex + 0.5)
+            top, grp = geom_world.first_up_face_y(cx, cz, g + apex + 0.5)
             if top is None:
                 continue
             h = top - g
-            if const['StepUpHeight'] < h <= apex:
-                out.append((ix, iz, cx, cz, g, top, h, grp))
-    return out
+            if not (const['StepUpHeight'] < h <= apex):
+                continue
+            real = real_all.get((ix, iz))
+            if real is not None and real - g > apex + 1e-6:
+                # ⛔ 只**记录**、不剔除：判据保持原样严格（不许为了让数字变绿而放宽候选集）。
+                #    这一列数字交给主 agent 裁决"候选分类口径"要不要收紧（见 策划/差异登记.tsv 的本片条目）。
+                suspicious.append((ix, iz, round(cx, 2), round(cz, 2), round(g, 2), round(top, 2),
+                                   round(real, 2), round(real - g, 2)))
+            out.append((ix, iz, cx, cz, g, top, h, grp))
+    return out, suspicious
 
 
 def jump_window(const, h):
@@ -472,10 +538,17 @@ def jump_window(const, h):
     return (t2 - t1), t1, t2, (t2 - t1) * const['SpeedKnife']
 
 
-def low_obstacle_stats(geo, bm, gate, geom_nocrate, const):
-    low = low_obstacle_cells(geo, bm, gate, geom_nocrate, const)
+def low_obstacle_stats(geo, bm, gate, geom_world, const):
+    low, suspicious = low_obstacle_cells(geo, bm, gate, geom_world, const)
     blocked = [c for c in low if not gate.clear_9(c[2], c[3], c[4])]
     cleared = [c for c in low if gate.clear_9(c[2], c[3], c[5] + 0.02)]
+    # ── 跳起高度站不住的那批，按"为什么"分开（切片AB）──────────────────────────
+    #    'solid' = 身高带里真有实体 ⇒ **原版也上不去**（不该算成差异，是候选分类问题）；
+    #    'void'  = 有探针点所在子区域没有任何世界几何 ⇒ 运行时**保守口径**判挡（登记为差异）。
+    kinds = {c[:2]: probe_kind_9(geom_world, const, c[2], c[3], c[5] + 0.02) for c in low}
+    standable = [c for c in low if kinds[c[:2]] == 'ok']
+    solid_blocked = [c for c in low if kinds[c[:2]] == 'solid']
+    void_blocked = [c for c in low if kinds[c[:2]] == 'void']
     # ── 轨迹断言（"A 点起跳能不能落到 B 点"的直接判据）──────────────────────────
     #    需要跨过的距离 = 障碍宽（1 格）+ 两侧各一个角色半径（身体完全过去才算过去）。
     need = geo['cell'] + 2 * const['PlayerRadius']
@@ -489,7 +562,12 @@ def low_obstacle_stats(geo, bm, gate, geom_nocrate, const):
     return dict(count=len(low), blocked_at_grade=len(blocked), clear_at_jump=len(cleared),
                 candidates=low, jumps=jumps, need=need,
                 worst=worst, jump_ok=jump_ok,
+                suspicious=suspicious, standable=standable,
+                solid_blocked=solid_blocked, void_blocked=void_blocked,
                 h_max=max([c[6] for c in low]) if low else 0.0,
+                # ⛔ 判定公式**保持原样严格**（切片AB 未放宽任何一条）：
+                #    候选必须① 在来路高度真被挡、② 全都跳起来站得住、③ 都能一次跳过去。
+                #    残留不达标的那几格走 `策划/差异登记.tsv` 登记，⛔ 不在这里放行。
                 ok=(len(low) > 0 and len(blocked) == len(low) and len(cleared) == len(low)
                     and jump_ok))
 
@@ -518,7 +596,6 @@ def main():
     bms = [load_bits(p) for p in BYTES_FILES]
     bm = load_bits(BITMAP)
     geom_all = Geom(geo)
-    geom_nocrate = Geom(geo, {g['name'] for g in geo['groups'] if g['name'] not in CRATE_GROUPS})
     gate = Gate(const, geom_all)
     ape = const['JumpSpeed'] ** 2 / (2.0 * const['Gravity'])
 
@@ -573,15 +650,30 @@ def main():
                                 v['old_allowed'], len(v['bad']))
                              for g, v in sorted(a4.items()))))
 
-    a5 = low_obstacle_stats(geo, bm, gate, geom_nocrate, const)
+    # ⛔ 顶面与可站性必须用**同一套几何**（切片AB 口径修正）：见 low_obstacle_cells 的 docstring。
+    a5 = low_obstacle_stats(geo, bm, gate, geom_all, const)
     w = a5['worst']
     results.append((a5['ok'], 'A5 矮障碍（顶面高差 ∈ (台阶, 跳跃可达]）地面挡 / 跳起通 / 起跳落点可达',
-                    '候选=%d 地面挡=%d 跳起通=%d 最高高差=%.2f m｜轨迹：最紧一处 '
-                    '脚面高于顶面 %.3f s ⇒ 水平可走 %.2f m ≥ 需跨 %.2f m'
-                    % (a5['count'], a5['blocked_at_grade'], a5['clear_at_jump'], a5['h_max'],
-                       w['dt'] if w else 0.0, w['reach'] if w else 0.0, a5['need'])))
+                    '候选=%d 地面挡=%d 跳起通=%d 实体挡=%d 外侧虚空=%d '
+                    '最高高差=%.2f m｜轨迹：最紧一处 脚面高于顶面 %.3f s ⇒ 水平可走 %.2f m ≥ 需跨 %.2f m'
+                    % (a5['count'], a5['blocked_at_grade'], a5['clear_at_jump'],
+                       len(a5['solid_blocked']), len(a5['void_blocked']),
+                       a5['h_max'], w['dt'] if w else 0.0, w['reach'] if w else 0.0, a5['need'])))
     say('A5 矮障碍候选 %d 个：地面高度挡住 %d / 跳起高度可通过 %d（最高高差 %.2f m ≤ %.4f m）'
-        % (a5['count'], a5['blocked_at_grade'], a5['clear_at_jump'], a5['h_max'], ape))
+        '｜跳起站不住：真有实体挡 %d / 外侧图外虚空 %d'
+        % (a5['count'], a5['blocked_at_grade'], a5['clear_at_jump'], a5['h_max'], ape,
+           len(a5['solid_blocked']), len(a5['void_blocked'])))
+    for c in a5['void_blocked']:
+        say('   跳起站不住（外侧图外虚空 ⇒ 运行时保守口径，登记为差异）cell=(%3d,%3d) 来路=%.2f 顶面=%.2f 组=%s'
+            % (c[0], c[1], c[4], c[5], c[7]))
+    for c in a5['solid_blocked']:
+        say('   跳起站不住（身高带里**真有实体** ⇒ 那上面本来就不是可站面）'
+            'cell=(%3d,%3d) 来路=%.2f 顶面=%.2f 组=%s' % (c[0], c[1], c[4], c[5], c[7]))
+    if a5['suspicious']:
+        say('   疑似非矮障碍（本格足迹内还有更高的面 ⇒ 高差已超可达高度；⛔ 仅线索，未改候选集）：')
+        for (ix, iz, cx, cz, g, top, real, hh) in a5['suspicious']:
+            say('     cell=(%3d,%3d) xz=(%8.2f,%8.2f) 来路=%6.2f 顶面(够得着)=%6.2f 格内真顶面=%6.2f'
+                '（高差 %.2f > %.4f）' % (ix, iz, cx, cz, g, top, real, hh, ape))
     say('   A 点起跳落点可达（解析解，常量出处 Core/CsConst.cs）：需跨 %.2f m（格宽+2×半径）；'
         '最紧一处 h=%.2f m ⇒ 脚面高于顶面的时间窗 %.3f s × SpeedKnife %.1f m/s = %.2f m %s'
         % (a5['need'], w['h'] if w else 0.0, w['dt'] if w else 0.0, const['SpeedKnife'],

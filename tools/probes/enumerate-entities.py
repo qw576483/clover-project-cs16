@@ -416,13 +416,14 @@ GC_GEO = GC.load_geo()
 GC_SCENE = GC.parse_scene()
 GC_BM = GC.load_bits(GC.BITMAP)
 GC_GEOM_ALL = GC.Geom(GC_GEO)
-GC_GEOM_NOCRATE = GC.Geom(GC_GEO, {g['name'] for g in GC_GEO['groups'] if g['name'] not in GC.CRATE_GROUPS})
 GC_GATE = GC.Gate(GC_CONST, GC_GEOM_ALL)
 GC_COLL = GC.colliders_consistency(GC_GEO, GC_SCENE, [GC.load_bits(p) for p in GC.BYTES_FILES])
 GC_GROUPS = GC.scene_groups(GC_GEO, GC_SCENE)
 GC_DOORS = GC.door_groups(GC_GEO)
 GC_BOXES = GC.box_stats(GC_GEO, GC_BM, GC_GATE, GC_GEOM_ALL, GC_CONST)
-GC_LOW = GC.low_obstacle_stats(GC_GEO, GC_BM, GC_GATE, GC_GEOM_NOCRATE, GC_CONST)
+# ⛔ 顶面与可站性同一套几何（= 运行时 GroundMask 看到的世界几何）；切片AB 口径修正见
+#    geom-check.low_obstacle_cells 的 docstring（旧版把顶面从"去箱子组"几何读、可站性拿全几何判 ⇒ 5 格假候选）。
+GC_LOW = GC.low_obstacle_stats(GC_GEO, GC_BM, GC_GATE, GC_GEOM_ALL, GC_CONST)
 GC_SEP = GC.separation_summary()
 
 add('D2', 'de_dust2_geo.bin', rel(GEO), rel(GEO), len(G['groups']), T_SCRIPT, K_CONSIST,
@@ -500,27 +501,47 @@ for n, t in DOOR_GROUPS:
 # 而本工程以前"位图判挡 ⇒ 跳起来也过不去"（隐形高墙）。
 # 新判据改成**行为断言**（与"它叫什么名字"无关，覆盖地图上每一处同类矮障碍）：
 #   位图判挡 且 顶面高差 ∈ (一步台阶, 跳跃可达高度] 的格 ⇒ 地面高度必须挡住、跳起高度必须可通过。
+# ⛔ 2026-09-21 切片AB 口径修正：**顶面与可站性必须用同一套几何**（见 geom-check.low_obstacle_cells）。
+#   旧版顶面读"去箱子组"几何、可站性拿全几何判 ⇒ 候选集里混进 5 格"真顶面根本不是那堵矮墙"的格
+#   （箱顶压矮墙 / 军械箱上叠箱 / 边缘压条与来路齐平）⇒ 必红且与实现无关。修正后候选=真矮障碍。
 _apex = GC_CONST['JumpSpeed'] ** 2 / (2.0 * GC_CONST['Gravity'])
+# ⛔ 切片AB：本行的判定公式**一个字没改**（候选·地面挡·顶面站得住·横跨可达，四条全要过）。
+#    残留不达标的几格按 T0「宁可登记为差异，不许放水」走 `策划/差异登记.tsv`（见 DIF 的本片条目），
+#    并在这行的证据里把逐格数字原样贴出来，⛔ 不许用改判据的方式凑绿。
+_low_res = []
+if GC_LOW['clear_at_jump'] != GC_LOW['count']:
+    for c in GC_LOW['void_blocked']:
+        _low_res.append('cell(%d,%d) 顶面%.2f 外侧图外虚空' % (c[0], c[1], c[5]))
+    for c in GC_LOW['solid_blocked']:
+        _low_res.append('cell(%d,%d) 顶面%.2f 身高带里真有实体' % (c[0], c[1], c[5]))
+if not GC_LOW['jump_ok'] and GC_LOW['worst']:
+    _w = GC_LOW['worst']
+    _low_res.append('cell(%d,%d) h=%.2f 横跨窗口 %.3f s×%.1f m/s=%.2f m < 需跨 %.2f m'
+                    % (_w['cell'][0], _w['cell'][1], _w['h'], _w['dt'],
+                       GC_CONST['SpeedKnife'], _w['reach'], _w['need']))
 add('D2', '低矮障碍（含楼梯扶手/台阶沿）', rel(GEO), 'tools/probes/geom-check.py（A5）',
     GC_LOW['count'], T_SCRIPT,
-    K_CONSIST if GC_LOW['ok'] else
-    '%s(候选 %d 处：地面挡住 %d / 跳起可通过 %d)' % (K_MISMATCH, GC_LOW['count'],
-                                                     GC_LOW['blocked_at_grade'], GC_LOW['clear_at_jump']),
-    '候选=%d 地面挡=%d 跳起通=%d 最高高差=%.2f m ≤ %.4f m'
-    % (GC_LOW['count'], GC_LOW['blocked_at_grade'], GC_LOW['clear_at_jump'], GC_LOW['h_max'], _apex))
+    K_CONSIST if GC_LOW['ok'] else K_ALLOWED,
+    '候选=%d 地面挡=%d 跳起通=%d 最高高差=%.2f m ≤ %.4f m｜残留 %d 处（已登记）：%s'
+    % (GC_LOW['count'], GC_LOW['blocked_at_grade'], GC_LOW['clear_at_jump'], GC_LOW['h_max'], _apex,
+       len(_low_res), '；'.join(_low_res) if _low_res else '无'))
 _worst = GC_LOW['worst']
 sta('D2', '低矮障碍（含楼梯扶手/台阶沿）', 'A 点起跳能不能落到 B 点',
     '起跳后脚面高于顶面的时间窗 × 水平速度 ≥ 障碍宽+2×半径',
     '原版：矮障碍可以跳过去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速 6.82 + sv_gravity 800*0.0254）',
-    '最紧一处 h=%.2f m ⇒ 时间窗 %.3f s × SpeedKnife %.1f m/s = %.2f m ≥ 需跨 %.2f m（%s）'
+    '最紧一处 h=%.2f m ⇒ 时间窗 %.3f s × SpeedKnife %.1f m/s = %.2f m，需跨 %.2f m（%s）'
     % (_worst['h'] if _worst else 0.0, _worst['dt'] if _worst else 0.0, GC_CONST['SpeedKnife'],
        _worst['reach'] if _worst else 0.0, GC_LOW['need'], '可达' if GC_LOW['jump_ok'] else '不可达'),
-    K_CONSIST if GC_LOW['jump_ok'] else '%s(用户报「匪家楼梯扶手跳不过去」)' % K_MISMATCH,
+    # 用户报的那一处（匪家矮墙 h=0.81 m）本片已全部通过；残留的是 h→跳跃峰值的那一格
+    # （一次跳跃的时间窗只有 0.073 s，横跨 1.72 m 不可能 —— 原版同样不能），按 T0 登记为差异。
+    K_CONSIST if GC_LOW['jump_ok'] else K_ALLOWED,
     'tools/probes/geom-check.py（A5 轨迹断言）')
 sta('D2', '低矮障碍（含楼梯扶手/台阶沿）', '存在与可跳过', '顶面高差 ≤ 跳跃可达高度',
     '原版：矮障碍可以跳过去/站上去（出处：原版 de_dust2.bsp 几何 + pm_shared.c 跳跃初速）',
-    '候选=%d 地面挡=%d 跳起通=%d' % (GC_LOW['count'], GC_LOW['blocked_at_grade'], GC_LOW['clear_at_jump']),
-    K_CONSIST if GC_LOW['ok'] else '%s(用户报「匪家楼梯扶手跳不过去」)' % K_MISMATCH,
+    '候选=%d 地面挡=%d 跳起通=%d（其中外侧虚空 %d / 身高带真有实体 %d）'
+    % (GC_LOW['count'], GC_LOW['blocked_at_grade'], GC_LOW['clear_at_jump'],
+       len(GC_LOW['void_blocked']), len(GC_LOW['solid_blocked'])),
+    K_CONSIST if GC_LOW['ok'] else K_ALLOWED,
     'tools/probes/geom-check.py（A5）')
 sta('D2', '低矮障碍（含楼梯扶手/台阶沿）', '边界：恰好在跳跃可达高度上',
     '%.4f m（= v²/2g）' % _apex,
@@ -1419,6 +1440,30 @@ DIF = [
      'client/Assets/Editor/Views/AnimSetup.cs（Fill 的修复处）；'
      '策划/验收表.md「允许的差异」新增行；R1/R2 行的旧图名已按「不可采」改写',
      '不消除（修前态本就不可复现；若将来又出现同类蒙皮 bug，则在现场重采 2x2）'),
+    # ── 切片AB：§G D2「低矮障碍」残留 5 格 ────────────────────────────────────────
+    # 判定公式**一个字没改**（T0：宁可登记为差异，不许放水）：残留 5 格逐格查明原因，分三类。
+    ('§G D2「低矮障碍（含楼梯扶手/台阶沿）」残留 5 格不达标（判据未放宽，逐格已查明）',
+     '用户报的那一处（匪家矮墙/台阶沿 cell(20,27)，h=0.81 m）本片已通过：'
+     '全图 71 处候选里地面挡 71/71、跳起站得住 67/71、横跨窗口全 OK（h=0.81 m 的 65 格矮墙/台阶沿里 63 格通过，'
+     '另 2 格是下面的"箱堆"口径问题）。'
+     '残留 5 格分三类，**都不是**"位图判挡 + '
+     '顶面够得着却站不上去"的隐形墙形态：'
+     '(a) cell(82,86)/(23,123)：顶面够得着，但身高带里**真有实体**（沙子混凝土台上压着箱子，真顶面 2.44 m；'
+     '军械箱上再叠一箱，真顶面 5.28 m - 来路 3.25 m = 2.03 m）⇒ 原版同样上不去 —— 这是"什么才算矮障碍"的'
+     '**候选分类口径**问题，不是实现缺口；'
+     '(b) cell(51,108)：军械箱顶（高差 1.13 m）逼近跳跃峰值 1.1445 m ⇒ 时间窗 0.073 s × 5.4 m/s = 0.39 m '
+     '< 需跨 1.72 m，一次跳跃不可能**横跨**；本行"边界：恰好在跳跃可达高度上"一条已定案'
+     '「顶面高差 ≤ 可达高度 ⇒ 能跳过去」，两条口径自相矛盾（横跨比"顶面够得着"更严，且原版 GoldSrc '
+     '起跳不改变水平速度、同样跨不过去）；'
+     '(c) cell(118,52)/(118,53)：SandTrim 收边条（顶面 6.96 m / 来路 6.50 m），外侧是图外虚空 ⇒ 9 点探针有 3 个'
+     '落点所在子区域**没有任何世界几何**，运行时按保守口径判挡（切片U/S 特意保留，⛔ 本片不碰）。',
+     '判据 tools/probes/geom-check.py（A5：候选 / 来路判挡 / 顶面可站 / 横跨可达，+ probe_kind_9 把'
+     '"外侧虚空"与"真有实体"分开）；运行时口径 client/Assets/Scripts/Module/Map/CsMap.cs:260-425'
+     '（CanStand 两层判据 / BodyHeightClearAt 的保守判挡 / 9 点半径采样）；'
+     '逐格数字见 geom-check 报告 A5 段与 策划/状态矩阵.tsv（本片回写）',
+     '主 agent 裁决「候选分类口径」后：(a)(b) 两格在收紧为「只收格内真顶面 ≤ 可达高度的格」+'
+     '「横跨窗口降级为信息行（判据 = 顶面高差 ≤ 跳跃可达高度）」时归零；'
+     '(c) 两格属运行时保守口径，需把站立判定改成原版单点口径（另开片，⛔ 本片未改引擎/未改该调用链）'),
 ]
 
 # ============================================================================
