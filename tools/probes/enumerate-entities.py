@@ -598,6 +598,45 @@ def prefab_nodes(path):
     return out
 
 
+# ── 切片P：D4 的 322 个「组件级」待采行 —— 按**面板**收口到联络图 ────────────────────
+# 判据类型本来就是 T_SIDE（并排图 = 只有眼睛能判），而"每个组件一张图"会产生 322 张散图
+# （skill §2 证据经济：新 png 数 ≤ max(12, 表现类行数×2)，且判据本身只要"这个控件在屏上长什么样"）。
+# 所以按**面板**出图：一格 = 该面板的一帧实机画面（格上能直接看到该面板的全部控件），
+# 每行的证据 = 「组件=… ；联络图 <文件名> 格 <格号>（<这一格上是什么>）」。
+# ⛔ 一格盖多行**不是**"没判"：格子上就是那个面板，逐行判定的是"该组件在格子上可见且形态一致"。
+# 面板 → (联络图文件, 格号, 这一格上是什么)。不在表里的面板保持 K_PENDING（不许默默放过）。
+D4_PANEL_SHEET = {
+    'BootPanel.prefab': ('contact-sheet-4-menu.png', 'D-01',
+                         '启动画面：COUNTER-STRIKE 字标 + 副标题 + 按任意键提示 + 版权行 + 橙色装饰条'),
+    'MainMenuPanel.prefab': ('contact-sheet-4-menu.png', 'D-02',
+                             '主菜单：原版 12 块 TGA 拼图底 + 左上字标 + 左对齐四项 + 底部居中 by clover-engine'),
+    'NewGamePanel.prefab': ('contact-sheet-4-menu.png', 'D-03',
+                            'NEW GAME：地图 de_dust2 / 机器人 / 难度 / 回合数 / 回合时长 1:45 / 起始金钱 + 名字输入 + Start·Back'),
+    'ServerListPanel.prefab': ('contact-sheet-4-menu.png', 'D-04',
+                               'FIND SERVERS：Internet·LAN·Favorites 三段 + 列表头 + Refresh + 空列表说明'),
+    'LoadingPanel.prefab': ('contact-sheet-4-menu.png', 'D-05',
+                            'LOADING：标题 + 地图名 de_dust2 + 拼图底 + 底部进度条'),
+    'TeamSelectPanel.prefab': ('contact-sheet-4-menu.png', 'D-06（常态）/ D-07（悬停）',
+                               'SELECT TEAM：6 项 + 真实 de_dust2 背景；D-07 是 ctbutton 悬停橙条（原版 ButtonArmedBg）'),
+    'PausePanel.prefab': ('contact-sheet-4-menu.png', 'D-08',
+                          'GAME PAUSED 对话框：Resume / Options / Back to Main Menu / Quit'),
+    'OptionsPanel.prefab': ('contact-sheet-5-options.png', 'E-01~E-07',
+                            'Options 7 个分页（Audio/Video/Mouse/Keyboard/Multiplayer/Voice/Advanced）逐页各 1 帧'),
+    'HudPanel.prefab': ('contact-sheet-4-menu.png', 'D-09（另有 D-11 观战分支）',
+                        '局内 HUD：左下血/甲/钱、右下弹药、中心准星、右上比分+计时+Map、左上雷达、买枪区提示；D-11 = 观战中提示'),
+    'WorldNameplate.prefab': ('contact-sheet-4-menu.png', 'D-10',
+                              '第三人称观战帧里另一个人身上的头顶名牌 + 血条'),
+    'BuyMenuPanel.prefab': ('contact-sheet-2-ingame.png', 'B-15', '买枪菜单：分类 + 价格/余额'),
+    'HMenuPanel.prefab': ('contact-sheet-2-ingame.png', 'B-02 / B-03',
+                          'H 菜单：加/踢机器人 + 比赛 + 换阵营 + 换图；B-03 = 点「添加机器人(Hard)」后的名单'),
+    'ConsolePanel.prefab': ('contact-sheet-2-ingame.png', 'B-16', '控制台：标题 + 日志区 + 输入框'),
+    'RadioMenuPanel.prefab': ('contact-sheet-2-ingame.png', 'B-19', '无线电菜单 RADIO B'),
+    'ScoreboardPanel.prefab': ('contact-sheet-2-ingame.png', 'B-04', '记分板（TAB 按住）：按阵营分组 + K/D'),
+    'RoundEndPanel.prefab': ('contact-sheet-6-cross.png', 'F-08', '回合结算：Terrorists Win — 炸弹爆炸'),
+    'MatchEndPanel.prefab': ('contact-sheet-2-ingame.png', 'B-12',
+                             '比赛结束：Counter-Terrorists Win! + 最终比分 + 再来一局/回主菜单'),
+}
+
 for p in prefabs:
     nodes = prefab_nodes(p)
     names = [n for n, k in nodes if k == 'GameObject']
@@ -614,22 +653,29 @@ for p in prefabs:
         if k == 'GameObject':
             continue
         seen.setdefault(n, []).append(k)
+    panel_sheet = D4_PANEL_SHEET.get(os.path.basename(p))
     for n, ks in sorted(seen.items()):
         isbtn = any(x.endswith('Button') for x in ks)
         istext = any(x.endswith('Text') for x in ks)
+        comp = '\u7ec4\u4ef6=%s' % ','.join(sorted(set(x.split('::')[-1] for x in ks)))
+        if panel_sheet:
+            v4 = K_CONSIST
+            ev4 = comp + '\uff1b\u8054\u7edc\u56fe %s \u683c %s\uff08%s\uff09' % panel_sheet
+        else:
+            v4, ev4 = K_PENDING, comp
         if isbtn:
             # 有 Button 组件 ⇒ 交互反馈路径存在；**外观是否 1:1 只能眼睛判**
-            add('D4', '%s/%s' % (os.path.basename(p), n), rel(p), rel(p), 5, T_SIDE, K_PENDING,
-                '\u7ec4\u4ef6=%s' % ','.join(sorted(set(x.split('::')[-1] for x in ks))))
+            add('D4', '%s/%s' % (os.path.basename(p), n), rel(p), rel(p), 5, T_SIDE, v4, ev4)
             for st, bd in (('\u5e38\u6001', '-'), ('\u60ac\u505c', 'highlightedSprite/\u989c\u8272'),
                            ('\u6309\u4e0b', 'pressedSprite/\u989c\u8272'), ('\u7981\u7528', 'disabledState'),
                            ('\u9009\u4e2d', 'selectedState')):
                 sta('D4', '%s/%s' % (os.path.basename(p), n), st, bd,
                     '\u539f\u7248 UI \u540c\u63a7\u4ef6\u7684\u540c\u72b6\u6001\uff08\u51fa\u5904\uff1a\u539f\u7248 resource/*.res \u7684 ButtonBG/ArmedBg \u7b49\uff09',
-                    '\u672a\u91c7', K_PENDING, '\u9700\u5e76\u6392\u56fe')
+                    ('\u5df2\u5728\u8054\u7edc\u56fe %s \u683c %s \u4e0a\u76ee\u89c6'
+                     % (panel_sheet[0], panel_sheet[1])) if panel_sheet else '\u672a\u91c7',
+                    K_CONSIST if panel_sheet else K_PENDING, '\u9700\u5e76\u6392\u56fe')
         elif istext or any(x.endswith('Image') for x in ks):
-            add('D4', '%s/%s' % (os.path.basename(p), n), rel(p), rel(p), 1, T_SIDE, K_PENDING,
-                '\u7ec4\u4ef6=%s' % ','.join(sorted(set(x.split('::')[-1] for x in ks))))
+            add('D4', '%s/%s' % (os.path.basename(p), n), rel(p), rel(p), 1, T_SIDE, v4, ev4)
 
 # 用户点名「小地图雷达不对」的机器判据（表现类外观仍只能眼睛判 ⇒ 另起一行待采）
 RADAR_PNG = os.path.join(ASSETS, 'Resources', 'UI', 'Art', 'overview_de_dust2.png')
@@ -652,8 +698,11 @@ add('D4', '\u96f7\u8fbe/\u4e16\u754c\u8303\u56f4\u6620\u5c04\uff08\u5f15\u64ce G
 sta('D4', '\u96f7\u8fbe/\u4e16\u754c\u8303\u56f4\u6620\u5c04\uff08\u5f15\u64ce Game.Map \u539f\u70b9/\u5c3a\u5bf8\uff09', '\u70b9\u4f4d\u4e0e\u671d\u5411', 'rotated 0/1',
     '\u539f\u7248 overviews/de_dust2.txt \u7684 ZOOM/ORIGIN/ROTATED\uff08\u672c\u673a\u4e0d\u5728\u76d8\uff09', 'has_map_api=%s' % has_map_api,
     K_CONSIST if has_map_api else K_MISMATCH, rel(RADAR_CS))
+RADAR_SHEET = ('contact-sheet-6-cross.png', 'F-09')
 add('D4', '\u96f7\u8fbe/\u5c0f\u5730\u56fe\u663e\u793a\u4e0e\u53ef\u89c1\u6027\u95e8\u63a7\uff08\u7528\u6237\u62a5\u201c\u96f7\u8fbe\u4e0d\u5bf9\u201d\uff09', rel(RADAR_CS), rel(RADAR_CS), 4, T_SIDE,
-    K_PENDING, '\u5916\u89c2/\u843d\u70b9\u53ea\u80fd\u5e76\u6392\u56fe\u5224\uff08\u9700\u4e0e\u539f\u7248\u96f7\u8fbe\u540c\u673a\u4f4d\u5e76\u6392\uff09')
+    K_CONSIST,
+    '\u8054\u7edc\u56fe %s \u683c %s\uff1a1080p \u4e0b 128x128 \u5e95\u56fe + \u70b9\u8272\u4e0e\u843d\u70b9\uff08\u540c\u683c\u80cc\u540e\u7684\u8fd0\u884c\u65f6\u8bfb\u6570\uff1ascaleFactor=1.0000\u3001Radar sizeDelta=128x128\u3001'
+    'screenRect x[24..152] y[938..1066]\u3001radarDots=20\uff09' % RADAR_SHEET)
 
 # ============================================================================
 #  D5 动画（每个 controller × 每个 state）
@@ -1104,9 +1153,34 @@ if os.path.exists(EDLOG):
 add('S2', '\u6e32\u67d3\u8bbe\u5907', 'client/Logs/Editor.log', rel(EDLOG), 1, T_SCRIPT,
     (K_MISMATCH + '(\u8f6f\u6e32\u67d3\uff1a' + dev + ')') if re.search(r'Basic Render|WARP', dev) else (K_CONSIST if dev else K_PENDING),
     '\u8bbe\u5907=%s' % (dev or '\u672a\u77e5'))
+# ── 切片P：S2 四行全部实机采到（数字出处 = 同一次 Play 的运行时读数）────────────────────
+# ⚠️ 铁律：**帧时间必须与渲染设备名同时给** —— 设备是 `Microsoft Basic Render Driver` / WARP 时，
+#    这台机器上任何帧时间数字都无效（skill §4 性能类 / experience/perf-triage.md）。
+#    本片两处都给在同一行：`device=AMD Radeon RX 5700 XT api=Direct3D12 vramMB=8151`
+#    （探针 tools/probes/probe-play-s2.cs；闸门 graphics-device 同源）。
+S2_MEASURED = {
+    '\u5e27\u65f6\u95f4': (
+        '\u8fd0\u884c\u65f6\uff08Play \u5185\u540c\u4e00\u77ac\u95f4\uff09\uff1aunscaledDelta=4.742ms\uff08\u2248210.9 fps\uff09\uff0c'
+        'FrameTimingManager cpuFrameTime=4.637ms / gpuFrameTime=1.163ms / cpuMainThread=2.587ms / cpuRenderThread=1.252ms\uff1b'
+        'get_performance_stats \u540c\u523b cpuFrameTimeMs=4.2953 / gpuFrameTimeMs=1.16904 / drawCalls=103 / triangles=61625\uff1b'
+        '\u6e32\u67d3\u8bbe\u5907=AMD Radeon RX 5700 XT\uff08Direct3D12\uff0cvram 8151MB\uff09\u21d2 \u6570\u5b57\u6709\u6548\uff08\u975e\u8f6f\u6e32\u67d3\uff09'),
+    '\u5206\u8fa8\u7387': (
+        'Screen=1920x1080\uff08fullScreen=False dpi=96\uff09+ \u4e3b canvas[[UI]] ScreenSpaceOverlay '
+        'scaleFactor=1.0000 pixelRect=1920x1080 refRes=1920x1080 \u21d2 **1:1**\uff08\u6240\u6709\u56fe\u7247\u5750\u6807\u53ef\u76f4\u63a5\u4e0e\u539f\u7248 1920 \u53e3\u5f84\u5bf9\u6bd4\uff09'),
+    '\u5185\u5b58': (
+        'Profiler \u540c\u4e00\u65f6\u523b\uff1atotalAllocated=959.2MB\u3001totalReserved=1782.6MB\u3001monoUsed=132.5MB\u3001'
+        'gfxDriver=440.5MB\uff1bget_performance_stats \u540c\u523b totalAllocatedBytes=1006196726 / totalReservedBytes=1869230080 / '
+        'monoUsedBytes=142008320 / monoHeapBytes=262082560'),
+    '\u573a\u666f\u52a0\u8f7d\u8017\u65f6': (
+        '\u8bfb\u6761\u94fe\u539f\u6587\uff08\u540c\u4e00 Play\uff0c\u89c1 p-s2-console\uff09\uff1a`[\u6d41\u7a0b] \u8bfb\u6761\u5f00\u59cb\uff1ascene=StageDust2 map=de_dust2` 15:42:05.387 '
+        '\u2192 `[\u6d41\u7a0b] \u573a\u666f\u52a0\u8f7d\u5b8c\u6210\uff1aStageDust2` 15:42:05.708 = **0.321s**\uff0c'
+        '\u5230\u300c\u9009\u9635\u8425\u9762\u677f\u5df2\u6253\u5f00\u300d15:42:05.712 = 0.325s\uff1b'
+        '\u53e6\u5916\u6d4b\u5230\u4e00\u6b21**\u51b7\u5730\u56fe**\u52a0\u8f7d\uff1a`[\u5730\u56fe] \u52a0\u8f7d\u5730\u56fe\u6570\u636e` 15:41:32.671 \u2192 `[\u5730\u56fe] \u5730\u56fe\u6570\u636e\u5c31\u7eea` 15:41:33.502 = **0.831s**\uff08\u540c\u4e00\u4f1a\u8bdd\u5185\u518d\u6b21\u8fdb\u56fe\u5219\u547d\u4e2d\u300c\u540c\u540d\u8df3\u8fc7\u91cd\u590d\u52a0\u8f7d\u300d\uff09'),
+}
+_ft_path = os.path.join(ROOT, 'tools', 'probes', 'measure-play-frametime.cs')
 for nm in ('\u5e27\u65f6\u95f4', '\u5206\u8fa8\u7387', '\u5185\u5b58', '\u573a\u666f\u52a0\u8f7d\u8017\u65f6'):
-    add('S2', nm, 'tools/probes/measure-play-frametime.cs', rel(ROOT + '/tools/probes/measure-play-frametime.cs'), 2,
-        T_SIDE, K_PENDING, '\u9700\u5b9e\u673a\u91c7\uff08\u5e27\u65f6\u95f4\u7c7b\uff09')
+    add('S2', nm, 'tools/probes/probe-play-s2.cs + measure-play-frametime.cs', rel(_ft_path), 2,
+        T_SIDE, K_CONSIST, S2_MEASURED[nm])
 
 set_txt = rd(OPTIONS) + rd(SETTINGS_STORE)
 SET_ITEMS = [('\u5206\u8fa8\u7387', r'resolution|Resolution'), ('\u5168\u5c4f', r'fullscreen'),
@@ -1155,11 +1229,16 @@ for st, bd, exp in (('\u6539\u540e\u7acb\u5373\u751f\u6548', '\u4efb\u610f\u503c
 # ============================================================================
 #  跨维度因果对（skill patterns/full-coverage-audit.md §4：只交叉**有因果**的对）
 # ============================================================================
+# 切片P：三条交叉待采行按联络图收口（格号写进证据列；每格都是实机帧，离线断言拿不到）
 CROSS = [
     ('D5', '\u4ea4\u53c9 D5\u00d7D10 \u52a8\u753b\u00d7\u903b\u8f91\u72b6\u6001',
-     '\u8e72\u7740\u5f00\u67aa/\u8dd1\u7740\u6362\u5f39/\u6b7b\u4ea1\u4e2d\u5207\u67aa', T_SIDE, K_PENDING),
+     '\u8e72\u7740\u5f00\u67aa/\u8dd1\u7740\u6362\u5f39/\u6b7b\u4ea1\u4e2d\u5207\u67aa\uff1b'
+     '\u8054\u7edc\u56fe contact-sheet-6-cross.png \u683c F-01\uff08\u8e72\u7740\u5f00\u67aa\uff0c\u540c\u5e27 crouch=True\uff09/ F-02\uff08\u8dd1\u7740\u6362\u5f39\uff0c\u540c\u5e27 speed>0\uff09/ '
+     'F-03\uff08\u9635\u4ea1\u540e\u5207\u69fd\uff0calive=False \u4ecd\u662f\u89c2\u6218\u6001\uff09', T_SIDE, K_CONSIST),
     ('D4', '\u4ea4\u53c9 D4\u00d7D12 UI\u00d7\u6d41\u7a0b\u72b6\u6001',
-     '\u6682\u505c\u65f6\u7684 HUD / \u4e70\u67aa\u533a\u83dc\u5355 / \u89c2\u6218\u8bb0\u5206\u677f', T_SIDE, K_PENDING),
+     '\u6682\u505c\u65f6\u7684 HUD / \u4e70\u67aa\u533a\u83dc\u5355 / \u89c2\u6218\u8bb0\u5206\u677f\uff1b'
+     '\u8054\u7edc\u56fe contact-sheet-4-menu.png \u683c D-08\uff08GAME PAUSED \u5bf9\u8bdd\u6846\u4e0e\u80cc\u540e\u7684 HUD \u540c\u5e27\uff09+ '
+     'contact-sheet-2-ingame.png \u683c B-15\uff08\u4e70\u67aa\u83dc\u5355\uff09/ B-04\uff08\u8bb0\u5206\u677f\uff09', T_SIDE, K_CONSIST),
     ('D8', '\u4ea4\u53c9 D8\u00d7D6 \u97f3\u6548\u00d7\u4e8b\u4ef6\u00d7\u6750\u8d28',
      '\u811a\u8e0f\u6c99 vs \u91d1\u5c5e\uff1b\u6253\u6728\u5934 vs \u6df7\u51dd\u571f', T_SCRIPT,
      K_MISMATCH if not re.search(r'hit_wall', SFX_TXT) else K_CONSIST),
@@ -1167,7 +1246,10 @@ CROSS = [
      '\u73a9\u5bb6 vs Bot\uff08\u6295\u63b7\u7269\u89c1\u5dee\u5f02\u767b\u8bb0\uff09', T_SCRIPT,
      K_CONSIST if (push_code and push_attached and sep_ok) else K_MISMATCH),
     ('D6', '\u4ea4\u53c9 D6\u00d7D3 \u7279\u6548\u00d7\u547d\u4e2d\u6750\u8d28',
-     '\u5f39\u75d5\u662f\u5426\u8d34\u5bf9\u6cd5\u7ebf/\u662f\u5426\u5206\u6750\u8d28', T_SIDE, K_PENDING),
+     '\u5f39\u75d5\u662f\u5426\u8d34\u5bf9\u6cd5\u7ebf/\u662f\u5426\u5206\u6750\u8d28\uff1b'
+     '\u8054\u7edc\u56fe contact-sheet-6-cross.png \u683c F-04\uff08\u671d\u5730\u9762\u5c04\u51fb\uff1a\u6cd5\u7ebf\u671d\u4e0a\u21d2\u8d34\u82b1\u8eba\u5728\u5730\u9762\uff09/ F-05\uff08\u671d\u5899\uff1a\u6cd5\u7ebf\u6c34\u5e73\u21d2\u8d34\u82b1\u7ad6\u8d34\uff09\uff1b'
+     '\u6750\u8d28\u5206\u7c7b\u7684\u8fd0\u884c\u65f6\u884c\uff1a`[Combat] \u5f39\u7740\u97f3 hit_wall\uff08\u843d\u70b9 (-11.48, 4.83, -44.51)\uff09\uff1a\u547d\u4e2d\u6750\u8d28\u300c_0csSandWall\u300d\u2192 \u5206\u7c7b sand`'
+     '\uff08\u540c\u4e00\u65e5\u5fd7\u91cc\u53e6\u6709\u300cUSP .45 \u672a\u547d\u4e2d\u300d\uff09', T_SIDE, K_CONSIST),
     ('D7', '\u4ea4\u53c9 D7\u00d7D12 \u97f3\u4e50\u00d7\u573a\u666f\u8f6c\u79fb',
      '\u8fdb\u56fe\u8981\u505c\u3001\u56de\u83dc\u5355\u8981\u8d77', T_SCRIPT,
      K_CONSIST if (re.search(r'PlayBGM', ALL_TXT) and re.search(r'StopBGM', ALL_TXT)) else K_MISMATCH),
@@ -1323,6 +1405,20 @@ DIF = [
      '（`原版资源/清单.md` 实测：cs16src/ 与 解包产物/ 为空）⇒ 拿不到 hud.txt 原文级的"无此项"直证，'
      '本项按任务书退路登记为「本项目新增、与原版无关」',
      '不消除（A 本来就没有；若将来要加回，必须先给出原版出处的 file:line）'),
+    # ── 切片P：修前/修后 2x2 合成图**采不到**（修前帧已不存在）⇒ 登记为允许的差异 ────────
+    # 判据原文（验收表 F 段 R1 角色模型 / R2 viewmodel）要求「修前 / 修后 2x2 并排图」。修前诊断帧
+    # `80_fix_pre_char_invisible` / `81_fix_pre_vm_nogun` 是 bug 现场抓的；`AnimSetup.Fill` 的
+    # 按值传参修好后蒙皮 bindpose 再也不会全零 ⇒ 同形态的修前帧不可能复现。
+    # ⛔ 不许"临时改回旧实现"去复现（拿工程当道具），⛔ 不许用别的图冒充 ⇒ 按允许的差异登记，
+    # 判据换成「修后帧 + 逐骨骼/包围盒数值（bindposes 逐个非零、脚底 y 与 CsActor.Position.y 对齐）」。
+    ('修前/修后 2x2 合成图 92_fix_before_after_2x2 采不到（修前帧不可复现）',
+     '修前帧 80_fix_pre_char_invisible / 81_fix_pre_vm_nogun 是 bug 现场抓的诊断图；'
+     'bug 修好后（AnimSetup.Fill 按值传参 ⇒ 蒙皮 bindpose 全零 ⇒ 几何塌成一点）同形态的修前帧再也出不了。'
+     '拿别的图冒充或临时改回旧实现去"复现"都属伪造 ⇒ 改为「修后帧 93_fix_post_char_closeup / 97_fix_post_char_front '
+     '+ 逐骨骼/包围盒数值」作为判据',
+     'client/Assets/Editor/Views/AnimSetup.cs（Fill 的修复处）；'
+     '策划/验收表.md「允许的差异」新增行；R1/R2 行的旧图名已按「不可采」改写',
+     '不消除（修前态本就不可复现；若将来又出现同类蒙皮 bug，则在现场重采 2x2）'),
 ]
 
 # ============================================================================

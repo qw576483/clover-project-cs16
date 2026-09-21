@@ -3743,10 +3743,10 @@ S1	武器/Usp	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Scripts/Core
 S1	武器/Vest	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Editor/Views/ModelData	3	脚本断言	S1 数值
 S1	武器/VestHelm	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Editor/Views/ModelData	3	脚本断言	S1 数值
 S1	武器/Xm1014	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Scripts/Core/CsWeapons.cs	3	脚本断言	S1 数值
-S2	内存	tools/probes/measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
-S2	分辨率	tools/probes/measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
-S2	场景加载耗时	tools/probes/measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
-S2	帧时间	tools/probes/measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
+S2	内存	tools/probes/probe-play-s2.cs + measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
+S2	分辨率	tools/probes/probe-play-s2.cs + measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
+S2	场景加载耗时	tools/probes/probe-play-s2.cs + measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
+S2	帧时间	tools/probes/probe-play-s2.cs + measure-play-frametime.cs	tools/probes/measure-play-frametime.cs	2	并排图	S2 性能
 S2	渲染设备	client/Logs/Editor.log	client/Logs/Editor.log	1	脚本断言	S2 性能
 S3	FOV	client/Assets/Scripts/UI/Flow/OptionsPanel.cs	client/Assets/Scripts/UI/Flow/OptionsPanel.cs	2	脚本断言	S3 设置
 S3	全屏	client/Assets/Scripts/UI/Flow/OptionsPanel.cs	client/Assets/Scripts/UI/Flow/OptionsPanel.cs	2	脚本断言	S3 设置

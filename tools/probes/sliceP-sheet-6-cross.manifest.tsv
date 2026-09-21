@@ -1,0 +1,9 @@
+F-01	.ai-tmp/screenshots/p_cross_crouchfire.png	交叉 D5×D10：蹲着开枪（viewmodel 开火序列 + 枪口火焰 + 后坐力抬升，同帧 Crouch=True）
+F-02	.ai-tmp/screenshots/p_cross_runreload.png	交叉 D5×D10：跑着换弹（速度 >0 的同时 viewmodel 走 reload 序列）
+F-03	.ai-tmp/screenshots/p_cross_deathswitch.png	交叉 D5×D10：死亡中切枪（阵亡后按 1 号槽，画面仍是死亡/观战态）
+F-04	.ai-tmp/screenshots/p_cross_bullethole_floor.png	交叉 D6×D3：朝地面射击的弹痕（法线朝上 ⇒ 贴花躺在地面上）
+F-05	.ai-tmp/screenshots/p_cross_bullethole_wall.png	交叉 D6×D3：朝墙射击的弹痕（法线水平 ⇒ 贴花竖贴在墙面上）+ 枪口火焰
+F-06	.ai-tmp/screenshots/p_hit_indicator.png	受击方向指示器：屏幕四边红色渐隐 + 指向伤害来源的方向标记（快照值驱动）
+F-07	.ai-tmp/screenshots/40_bomb_planted.png	C4 已安放：安放进度/提示 + 蜂鸣期间画面（走真实下包链路，35s 倒计时起点）
+F-08	.ai-tmp/screenshots/41_bomb_exploded.png	C4 爆炸后：回合结算 Terrorists Win — 炸弹爆炸
+F-09	.ai-tmp/screenshots/g70-hud-1920.png	雷达（D4 用户点名「雷达不对」）：1080p 下 128×128 底图 + 点色与落点
