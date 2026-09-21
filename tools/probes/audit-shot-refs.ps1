@@ -4,17 +4,20 @@
 # 为什么它要是一支脚本：SKILL 0.6「必然性规则必须做成闸门」—— "每个图都有引用"是一个**可计算**的
 # 断言，靠人记必然漏。切片 AF 用它查出 176 张里 78 张零引用 + 12 张 `b41_*` 连拍残留（只被
 # 运行日志提到，无任何表引用），删掉 90 张后重跑 = 零引用 0 / 86 张全部有引用。
-# 【建议（留给主 agent 裁决）】把它接成 verify.ps1 的新条目（例如 `shot-refs-audited`），
-# 那样"图不被引用"就会自己变红；本片按任务书"只许新增 home-credit-rendered 一条"未接。
+# 【切片AG（2026-09-21）已裁决并接线】本脚本现由 tools\verify.ps1 第 26 条
+# `shot-refs-audited` 调用（.ai-tmp/screenshots 下零引用图 > 0 即 FAIL）——
+# "图不被引用"从此自己变红；上一版（切片AF）按当时任务书"只许新增 home-credit-rendered 一条"未接。
 # ASCII-only on purpose (PS 5.1 reads a BOM-less .ps1 as ANSI).
-# ASCII-only on purpose (PS 5.1 reads a BOM-less .ps1 as ANSI).
-# Usage:
-#   powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\af-audit.ps1            # zero-ref list
-#   powershell ... af-audit.ps1 -Png b41_00.png                                               # per-file hits
-#   powershell ... af-audit.ps1 -Matrix                                                       # per-png referencing files
+# Usage (also invoked by tools\verify.ps1 item 26, which parses the summary line):
+#   powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\audit-shot-refs.ps1   # zero-ref list
+#   powershell ... audit-shot-refs.ps1 -Png <name>.png                                      # per-file hits
+#   powershell ... audit-shot-refs.ps1 -Matrix                                              # per-png referencing files
 param([string]$Png = '', [switch]$Matrix, [switch]$Full)
 $ErrorActionPreference = 'Stop'
-$root    = 'c:\Work\Server\f-v2\clover-project-cs16'
+# Root is derived from this script's own location (tools\probes\ -> tools\ -> project
+# root) so the gate stays portable; a hard-coded absolute path would break on move
+# (SKILL 8: no machine-local paths in shipped tools).
+$root    = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $shotDir = Join-Path $root '.ai-tmp\screenshots'
 $exts    = @('.md', '.tsv', '.txt', '.ps1', '.py', '.cs', '.json')
 
@@ -67,7 +70,7 @@ foreach ($p in $pngs) {
   elseif ($Full) { Write-Output ("REF:" + $c + "  " + $p.Name) }
 }
 Write-Output ""
-Write-Output ("=== unreferenced (count = 0): " + $zero.Count + " of " + $pngs.Count + " ===")
+Write-Output ("=== unreferenced (count = " + $zero.Count + "): " + $zero.Count + " of " + $pngs.Count + " ===")
 $zero | ForEach-Object { Write-Output ("  " + $_) }
 if ($Png -ne '') {
   Write-Output ""

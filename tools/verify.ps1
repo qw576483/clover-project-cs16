@@ -1,5 +1,5 @@
 # ============================================================================
-#  External delivery gate -- 16 checks (spec: skill reference/verify-template.md).
+#  External delivery gate -- numbered checks (spec: skill reference/verify-template.md).
 #  One PASS / FAIL / HUMAN-ONLY line per check, then a summary; exit 1 if FAIL.
 #
 #  NOTE: this file must stay ASCII-only. Windows PowerShell 5.1 parses .ps1 as
@@ -329,9 +329,22 @@ function Invoke-Checks {
   if ($bad9.Count -eq 0) { Say 'PASS' 'no-handover-docs' 'none' }
   else { $script:fail++; Say 'FAIL' 'handoff-doc-found' ($bad9 -join ', ') }
 
-  # --- 10) engine self-name: the literal, plus the rendered home-screen line
-  # The real judgement is the rendered label (runtime UI tree / glyph match), so
-  # the computable half only proves the literal exists; the rest is human-only.
+  # --- 10) engine self-name: the literal `clover-engine` must exist in sources ---
+  # This item is the COMPUTABLE half only: the literal is present in the sources.
+  # The rendered verdict (the home-screen line, case-exact, bottom-most on screen)
+  # is judged by item 25 `home-credit-rendered`, which reads a runtime UI-tree dump
+  # taken from a REAL Play session -- so it belongs there, not here.
+  #
+  # Until slice AF this branch ALSO bumped $script:human UNCONDITIONALLY in the
+  # success path, i.e. a check whose computable half had already PASSED still
+  # emitted a HUMAN-ONLY verdict -- a dangling verdict with nothing behind it, and
+  # moreover a DUPLICATE of item 25's judgement.  SKILL 0.5/0.6: a rule that cannot
+  # be tested red is not a gate ("a system prompt is a request, a hook is a
+  # guarantee").  Ruling (slice AG, main-agent decision): the literal item PASSES /
+  # FAILS on its own, and the rendered half is delegated to item 25 -- so a passing
+  # literal no longer manufactures a HUMAN-ONLY.  This is why the gate total went
+  # from HUMAN-ONLY=1 to HUMAN-ONLY=0 without any judgement being dropped: the
+  # judgement moved to the item that can actually make it (item 25).
   $brand = @(Get-ChildItem $codeDir -Recurse -Filter *.cs -ErrorAction SilentlyContinue |
              Select-String -Pattern 'clover-engine' -Encoding UTF8)
   if ($brand.Count -eq 0) {
@@ -340,8 +353,7 @@ function Invoke-Checks {
   } else {
     $mentions = @(Get-ChildItem $codeDir -Recurse -Filter *.cs -ErrorAction SilentlyContinue |
                   Select-String -Pattern 'Engine' -Encoding UTF8).Count
-    $script:human++
-    Say 'HUMAN-ONLY' 'engine-credit' "literal ok ($($brand.Count) line(s)); home-screen signature must be seen rendered and case-exact ($mentions lines mention Engine)"
+    Say 'PASS' 'engine-credit' "literal clover-engine present ($($brand.Count) line(s)); the rendered home-screen signature is judged by item 25 home-credit-rendered ($mentions lines mention Engine)"
   }
 
   # --- 11) scope / time window: historical residue must not be reported ----
@@ -766,6 +778,53 @@ if (-not (Test-Path $probeDump)) {
     $script:fail++
     Say 'FAIL' 'home-credit-rendered' ($problems.Count.ToString() + ' problem(s) in ' + (Split-Path $probeDump -Leaf))
     $problems | ForEach-Object { Sub $_ }
+  }
+}
+
+# --- 26) shot-refs-audited -- every evidence screenshot must be REFERENCED ------
+#  SKILL 1.8 item 6: an evidence screenshot is a ONE-OFF artifact; only the shots
+#  that some table / manifest / script actually cites are worth keeping, because a
+#  shot nobody reads is a draw-only artifact (it proves nothing and hides the fact
+#  that a row was never judged).  "Every shot under .ai-tmp/screenshots is cited"
+#  is a COMPUTABLE assertion, so by SKILL 0.6 it must be a gate, not a habit --
+#  slice AF proved this the hard way: tools\probes\audit-shot-refs.ps1 found 176
+#  shots of which 78 were cited by nothing plus 12 b41_* burst leftovers (mentioned
+#  only in a runtime log, cited by no table), and 90 were deleted.  Slice AF left
+#  the audit as a tool but (per its own task book) did not wire it a gate; slice AG
+#  wires it here.
+#  Judgement: run the audit in its default (zero-ref list) mode, parse its ASCII
+#  summary line, and FAIL when any screenshot is unreferenced.  An empty screenshot
+#  set is HUMAN-ONLY (never a vacuous PASS: an unjudged set is not a judged one).
+#  The audit is invoked as a CHILD process so that its own variables cannot clobber
+#  this script's state, and its stdout is captured in memory -- deliberately NOT
+#  written to a file inside the project, because such a file would name the very
+#  pngs under audit and, on the next run, be counted as a reference to them (the
+#  gate would silently heal its own violations).
+$auditScript = Join-Path $root 'tools\probes\audit-shot-refs.ps1'
+if (-not (Test-Path $auditScript)) {
+  $script:fail++
+  Say 'FAIL' 'shot-refs-audited' ('missing ' + $auditScript + ' -- the "every screenshot is cited" rule cannot be tested')
+} else {
+  $auditOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $auditScript 2>&1 | ForEach-Object { [string]$_ })
+  $sumLine = @($auditOut | Where-Object { $_ -match 'unreferenced \(count = (\d+)\): (\d+) of (\d+)' } | Select-Object -Last 1)
+  if ($sumLine.Count -eq 0) {
+    $script:fail++
+    Say 'FAIL' 'shot-refs-audited' 'the audit produced no parsable summary line -- inspect ' + $auditScript
+    $auditOut | Select-Object -Last 6 | ForEach-Object { Sub $_ }
+  } else {
+    $am = [regex]::Match($sumLine[0], 'unreferenced \(count = (\d+)\): (\d+) of (\d+)')
+    $zeroRef = [int]$am.Groups[1].Value
+    $totalShots = [int]$am.Groups[3].Value
+    if ($totalShots -eq 0) {
+      $script:human++
+      Say 'HUMAN-ONLY' 'shot-refs-audited' 'no evidence screenshots exist under .ai-tmp/screenshots -- an empty set is unjudged, not a pass'
+    } elseif ($zeroRef -eq 0) {
+      Say 'PASS' 'shot-refs-audited' ($totalShots.ToString() + ' screenshot(s), every one cited by a table / manifest / script (zero-ref = 0)')
+    } else {
+      $script:fail++
+      Say 'FAIL' 'shot-refs-audited' ($zeroRef.ToString() + ' of ' + $totalShots.ToString() + ' screenshot(s) under .ai-tmp/screenshots are cited by nothing (draw-only artifacts)')
+      $auditOut | Where-Object { $_ -match '^ZERO ' } | ForEach-Object { Sub $_ }
+    }
   }
 }
 
