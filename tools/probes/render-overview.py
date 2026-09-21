@@ -173,21 +173,42 @@ def read_geo(path):
     (bc_field,) = struct.unpack_from("<I", data, o); o += 4
     blockers_off = o
 
-    # locate the marker section: the tail must parse exactly to EOF (see try_parse_markers)
+    # locate the marker section: the tail must parse exactly to EOF (see try_parse_markers).
+    #
+    # NOTE (2026-09-21, cs16-sliceG): a blocker record is **24** bytes
+    #   (u32 ix0, iz0, ix1, iz1 + f32 yMin, yMax -- Editor/MapGen/Dust2GeoData.cs:150-165).
+    # The old code used a 20-byte stride; with the current on-disk file
+    # (blockerCountField=656, size=712680 B, blockers at 695060) the marker table sits at
+    # 695060 + 656*24 = 710804 and 656*24 = 15744 is not a multiple of 20, so the search could
+    # never land on it and the script died with "cannot locate the marker table".
+    # Fixed to the real stride; the byte-scan fallback below keeps a future layout change from
+    # turning into a hard failure (it reports the stride it found instead).
+    BLOCKER_STRIDE = 24
     bc = None
     markers_off = None
     markers = None
     for k in range(bc_field, bc_field + 4097):
-        cand = blockers_off + k * 20
+        cand = blockers_off + k * BLOCKER_STRIDE
         got = try_parse_markers(data, cand)
         if got is not None:
             bc, markers = k, got[1]
             markers_off = cand
             break
     if bc is None:
+        for cand in range(len(data) - 4, blockers_off, -1):
+            got = try_parse_markers(data, cand)
+            if got is None:
+                continue
+            span = cand - blockers_off
+            if span % bc_field != 0:
+                continue
+            bc, markers = bc_field, got[1]
+            markers_off = cand
+            break
+    if bc is None:
         raise ValueError("%s: cannot locate the marker table (blocker count field=%d, file=%d B)"
                          % (path, bc_field, len(data)))
-    blockers = [struct.unpack_from("<6f", data, blockers_off + 20 * i) for i in range(bc)]
+    blockers = [struct.unpack_from("<6f", data, blockers_off + BLOCKER_STRIDE * i) for i in range(bc)]
 
     return {
         "blockerCountField": bc_field, "blockerRecords": bc,

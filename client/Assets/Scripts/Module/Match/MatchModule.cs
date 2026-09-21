@@ -17,6 +17,21 @@ namespace Cs16.Module.Match
     {
         private const string Tag = CsMatch.Tag;
 
+        /// <summary>
+        /// 当前活着的比赛模块（静止引用；由 <see cref="Awake"/> 赋值、<see cref="OnDestroy"/> 清空）。
+        ///
+        /// <para><b>为什么需要它</b>：本组件的挂载点是 <c>Bootstrap</c> 那个 <c>DontDestroyOnLoad</c> 的
+        /// GameObject，而 <c>Bootstrap</c> 只存在于 <c>Scenes/Boot.unity</c>。任何"从外部按类型找它"的代码
+        /// （自检宿主 / 取证驱动）一旦写成 <c>FindObjectOfType</c>，在 Unity 6 里既是废弃 API，
+        /// 又会在"没从 Boot 场景进 Play"时**静默返回 null** —— 实测代价：<c>.ai-tmp/drivers/cs16-play-driver.cs</c>
+        /// 的 <c>Apply()</c> 因此无声早退，pause / godmode / cam / input 全部不生效，
+        /// 整场驱动看起来"挂了"却没有任何日志说明原因。</para>
+        ///
+        /// <para>所以对外只暴露这一个入口（与 <c>Bootstrap</c> 的单实例守卫同一套做法）：
+        /// 取不到就是 <c>null</c>，取用方必须自己判空并**留痕**，不许静默继续。</para>
+        /// </summary>
+        public static MatchModule Instance { get; private set; }
+
         [Tooltip("勾上时本组件在自己 Awake 时记一条日志（调试用）。")]
         [SerializeField] private bool _verbose;
 
@@ -54,6 +69,8 @@ namespace Cs16.Module.Match
         {
             Game.Logger.Info(Tag, $"MatchModule.Awake: go={gameObject.name} scene={gameObject.scene.name}");
 
+            Instance = this;
+
             _match = new CsMatch(ResolveMap());
 
             if (_match.Map == null)
@@ -77,6 +94,7 @@ namespace Cs16.Module.Match
         {
             Game.Logger.Warn(Tag,
                 $"MatchModule.OnDestroy: go={gameObject.name} scene={gameObject.scene.name} —— 门面即将被置空");
+            if (Instance == this) Instance = null;
             Unsubscribe();
             _match?.Stop();
             _match = null;

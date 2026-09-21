@@ -1049,12 +1049,9 @@ for dim, nm, note, vt, vd in CROSS:
 #  差异登记（四要素）
 # ============================================================================
 DIF = [
-    ('\u96f7\u8fbe\u5e95\u56fe\u7531**\u65e7** geo \u6805\u683c\u5316\u800c\u6765\uff08\u672c\u7247\u6539\u4e86 geo \u4f46\u672a\u91cd\u51fa\uff09',
-     '\u5e95\u56fe = \u7531 de_dust2_geo.bin \u79bb\u7ebf\u4fef\u89c6\u6805\u683c\u5316\uff08\u964d\u7ea7\u94fe\u7ea7\u2460\uff09\uff1b'
-     '\u672c\u7247\u628a geo \u7684\u95e8\u8d34\u56fe\u9762\u8865\u56de\u7f51\u683c\u3001\u963b\u6321\u76d2 660\u2192656\uff0c'
-     '\u4f46\u6309\u4efb\u52a1\u8fb9\u754c\u4e0d\u91cd\u505a\u7247C \u7684\u96f7\u8fbe\u5de5\u4f5c \u21d2 \u5e95\u56fe\u4e0e\u73b0 geo \u7565\u6709\u51fa\u5165',
-     'Assets/Resources/UI/Art/overview_de_dust2.png\uff1btools/probes/render-overview.py\uff08\u53ef\u91cd\u8dd1\uff09',
-     '\u7247C \u5f52\u5c5e\u7247\u91cd\u8dd1 render-overview.py\uff08\u4e00\u6761\u547d\u4ee4\uff09'),
+    # 切片G 已消除的那条（雷达底图由旧 geo 栅格化）**从登记里删除** —— 本片已重出：
+    # render-overview.py 修 blocker stride 20→24 后重跑，底图与现 geo 一致（差异 #14 同片消除）。
+    # 登记是"允许的差异"，不是"曾经的缺陷"档案：修好了还留着，会让"零不一致"永远打折。
     # 切片F 已消除的两条（门板网格为空 / 阻挡盒口径 218 vs 660）**从登记里删除** ——
     # 登记是"允许的差异"，不是"曾经的缺陷"档案：修好了还留着，会让"零不一致"永远打折。
     ('\u4f4d\u56fe\uff08CloverMap v1\uff09\u662f\u5355\u5c42 2D\uff1a\u7bb1\u5b50\u6240\u5728\u683c\u8bb0\u4e3a\u201c\u53ef\u8d70\u201d\uff08\u7bb1\u9876\u662f\u671d\u4e0a\u7684\u9762\uff09',

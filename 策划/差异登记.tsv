@@ -1,5 +1,4 @@
 # 是什么	为什么	出处	何时消除
-雷达底图由**旧** geo 栅格化而来（本片改了 geo 但未重出）	底图 = 由 de_dust2_geo.bin 离线俯视栅格化（降级链级①）；本片把 geo 的门贴图面补回网格、阻挡盒 660→656，但按任务边界不重做片C 的雷达工作 ⇒ 底图与现 geo 略有出入	Assets/Resources/UI/Art/overview_de_dust2.png；tools/probes/render-overview.py（可重跑）	片C 归属片重跑 render-overview.py（一条命令）
 位图（CloverMap v1）是单层 2D：箱子所在格记为“可走”（箱顶是朝上的面）	格式层没有高度（FlagHeightField 预留但 V1 解码器拒绝）⇒ 一格一位，表达不了“同一格在 y=0 被挡、在 y=1.2 通畅”；带来的边界：箱子进不去（已由 CsMap.CanStand 的“地面一步闸门”拦住），但位图本身仍不能单独回答“能不能穿”	Assets/Scripts/Module/Map/CsMap.cs（CanStand/BodyHeightClear）；Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs:30（FlagHeightField）	引擎开出 V2 高度场（FlagHeightField）后
 投掷物与角色之间不互相挡/推开	本片只把“角色对角色”这一层做出来（CsActorSeparation 只收 CsActor）；原版投掷物是 MOVETYPE_BOUNCE 实体，与角色是否互相阻挡本机取不到可信出处（原版 mp.dll 未在盘）	Assets/Scripts/Module/Map/CsActorSeparation.cs（只收 actor）；Module/Match/CsInventory.cs（投掷物落点）	解出原版投掷物的 solid/movetype 后
 雷达底图非原版 overviews/de_dust2.bmp	原版 overviews/de_dust2.bmp + .txt 本机不在盘（降级链退到级①：由工程内 de_dust2_geo.bin 离线俯视栅格化）	Core/ResPaths.cs:117 / tools/probes/render-overview.py	拿到原版 overviews 后同名覆盖 PNG

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using CloverEngine;
 using Cs16.Core;
 using UnityEngine;
@@ -60,6 +61,8 @@ namespace Cs16.UI
         [System.NonSerialized] private bool _warnedMapSprite;
         [System.NonSerialized] private bool _bakedSites;
         [System.NonSerialized] private float _blinkTimer;
+        /// <summary>上一次记「雷达映射」判据日志时的世界矩形（变了才记，见 <see cref="Refresh"/>）。</summary>
+        [System.NonSerialized] private string _lastRectStamp;
 
         public void Build(RectTransform parent)
         {
@@ -215,6 +218,24 @@ namespace Cs16.UI
             var scale = Mathf.Min(field.width / w, field.height / h);
             var cx = (minX + maxX) * 0.5f;
             var cz = (minZ + maxZ) * 0.5f;
+
+            // ── 判据日志（矩形变化时 1 条）：把「世界矩形 → 雷达像素」的映射原文记下来 ──
+            //    为什么必须留这条：「雷达上的点有没有偏」不能靠眼睛说 —— 得能拿 actors 的
+            //    世界坐标把点的像素位置算回去，再与截图上量到的位置对上。只记一条（一局里矩形不变），
+            //    不是每帧刷屏。
+            var inv = CultureInfo.InvariantCulture;
+            var stamp = minX.ToString("F2", inv) + "," + maxX.ToString("F2", inv) + "," +
+                        minZ.ToString("F2", inv) + "," + maxZ.ToString("F2", inv);
+            if (stamp != _lastRectStamp)
+            {
+                _lastRectStamp = stamp;
+                Game.Logger?.Info("UI",
+                    $"雷达映射：世界 x[{minX.ToString("F2", inv)}..{maxX.ToString("F2", inv)}] " +
+                    $"z[{minZ.ToString("F2", inv)}..{maxZ.ToString("F2", inv)}] " +
+                    $"内区 {field.width.ToString("F1", inv)}x{field.height.ToString("F1", inv)}px " +
+                    $"scale={scale.ToString("F4", inv)}px/m 中心=({cx.ToString("F2", inv)}," +
+                    $"{cz.ToString("F2", inv)}) 点={dots.Count}");
+            }
 
             _blinkTimer += Time.deltaTime;
 
