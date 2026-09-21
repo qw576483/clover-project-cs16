@@ -25,14 +25,17 @@ namespace Cs16.Module.View
         // ==================================================================
         //  资源路径（Resources 下，不带扩展名）
         // ==================================================================
-        /// <summary>模型/预制体根目录。</summary>
+        /// <summary>模型/预制体根目录。出处：**本项目新增**（Unity <c>Resources</c> 下的子目录命名 = 本工程素材契约，
+        /// 与生成器 <c>Assets/Editor/Views/ArtSetup.cs</c> 共用同一份常量）。</summary>
         public const string ArtRoot = "Art/";
 
-        /// <summary>阵营子目录名（Art/T/**、Art/CT/**）。</summary>
+        /// <summary>阵营子目录名（Art/T/**、Art/CT/**）。出处：**本项目新增**（本工程归一的目录命名；
+        /// 原版阵营模型目录名是 <c>models/player/{terror,leet,arctic,guerilla,urban,gsg9,sas,gign,vip}</c>，见规格 §5）。</summary>
         public const string TeamFolderT = "T";
         public const string TeamFolderCT = "CT";
 
-        /// <summary>角色模型预制体名（Art/{阵营}/player）。</summary>
+        /// <summary>角色模型预制体名（Art/{阵营}/player）。出处：**本项目新增**（本工程预制体命名；
+        /// 原版是 <c>models/player/&lt;皮肤&gt;/&lt;皮肤&gt;.mdl</c> ⇒ 名字不同源）。</summary>
         public const string PlayerModelName = "player";
 
         /// <summary>
@@ -44,28 +47,35 @@ namespace Cs16.Module.View
         /// <summary>CT 阵营可用的皮肤（同上；<c>Art/CT/player</c> 必须存在）。</summary>
         public static readonly string[] SkinsCT = { "player", "gsg9", "sas", "gign", "vip" };
 
-        /// <summary>第一人称武器模型前缀（Art/{阵营}/viewmodel_{武器id}）。</summary>
+        /// <summary>第一人称武器模型前缀（Art/{阵营}/viewmodel_{武器id}）。出处：**本项目新增**（本工程预制体命名；
+        /// 原版第一人称模型文件名是 <c>models/v_&lt;武器&gt;.mdl</c>（见规格 §5）⇒ 前缀不同源）。</summary>
         public const string ViewModelPrefix = "viewmodel_";
 
-        /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名（名牌放它外面，才不会被蹲下压扁）。</summary>
+        /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名（名牌放它外面，才不会被蹲下压扁）。
+        /// 出处：**本项目新增**（预制体内部节点名 = 本工程命名）。</summary>
         public const string BodyNodeName = "Body";
 
-        /// <summary>命中区子节点名前缀：<c>Hitbox_{CsHitbox}</c>（Hitbox_Head / Hitbox_Chest / ...）。</summary>
+        /// <summary>命中区子节点名前缀：<c>Hitbox_{CsHitbox}</c>（Hitbox_Head / Hitbox_Chest / ...）。
+        /// 出处：**本项目新增**（节点名前缀 = 本工程命名；命中区的**语义**出处 = <c>CsHitbox</c> 枚举，见 <c>Core/CsEnums.cs</c>）。</summary>
         public const string HitboxNodePrefix = "Hitbox_";
 
-        /// <summary>名牌预制体实例在角色视图下的节点名。</summary>
+        /// <summary>名牌预制体实例在角色视图下的节点名。出处：**本项目新增**（本工程命名）。</summary>
         public const string PlateNodeName = "Plate";
 
-        /// <summary>头顶名牌的**世界空间**预制体（只在 Resources/UI 下放这一个）。</summary>
+        /// <summary>头顶名牌的**世界空间**预制体（只在 Resources/UI 下放这一个）。
+        /// 出处：**本项目新增**（本工程资源路径；原版队友名牌的绘制在 <c>client.dll</c>，没有对应预制体）。</summary>
         public const string NameplatePath = "UI/WorldNameplate";
 
         // ==================================================================
         //  角色视图
         // ==================================================================
-        /// <summary>角色的目标身高（米）。与 <c>CsConst.StandHeight</c> 同源 —— 碰撞体/射线按它对齐。</summary>
+        /// <summary>角色的目标身高（米）。与 <c>CsConst.StandHeight</c> 同源 —— 碰撞体/射线按它对齐。
+        /// 出处：<c>Core/CsConst.cs</c> 的 <c>StandHeight = 1.80f</c>（本值即该常量，不另立数值）；
+        /// 原版站高 72 unit × 0.0254 = 1.829 m，归一化口径见 <c>策划/对照表.md</c> N-25。</summary>
         public const float TargetHeight = CsConst.StandHeight;
 
-        /// <summary>实例化后实测身高与目标值的容许偏差（超出即纠偏并告警）。</summary>
+        /// <summary>实例化后实测身高与目标值的容许偏差（超出即纠偏并告警）。
+        /// 出处：**本项目新增**（生成期自检容差）。</summary>
         public const float HeightTolerance = 0.03f;
 
         /// <summary>

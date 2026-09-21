@@ -1076,11 +1076,40 @@ SET_ITEMS = [('\u5206\u8fa8\u7387', r'resolution|Resolution'), ('\u5168\u5c4f', 
              ('\u9f20\u6807\u7075\u654f\u5ea6', r'sens|Sensitivity'), ('\u53cd\u8f6c Y', r'invertY'),
              ('FOV', r'\bfov\b'), ('\u73a9\u5bb6\u540d', r'\bname\b|UserName'), ('\u952e\u4f4d\u7ed1\u5b9a', r'KeyBind|Rebind|key'),
              ('\u8bed\u8a00', r'language|Language'), ('\u8f6f\u4ef6\u6e32\u67d3\u5f00\u5173', r'software|Software')]
+# ── 切片L（S3）：A 本体**没有**的设置项 ⇒ 判据修正（⛔ 不是"登记成差异"就完事）──────────
+# 「语言」这一行的旧判据是"在 OptionsPanel / CsPlayerSettingsStore 里搜 language|Language"。
+# 该判据**本身是错的**，依据三条（都在工程内、可复核）：
+#   ① `UI/Flow/OptionsPanel.cs` 的类注释：Options 是**逐字段重建自原版 7 个子页**的 `.res`
+#      —— `optionssub{audio,video,mouse,keyboard,multiplayer,voice,advanced}.res`，**7 页里没有 language**；
+#   ② 同文件 `TabNames` 的注释：页签名 = 原版 `gameui_english.txt` 的 7 个 token
+#      （Audio:99 / Video:100 / Mouse:98 / Keyboard:97 / Multiplayer:41 / Voice:101 / Advanced:44），同样没有 Language；
+#   ③ GoldSrc / Steam 的语言由 **Steam 客户端语言 / `-language` 启动参数**决定，不是游戏内选项。
+# ⇒ 正确判决 = 「与 A 一致（A 也无此设置项）」；按旧判据"补一个语言设置"= 给 A 加它没有的东西
+#    （违反 skill §0 铁律 1「A 没有 ⇒ 不加」）。
+# 引擎侧确有本地化能力（`ILocalization.SetLanguage`，`clover-client-unity-engine/Runtime/Core/Contracts.cs`），
+# 但那是**引擎设施**、不是 A 的界面项 ⇒ 本工程不因此新增该 UI。
+S3_ABSENT_IN_A = {
+    '\u8bed\u8a00': 'A\uff08CS 1.6\uff09\u7684 Options \u5bf9\u8bdd\u6846\u65e0\u8bed\u8a00\u9875\uff1a'
+                    'OptionsPanel \u9010\u5b57\u6bb5\u91cd\u5efa\u81ea\u539f\u7248\u4e03\u4e2a\u5b50\u9875 .res'
+                    '\uff08audio/video/mouse/keyboard/multiplayer/voice/advanced\uff09\uff0c'
+                    '\u9875\u7b7e\u540d\u4e5f\u53d6\u81ea\u539f\u7248 gameui_english.txt \u7684 7 \u4e2a token\uff0c'
+                    '\u4e24\u8005\u90fd\u6ca1\u6709 Language \u21d2 \u4e0e A \u4e00\u81f4\uff08A \u4e5f\u65e0\u6b64\u8bbe\u7f6e\uff09\uff0c'
+                    '\u672c\u5de5\u7a0b\u4e0d\u65b0\u589e\u8be5 UI',
+}
 for nm, pat in SET_ITEMS:
     hit = re.search(pat, set_txt, re.I)
-    add('S3', nm, rel(OPTIONS), rel(OPTIONS), 2, T_SCRIPT,
-        K_CONSIST if hit else '%s(\u8bbe\u7f6e\u9879\u5728\u4ee3\u7801\u91cc\u627e\u4e0d\u5230)' % K_MISMATCH,
-        '\u751f\u6548\u8303\u56f4=\u91cd\u8fdb Play')
+    if hit:
+        v = K_CONSIST
+        ev = '\u751f\u6548\u8303\u56f4=\u91cd\u8fdb Play'
+    elif nm in S3_ABSENT_IN_A:
+        v = '%s\uff08%s\uff09' % (K_CONSIST, S3_ABSENT_IN_A[nm])
+        ev = ('\u5224\u636e\u4fee\u6b63\uff08\u5207\u7247L\uff09\uff1aA \u672c\u4f53\u65e0\u8be5\u8bbe\u7f6e\u9879 \u21d2 \u672c\u5de5\u7a0b\u4e5f\u4e0d\u52a0\uff1b'
+              '\u636e = UI/Flow/OptionsPanel.cs \u7c7b\u6ce8\u91ca\uff08\u539f\u7248 7 \u4e2a\u5b50\u9875 .res\uff09'
+              '+ \u8be5\u6587\u4ef6 TabNames \u6ce8\u91ca\uff08gameui_english.txt \u7684 7 \u4e2a token\uff09')
+    else:
+        v = '%s(\u8bbe\u7f6e\u9879\u5728\u4ee3\u7801\u91cc\u627e\u4e0d\u5230)' % K_MISMATCH
+        ev = '\u751f\u6548\u8303\u56f4=\u91cd\u8fdb Play'
+    add('S3', nm, rel(OPTIONS), rel(OPTIONS), 2, T_SCRIPT, v, ev)
 for st, bd, exp in (('\u6539\u540e\u7acb\u5373\u751f\u6548', '\u4efb\u610f\u503c', '\u7acb\u5373\u5f71\u54cd\u5f53\u524d\u5c40'),
                     ('\u91cd\u8fdb Play \u4ecd\u751f\u6548', '\u843d Game.Setting', '\u6301\u4e45\u5316\u5230\u78c1\u76d8')):
     sta('S3', 'OptionsPanel', st, bd, exp, '\u9700\u5b9e\u673a', K_PENDING, rel(OPTIONS))
@@ -1219,6 +1248,18 @@ DIF = [
      '要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"',
      'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85',
      '不消除（与 A 一致的行为差异）'),
+    # ── 切片L（S1 出处补齐）新增的登记 ────────────────────────────────────────────
+    ('切片L（S1）：操作 / 表现层的可调旋钮没有原版出处（CsCombatTuning 全 31 条；'
+     'CsMatch / CsViewTuning / CsConst 里标「本项目新增」的那些）',
+     '这些量（后坐力时间常数 / 散布倍率 / 准星扩散 / bob / 开镜过渡 / 受击晃动 / 枪口火焰时长 / 各类实现容量上限）'
+     '在 A 里对应的是**客户端手感**，原版把它们写死在 `cstrike/cl_dlls/client.dll` 与 `mp.dll` 的逐武器代码里'
+     '（不是 cvar、也不是数据表 —— 见 `策划/对照表.md` §6 BLOCKED-1 / BLOCKED-2）；'
+     '本机原版载体 `原版资源/cs16src` 已空（`原版资源/清单.md`）⇒ 拿不到 `文件:偏移` 级出处，'
+     '只能取本工程自定值并逐条如实标注',
+     'client/Assets/Scripts/Module/Combat/CsCombatTuning.cs（31 条逐行已标「本项目新增」+ 该条与 A 的关系）；'
+     'Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；'
+     '策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36',
+     '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
 ]
 
 # ============================================================================

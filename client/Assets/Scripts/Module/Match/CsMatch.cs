@@ -18,7 +18,9 @@ namespace Cs16.Module.Match
     internal static class CsMatchConst
     {
         // ---- 视角 ----
-        /// <summary>俯仰角上限（度）。与 CsActor.Pitch 的 -89~89 约定一致。</summary>
+        /// <summary>俯仰角上限（度）。与 CsActor.Pitch 的 -89~89 约定一致。
+        /// 出处：**本项目新增**（钳制值 ±89° 与 <c>CsActor.Pitch</c> / <c>CsCombatTuning.PitchLimit</c> 同约定；
+        /// 原版同一钳制在 GoldSrc 客户端视角侧，载体不在盘 ⇒ 不给 file:line）。</summary>
         public const float PitchLimit = 89f;
 
         // ---- 日志降频 ----
@@ -26,6 +28,8 @@ namespace Cs16.Module.Match
         /// 高频路径日志：首次 + 每 N 次。见 skill「日志约束」。
         /// **N 必须按"调用频率"选**：视线查询这类**每个 bot 每帧都可能调**的路径，50 会被打爆
         /// （实测：一场比赛刷出上千条，把 Console 冲掉、真正要看的信息全被埋了）—— 取 1000。
+        /// 出处：日志口径 = skill <c>clover-engine</c> §8「日志」（非预期分支必须留痕 / 高频回调只报一次）；
+        /// **N = 1000 这个具体值本项目新增**（按调用频率自定）。
         /// </summary>
         public const int LogRateEvery = 1000;
 
@@ -102,74 +106,104 @@ namespace Cs16.Module.Match
         // ---- 后坐力回复 ----
         /// <summary>停火后多久开始回复后坐力（秒）。</summary>
         public const float RecoilRecoverDelay = 0.25f;
-        /// <summary>后坐力回复速度（度/秒）。</summary>
+        /// <summary>后坐力回复速度（度/秒）。
+        /// 出处：**本项目新增**（原版后坐力是 <c>mp.dll</c> 里逐武器写死的浮点立即数，
+        /// 见 <c>策划/对照表.md</c> §6 BLOCKED-2）。</summary>
         public const float RecoilRecoverSpeed = 6f;
 
         // ---- 穿透 ----
-        /// <summary>穿墙命中时伤害保留比例（简化：不区分材质）。</summary>
+        /// <summary>穿墙命中时伤害保留比例（简化：不区分材质）。
+        /// 出处：**本项目新增**（原版穿透伤害同 <c>策划/对照表.md</c> §6 BLOCKED-2）。</summary>
         public const float PenetrationDamageScale = 0.5f;
 
         // ---- 移动 ----
-        /// <summary>两次跳跃之间的最小间隔（防连跳）。</summary>
+        /// <summary>两次跳跃之间的最小间隔（防连跳）。
+        /// 出处：**本项目新增**（原版连跳靠 <c>IN_JUMP</c> 的按下沿去抖，没有"最小间隔秒数"这个量）。</summary>
         public const float JumpRepeatDelay = 0.35f;
         /// <summary>
         /// 撞墙判定：某轴"实际位移 &lt; 期望位移 × 该比例"就认为被墙挡住并清掉该轴速度。
         /// （纯启发式系数，与 CsConst 里的伤害/数值无关。）
+        /// 出处：**本项目新增**（纯实现启发式）。
         /// </summary>
         public const float WallBlockVelocityRatio = 0.5f;
-        /// <summary>拾取地面武器/炸弹的判定半径。</summary>
+        /// <summary>拾取地面武器/炸弹的判定半径。
+        /// 出处：**本项目新增**（原版地面武器拾取由服务端实体触碰判定（<c>mp.dll</c>，不在盘）⇒ 球半径自定）。</summary>
         public const float PickupRadius = 1.2f;
 
         // ---- 记分 ----
+        // 出处（下面 2 条）：**本项目新增** —— 原版记分板的分数列由 <c>mp.dll</c> 的结算逻辑给出（载体不在盘）。
         public const int ScorePerKill = 1;
         public const int ScorePerBombObjective = 2;
 
         // ---- 表现/快照 ----
-        /// <summary>待消费的射击记录上限（防止无人消费时无限增长）。</summary>
+        /// <summary>待消费的射击记录上限（防止无人消费时无限增长）。
+        /// 出处：**本项目新增**（实现容量上限）。</summary>
         public const int MaxPendingShots = 16;
-        /// <summary>击杀信息在 KillFeed 里保留的秒数。</summary>
+        /// <summary>击杀信息在 KillFeed 里保留的秒数。
+        /// 出处：原版 <c>hud_deathnotice_time</c> 默认 <b>6</b> 秒 · <c>client.dll:0x0e77f8</c>（名串 <c>client.dll:0x0e77e0</c>）
+        /// —— 见 <c>策划/对照表.md</c> U-36，本值与之一致。</summary>
         public const float KillFeedLifetime = 6f;
-        /// <summary>内部保留的击杀条数上限（HUD 只取前 CsConst.MaxKillFeedEntries 条）。</summary>
+        /// <summary>内部保留的击杀条数上限（HUD 只取前 CsConst.MaxKillFeedEntries 条）。
+        /// 出处：**本项目新增**（<c>策划/对照表.md</c> U-36 只解出显示时长，未解出条数上限）。</summary>
         public const int MaxKillFeedStore = 12;
 
         // ---- 手雷/烟雾 ----
-        /// <summary>闪光弹致盲的最大半径（复用 HE 半径 —— CsConst 未单独定义）。</summary>
+        /// <summary>闪光弹致盲的最大半径（复用 HE 半径 —— CsConst 未单独定义）。
+        /// 出处：<c>Core/CsConst.cs</c> 的 <c>GrenadeHeRadius</c>（本值即该常量，不另立数值）。</summary>
         public const float FlashRadius = CsConst.GrenadeHeRadius;
-        /// <summary>烟雾体积半径（简化球体；CsConst 未定义）。</summary>
+        /// <summary>烟雾体积半径（简化球体；CsConst 未定义）。
+        /// 出处：**本项目新增**（原版烟是 <c>func_smokevolume</c> 粒子体积，载体不在盘）。</summary>
         public const float SmokeRadius = 3.5f;
-        /// <summary>视线被烟雾遮挡的判定半径。</summary>
+        /// <summary>视线被烟雾遮挡的判定半径。
+        /// 出处：**本项目新增**（遮挡判定半径，与 <c>SmokeRadius</c> 同值）。</summary>
         public const float SmokeBlockRadius = 3.5f;
 
         // ---- 机器人 ----
-        /// <summary>机器人瞄准误差的重采样间隔（秒）。</summary>
+        /// <summary>机器人瞄准误差的重采样间隔（秒）。
+        /// 出处：**本项目新增**（节奏与 <c>CsBotConst.AimWobbleRefreshSeconds</c> 同值；A 无 bot AI ⇒ 无原版对应量，
+        /// 见 <c>策划/差异登记.tsv</c> 第 16 条）。</summary>
         public const float BotAimErrorRefresh = 0.35f;
 
         /// <summary>
         /// "机器人射线结算"累计统计日志的最小间隔（秒）。
         /// 射线路径是**每次开火**都会走到的高频路径（一场比赛几百发），所以按时间降频：
         /// 首次必打（第一发就是证据），之后每 <see cref="BotShotDiagInterval"/> 秒一条。
+        /// 出处：**本项目新增**（诊断日志降频参数）。
         /// </summary>
         public const float BotShotDiagInterval = 10f;
 
-        /// <summary>命中缓冲容量（一次射线的全部命中）。放够 32：射手的 4 个自身受体 + 多个敌人 + 多层几何。</summary>
+        /// <summary>命中缓冲容量（一次射线的全部命中）。放够 32：射手的 4 个自身受体 + 多个敌人 + 多层几何。
+        /// 出处：**本项目新增**（实现容量上限）。</summary>
         public const int BotHitBufferSize = 32;
 
         // ---- 炸弹操作 ----
-        /// <summary>下包/拆包期间的水平速度平方阈值；超过即判定"移动中" → 进度清零。</summary>
+        /// <summary>下包/拆包期间的水平速度平方阈值；超过即判定"移动中" → 进度清零。
+        /// 出处：**本项目新增**（原版 C4 操作判定在 <c>mp.dll</c> 的 C4 逻辑里，载体不在盘）。</summary>
         public const float MoveCancelSpeedSqr = 0.01f;
-        /// <summary>拆包时允许离炸弹的最大距离（CsConst 未定义；官方 1.6 需要贴身）。</summary>
+        /// <summary>拆包时允许离炸弹的最大距离（CsConst 未定义；官方 1.6 需要贴身）。
+        /// 出处：原版对应量 = <c>de_dust2.bsp</c> 的 <c>func_bomb_target</c> 触发体
+        /// （<c>client/Assets/ThirdParty/Dust2/de_dust2.bsp</c> entity lump）；**1.5 m 这个球半径本项目新增**
+        /// （载体给的是 brush 体积，不是以炸弹为心的球半径）。</summary>
         public const float DefuseRadius = 1.5f;
-        /// <summary>炸弹剩余时间低于该值时，蜂鸣切到快速节拍（CsConst 注释里的 "&gt;10s"）。</summary>
+        /// <summary>炸弹剩余时间低于该值时，蜂鸣切到快速节拍（CsConst 注释里的 "&gt;10s"）。
+        /// 出处：**本项目新增**（10s 分界；原版 C4 蜂鸣节奏写在 <c>mp.dll</c> 的 C4 逻辑里（非 cvar），载体不在盘
+        /// ⇒ 已登记 <c>策划/差异登记.tsv</c> 第 15 条）。</summary>
         public const float BombBeepFastThreshold = 10f;
-        /// <summary>C4 爆炸半径（CsConst 未定义；官方 1.6 的 C4 在十余米内几乎必杀）。</summary>
+        /// <summary>C4 爆炸半径（CsConst 未定义；官方 1.6 的 C4 在十余米内几乎必杀）。
+        /// 出处：**本项目新增**（原版 C4 爆炸半径在 <c>mp.dll</c> 的 C4 逻辑里，载体不在盘）。</summary>
         public const float BombExplosionRadius = 12f;
-        /// <summary>C4 爆炸最大伤害（足够在半径内致死）。</summary>
+        /// <summary>C4 爆炸最大伤害（足够在半径内致死）。
+        /// 出处：**本项目新增**（同 <c>BombExplosionRadius</c>）。</summary>
         public const int BombExplosionMaxDamage = 500;
 
         // ---- 出生 ----
+        /// <summary>出生朝向的随机幅度（度）。出处：**本项目新增**（按 0~360° 均匀随机；
+        /// 原版出生角由服务端出生点实体的角度给定）。</summary>
         public const float SpawnYawRandomDeg = 360f;
 
         // ---- 队伍 ----
+        /// <summary>单机 bot 的队伍上限。出处：**本项目新增** —— 原版是服务端 <c>maxplayers</c> / <c>mp_limitteams</c>
+        /// （<c>策划/对照表.md</c> N-31：随包 <c>server.cfg:41</c> = 0 不限）⇒ 本值无原版对应量。</summary>
         public const int MaxTeamSize = 16;
     }
 

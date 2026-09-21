@@ -340,7 +340,10 @@ namespace Cs16.UI
         /// </summary>
         public const float MapRightInsetPx = 15f;
 
-        /// <summary>`Map: <地图名>` 行的上边缘（= 与比分行 1 同高，取 <see cref="ScoreCTTopPx"/>）。</summary>
+        /// <summary>`Map: <地图名>` 行的上边缘（= 与比分行 1 同高，取 <see cref="ScoreCTTopPx"/>）。
+        /// 出处：原版截图 `策划/基线图/original/de_dust2_freecam_A_00.jpg` 的 `Map: de_dust2` 行
+        /// ink y[35..50]（与比分行 1 **同一行高**，取证实录见上面那一整段）；
+        /// 原版**有**这一行这一事实 = `策划/对照表.md` §9-F01。</summary>
         public const float MapTopPx = ScoreCTTopPx;
 
         /// <summary>`Map: <地图名>` 行文本的固定前缀（原版 freecam 实测就是 <c>"Map: "</c> + 地图名）。</summary>

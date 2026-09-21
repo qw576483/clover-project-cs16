@@ -6,6 +6,9 @@ namespace Cs16.UI
 {
     /// <summary>
     /// <see cref="CsPlayerSettings"/> 的持久化读写（<c>Game.Setting</c> 的强类型包装）。
+    /// ⛔ 这里**没有「语言」设置键，是本工程有意为之**：A（CS 1.6）本体没有游戏内语言设置项
+    /// （原版 Options = 7 个子页 .res、**没有语言页**，依据见 <c>OptionsPanel</c> 的 <c>TabNames</c> 注释），
+    /// 语言由 Steam 客户端的语言设置 / 启动参数决定 ⇒ 不新增该 UI、不新增该键（skill §0 铁律 1）。
     ///
     /// <para>
     /// 为什么要有它：<c>Game.Setting</c> 只支持基础类型（string / int / float / bool），

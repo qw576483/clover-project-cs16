@@ -92,7 +92,9 @@ namespace Cs16.Core
         public const float SpeedPistol = 5.2f;
         public const float SpeedRifle = 4.4f;
         public const float SpeedAWP = 3.6f;
-        public const float SpeedWalkMultiplier = 0.42f;   // Shift 慢走
+        // Shift 慢走 · 出处：**本项目新增**（原版慢走倍率的实现载体 —— GoldSrc 客户端与 `pm_shared` —— 现不在盘
+        // ⇒ 给不出 file:line；⛔ 对照表 N-17 是"**下蹲**速度倍率"、与本条无关，不许互相充数）。
+        public const float SpeedWalkMultiplier = 0.42f;
         public const float SpeedCrouchMultiplier = 0.34f;
         /// <summary>
         /// 跳跃初速度：<c>sqrt(2 * 800 * 45.0)</c> = <b>268.328 units/s</b> ⇒ ×0.0254 = <b>6.82 m/s</b>。
@@ -232,10 +234,15 @@ namespace Cs16.Core
 
         // ---- 表现 ----
         public const int MaxKillFeedEntries = 5;
+        // 出处：原版命中标记的**形态** = `hud.txt:179` 的 `d_headshot` 36×16（见 `策划/对照表.md` U-09）；
+        // **0.25s 这个显示时长本项目新增**（原版命中标记的时长在 `client.dll` 里、未解出 ⇒ 不给 file:line）。
         public const float HitMarkerTime = 0.25f;
+        // 出处：**本项目新增**（A = CS 1.6 没有伤害数字飘字；这是本工程为"打中敌人"加的命中反馈文本）。
         public const float DamageNumberTime = 0.8f;
 
         // ---- 地图 / 场景 ----
+        // 出处：原版地图文件名 `maps/de_dust2.bsp`（规格 §3 / §5；工程内的原版载体 =
+        // `client/Assets/ThirdParty/Dust2/de_dust2.bsp`）。
         public const string MapDust2 = "de_dust2";
         // 资源路径（Resources 相对）真源 = Core/ResPaths.cs：MapDust2（位图）/ MapDust2Markers（标记表）。
     }
@@ -248,7 +255,10 @@ namespace Cs16.Core
         public const string StageDust2 = "StageDust2";
     }
 
-    /// <summary>物理层（需与 ProjectSettings/TagManager 对齐，由 Editor 脚本保证）。</summary>
+    /// <summary>物理层（需与 ProjectSettings/TagManager 对齐，由 Editor 脚本保证）。
+    /// 出处：`client/ProjectSettings/TagManager.asset` 的 `layers:` 列表 —— 下标 0 = Unity **内置** `Default` 层，
+    /// 8 / 9 / 10 = 本工程新增的 `CsPlayer` / `CsBot` / `CsWorld`；**层名与这三个层索引都是本项目新增**
+    /// （Unity 内置层 0~7 不可改，用户自定义层从 8 起）。</summary>
     public static class PhysicsLayers
     {
         public const int Default = 0;
