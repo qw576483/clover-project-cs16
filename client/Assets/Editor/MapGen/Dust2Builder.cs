@@ -326,7 +326,13 @@ namespace Cs16.EditorTools
             var sun = sunGo.AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.color = new Color32(255, 255, 128, 255);
-            sun.intensity = 1.15f;
+            // intensity 1.15 → 1.75（片X 2026-09-21 定案）：原版基线图 `策划/基线图/original/de_dust2_freecam_A_00.jpg`
+            // 的**内容区**（裁掉上下信箱黑边后 1280×810）实测 meanLum 123.1 / p50 127；改前我方同机位帧
+            // （`.ai-tmp/screenshots/x-L0-base.png`）只有 99.4（−19.2%）⇒ 原版 `_light "255 255 128 70"` 的
+            // 亮度口径在 Unity intensity 上无逐值对应（G-17 已登记"不可直比"）⇒ 以**基线图像素数字**为量化出处
+            // （任务书 ② 允许的降级），逐档实测到 1.75 时 meanLum 124.3（Δ +1.2 / 0.98%）。
+            // ⛔ 只动光照参数，⛔ 不加任何滤镜/后处理。
+            sun.intensity = 1.75f;
             sun.shadows = LightShadows.Soft;
             sun.shadowStrength = 0.75f;
 
@@ -334,11 +340,16 @@ namespace Cs16.EditorTools
             RenderSettings.ambientSkyColor = new Color32(150, 150, 170, 255);
             RenderSettings.ambientEquatorColor = new Color32(130, 115, 90, 255);
             RenderSettings.ambientGroundColor = new Color32(80, 68, 50, 255);
+            // ambientIntensity 1（默认）→ 1.55（片X 定案，出处同上：基线图内容区 meanLum 123.1）
+            RenderSettings.ambientIntensity = 1.55f;
 
             // 沙漠薄雾：远处沙色发白，贴近原版 dust2 的通透感（不影响近处辨识）
+            // density 0.0025 → 0.010（片X 定案）：目标不是"抬远景带 RMS"（实测雾对本场景的远景带 RMS **无影响**，
+            //   见 策划/对照表.md §X：那一段是天空盒主导，而 Unity 天空盒着色器**不吃雾**），
+            //   而是按下述**实测**效果收敛到基线：meanLum +4.7（99.4 → 104.1）、平均饱和度 −0.038（0.546 → 0.508）。
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
-            RenderSettings.fogDensity = 0.0025f;
+            RenderSettings.fogDensity = 0.010f;
             RenderSettings.fogColor = new Color32(214, 197, 155, 255);
 
             var sky = MakeSkyboxMaterial();

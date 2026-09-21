@@ -1431,7 +1431,7 @@ D2	de_dust2_geo.bin	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	client/Asset
 D2	djCredit1.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	8	脚本断言	D1D2D3 资产几何
 D2	djCredit2.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	6	脚本断言	D1D2D3 资产几何
 D2	white.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	72	脚本断言	D1D2D3 资产几何
-D2	低矮障碍（含楼梯扶手/台阶沿）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	tools/probes/geom-check.py（A5）	10	脚本断言	D1D2D3 资产几何
+D2	低矮障碍（含楼梯扶手/台阶沿）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	tools/probes/geom-check.py（A5）	71	脚本断言	D1D2D3 资产几何
 D2	物件树/Blocker_xxxx（子物件）	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	656	脚本断言	D1D2D3 资产几何
 D2	物件树/Blockers	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	1	脚本断言	D1D2D3 资产几何
 D2	物件树/Bombsite_A	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	6	脚本断言	D1D2D3 资产几何
@@ -3293,8 +3293,8 @@ D9	角色间碰撞（player↔player）	client/Assets/Scripts/Module/Map/CsActor
 D9	跳跃初速	Core/CsConst.cs	Core/CsConst.cs	4	脚本断言	D9 碰撞与可走
 D9	重力	Core/CsConst.cs	Core/CsConst.cs	4	脚本断言	D9 碰撞与可走
 D9	阻挡盒口径一致性（位图 vs geo vs 场景，逐条 AABB）	client/Assets/Resources/MapData/de_dust2.bytes	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	4	脚本断言	D9 碰撞与可走
-D9	阻挡盒数 vs 规格声明	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	策划/策划案/CS1.6单机参考规格.md	656	脚本断言	D9 碰撞与可走
-D9	阻挡盒数（geo ≡ 场景 BoxCollider）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	656	脚本断言	D9 碰撞与可走
+D9	阻挡盒数 vs 规格声明	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	策划/策划案/CS1.6单机参考规格.md	811	脚本断言	D9 碰撞与可走
+D9	阻挡盒数（geo ≡ 场景 BoxCollider）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	811	脚本断言	D9 碰撞与可走
 D10	CsTeam 枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:4	3	脚本断言	D10 玩法逻辑
 D10	下包/拆包使用键	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:852	3	脚本断言	D10 玩法逻辑
 D10	丢枪	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:861	3	脚本断言	D10 玩法逻辑

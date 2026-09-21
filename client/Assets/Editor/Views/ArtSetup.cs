@@ -296,11 +296,17 @@ namespace Cs16.EditorTools
                 }
                 else
                 {
-                    // 复古像素观感 + 可平铺（GoldSrc 的 UV 常常超出 0..1）+ 控显存
-                    if (importer.filterMode != FilterMode.Point) { importer.filterMode = FilterMode.Point; dirty = true; }
+                    // 可平铺（GoldSrc 的 UV 常常超出 0..1）+ 不做有损压缩 + 不缩放（片W 定案，见 策划/对照表.md §W）
+                    // 出处：GoldSrc 硬件渲染默认**双线性 + mip**（原版侧无出处文件 ⇒ 见 对照表 BLOCKED-W1，
+                    //   按"最接近不做处理的硬件默认"取 Bilinear）；`textureCompression = Uncompressed` 与
+                    //   片W 已落盘的 242 张一致（BC1 有损编码实测 maxΔ ≈19%，见 W-03/W-04）；
+                    //   `maxTextureSize = 2048 ≥ 源尺寸最大边 256` ⇒ 不缩放（W-01）。
+                    // ⚠️ 改本行 = 改生成器语义：⛔ 不许再写回 Point / 512（片W 之前就是被这里回退的）。
+                    if (importer.filterMode != FilterMode.Bilinear) { importer.filterMode = FilterMode.Bilinear; dirty = true; }
                     if (!importer.mipmapEnabled) { importer.mipmapEnabled = true; dirty = true; }
                     if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; dirty = true; }
-                    if (importer.maxTextureSize != 512) { importer.maxTextureSize = 512; dirty = true; }
+                    if (importer.maxTextureSize != 2048) { importer.maxTextureSize = 2048; dirty = true; }
+                    if (importer.textureCompression != TextureImporterCompression.Uncompressed) { importer.textureCompression = TextureImporterCompression.Uncompressed; dirty = true; }
                     if (importer.anisoLevel != 1) { importer.anisoLevel = 1; dirty = true; }
                 }
 
