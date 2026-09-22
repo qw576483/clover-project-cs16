@@ -275,6 +275,44 @@ if (-not (Test-Path $refTbl)) {
   Remove-Item $tblBak -Force -ErrorAction Continue
 }
 
+# =====================================================================
+#  6) slice BB: reference-table-refs now ALSO scans the differences registry
+#     (ce hua/cha yi deng ji.tsv) -- verify.ps1 item 8b widened, never loosened.
+#     Same two-sample rule as section 5: the pristine registry PASSES, an
+#     injected dangling citation INSIDE it FAILS, restore => PASS again.
+#     Why this sample is not redundant with section 5: section 5 proves the
+#     reference table is judged; this one proves the NEWLY SCANNED table is
+#     judged.  Without it, "widened the scope" would be an unverified claim.
+#     The ghost carrier name is assembled at RUNTIME for the reason item 26
+#     documents: a literal would make this very script a citation of it.
+# =====================================================================
+Note ''
+Note '--- slice BB: reference-table-refs also scans the differences registry ---'
+$diffReg = Join-Path $plan ((([char[]]@(0x5DEE, 0x5F02, 0x767B, 0x8BB0)) -join '') + '.tsv')
+$dRegBak = Join-Path $Project '.ai-tmp\test\bb-selftest-diffreg.bak'
+if (-not (Test-Path $diffReg)) {
+  Note ('FAIL  reference-table-refs / diff-registry : differences registry not found at ' + $diffReg)
+  $bad++
+} else {
+  Copy-Item $diffReg $dRegBak -Force
+  $hD0 = HashOf $diffReg
+  Expect 'reference-table-refs / good (pristine differences registry)' (Invoke-Gate 'reference-table-refs') 'PASS'
+
+  # injected defect: one carrier path inside the differences registry that resolves
+  # to nothing and has no registry row.
+  $ghost2 = $cYbzy + '/cs16src/bb-selftest-' + [guid]::NewGuid().ToString('N').Substring(0, 10) + '.md'
+  Note ('  injected ghost carrier (in the differences registry): ' + $ghost2)
+  [IO.File]::AppendAllText($diffReg, ("`r`n# bb-selftest " + $ghost2 + "`r`n"),
+                           (New-Object Text.UTF8Encoding($false)))
+  Expect 'reference-table-refs / bad (dangling citation inside the differences registry)' (Invoke-Gate 'reference-table-refs') 'FAIL'
+
+  Copy-Item $dRegBak $diffReg -Force
+  Expect 'reference-table-refs / restored (differences registry)' (Invoke-Gate 'reference-table-refs') 'PASS'
+  Note ('  hash self-check: before=' + $hD0 + ' after=' + (HashOf $diffReg) + ' identical=' + ($hD0 -eq (HashOf $diffReg)))
+  if ($hD0 -ne (HashOf $diffReg)) { $bad++; Note 'MISS  the differences registry was not restored byte-identically' }
+  Remove-Item $dRegBak -Force -ErrorAction Continue
+}
+
 Note ''
 Note ('===== gate-selftest summary: unmet-expectations=' + $bad + ' =====')
 exit $(if ($bad -gt 0) { 1 } else { 0 })

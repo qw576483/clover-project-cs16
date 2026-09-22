@@ -357,8 +357,14 @@ function Invoke-Checks {
   # plan-dir carrier-reachability registry (path built from code points below).
   # A registry row whose carrier is reachable again FAILs too (a silencer left behind
   # is worse than no gate at all).
-  # Scope is deliberately the reference table ONLY -- the acceptance table stays item 5's
-  # territory, otherwise the same citation is counted twice.
+  # Scope (slice BB, 2026-09-22): the reference table AND the differences registry
+  # (ce hua/cha yi deng ji.tsv).  The registry cites carriers and `file:line` in the very
+  # same two shapes, and nothing resolved them before -- measured that day it carried 10+
+  # carriers under `yuan-ban/cs16src/cs16game/...` that are not on disk, so that whole class
+  # lived outside the gate.  Widening the scope can only add failures, never remove one.
+  # The acceptance table stays item 5's territory, otherwise the same citation is counted
+  # twice.  The two-sample proof for the NEW scope lives in tools/probes/gate-selftest.ps1
+  # section 6 (inject a dangling citation inside the registry => FAIL, restore => PASS).
   # The two-sample proof lives in tools/probes/gate-selftest.ps1 (inject a dangling path
   # => FAIL, restore => PASS).
   $cCarrierReg = ([char[]]@(0x8F7D, 0x4F53, 0x53EF, 0x8FBE, 0x6027, 0x767B, 0x8BB0) -join '') + '.tsv'

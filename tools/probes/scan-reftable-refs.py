@@ -11,10 +11,16 @@ ACCEPTANCE table only, so every dangling carrier path written in the REFERENCE t
 2026-09-22 (slice AX): section 0 alone carried 4 dangling `yuan ban zi yuan/...` carriers,
 one of them labelled `Test-Path = True` while the path was not on disk.
 
-Scope (deliberately narrow)
----------------------------
-ONLY the reference table is scanned.  The acceptance table is item 5's territory; counting
-it here as well would double-count and mis-report.
+Scope (slice BB: widened, never loosened)
+----------------------------------------
+Two tables are scanned, both with the identical rule set:
+  * the reference table (plan/dui zhao biao.md)
+  * the differences registry (plan/cha yi deng ji.tsv)   <-- added by slice BB
+Why the second one: it cites carriers in the very same two shapes, and until slice BB
+nothing resolved them -- measured 2026-09-22, it carried 10+ carriers under
+`yuan ban zi yuan/cs16src/cs16game/...` that are not on disk, so the whole class of
+dangling citations lived outside the gate.  The acceptance table stays item 5's
+territory; counting it here as well would double-count and mis-report.
 
 What is judged
 --------------
@@ -59,6 +65,10 @@ CJK = re.compile(r'[\u4e00-\u9fff]')
 YS = '\u539f\u7248\u8d44\u6e90'          # yuan ban zi yuan  (the original-assets root)
 PLAN = '\u7b56\u5212'                     # ce hua
 REFTBL = '\u5bf9\u7167\u8868'             # dui zhao biao
+# slice BB: the differences registry (ce hua/cha yi deng ji.tsv) cites carriers with the
+# very same two shapes, and until now nothing resolved them -- item 8b only ever scanned
+# the reference table.  Widening the scope to it is the whole point of slice BB.
+DIFFREG = '\u5dee\u5f02\u767b\u8bb0'      # cha yi deng ji
 REGDOC = '\u8f7d\u4f53\u53ef\u8fbe\u6027\u767b\u8bb0'   # zai ti ke da xing deng ji
 
 # four-element column headers, spelled with escapes to keep this file ASCII-only
@@ -149,10 +159,14 @@ class Scanner(object):
     def __init__(self, root):
         self.root = os.path.abspath(root)
         self.tbl = os.path.join(self.root, PLAN, REFTBL + '.md')
+        self.tbl2 = os.path.join(self.root, PLAN, DIFFREG + '.tsv')
+        # Order matters for the report only; both are scanned identically.
+        self.tables = [self.tbl, self.tbl2]
         self.reg = os.path.join(self.root, PLAN, REGDOC + '.tsv')
         self.by_name = {}
         self.n_files = 0
-        self.refs = []          # (kind, carrier, nums_or_None, lineno)
+        self.refs = []          # (table, kind, carrier, nums_or_None, lineno)
+        self.lines_by_file = {}  # table path -> its lines (the VA marker is per citing line)
         self.registry = {}      # carrier -> (status, cells list, lineno)
 
     # ---- index -----------------------------------------------------------
@@ -183,45 +197,54 @@ class Scanner(object):
 
     # ---- extraction ------------------------------------------------------
     def scan(self):
-        lines = io.open(self.tbl, encoding='utf-8').read().split('\n')
-        self.lines = lines
-        pat_ys = re.compile(YS + r'/[^\s`|\uff0c\u3002\uff1b\u3001\uff09)\u3011\]"\']+')
-        pat_cl = re.compile(r'(?<![0-9A-Za-z_\u4e00-\u9fff])CL/[^\s`|\uff0c\u3002\uff1b\u3001\uff09)\u3011\]"\']+')
+        # Token terminators.  Slice BB adds the *opening* delimiters (U+FF08 U+3010 U+300A
+        # U+300C U+300D U+FF1A U+2026) to the original set (U+FF0C U+3002 U+FF1B U+3001
+        # U+FF09 U+3011 + quote).  Why: the differences registry runs prose straight
+        # into a carrier -- `yuan-ban/cs16src` + an opening paren / `...md` + a corner
+        # bracket -- and
+        # without them the regex swallowed the whole sentence into one bogus "path", which
+        # showed up as 2 false DANGLING lines.  A terminator can only SHORTEN a token.
+        STOP = r'\uff08\u3010\u300a\u300c\u300d\uff1a\u2026'
+        pat_ys = re.compile(YS + r'/[^\s`|\uff0c\u3002\uff1b\u3001\uff09)\u3011\]"\'' + STOP + r']+')
+        pat_cl = re.compile(r'(?<![0-9A-Za-z_\u4e00-\u9fff])CL/[^\s`|\uff0c\u3002\uff1b\u3001\uff09)\u3011\]"\'' + STOP + r']+')
         pat_file = re.compile(r'[0-9A-Za-z_\u4e00-\u9fff][0-9A-Za-z_\u4e00-\u9fff./\\-]*'
                               r'\.(?:%s):[0-9][0-9A-Za-z,\-]*' % '|'.join(EXT))
         seen = set()
-        for i, ln in enumerate(lines, 1):
-            found = []
-            for m in pat_ys.finditer(ln):
-                found.append(('ys', m.group(0)))
-            for m in pat_cl.finditer(ln):
-                found.append(('cl', m.group(0)))
-            for m in pat_file.finditer(ln):
-                tok = m.group(0)
-                if tok.startswith(YS + '/') or tok.startswith('CL/'):
-                    continue
-                found.append(('file', tok))
-            for kind, tok in found:
-                tok = tok.rstrip('.,;:')
-                if ('{' in tok) or ('}' in tok):
-                    continue
-                if kind in ('ys', 'cl'):
-                    sp = split_linespec(tok)
-                    if sp is not None and re.search(r'\.[A-Za-z0-9]+:', tok):
-                        carrier, nums = sp
+        for tf in self.tables:
+            lines = io.open(tf, encoding='utf-8').read().split('\n')
+            self.lines_by_file[tf] = lines
+            for i, ln in enumerate(lines, 1):
+                found = []
+                for m in pat_ys.finditer(ln):
+                    found.append(('ys', m.group(0)))
+                for m in pat_cl.finditer(ln):
+                    found.append(('cl', m.group(0)))
+                for m in pat_file.finditer(ln):
+                    tok = m.group(0)
+                    if tok.startswith(YS + '/') or tok.startswith('CL/'):
+                        continue
+                    found.append(('file', tok))
+                for kind, tok in found:
+                    tok = tok.rstrip('.,;:')
+                    if ('{' in tok) or ('}' in tok):
+                        continue
+                    if kind in ('ys', 'cl'):
+                        sp = split_linespec(tok)
+                        if sp is not None and re.search(r'\.[A-Za-z0-9]+:', tok):
+                            carrier, nums = sp
+                        else:
+                            carrier, nums = tok, None
                     else:
-                        carrier, nums = tok, None
-                else:
-                    sp = split_linespec(tok)
-                    if sp is None:
-                        carrier, nums = tok, None
-                    else:
-                        carrier, nums = sp
-                key = (kind, carrier, i)
-                if key in seen:
-                    continue
-                seen.add(key)
-                self.refs.append((kind, carrier, nums, i))
+                        sp = split_linespec(tok)
+                        if sp is None:
+                            carrier, nums = tok, None
+                        else:
+                            carrier, nums = sp
+                    key = (tf, kind, carrier, i)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    self.refs.append((tf, kind, carrier, nums, i))
 
     # ---- resolution ------------------------------------------------------
     def _try(self, rel):
@@ -294,25 +317,28 @@ class Scanner(object):
         self.index()
         self.load_registry()
         self.scan()
-        carriers = {}      # carrier key -> [lineno...]
+        carriers = {}      # (table, carrier) -> [lineno...]
         ok = 0
         bad = []
+        per_table = {}     # table -> citation count
 
         def keyof(carrier, nums):
             return carrier + ('' if not nums else ':' + ','.join(nums))
 
-        for kind, carrier, nums, lineno in self.refs:
+        for tf, kind, carrier, nums, lineno in self.refs:
             tok = keyof(carrier, nums)
             good, detail, hit = self.resolve(kind, carrier, nums)
             # A virtual address is not a file offset: the table marks those explicitly
             # with the ASCII token VA on the citing line (they live in client.dll .data,
             # past EOF).  Only that marker waives the offset bound -- nothing else does.
-            if (not good) and detail.startswith('offset ') and 'VA' in self.lines[lineno - 1]:
+            if (not good) and detail.startswith('offset ') and 'VA' in self.lines_by_file[tf][lineno - 1]:
                 good = True
             reg = self.registry.get(tok)
             if reg is None:
                 reg = self.registry.get(carrier)
-            ck = carrier
+            tk = self.tagname(tf)
+            ck = (tk, carrier)
+            per_table[tk] = per_table.get(tk, 0) + 1
             carriers.setdefault(ck, [])
             if lineno not in carriers[ck]:
                 carriers[ck].append(lineno)
@@ -320,12 +346,12 @@ class Scanner(object):
                 ok += 1
                 continue
             if reg is None:
-                bad.append((ck, kind, carrier, nums, detail, lineno))
+                bad.append((tk, carrier, kind, nums, detail, lineno))
             elif reg[0] != ST_GONE:
-                bad.append((ck, kind, carrier, nums,
+                bad.append((tk, carrier, kind, nums,
                             detail + ' | UNKNOWN status in registry: ' + reg[0], lineno))
             elif any(c == '' for c in reg[1]):
-                bad.append((ck, kind, carrier, nums,
+                bad.append((tk, carrier, kind, nums,
                             detail + ' | registry row %d has an empty four-element cell' % reg[2], lineno))
             else:
                 ok += 1
@@ -336,18 +362,22 @@ class Scanner(object):
             if status == ST_GONE and self.row_good(rowkey):
                 stale.append((rowkey, rl))
 
-        print('scan-reftable-refs: table=%s registry=%s'
-              % (ascii_safe(os.path.basename(self.tbl)), ascii_safe(os.path.basename(self.reg))))
+        print('scan-reftable-refs: tables=%s registry=%s'
+              % ('+'.join(self.tagname(t) for t in self.tables), ascii_safe(os.path.basename(self.reg))))
         print('  index: %d file(s); %d citation(s) -> %d distinct carrier(s)'
               % (self.n_files, len(self.refs), len(carriers)))
+        print('  per table: ' + ', '.join('%s=%d' % (t, per_table.get(t, 0)) for t in
+                                          [self.tagname(x) for x in self.tables]))
         print('  reachable-or-registered: %d citation(s)' % ok)
         seen = set()
-        for ck, kind, carrier, nums, detail, lineno in bad:
+        for tk, carrier, kind, nums, detail, lineno in bad:
+            ck = (tk, carrier)
             if ck in seen:
                 continue
             seen.add(ck)
-            print('  DANGLING lines %s [%s] %s  -- %s'
-                  % (','.join(str(x) for x in carriers[ck][:6]), kind, ascii_safe(ck), ascii_safe(detail)))
+            print('  DANGLING [%s] lines %s [%s] %s  -- %s'
+                  % (tk, ','.join(str(x) for x in carriers[ck][:6]), kind,
+                     ascii_safe(carrier), ascii_safe(detail)))
         for rowkey, rl in stale:
             print('  STALE-REGISTRY row %d: %s is reachable again -- delete the row'
                   % (rl, ascii_safe(rowkey)))
@@ -357,9 +387,13 @@ class Scanner(object):
             print('FAIL: %d unaccounted carrier(s) + %d stale registry row(s)'
                   % (len(seen), len(stale)))
             return 1
-        print('PASS: every yuan-ban carrier path and file:line citation in the reference table is '
-              'reachable on disk, or registered with what/why/source/expiry')
+        print('PASS: every yuan-ban carrier path and file:line citation in the reference table and '
+              'the differences registry is reachable on disk, or registered with what/why/source/expiry')
         return 0
+
+    def tagname(self, table):
+        """ASCII label per scanned table (a CJK file name would print as '?' otherwise)."""
+        return {self.tbl: 'ref-table', self.tbl2: 'diff-registry'}.get(table, os.path.basename(table))
 
     def emit(self, bad):
         """Append a skeleton row for every NEW dangling carrier (existing rows untouched)."""
@@ -368,7 +402,7 @@ class Scanner(object):
             lines = io.open(self.reg, encoding='utf-8').read().rstrip('\n').split('\n')
         known = set(self.registry.keys())
         added = 0
-        for ck, kind, carrier, nums, detail, lineno in bad:
+        for tk, carrier, kind, nums, detail, lineno in bad:
             # A row is a waiver for its key: the carrier path when the PATH itself is
             # missing, the full citation when only the line/offset is out of range
             # (otherwise one token-level failure would silence the whole carrier).
