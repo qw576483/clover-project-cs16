@@ -14,8 +14,11 @@ WHAT THIS SCRIPT JUDGES (and what it does NOT):
   * NOT JUDGED HERE (needs one Play run, see the PENDING rows at the end):
       - "did N CT actually spread over >= 2 bombsites and really swap spots";
       - "did the T carrier really plant within S seconds of arriving".
-    Those rows read <project>/.ai-tmp/test/bg-hold-plant.tsv (runtime snapshot) and stay
-    PENDING (never PASS) while that file does not exist.
+    The C rows read <project>/.ai-tmp/test/bh-hold-plant.tsv, written by
+    tools/probes/bot-hold-plant.cs during ONE real Play run (driven by
+    tools/probes/hold-plant-ai.ps1).  While that file does not exist they stay
+    PENDING -- and once it exists they carry the numbers the sim produced, so a
+    measured "no swap / no bot plant" comes out as FAIL, never as PASS.
 
 Exit code: 0 = no FAIL row (PENDING rows do not make it fail, but they are counted and
 printed separately so they can never be mistaken for a pass).
@@ -37,7 +40,7 @@ ICS_MAP = os.path.join(ROOT, 'client', 'Assets', 'Scripts', 'Module', 'Map', 'IC
 BRAIN = os.path.join(ROOT, 'client', 'Assets', 'Scripts', 'Module', 'Bot', 'CsBotBrain.cs')
 HOLD_SPOTS = os.path.join(ROOT, 'client', 'Assets', 'Scripts', 'Module', 'Bot', 'CsBotHoldSpots.cs')
 C_BOMB = os.path.join(ROOT, 'client', 'Assets', 'Scripts', 'Module', 'Match', 'CsBomb.cs')
-RUNTIME_TSV = os.path.join(ROOT, '.ai-tmp', 'test', 'bg-hold-plant.tsv')
+RUNTIME_TSV = os.path.join(ROOT, '.ai-tmp', 'test', 'bh-hold-plant.tsv')
 
 SITE_A = 'Bombsite_A'
 SITE_B = 'Bombsite_B'
@@ -244,14 +247,149 @@ def main():
     else:
         add('FAIL', 'B5', 'one of the two bombsite marker groups is missing')
 
-    # ---- C: runtime rows (need one Play run) ----
-    if os.path.isfile(RUNTIME_TSV):
-        add('INFO', 'C0', 'runtime snapshot found: %s (parsed by the runtime section, see report)' % RUNTIME_TSV)
-    else:
+    # ---- C: runtime rows (parsed from the per-frame snapshot of slice BH-R) ------
+    # The snapshot is written by tools/probes/bot-hold-plant.cs during a real Play run.
+    # ABSOLUTE READING RULE: never turn "the file is there" into PASS.  Every row below
+    # either carries a number produced by the sim or says FAIL.
+    runtime = None
+    for cand in (RUNTIME_TSV, os.path.join(ROOT, '.ai-tmp', 'test', 'bg-hold-plant.tsv'),
+                 os.path.join(ROOT, '.ai-tmp', 'test', 'bh-hold-plant.tsv')):
+        if os.path.isfile(cand):
+            runtime = cand
+            break
+    if runtime is None:
         add('PENDING', 'C1.runtime',
             'CT spread over >=2 bombsites and real spot swaps: needs one Play run -> %s' % RUNTIME_TSV)
         add('PENDING', 'C2.runtime',
             'T carrier plants within S seconds of arriving: needs one Play run -> %s' % RUNTIME_TSV)
+        add('PENDING', 'C3.runtime',
+            'T bot (not the driver) really plants the C4: needs one Play run -> %s' % RUNTIME_TSV)
+    else:
+        add('INFO', 'C0', 'runtime snapshot parsed: %s (%d bytes)' % (runtime, os.path.getsize(runtime)))
+
+        ct_bots = {}          # name -> team of every actor seen on a CT row
+        is_bot = {}           # name -> 1/0 (read from the snapshot's IsBot column)
+        bot_span = {}         # (round, name) -> [min_dist_A, min_dist_B, first_x, first_z, max_step]
+        ct_sites = {}         # round -> {label: set(names)}
+        swaps = []            # (round, name, from, to, t)
+        cars = []             # (round, name, t)
+        ev = {}               # kind -> row (single-shot events)
+        rounds = []
+        def kv(c):
+            """event rows are 'E<TAB>KIND<TAB>key=value...' -> {key: value}"""
+            d = {}
+            for f in c[1:]:
+                if '=' in f:
+                    k, v = f.split('=', 1)
+                    d[k] = v
+            return d
+
+        with open(runtime, 'r', encoding='utf-8', errors='replace') as fh:
+            for line in fh:
+                c = line.rstrip('\n').split('\t')
+                if not c:
+                    continue
+                if c[0] == 'E' and len(c) > 2:
+                    kind = c[1] if c[1] != 'PROBE' else ('PROBE.' + c[2])
+                    ev.setdefault(kind, c)
+                    d = kv(c[2:] if c[1] == 'PROBE' else c[1:])
+                    if kind == 'ROUND':
+                        rounds.append(c)
+                    elif kind == 'CTSITE' and d.get('site'):
+                        ct_sites.setdefault(d.get('round', '?'), {}).setdefault(d['site'], set()).add(d.get('actor', '?'))
+                    elif kind == 'CTSITECHANGE' and 'from' in d:
+                        swaps.append((d.get('round', '?'), d.get('actor', '?'), d['from'], d.get('to', '?'), d.get('t', '?')))
+                    elif kind == 'CARRIER' and d.get('actor'):
+                        cars.append((d.get('round', '?'), d['actor'], d.get('t', '?')))
+                elif c[0] == 'A' and len(c) >= 21:
+                    rnd, name, team, ib = c[3], c[6], c[7], c[8]
+                    is_bot[name] = ib
+                    if team == 'CT':
+                        ct_bots[name] = team
+                    k = (rnd, name)
+                    dA, dB = float(c[17]), float(c[18])
+                    lab = c[20]
+                    rec = bot_span.get(k)
+                    if rec is None:
+                        rec = [dA, dB, float(c[11]), float(c[13]), 0.0, set()]
+                        bot_span[k] = rec
+                    else:
+                        step = ((float(c[11]) - rec[2]) ** 2 + (float(c[13]) - rec[3]) ** 2) ** 0.5
+                        if step > rec[4]:
+                            rec[4] = step
+                        rec[2], rec[3] = float(c[11]), float(c[13])
+                        rec[0] = min(rec[0], dA)
+                        rec[1] = min(rec[1], dB)
+                    if lab != '0':
+                        rec[5].add(lab)
+
+        # ---- C1: did the CT side really spread over >= 2 bombsites and swap? ----
+        n_rounds = len(rounds)
+        ct_names = sorted(ct_bots)
+        site_hit = {}
+        for rnd, d in ct_sites.items():
+            for site, names in d.items():
+                site_hit.setdefault(site, set()).update(names)
+        if not ct_names:
+            add('FAIL', 'C1.runtime', 'no CT actor ever appeared in the snapshot (%d rounds recorded)' % n_rounds)
+        else:
+            worst = []
+            for (rnd, name), rec in sorted(bot_span.items()):
+                if name in ct_bots:
+                    worst.append('r%s/%s dA=%.1f dB=%.1f step=%.2f' % (rnd, name, rec[0], rec[1], rec[4]))
+            add('FAIL' if len(site_hit) < 2 else 'PASS', 'C1.runtime',
+                'CT bots = %d (%s) in %d round(s); bombsites any CT actually entered (within SiteRadius) = %d %s; '
+                'CTSITECHANGE (spot swaps) = %d; per-CT closest approach: %s'
+                % (len(ct_names), ','.join(ct_names), n_rounds, len(site_hit),
+                   sorted(site_hit) if site_hit else '{}', len(swaps), ' | '.join(worst) if worst else 'n/a'))
+        if n_rounds and not swaps:
+            add('FAIL', 'C1b.runtime',
+                'no CT spot swap was recorded in %d round(s) (the probe turns CsBotBrain''s own swap event '
+                'into a CTSITECHANGE row; zero rows = no swap happened, not "not measured")' % n_rounds)
+        elif swaps:
+            add('PASS', 'C1b.runtime', '%d CT spot swap(s): %s' % (len(swaps), swaps[:6]))
+
+        # ---- C2 / C3: the plant chain ----
+        arr = ev.get('TARRIVE')
+        st = ev.get('TPLANTSTART')
+        pl = ev.get('TPLANTED')
+        if pl is None:
+            add('FAIL', 'C2.runtime',
+                'no BombPlanted happened in this session (arrive row: %s; carrier changes seen: %d) -> the plant '
+                'chain produced nothing to time' % ('yes' if arr else 'none', len(cars)))
+        else:
+            pd = kv(pl[1:])
+            ad = kv(arr[1:]) if arr else {}
+            sd = kv(st[1:]) if st else {}
+            # WHO planted is read from TPLANTSTART's actor (the actor whose UseProgress rose),
+            # NOT from TPLANTED's `carrier=` field: that field is the probe's last-seen carrier
+            # id and it flaps between the T bot and the driver's local player (see C4), so using
+            # it would be able to report a bot plant that never happened.
+            who = sd.get('id', '?')
+            bot = is_bot.get(who, '?')
+            add('PASS', 'C2.runtime',
+                'real plant happened: arriveToPlantedSec=%s s (TARRIVE t=%s -> TPLANTSTART t=%s [%s s use-progress] -> '
+                'TPLANTED t=%s); bombPos=%s'
+                % (pd.get('arriveToPlantedSec', '?'), ad.get('t', '?'), sd.get('t', '?'),
+                   sd.get('arriveToPlantStartSec', '?'), pd.get('t', '?'), pd.get('bombPos', '?')))
+            add('PASS' if bot == '1' else 'FAIL', 'C3.runtime',
+                'the planting actor was id=%s (IsBot=%s) -> %s'
+                % (who, bot, 'a bot planted on its own'
+                   if bot == '1' else 'the driver-driven local player planted; NO bot ever planted'))
+
+        # ---- C4: why (diagnostic numbers only, never used as a pass) ----
+        stuck = []
+        for (rnd, name), rec in sorted(bot_span.items()):
+            if is_bot.get(name) == '1':
+                stuck.append('r%s/%s min_dA=%.1f min_dB=%.1f max_step=%.2fm' % (rnd, name, rec[0], rec[1], rec[4]))
+        add('INFO', 'C4b.runtime',
+            'probe limitation (do not read as a pass): its CARRIER row fires whenever _carrierId != actor.Id '
+            'inside the per-actor loop, so %d rows over %d distinct (round,actor) pairs -- the carrier field is '
+            'NOT a reliable "who holds the C4" reading; use TPLANTSTART.actor instead'
+            % (len(cars), len(set((r, a) for r, a, _ in cars))))
+        if stuck:
+            add('INFO', 'C4.runtime',
+                'per-bot closest approach / largest single-sample step over the whole run: ' + ' | '.join(stuck[:14]))
 
     # ---- print ----
     npass = sum(1 for s, _, _ in rows if s == 'PASS')
