@@ -113,6 +113,29 @@ namespace Cs16.Module.Bot
         /// <summary>"高度层这次为何没生效"的时间闸（同原因 <see cref="CsBotConst.StuckWarnCooldown"/> 内只报一条）。</summary>
         private float _nextHeightLogAt;
 
+        // ---- 整格口径（切片BR）：格心取样失败 ⇒ 退到格内多点 ----
+        /// <summary>
+        /// **整格口径**的多点取样偏移（**格边长的比例**，升序；`0f` = 格心）。
+        /// 取 ±0.4 而**不是** ±0.5：±0.5 正好落在格边上，格归属有歧义（同一个世界点会被相邻两格各算一次），
+        /// 而 ±0.4 保证 25 个点都严格落在**本格内**。
+        ///
+        /// <para><b>与位图生成侧口径的差异（必须写明）</b>：位图生成侧**根本不取地面** ——
+        /// <c>Assets/Editor/MapGen/Dust2GeoData.cs:213-247 BuildBlockedBitmap()</c> 判的是
+        /// "格柱 y∈[GroundTopY+ProbeBottomY, GroundTopY+ProbeTopY] 与障碍 AABB 相交 ⇒ 阻挡"（**整格柱体**语义）；
+        /// 而运行时的消费方（<see cref="CellCenter"/> / <see cref="GroundYAbove"/> /
+        /// <c>ICsMap.TrySampleGround</c>）只在**格心**取样 ⇒ 两侧口径不一致，产生"位图上连通、运行时断"的伪连通边
+        /// （实证：格 <c>(49,17)</c> 格心 8 m 内探不到地面，5×5 只在格角命中 <c>y=8.941</c>）。
+        /// 生成侧没有可复用的"格内采样点"，所以这里用**格内 5×5** 近似"整格"：只要格内**任一点**存在带内合法
+        /// 落脚面，这一格就按"能站"处理（= 生成侧的整格语义）。</para>
+        /// </summary>
+        private static readonly float[] InCellFrac = { 0f, -0.2f, 0.2f, -0.4f, 0.4f };
+        /// <summary><see cref="InCellFrac"/> 里 `0f` 的下标（= 格心那一档；多点循环里跳过，因为格心已经试过）。</summary>
+        private const int InCellCenter = 0;
+        /// <summary>带内下界用的探测深度 = <c>CsMap.SampleGround</c> 的默认 <c>maxDrop</c>（Module/Map/CsMap.cs:534）。</summary>
+        private const float GroundProbeDepth = 8f;
+        /// <summary>本片证据计数（清点在 <see cref="BuildHeightReach"/> 的**重算**开头）：格心失败 / 多点救回 / 多点也判死。</summary>
+        private int _mpCenterFail, _mpSaved, _mpDead;
+
         // ---- 连通性（切片BJ）：可走 ≠ 走得到 ----
         /// <summary>
         /// 最近一次被判为"**与起点格不连通**"的终点格（`AStar.Find` 在两端都可走时仍返回 null）。
@@ -775,7 +798,9 @@ namespace Cs16.Module.Bot
         ///
         /// <para><b>代价（⛔ 不是每帧每格打射线）</b>：每次**重求路径**（<see cref="CsBotConst.PathReplanInterval"/>
         /// = 1 s 一次，且只在起点格变了时才重算）对可达格各打 1 根射线（实测主分量 ~4.4k 格）；
-        /// 结果按**起点格**备忘（<see cref="_heightReachCache"/>）⇒ 卡住不动时（起点格不变）零重算。</para>
+        /// 结果按**起点格**备忘（<see cref="_heightReachCache"/>）⇒ 卡住不动时（起点格不变）零重算。
+        /// 切片BR 的整格口径只在**格心失败**的格上再多打 24 根（见 <see cref="CellLandingFace"/>），
+        /// **缓存粒度不变**（仍然是"起点格 → 整个可达集"，多点结论不单独缓存，因为它只在这一层被消费）。</para>
         /// </summary>
         /// <returns>可达格集合；null = 本帧不加这一层（调用方按既有行为走）。</returns>
         private HashSet<Vector2Int> BuildHeightReach(Vector2Int from, Vector3 selfPosition)
@@ -809,6 +834,8 @@ namespace Cs16.Module.Bot
                 HeightLayerOff("自己脚下探不到地面（SampleGround = -inf）", from, selfPosition);
                 return null;
             }
+
+            _mpCenterFail = 0; _mpSaved = 0; _mpDead = 0;   // 本片证据计数（只在**重算**时清，命中缓存不改）
 
             var reach = new HashSet<Vector2Int> { from };
             var height = new Dictionary<Vector2Int, float> { { from, baseY } };
@@ -849,7 +876,10 @@ namespace Cs16.Module.Bot
                     }
                     if (hN - hCur > CsConst.StepUpHeight)
                     {
-                        blocked++;                                   // CsMap.cs:522 同一式
+                        // CsMap.cs:522 同一式。切片BR 之后这一支**成了兜底断言**：GroundYAbove 只会返回
+                        // 带内（dy ≤ StepUpHeight）的面，所以这里再判一次是为了"契约被改坏时仍然不通"，
+                        // ⛔ 阈值一个字没动、也不许被这里绕过。
+                        blocked++;
                         continue;
                     }
 
@@ -872,7 +902,9 @@ namespace Cs16.Module.Bot
                 Game.Logger.Info(Tag,
                     $"{_ownerName} 高度一致性层：从格 {from}（脚下地面 y={baseY:F3}）起按抬升 ≤ " +
                     $"CsConst.StepUpHeight（{CsConst.StepUpHeight:F2}）扩张 ⇒ 可达 {reach.Count} 格，" +
-                    $"被高度判死 {blocked} 格（判据出处 Module/Map/CsMap.cs:514-523，⛔ 不改位图）");
+                    $"被高度判死 {blocked} 格；其中**格心口径**探不到带内落脚面 {_mpCenterFail} 格 → " +
+                    $"格内 5×5 多点**救回** {_mpSaved} 格 / 多点也判死 {_mpDead} 格" +
+                    $"（判据出处 Module/Map/CsMap.cs:514-523；取样口径 BotNavigator.cs:GroundYAbove/CellLandingFace，⛔ 不改位图）");
             }
             return reach;
         }
@@ -887,14 +919,97 @@ namespace Cs16.Module.Bot
         /// （出处 Module/Map/CsMap.cs:542-557），**探测起点 / 掩码 / 深度一个都不改**。</para>
         /// <para>起点抬 <see cref="CsConst.StepUpHeight"/>：高于它的面**不构成落脚面**（那正是"抬升面"的形状：
         /// 从脚底起射会落在实体内部 ⇒ 不收"内部起步"的命中 ⇒ 探不到 ⇒ 判不通，与实证 0/754 一致）。</para>
+        ///
+        /// <para><b>切片BR：格心失败 ⇒ 退到「整格」口径</b>（见 <see cref="InCellFrac"/> 里那段"与生成侧口径的差异"）。
+        /// 先按**格心**取样；格心探不到 / 命中的面落在带外（高于脚底一个台阶、或深过探测深度）⇒ 再按
+        /// <see cref="CellLandingFace"/> 在**格内 5×5** 找带内合法落脚面。⛔ 判据一个字没放宽：
+        /// 仍然是"带内（<c>[脚底 − GroundProbeDepth, 脚底 + StepUpHeight]</c>）存在**可站立**的合法面"，
+        /// <see cref="CsConst.StepUpHeight"/> / <see cref="CsConst.MaxStandableSlopeNormalZ"/> 都没改。</para>
         /// </summary>
         private float GroundYAbove(Vector2Int cell, float fromY)
         {
             var c = CellCenter(cell);
-            var origin = new Vector3(c.x, fromY + CsConst.StepUpHeight, c.z);
-            // 默认 maxDrop（CsMap.cs:534）= 产品自己的探测深度；命中与否由 bool 给出（探不到 ⇒ NaN）。
+
+            // 层②a —— **格心口径，一字不动**：命中、且落在带内就直接返回。刻意**不加**任何新判据，
+            // 这样"修前"的行为与切片BN/BP 完全相同（可达集基线可比：L3 日志 4173 格 / 被高度判死 74 格）。
             Vector3 point; Vector3 normal;
-            return _map.TrySampleGround(origin, out point, out normal) ? point.y : float.NaN;
+            if (_map.TrySampleGround(new Vector3(c.x, fromY + CsConst.StepUpHeight, c.z), out point, out normal))
+            {
+                var dy = point.y - fromY;
+                if (dy <= CsConst.StepUpHeight && dy >= -GroundProbeDepth) return point.y;
+            }
+
+            // 层②b —— 切片BR：格心**探不到**（命中点为空 / 人在实体内部）或命中的面**落在带外**
+            // ⇒ 退到**整格口径**（格内 5×5）。回退分支的候选必须是**合法落脚面**（带内 + 可站立），
+            // 因为这里是本片**新开**的判定面，按任务书"带内、与脚底最近的**合法**面"取；
+            // ⛔ 这不是放宽：陡坡（normal.y < CsConst.MaxStandableSlopeNormalZ）在回退分支里依然不算落脚面。
+            _mpCenterFail++;
+            var mp = CellLandingFace(cell, fromY);
+            if (float.IsNaN(mp))
+            {
+                _mpDead++;                                   // 整格里也没有带内合法落脚面 ⇒ 这格真的不能站
+                return float.NaN;
+            }
+
+            _mpSaved++;
+            return mp;
+        }
+
+        /// <summary>
+        /// **回退分支**的单点取样：命中、且落在 <c>[fromY − <see cref="GroundProbeDepth"/>, fromY + <see cref="CsConst.StepUpHeight"/>]</c>
+        /// 带内、且**可站立**（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）⇒ true 并给出高度。
+        /// 任一条不满足 ⇒ false（⛔ 与既有判据同式：<c>Module/Map/CsMap.cs:520-522</c> 的
+        /// <c>TryStepUp</c>；探到与否仍只由 <see cref="ICsMap.TrySampleGround"/> 的 bool 给出，
+        /// 出处 <c>Module/Map/CsMap.cs:542-557</c>）。
+        /// </summary>
+        private bool SampleLandingFace(Vector3 origin, float fromY, out float y)
+        {
+            y = float.NaN;
+            Vector3 point; Vector3 normal;
+            if (!_map.TrySampleGround(origin, out point, out normal)) return false;
+            var dy = point.y - fromY;
+            if (dy > CsConst.StepUpHeight) return false;                            // 抬升超一个台阶 ⇒ 不是落脚面
+            if (dy < -GroundProbeDepth) return false;                               // 深过探测深度 ⇒ 不在带内
+            if (normal.y < CsConst.MaxStandableSlopeNormalZ) return false;           // 陡坡不算地面（CsMap.cs:521 同式）
+            y = point.y;
+            return true;
+        }
+
+        /// <summary>
+        /// **整格口径**的落脚面：格内 5×5 多点取样（<see cref="InCellFrac"/>，格心那一档已在上层试过 ⇒ 跳过），
+        /// 取**带内、与脚底最近**的那一个合法落脚面（并列 → 保留先遍历到的，遍历顺序 = <see cref="InCellFrac"/> 升序，
+        /// 所以确定性）；格内**任何一点**都没有带内合法面 ⇒ <see cref="float.NaN"/>（= 这格真的站不住）。
+        /// <para><b>代价</b>：只在**格心失败**时才走这一支（每次扩张的失败格数 = 日志里的 <c>blocked</c>，实测 CT 74 / T 95 量级），
+        /// 每个失败格 24 根射线；整个可达集的结论按**起点格**备忘（<see cref="_heightReachCache"/>）⇒
+        /// 卡住不动（起点格不变）时零重算，⛔ 不是每帧每格打多点射线。</para>
+        /// </summary>
+        private float CellLandingFace(Vector2Int cell, float fromY)
+        {
+            var c = CellCenter(cell);
+            var size = Game.Map.CellSize;
+            var best = float.NaN;
+            var bestAbs = float.MaxValue;
+
+            for (var i = 0; i < InCellFrac.Length; i++)
+            {
+                for (var k = 0; k < InCellFrac.Length; k++)
+                {
+                    if (i == InCellCenter && k == InCellCenter) continue;      // 格心刚才已经试过
+                    float h;
+                    var origin = new Vector3(c.x + InCellFrac[i] * size, fromY + CsConst.StepUpHeight,
+                                             c.z + InCellFrac[k] * size);
+                    if (!SampleLandingFace(origin, fromY, out h)) continue;
+
+                    var ad = Mathf.Abs(h - fromY);
+                    if (ad < bestAbs - 1e-4f)                                   // 更近（并列保留先命中的 ⇒ 确定性）
+                    {
+                        bestAbs = ad;
+                        best = h;
+                    }
+                }
+            }
+
+            return best;
         }
 
         /// <summary>高度层"这次没生效"的原因（⛔ 不许静默退化；同一原因按 <see cref="CsBotConst.StuckWarnCooldown"/> 降频）。</summary>
@@ -918,7 +1033,8 @@ namespace Cs16.Module.Bot
             var sb = new System.Text.StringBuilder("；高度一致性层：");
             sb.Append(_heightReach.Contains(to) ? $"终点格 {to} 在可达集内" : $"**终点格 {to} 不可达**");
             sb.Append(_heightReach.Contains(from) ? $"，起点格 {from} 在可达集内" : $"，**起点格 {from} 不可达**");
-            sb.Append($"（可达集 {_heightReach.Count} 格；判据 = 抬升 > {CsConst.StepUpHeight:F2} m 的边不通，出处 Module/Map/CsMap.cs:514-523）");
+            sb.Append($"（可达集 {_heightReach.Count} 格；判据 = 带内无合法落脚面 / 抬升 > {CsConst.StepUpHeight:F2} m 的边不通" +
+                      $"（出处 Module/Map/CsMap.cs:514-523）；取样口径 = 格心 → 格内 5×5（切片BR，BotNavigator.cs:GroundYAbove/CellLandingFace））");
             return sb.ToString();
         }
 
