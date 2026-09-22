@@ -12,7 +12,7 @@ The original CS 1.6 cannot be run on this machine, so the "A side" for the chara
 with every bone's composed world position; the in-editor driver
 (`.ai-tmp/drivers/cs16-play-driver.cs` -> `Entry.SweepAll`) pins the *runtime* Animator to the
 **same state and the same time** and dumps every bone's model-space position
-(`force.bone ... mp=x,y,z` in `.ai-tmp/test/driver-log.tsv`).
+(`force.bone ... mp=x,y,z` in `tools/probes/driver-log.tsv`).
 
 This script pairs the two by (state, time) and reports the per-bone residual, so "the character
 plays the original sequence" is a number, not an eyeball.
@@ -25,7 +25,7 @@ wrong frame / a wrong clip / a normalized-away pose, the residuals would jump im
 Usage
 -----
     python tools/probes/compare-cs16anim-bones.py \
-        --driver-log .ai-tmp/test/driver-log.tsv \
+        --driver-log tools/probes/driver-log.tsv \
         --model player_T \
         --out .ai-tmp/test/anim-sameframe-report.txt
     # exit 0 = every paired bone within tolerance, 1 = some pair is off, 2 = bad input
@@ -116,7 +116,7 @@ def qdot_abs(a, b):
 
 def main():
     ap = argparse.ArgumentParser(description="A-side (.cs16anim) vs runtime per-bone same-frame diff.")
-    ap.add_argument("--driver-log", default=os.path.join(PROJECT_ROOT, ".ai-tmp", "test", "driver-log.tsv"))
+    ap.add_argument("--driver-log", default=os.path.join(PROJECT_ROOT, "tools", "probes", "driver-log.tsv"))
     ap.add_argument("--model", default="player_T")
     # tolerance rationale: a 1.8 m tall model => 1 mm is 1/1800 of its height (invisible), while the
     # residual that is actually left is *float32 key precision + clip-time resampling*

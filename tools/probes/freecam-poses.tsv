@@ -18,7 +18,7 @@
 #   2) **Play 中、地图已生成** 时跑既有驱动：
 #      `powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp/drivers/w-capture.ps1 1280 720 af-poses.txt`
 #      （同名覆盖 `.ai-tmp/screenshots/<图名>.png`，1280×720 与原帧一致 ⇒ png 数不增）；
-#      机位摆放脚本 = `.ai-tmp/test/x-place-cam.cs`（既有：写 probe-cam.txt → eval_file 建/摆 Cs16ProbeCam）。
+#      机位摆放脚本 = `tools/probes/x-place-cam.cs`（既有：写 probe-cam.txt → eval_file 建/摆 Cs16ProbeCam）。
 #   3) 机位**先用数值检查再采**：`.ai-tmp/drivers/af-pose-check.cs`（Physics.CheckSphere 判"机位是否在实体里"、
 #      向下/向上射线取地面与顶棚、沿视线射线取"第一个挡住的实体距离"）⇒ 本轮据此淘汰了 4 个"机位贴墙
 #      （视线在 1.1~1.6 m 就被墙挡住）"的候选机位，改为下面这些 `lookHit ≥ 10 m` 的机位。

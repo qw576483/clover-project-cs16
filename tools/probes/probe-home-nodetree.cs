@@ -45,7 +45,15 @@ sb.Append("# home-screen Text node tree (clover-engine skill section 8 brand gat
 sb.Append("# screen=").Append(UnityEngine.Screen.width).Append('x').Append(UnityEngine.Screen.height).Append('\n');
 sb.Append("# origin=top-left, y grows downward; bottom = y + h\n");
 sb.Append("# activePanels=").Append(activePanels.ToString()).Append('\n');
-sb.Append("# columns: TEXT <hierarchy path> | text='<raw text>' | fontSize=<n> | bestFit=<bool> | rect=<x>,<y>,<w>,<h>\n");
+sb.Append("# columns: TEXT <hierarchy path> | text='<raw text>' | fontSize=<n> | bestFit=<bool> | rect=<x>,<y>,<w>,<h> | font=<font asset name> | fontDyn=<bool> | glyphs=<characterInfo.Length> | hasA=<bool> | hasa=<bool>\n");
+sb.Append("# font columns (clover-engine skill section 6.9: the brand judgement is the ACTUAL text + the ACTUAL font,\n");
+sb.Append("#  because a pixel font that only carries uppercase glyphs renders `by clover-engine` as `BY CLOVER-ENGINE`):\n");
+sb.Append("#   font    = UnityEngine.UI.Text.font.name (the asset actually used to rasterize that node)\n");
+sb.Append("#   fontDyn = Font.dynamic (a dynamic font rasterizes any system glyph, so lowercase is always available)\n");
+sb.Append("#   glyphs  = Font.characterInfo.Length (glyphs BAKED into a non-dynamic font asset; 0 => dynamic)\n");
+sb.Append("#   hasA/hasa = Font.HasCharacter('A') / Font.HasCharacter('a') -- false on 'a' means the font asset\n");
+sb.Append("#               has NO lowercase glyph and the string WILL be drawn all-caps => not compliant\n");
+sb.Append("# TMPTEXT lines (should the signature ever become a TextMeshPro node) carry fontAsset/hasA/hasa instead.\n");
 
 var rows = new System.Collections.Generic.List<string>();
 var nAct = 0;
@@ -72,12 +80,30 @@ for (var i = 0; i < texts.Length; i++)
         if (sy < minY) minY = sy;
         if (sy > maxY) maxY = sy;
     }
+    // font evidence (skill section 6.9): which font asset renders this node, and
+    // whether it can actually draw lowercase. Wrapped defensively so one odd font
+    // asset can never abort the whole dump.
+    var fnt = t.font;
+    var fname = (fnt != null) ? fnt.name : "(null)";
+    var fdyn = false; var nglyph = 0; var hasA = false; var hasa = false;
+    if (fnt != null)
+    {
+        try { fdyn = fnt.dynamic; } catch { }
+        try { nglyph = fnt.characterInfo.Length; } catch { nglyph = -1; }
+        try { hasA = fnt.HasCharacter('A'); } catch { }
+        try { hasa = fnt.HasCharacter('a'); } catch { }
+    }
     var line = "TEXT " + dig(t.transform, 4)
         + " | text='" + raw.Replace("\n", "\\n") + "'"
         + " | fontSize=" + t.fontSize.ToString(inv)
         + " | bestFit=" + (t.resizeTextForBestFit ? "True" : "False")
         + " | rect=" + minX.ToString("F1", inv) + "," + minY.ToString("F1", inv)
-        + "," + (maxX - minX).ToString("F1", inv) + "," + (maxY - minY).ToString("F1", inv);
+        + "," + (maxX - minX).ToString("F1", inv) + "," + (maxY - minY).ToString("F1", inv)
+        + " | font=" + fname
+        + " | fontDyn=" + (fdyn ? "True" : "False")
+        + " | glyphs=" + nglyph.ToString(inv)
+        + " | hasA=" + (hasA ? "True" : "False")
+        + " | hasa=" + (hasa ? "True" : "False");
     rows.Add(line);
 }
 // 按"最底部"排序输出（bottom 最大在前），文件本身即可直读结论
@@ -87,6 +113,74 @@ ordered.Sort((a, b) =>
         a.Substring(a.LastIndexOf("rect=", System.StringComparison.Ordinal)),
         b.Substring(b.LastIndexOf("rect=", System.StringComparison.Ordinal))));
 foreach (var r in ordered) { sb.Append(r).Append('\n'); }
+
+// --- TextMeshPro nodes (skill section 6.9 names TMP_FontAsset explicitly) -----
+// Resolved by TYPE NAME through reflection on purpose: a hard `using TMPro;`
+// would fail to compile wherever the package is absent, and this probe must
+// always produce a dump. Small sample (only TextMeshPro/TMP_Text components).
+var nTmp = 0;
+try
+{
+    var tmpComps = UnityEngine.Object.FindObjectsByType<MonoBehaviour>(UnityEngine.FindObjectsInactive.Include);
+    for (var i = 0; i < tmpComps.Length; i++)
+    {
+        var mm = tmpComps[i];
+        if (mm == null || !mm.gameObject.activeInHierarchy) continue;
+        var full = mm.GetType().FullName;
+        if (full == null || !full.StartsWith("TMPro.", System.StringComparison.Ordinal)) continue;
+        if (full != "TMPro.TextMeshProUGUI" && full != "TMPro.TextMeshPro") continue;
+        var ptxt = mm.GetType().GetProperty("text");
+        var tv = (ptxt != null) ? ptxt.GetValue(mm, null) : null;
+        var traw = (tv == null) ? "" : tv.ToString();
+        if (traw == null || traw.Trim().Length == 0) continue;
+        var pfont = mm.GetType().GetProperty("font");
+        var fav = (pfont != null) ? pfont.GetValue(mm, null) : null;
+        var faName = "(null)";
+        var faA = false; var faa = false;
+        if (fav != null)
+        {
+            var fo = fav as UnityEngine.Object;
+            if (fo != null) faName = fo.name;
+            var mh = fav.GetType().GetMethod("HasCharacter", new System.Type[] { typeof(char) });
+            if (mh != null)
+            {
+                try { faA = (bool)mh.Invoke(fav, new object[] { 'A' }); } catch { }
+                try { faa = (bool)mh.Invoke(fav, new object[] { 'a' }); } catch { }
+            }
+        }
+        var comp = mm as UnityEngine.Component;
+        if (comp == null) continue;
+        var rtr = comp.GetComponent<UnityEngine.RectTransform>();
+        var rectTxt = "(no rect)";
+        if (rtr != null)
+        {
+            var cs = new UnityEngine.Vector3[4];
+            rtr.GetWorldCorners(cs);
+            var cv = comp.GetComponent<UnityEngine.Canvas>();
+            var cw = (cv != null) ? cv.worldCamera : null;
+            var mnX = float.MaxValue; var mnY = float.MaxValue; var mxX = float.MinValue; var mxY = float.MinValue;
+            for (var k = 0; k < 4; k++)
+            {
+                var sp = UnityEngine.RectTransformUtility.WorldToScreenPoint(cw, cs[k]);
+                var sy = UnityEngine.Screen.height - sp.y;
+                if (sp.x < mnX) mnX = sp.x;
+                if (sp.x > mxX) mxX = sp.x;
+                if (sy < mnY) mnY = sy;
+                if (sy > mxY) mxY = sy;
+            }
+            rectTxt = mnX.ToString("F1", inv) + "," + mnY.ToString("F1", inv) + "," + (mxX - mnX).ToString("F1", inv) + "," + (mxY - mnY).ToString("F1", inv);
+        }
+        nTmp++;
+        sb.Append("TMPTEXT ").Append(dig(comp.transform, 4))
+          .Append(" | text='").Append(traw.Replace("\n", "\\n")).Append('\'')
+          .Append(" | fontAsset=").Append(faName)
+          .Append(" | hasA=").Append(faA ? "True" : "False")
+          .Append(" | hasa=").Append(faa ? "True" : "False")
+          .Append(" | rect=").Append(rectTxt).Append('\n');
+    }
+}
+catch { }
+sb.Append("# tmpText.active=").Append(nTmp).Append('\n');
 sb.Append("# texts.active=").Append(nAct).Append('\n');
 
 var outp = @"C:\Work\Server\f-v2\clover-project-cs16\tools\probes\home-screen-nodetree.txt";

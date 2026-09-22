@@ -736,24 +736,59 @@ if (-not (Test-Path $probeDump)) {
   $script:human++
   Say 'HUMAN-ONLY' 'home-credit-rendered' ('missing ' + $probeDump + ' -- it is written by a REAL Play session: run tools/probes/probe-home-nodetree.cs through .ai-tmp/drivers/af-play.ps1 -Phase open then -Phase tree. Who can give it: whoever can let the Unity editor enter Play Mode on this machine')
 } else {
+  # Parser, version 2 (slice AH-R): the judgement is the ACTUAL text AND the
+  # ACTUAL font (skill section 6.9 -- a pixel font that only carries uppercase
+  # glyphs renders `by clover-engine` as `BY CLOVER-ENGINE`, which is just as
+  # non-compliant as a wrong string). The probe therefore also dumps, per node:
+  # font=<asset name> fontDyn=<bool> glyphs=<baked glyph count> hasA= hasa=.
+  # A node whose font cannot draw lowercase is a FAIL, not a PASS.
   $dumpTxt = Read-Text $probeDump
-  $head = @(); $nodes = @()
+  $head = @(); $nodes = @(); $txtLines = 0
   foreach ($ln in @($dumpTxt -split "`r?`n")) {
     if ($ln.StartsWith('#')) { $head += $ln; continue }
-    if (-not $ln.StartsWith('TEXT ')) { continue }
-    $m = [regex]::Match($ln, "text='(.*)' \| fontSize=([0-9]+) \| bestFit=([A-Za-z]+) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)")
-    if (-not $m.Success) { continue }
-    $pEnd = $ln.IndexOf(' | text=')
-    $nodes += [pscustomobject]@{
-      Path     = $ln.Substring(5, $pEnd - 5)
-      Text     = $m.Groups[1].Value
-      FontSize = [int]$m.Groups[2].Value
-      Bottom   = [double]$m.Groups[5].Value + [double]$m.Groups[7].Value
+    if ($ln.StartsWith('TEXT ')) {
+      $txtLines++
+      $m = [regex]::Match($ln, "text='(.*)' \| fontSize=([0-9]+) \| bestFit=([A-Za-z]+) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+) \| font=(\S*) \| fontDyn=(True|False) \| glyphs=(-?[0-9]+) \| hasA=(True|False) \| hasa=(True|False)")
+      if (-not $m.Success) { continue }
+      $pEnd = $ln.IndexOf(' | text=')
+      $nodes += [pscustomobject]@{
+        Path     = $ln.Substring(5, $pEnd - 5)
+        Text     = $m.Groups[1].Value
+        FontSize = [int]$m.Groups[2].Value
+        Bottom   = [double]$m.Groups[5].Value + [double]$m.Groups[7].Value
+        Font     = $m.Groups[8].Value
+        FontDyn  = ($m.Groups[9].Value -eq 'True')
+        Glyphs   = [int]$m.Groups[10].Value
+        HasUpper = ($m.Groups[11].Value -eq 'True')
+        HasLower = ($m.Groups[12].Value -eq 'True')
+        Kind     = 'UnityEngine.UI.Text'
+      }
+      continue
+    }
+    if ($ln.StartsWith('TMPTEXT ')) {
+      $m2 = [regex]::Match($ln, "text='(.*)' \| fontAsset=(\S*) \| hasA=(True|False) \| hasa=(True|False) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)")
+      if (-not $m2.Success) { continue }
+      $pEnd2 = $ln.IndexOf(' | text=')
+      $nodes += [pscustomobject]@{
+        Path     = $ln.Substring(8, $pEnd2 - 8)
+        Text     = $m2.Groups[1].Value
+        FontSize = 0
+        Bottom   = [double]$m2.Groups[6].Value + [double]$m2.Groups[8].Value
+        Font     = $m2.Groups[2].Value
+        FontDyn  = $false
+        Glyphs   = -1
+        HasUpper = ($m2.Groups[3].Value -eq 'True')
+        HasLower = ($m2.Groups[4].Value -eq 'True')
+        Kind     = 'TMPro'
+      }
     }
   }
   $headTxt = ($head -join "`n")
   $problems = @()
-  if ($nodes.Count -eq 0) { $problems += 'the dump holds no TEXT line (nothing was on screen when it was taken)' }
+  if ($txtLines -gt 0 -and $nodes.Count -eq 0) {
+    $problems += ('the ' + $txtLines + ' TEXT line(s) in the dump carry no font-evidence columns -- re-take the dump with tools/probes/probe-home-nodetree.cs (skill 6.9 judges the actual text AND the actual font)')
+  }
+  if ($nodes.Count -eq 0) { $problems += 'the dump holds no TEXT/TMPTEXT line (nothing was on screen when it was taken)' }
   if ($headTxt -notmatch 'origin=top-left') { $problems += 'the dump does not declare `origin=top-left` -- its rect column cannot be read as a screen rect' }
   if ($headTxt -notmatch 'activePanels=[^\r\n]*MainMenuPanel') { $problems += 'the dump was NOT taken on the home screen (activePanels does not contain MainMenuPanel)' }
   $ordered = @($nodes | Sort-Object Bottom -Descending)
@@ -763,6 +798,22 @@ if (-not (Test-Path $probeDump)) {
     $problems += ('no on-screen text node reads exactly "' + $cCredit + '" (case sensitive comparison after stripping whitespace)')
   } elseif ($ordered.Count -gt 0 -and [math]::Abs($hit[0].Bottom - $ordered[0].Bottom) -gt 0.01) {
     $problems += ('the signature IS rendered but is not the bottom-most text node: bottom-most = ' + $ordered[0].Path + ' text="' + $ordered[0].Text + '" bottom=' + $ordered[0].Bottom.ToString('F1') + '; signature bottom=' + $hit[0].Bottom.ToString('F1'))
+  } else {
+    # --- font half of the skill-6.9 judgement (slice AH-R: this is the tightening) --
+    # The literal is right; now prove the font can actually DRAW lowercase. A font
+    # asset with no 'a' glyph renders the line as BY CLOVER-ENGINE => FAIL.
+    $s = $hit[0]
+    if (-not $s.HasLower) {
+      $problems += ('the signature font "' + $s.Font + '" (' + $s.Kind + ') has NO lowercase glyph: HasCharacter(a)=False, dynamic=' + $s.FontDyn + ', bakedGlyphs=' + $s.Glyphs + ' => the line is rendered ALL-CAPS => NOT compliant (skill 6.9); supply a font that carries lowercase glyphs')
+    }
+    if (-not $s.HasUpper) {
+      $problems += ('the signature font "' + $s.Font + '" has no uppercase glyph either (HasCharacter(A)=False) -- the font asset looks broken/empty')
+    }
+    # A dynamic font rasterizes any system glyph, so lowercase is guaranteed only
+    # when dynamic=True; a static asset must prove it by the hasa column.
+    if ((-not $s.FontDyn) -and ($s.Glyphs -le 0) -and $s.HasLower) {
+      $problems += ('the signature font "' + $s.Font + '" is static but declares 0 baked glyphs while claiming lowercase -- the font evidence is self-contradictory, re-take the dump')
+    }
   }
   if (Test-Path $brandPanel) {
     $tDump = (Get-Item $probeDump).LastWriteTime
@@ -773,7 +824,7 @@ if (-not (Test-Path $probeDump)) {
   } else { $problems += ('cannot judge freshness: ' + $brandPanel + ' is missing') }
   if ($problems.Count -eq 0) {
     $s = $hit[0]
-    Say 'PASS' 'home-credit-rendered' ($nodes.Count.ToString() + ' on-screen text node(s); bottom-most = ' + $s.Path + ' text="' + $s.Text + '" fontSize=' + $s.FontSize + ' bottom=' + $s.Bottom.ToString('F1') + '; dump is newer than MainMenuPanel.cs')
+    Say 'PASS' 'home-credit-rendered' ($nodes.Count.ToString() + ' on-screen text node(s); bottom-most = ' + $s.Path + ' text="' + $s.Text + '" fontSize=' + $s.FontSize + ' bottom=' + $s.Bottom.ToString('F1') + ' font=' + $s.Font + ' dynamic=' + $s.FontDyn + ' hasa=' + $s.HasLower + ' (lowercase renderable, so the line is NOT drawn all-caps); dump is newer than MainMenuPanel.cs')
   } else {
     $script:fail++
     Say 'FAIL' 'home-credit-rendered' ($problems.Count.ToString() + ' problem(s) in ' + (Split-Path $probeDump -Leaf))
@@ -826,6 +877,68 @@ if (-not (Test-Path $auditScript)) {
       $auditOut | Where-Object { $_ -match '^ZERO ' } | ForEach-Object { Sub $_ }
     }
   }
+}
+
+# --- 27) spec-doc -- the reference spec document must exist -------------------
+#  (template item `spec-doc`, required; slice AH-R) Every acceptance verdict is a
+#  "does it match the original" claim, so without the reference spec there is
+#  nothing to match against. Existence is computable => it is a gate (SKILL 0.6).
+if (Test-Path $specDir) {
+  $specDocs = @(Get-ChildItem $specDir -Filter *.md -File -ErrorAction SilentlyContinue)
+  if ($specDocs.Count -gt 0) { Say 'PASS' 'spec-doc' ($specDocs.Count.ToString() + ' reference spec document(s) under plan/spec/ (e.g. ' + $specDocs[0].Name + ')') }
+  else { $script:fail++; Say 'FAIL' 'spec-doc' ('no *.md reference spec under ' + $specDir) }
+} else { $script:fail++; Say 'FAIL' 'spec-doc' ('missing the reference spec directory: ' + $specDir) }
+
+# --- 28) asset-research-doc -- the asset research log must exist --------------
+#  (template item `asset-research-doc`, required; SKILL 1 item 5) Exhausting the
+#  original's own assets is a RULE; "no research file" means it was never done.
+$cResearch = ([char[]]@(0x7D20,0x6750,0x8C03,0x7814) -join '') + '.md'
+$researchPath = Join-Path $planDir $cResearch
+if (Test-Path $researchPath) { Say 'PASS' 'asset-research-doc' ($cResearch + ' present') }
+else { $script:fail++; Say 'FAIL' 'asset-research-doc' ('missing ' + $cResearch + ' -- the asset research log is required before generic fallback assets') }
+
+# --- 29) baseline-images -- reference-side baselines must exist --------------
+#  (template item `baseline-images`, required) A visual verdict needs a reference
+#  side; a project with no baseline images cannot judge "looks like the original".
+$cBaseline = ([char[]]@(0x57FA,0x7EBF,0x56FE) -join '')
+$baseDir = Join-Path $planDir $cBaseline
+$baseImgs = @()
+if (Test-Path $baseDir) { $baseImgs = @(Get-ChildItem $baseDir -Recurse -File -ErrorAction SilentlyContinue | Where-Object { @('.png','.jpg','.jpeg','.bmp') -contains $_.Extension.ToLower() }) }
+if ($baseImgs.Count -ge 2) { Say 'PASS' 'baseline-images' ($baseImgs.Count.ToString() + ' reference baseline image(s) under plan/' + $cBaseline) }
+else { $script:fail++; Say 'FAIL' 'baseline-images' ('only ' + $baseImgs.Count + ' baseline image(s) under ' + $baseDir + ' -- the reference side of every visual row is missing') }
+
+# --- 30) no-assets-screenshots -- no forensic shots inside the Unity project --
+#  (template item `no-assets-screenshots`, required) Evidence shots are one-off
+#  artifacts; inside client/Assets they would also be imported as game assets.
+$forensic = @()
+foreach ($nm in @('Screenshots', 'Screenshots_', '_Screenshots')) {
+  $d = Join-Path $root ('client\Assets\' + $nm)
+  if (Test-Path $d) { $forensic += $d }
+}
+if ($forensic.Count -eq 0) { Say 'PASS' 'no-assets-screenshots' 'no forensic screenshot dir under client/Assets (evidence shots live in .ai-tmp/screenshots/)' }
+else { $script:fail++; Say 'FAIL' 'no-assets-screenshots' ('forensic screenshot dir(s) inside the Unity project: ' + ($forensic -join ', ')) }
+
+# --- 31) play-ledger -- every Play session logged WITH a reason --------------
+#  (template item `play-ledger` / alias `play-budget`, required) The ledger exists
+#  to answer "was this Play session justified?" -- a row with an empty column 4
+#  answers nothing, so an empty reason is a FAIL, not a note. The ledger is never
+#  scored by ROW COUNT (a budget reading was retired; see reference/anti-gaming.md).
+$playLedger = Join-Path $root '.ai-tmp\test\play-log.tsv'
+if (-not (Test-Path $playLedger)) {
+  $script:fail++
+  Say 'FAIL' 'play-ledger' 'no .ai-tmp/test/play-log.tsv -- every Play session must be logged with a non-empty reason'
+} else {
+  $pRows = 0; $pBad = 0
+  foreach ($line in @([System.IO.File]::ReadAllLines($playLedger, [Text.Encoding]::UTF8))) {
+    $l = [string]$line
+    if ($l.Trim().Length -eq 0 -or $l.TrimStart().StartsWith('#')) { continue }
+    $pRows++
+    $c = $l -split "`t"
+    if ($c.Count -lt 4 -or $c[3].Trim().Length -eq 0) { $pBad++ }
+  }
+  if ($pRows -eq 0) { $script:human++; Say 'HUMAN-ONLY' 'play-ledger' 'the play ledger carries no session row yet' }
+  elseif ($pBad -eq 0) { Say 'PASS' 'play-ledger' ($pRows.ToString() + ' Play session(s) logged, every one with a non-empty reason') }
+  else { $script:fail++; Say 'FAIL' 'play-ledger' ($pBad.ToString() + ' of ' + $pRows.ToString() + ' session row(s) carry no reason (column 4)') }
 }
 
 Write-Output ''
