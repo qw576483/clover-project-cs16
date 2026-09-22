@@ -64,6 +64,8 @@ namespace Cs16.Module.Bot
         private float _escapeUntil;
         private float _escapeSign = 1f;
         private bool _warnedNoRunway;
+        /// <summary>片BL-R：位图判"不可走"、物理判"走得动"这条留证只报一次。</summary>
+        private bool _warnedBitmapDisagrees;
         private Vector3 _lastDir;          // 上一次真正提交出去的方向（判"哪个方向走不动"用）
         private Vector3 _blockedDir;       // 最近一次"想走却走不动"的方向
         private float _blockedUntil;
@@ -841,10 +843,14 @@ namespace Cs16.Module.Bot
         private bool WalkableAhead(Vector3 position, Vector3 dir)
         {
             var near = position + dir * CsBotConst.ProbeClearance;
-            if (!_map.WalkableAt(near.x, near.z)) return false;
-
             var far = position + dir * CsBotConst.ProbeDistance;
-            return _map.WalkableAt(far.x, far.z);
+            if (_map.WalkableAt(near.x, near.z) && _map.WalkableAt(far.x, far.z)) return true;
+
+            // ★ 片BL-R：位图说不行时用**物理**复核（位图是单层 2D，多层几何重叠处会误判 ⇒
+            //   机器人被自己的位图判成"路上被挡"、原地不动；实测见 <see cref="PhysRunway"/> 的注释）。
+            //   阈值 = 近端探距的一半（与 CsMatchConst.WallBlockVelocityRatio 同源的"走成了没有"口径）：
+            //   近端都迈不过去 ⇒ 真的顶住了墙（1m 厚墙的用例照旧被拦住，物理会在墙前停下）。
+            return PhysRunway(position, dir) >= CsBotConst.ProbeClearance * CsBotConst.PhysRunwayRatio;
         }
 
         private static Vector3 Rotate(Vector3 dir, float degrees)
@@ -879,7 +885,52 @@ namespace Cs16.Module.Bot
                 if (!_map.WalkableAt(p.x, p.z)) break;
                 run = d;
             }
+
+            // ★ 片BL-R：位图与物理是**两套空间事实**，位图说"没跑道"时必须用物理复核。
+            //   实测（.ai-tmp/test/bk-bot-phys.tsv，14888/14888 行）：卡住的 bot 用
+            //   ICsMap.ResolveMove 朝目标迈 1m 的实际位移是 **1.000m**、8 个方向**全部迈得动**，
+            //   而 ICsMap.WalkableAt 说这一带不可走（日志 101 条"跳过不可走的路点 (17.50, 0.68, 14.50)"）。
+            //   位图是**单层 2D**（de_dust2.bytes 46 个连通分量 / 919 格非主分量），多层几何上下重叠处
+            //   它给不出正确答案。只认位图 ⇒ 机器人被自己判成"路上被挡" ⇒ 原地不动（病灶）。
+            var phys = PhysRunway(position, dir);
+            if (run <= 0f && phys > 0f) WarnBitmapDisagrees();
+            return Mathf.Max(run, phys);
+        }
+
+        /// <summary>
+        /// 沿 <paramref name="dir"/> 的**物理**跑道：用与模拟同源的 <see cref="ICsMap.ResolveMove"/>
+        /// 试迈 <see cref="CsBotConst.EscapeRunwayStep"/> 的整数倍，取"实际沿该方向走出来的距离"。
+        ///
+        /// <para>只算**投影到 dir 上的分量** —— ResolveMove 会分轴滑墙，若按位移模长算，
+        /// "顶着墙侧滑"会被误判成"走得通"。</para>
+        ///
+        /// <para>验收阈值与模拟自身的撞墙判据同源：<c>CsMatchConst.WallBlockVelocityRatio</c>
+        /// （<c>Module/Match/CsMatch.cs:128</c> = 0.5）：实际位移 &lt; 期望 × 0.5 即"没走成"。</para>
+        /// </summary>
+        private float PhysRunway(Vector3 position, Vector3 dir)
+        {
+            if (_map == null || !_map.IsLoaded) return CsBotConst.EscapeRunwayMax;
+
+            var run = 0f;
+            for (var d = CsBotConst.EscapeRunwayStep; d <= CsBotConst.EscapeRunwayMax + 0.001f;
+                 d += CsBotConst.EscapeRunwayStep)
+            {
+                var resolved = _map.ResolveMove(position, position + dir * d);
+                var along = (resolved.x - position.x) * dir.x + (resolved.z - position.z) * dir.z;
+                if (along < d * CsBotConst.PhysRunwayRatio) break;
+                run = along;
+            }
             return run;
+        }
+
+        /// <summary>位图判"没跑道"、物理判"走得动"→ 留证一次（"站得下却不动"的直接病灶）。</summary>
+        private void WarnBitmapDisagrees()
+        {
+            if (_warnedBitmapDisagrees) return;
+            _warnedBitmapDisagrees = true;
+            Game.Logger.Warn(Tag,
+                $"{_ownerName} 可走位图说这一带没有跑道、物理（ResolveMove）却说走得动 —— " +
+                "位图是单层 2D，多层几何重叠处会误判；本帧起以物理为准（判据见 BotNavigator.PhysRunway）");
         }
 
         /// <summary>

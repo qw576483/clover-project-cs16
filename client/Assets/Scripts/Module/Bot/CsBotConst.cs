@@ -173,6 +173,15 @@ namespace Cs16.Module.Bot
         /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeRunwayMax = 4.2f;
 
+        /// <summary>
+        /// 物理跑道判定比例：**与模拟自身的"撞墙"判据同源** ——
+        /// <c>CsMatchConst.WallBlockVelocityRatio</c>（<c>Module/Match/CsMatch.cs:128</c> = 0.5）：
+        /// "实际位移 &lt; 期望位移 × 0.5"就认为这一档没走成。
+        /// 用于 <c>BotNavigator.PhysRunway</c>（可走位图说"不可走"时用物理复核）。
+        /// 出处：<c>Module/Match/CsMatch.cs:123-128</c>。
+        /// </summary>
+        public const float PhysRunwayRatio = 0.5f;
+
         /// <summary>逃逸候选方向的扫描步长（度）：从期望方向向两侧各扫 180°。
         /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float EscapeSweepStepDegrees = 30f;

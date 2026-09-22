@@ -31,9 +31,11 @@ $proj   = 'c:\Work\Server\f-v2\clover-project-cs16'
 $client = Join-Path $proj 'client'
 $drv    = Join-Path $proj '.ai-tmp\drivers\cs16-play-driver.cs'
 $probe  = Join-Path $proj 'tools\probes\bot-phys.cs'
+$hpProbe = Join-Path $proj 'tools\probes\bot-hold-plant.cs'
 $tmp    = Join-Path $proj '.ai-tmp\test'
 $stateF = Join-Path $proj '.ai-tmp\drivers\state.txt'
 $outF   = Join-Path $tmp 'bk-bot-phys.tsv'
+$hpOutF = Join-Path $tmp 'bh-hold-plant.tsv'
 $playLog = Join-Path $tmp 'play-log.tsv'
 Set-Location $client
 
@@ -51,6 +53,7 @@ $reason = 'CanStand / ResolveMove / TrySampleGround go through real PhysX agains
 [IO.File]::AppendAllText($playLog, ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm') + "]`tclover-impl`tcs16-sliceBL-bot-phys-env`t" + $reason + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
 
 if (Test-Path $outF) { Remove-Item $outF -Force }
+if (Test-Path $hpOutF) { Remove-Item $hpOutF -Force }
 
 Mark 'phase 0: leave any session, open Boot, enter Play'
 & unity command editor_stop --format tsv 2>&1 | Out-String -Width 200 | ForEach-Object { $_.Trim() }
@@ -82,29 +85,41 @@ Run $drv 'Cs16Drv.Entry.CloseEndPanels'
 St ("godmode=1`n")
 Start-Sleep -Seconds 8
 
-Mark 'phase 4: start the read-only per-frame physics probe (ticks by itself from now on)'
+Mark 'phase 4: start BOTH read-only probes (they tick by themselves from now on)'
 Run $probe 'BotPhys.Begin'
+Run $hpProbe 'BotHoldPlant.Begin'
 
-Mark 'phase 5: let the sim run -- poll the probe file (max 165 s / until 3 rounds + brain rows)'
-$deadline = (Get-Date).AddSeconds(165)
+Mark 'phase 5: let the sim run -- poll both files (max 260 s / until 3 rounds + env row / until a bot plants)'
+$deadline = (Get-Date).AddSeconds(260)
 $lastLen = -1
+$lastHpLen = -1
+$planted = $false
 while ((Get-Date) -lt $deadline) {
   if (Test-Path $outF) {
     $lines = @(Get-Content $outF -Encoding UTF8)
     if ($lines.Count -ne $lastLen) {
       $lastLen = $lines.Count
-      Write-Host ('  lines=' + $lines.Count + '  last: ' + $lines[$lines.Count - 1])
+      Write-Host ('  phys lines=' + $lines.Count + '  last: ' + $lines[$lines.Count - 1])
     }
     $rounds  = @($lines | Where-Object { $_ -match '^E\tROUND\t' }).Count
     $envRows = @($lines | Where-Object { $_ -match '^E\tENV\t' }).Count
-    $goalOn  = @($lines | Where-Object { $_ -match '^B\t' } | Where-Object { $_ -match '\t1\t' }).Count
-    if ($rounds -ge 3 -and $envRows -ge 1) { Write-Host '  enough rounds + env row'; break }
+    if ($rounds -ge 3 -and $envRows -ge 1) { Write-Host '  phys: enough rounds + env row'; break }
+  }
+  if (Test-Path $hpOutF) {
+    $hlines = @(Get-Content $hpOutF -Encoding UTF8)
+    if ($hlines.Count -ne $lastHpLen) {
+      $lastHpLen = $hlines.Count
+      Write-Host ('  hold lines=' + $hlines.Count + '  last: ' + $hlines[$hlines.Count - 1])
+    }
+    if (@($hlines | Where-Object { $_ -match '^E\tTPLANTED\t' }).Count -gt 0) { $planted = $true; Write-Host '  hold: bot planted the C4'; break }
   }
   Start-Sleep -Seconds 5
 }
+Write-Host ('bot plant observed = ' + $planted)
 
-Mark 'phase 6: stop the probe and leave Play'
+Mark 'phase 6: stop both probes and leave Play'
 Run $probe 'BotPhys.Stop'
+if (Test-Path $hpOutF) { Run $hpProbe 'BotHoldPlant.Stop' }
 & unity command editor_stop --format tsv 2>&1 | Out-String -Width 300 | ForEach-Object { $_.Trim() }
 
 Mark 'phase 7: probe output summary (E ENV / E REFLECT first -- that is the answer)'
@@ -120,4 +135,12 @@ if (Test-Path $outF) {
     Where-Object { $_ -notlike "E`tENV*" } | Where-Object { $_ -notlike "E`tREFLECT*" } |
     Select-Object -First 20
 } else { Write-Host 'NO PROBE OUTPUT' }
+
+Write-Host ''
+Write-Host '-- hold-plant probe: E rows (TARRIVE / TPLANTED / ROUND) --'
+if (Test-Path $hpOutF) {
+  Write-Host ('hold tsv bytes = ' + (Get-Item $hpOutF).Length)
+  Get-Content $hpOutF -Encoding UTF8 | Where-Object { $_ -like 'E*' } | Select-Object -First 60
+  Write-Host ('  CT rows = ' + @(Get-Content $hpOutF -Encoding UTF8 | Where-Object { $_ -like "A`t*" }).Count)
+} else { Write-Host 'NO HOLD-PLANT OUTPUT' }
 Write-Host '== bot-phys-ai-bl done =='
