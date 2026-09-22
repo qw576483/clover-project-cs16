@@ -106,6 +106,20 @@ namespace Cs16.Module.Bot
         /// </summary>
         public const int PathSnapRadiusCells = 2;
 
+        /// <summary>
+        /// "同一对端点上连续求不出路径几次" ⇒ 判为**终点格与起点格不连通**（位图连通性问题，不是偶发）。
+        ///
+        /// <para>必要性（切片BJ 实测根因）：引擎 <c>AStar.Find</c> 在**起终点都可走**但位图上不连通时返回 null
+        /// （<c>astar.nopath</c>）。此时若照旧"朝目标直线走"，机器人每 <c>StuckCheckInterval</c>(0.5s) 判一次卡住、
+        /// 位移恒为 0.00m，再触发换目标 → 换到的路线里又有同样落在孤岛里的路点 ⇒ **无限循环**
+        /// （切片BI 实测：<c>[AStar] 无可达路径 from=(79,96) to=(80,93)</c> ×21、换目标 ×28、373s 内除真人外
+        /// 无任何 actor 位移 &gt; 5.8m）。判"不连通"要连续观测，单次失败可能只是"被挤进阻挡格 / 重求时机"。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI；与 <see cref="StuckReplanStreak"/> 同一形状，
+        /// ⛔ 不复用它的值 —— "卡住次数"与"求路径失败次数"是两件事，混用会让调其中一个时另一个跟着变）。</para>
+        /// </summary>
+        public const int PathFailStreakToUnreachable = 2;
+
         /// <summary>包点/买枪区半径 —— 复用地图契约里的值，保证与模拟的判定口径一致。
         /// 出处：<c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius = 7f</c>
         /// （**逐值搬自该处**，不是另定一个数）。</summary>

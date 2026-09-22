@@ -80,6 +80,24 @@ namespace Cs16.Module.Bot
         /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
         private float _nextPathFailLogAt;
 
+        // ---- 连通性（切片BJ）：可走 ≠ 走得到 ----
+        /// <summary>
+        /// 最近一次被判为"**与起点格不连通**"的终点格（`AStar.Find` 在两端都可走时仍返回 null）。
+        ///
+        /// <para>为什么需要这份备忘：位图可以有好几块互不连通的区域，而**标记点/路线路点只判过"可走"、
+        /// 没判过"走得到"**（生成侧 <c>SnapMarkerToWalkable</c> 与运行侧 <c>ICsMap.CanStand</c> 都只管本格的
+        /// 站立性）。切片BJ 实测：127×145 位图有 **46 个连通分量**，主分量 4393 格，其余 45 个分量共 919 格；
+        /// <c>Route_CT_Mid[1]</c>=(80,93) 世界 (17.5,21.5) 就落在 **19 格的孤岛**里 ⇒ 追它 = 永远求不出路径。
+        /// 记住这一格，<see cref="ResolveNextTarget"/> 就能把对应路点跳掉，而不是一路朝它撞墙。</para>
+        /// </summary>
+        private Vector2Int _unreachableCell;
+        private bool _hasUnreachableCell;
+        /// <summary>同一终点格连续求路径失败的次数（达到 <see cref="CsBotConst.PathFailStreakToUnreachable"/> 即记入上面那条备忘）。</summary>
+        private int _pathFailStreak;
+        private Vector2Int _pathFailCell;
+        /// <summary>"判到不连通"日志的时间闸。</summary>
+        private float _nextUnreachableLogAt;
+
         /// <summary>当前路线是否至少有一个路点（false = 退化成"朝目标直线走"）。</summary>
         public bool HasRoute => _route.Count > 0;
         /// <summary>当前路线名（日志/自检用）。</summary>
@@ -116,11 +134,24 @@ namespace Cs16.Module.Bot
             ClearEscape();
             ClearStuckState();
             InvalidatePath();
+            InvalidateUnreachable();
             _stuckLogCounts.Clear();
             _nextStuckLogAt = 0f;
             _nextSkipLogAt = 0f;
             _nextPathFailLogAt = 0f;
             _warnedNoRunway = false;
+        }
+
+        /// <summary>
+        /// 丢掉"哪一格不可达"的备忘（换路线 / 重选目标 / 复位时）。
+        /// 必要性：备忘是**当前这条路线**的结论，路线一换起点与终点全变，留着它会把新路线里合法的路点也跳掉
+        /// （那就是"修一个 bug 换出一个更差的行为"）。
+        /// </summary>
+        private void InvalidateUnreachable()
+        {
+            _hasUnreachableCell = false;
+            _pathFailStreak = 0;
+            _nextUnreachableLogAt = 0f;
         }
 
         /// <summary>
@@ -143,6 +174,7 @@ namespace Cs16.Module.Bot
             ClearEscape();
             ClearStuckState();
             InvalidatePath();
+            InvalidateUnreachable();
 
             if (map == null)
             {
@@ -220,6 +252,82 @@ namespace Cs16.Module.Bot
                 _route.Add(pick);
                 cursor = pick;
             }
+
+            DropUnreachableWaypoints(fromPosition, marker, pts.Length);
+        }
+
+        /// <summary>
+        /// 排掉"**可走但走不到**"的路点（切片BJ 新增的兜底，与上面 <c>CanStand</c> 那层同一形状）。
+        ///
+        /// <para><b>为什么必须有这一层</b>：生成侧 <c>SnapMarkerToWalkable</c> 与运行侧 <see cref="ICsMap.CanStand"/>
+        /// 都只判"这一点**站得住 / 可走**"，**不判"走得到"**；而引擎 <see cref="AStar"/> 是**格子连通性**查询。
+        /// 一张单层 2D 位图里可以有多个互不连通的区域 —— 切片BJ 离线实测（<c>tools/probes/marker-connectivity.py</c>）：
+        /// 该位图 **46 个连通分量**，主分量（含 CT/T 出生点、A/B 包点）4393 格，其余 45 个分量共 919 格；
+        /// **11/117 个标记点、10/35 条相邻路点对**落在这些孤岛里。路点一旦落在孤岛里，
+        /// <see cref="EnsurePath"/> 就**永远**返回 false ⇒ 旧行为是"朝它直线走" ⇒ 每 0.5s 判一次卡住 ⇒
+        /// 无限循环（切片BI 实测 373s 里 CT 进点 0、除真人外无 actor 位移 &gt; 5.8m）。</para>
+        ///
+        /// <para><b>判据与运行时同源</b>：直接调引擎 <see cref="AStar.Find"/> + 本类同一个 <see cref="WalkableCell"/>
+        /// + 同一个 <see cref="SnapToWalkable"/> 半径（⛔ 不另写一套连通性算法，否则判据与被判对象会漂移）。
+        /// 推进顺序 = 上面刚排好的顺序（从机器人当前位置逐个走）。</para>
+        ///
+        /// <para>⛔ 不许静默排点（降频 Warn，逐点给格号）；⛔ "整条路线全被排掉"时**退回未过滤的路线**并打 Error
+        /// —— 与上面的 <c>CanStand</c> 层同口径，绝不复现"整条路线为空"这种更差的行为。</para>
+        /// </summary>
+        private void DropUnreachableWaypoints(Vector3 fromPosition, string marker, int rawCount)
+        {
+            var mapData = Game.Map;
+            if (_route.Count == 0) return;
+            if (mapData == null || !mapData.Loaded || mapData.CellSize <= 0f) return;   // 位图不可用：无从判连通
+
+            var cursorCell = CellOf(mapData, fromPosition);
+            if (!SnapToWalkable(ref cursorCell)) return;      // 自己在图外/全是阻挡格：不排，交给运行时
+
+            var kept = new List<Vector3>(_route.Count);
+            var dropped = 0;
+            for (var i = 0; i < _route.Count; i++)
+            {
+                var pt = _route[i];
+                var cell = CellOf(mapData, pt);
+                if (!SnapToWalkable(ref cell))
+                {
+                    kept.Add(pt);                             // 本格不可走这一支由运行时"跳过不可走路点"负责
+                    continue;
+                }
+
+                if (AStar.Find(WalkableCell, cursorCell, cell, AStar.DefaultMaxNodes) == null)
+                {
+                    dropped++;
+                    if (Time.time >= _nextSkipLogAt)
+                    {
+                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        var c = CellCenter(cell);
+                        Game.Logger.Warn(Tag,
+                            $"{_ownerName} 路线 '{marker}' 第 {i + 1}/{_route.Count} 个路点 " +
+                            $"({pt.x:F1},{pt.y:F1},{pt.z:F1})（格 {cell}，世界 {c.x:F1},{c.z:F1}）" +
+                            $"**可走但走不到**（引擎 AStar.Find 判不连通）→ 已从路线里排掉（累计已排 {dropped} 个；" +
+                            $"本日志按 {CsBotConst.StuckWarnCooldown:F0}s 降频）");
+                    }
+                    continue;
+                }
+
+                kept.Add(pt);
+                cursorCell = cell;
+            }
+
+            if (dropped == 0) return;
+
+            if (kept.Count == 0)
+            {
+                Game.Logger.Error(Tag,
+                    $"{_ownerName} 路线 '{marker}' 的 {rawCount} 个标记点**全部**与当前位置判为不连通（引擎 AStar.Find 全返回 null）" +
+                    "→ 退回未过滤的路线（⛔ 不复现「整条路线为空」这种更差的行为）。" +
+                    "多半是位图把该片区域封成了孤立分量（单层 2D 位图 + 多层几何），见 tools/probes/marker-connectivity.py");
+                return;
+            }
+
+            _route.Clear();
+            _route.AddRange(kept);
         }
 
         /// <summary>清空路线（"重新选目标"时用）：之后 <see cref="ComputeMove"/> 直接朝 goal 走（仍带避障）。</summary>
@@ -232,6 +340,7 @@ namespace Cs16.Module.Bot
             ClearEscape();
             ClearStuckState();
             InvalidatePath();
+            InvalidateUnreachable();   // 切片BJ：路线没了 ⇒ 上一条的"哪一格不可达"结论作废
         }
 
         /// <summary>
@@ -370,6 +479,16 @@ namespace Cs16.Module.Bot
         /// <para><b>退化口径（⛔ 不许比旧实现更差）</b>：地图位图未加载 / 起点终点都 snap 不到可走格 /
         /// 不可达（<see cref="AStar.Find"/> 返回 null）⇒ 走**既有**的"朝标记点（或 goal）直线走"，
         /// 并留一条降频 Warn（见 <see cref="WarnPathFailed"/>，⛔ 不许静默）。</para>
+        ///
+        /// <para><b>切片BJ 补的两处（都只针对"可走但走不到"这一支，其余口径不变）</b>：</para>
+        /// <list type="number">
+        /// <item>被追的路点若已被判为**不连通**（见 <see cref="NotePathFail"/> / <see cref="_unreachableCell"/>）
+        /// ⇒ **跳过它**推进到下一个走得到的路点（与既有的"跳过不可走路点"同一形状）。这是"CT 进点 0"的直接前提：
+        /// 旧行为会永远追着孤岛里的那个路点原地打转，路线根本没机会往下走。</item>
+        /// <item>**最终目标**(goal) 落在孤岛里（不是路点，跳不掉）⇒ 立刻上报"卡住 + 必须换目标"
+        /// （<see cref="ConsumeStuck"/> 的 escalate），不再等 2×0.5s 的位移判卡 —— 终点走不到时，
+        /// "换个方向/换条路点"都无解，只有换目标能走出去。</item>
+        /// </list>
         /// </summary>
         private Vector3 ResolveNextTarget(Vector3 selfPosition, Vector3 goal)
         {
@@ -394,6 +513,27 @@ namespace Cs16.Module.Bot
                         Game.Logger.Warn(Tag,
                             $"{_ownerName} 跳过不可走的路点 {wp}（路线 '{_marker}'，第 {_index + 1}/{_route.Count} 个）—— " +
                             "多半是地图标记摆进了几何体");
+                    }
+                    _index++;
+                    continue;
+                }
+
+                // ★ 切片BJ：路点**可走但不连通**时也要跳掉它。
+                //   "可走"（`WalkableAt` 说这一格能站）与"走得到"（A* 求得出路径）是两件事：
+                //   实测 `Route_CT_Mid[1]`=(80,93) 世界 (17.5,21.5) 落在 **19 格的孤立分量**里（主分量 4393 格）
+                //   —— 这一点可走，却永远走不到。旧行为是"朝它直线走"⇒ 每 0.5s 判一次卡住（位移 0.00m）⇒
+                //   换目标 ⇒ 换到的路线里又有同样落在孤岛里的路点 ⇒ 无限循环。跳过它，机器人才能继续沿
+                //   路线推进到下一个**走得到**的路点（这正是"CT 进点 0 → >0"的前提）。
+                if (_hasUnreachableCell && Game.Map != null && CellOf(Game.Map, wp) == _unreachableCell)
+                {
+                    if (Time.time >= _nextSkipLogAt)
+                    {
+                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        var c = CellCenter(_unreachableCell);
+                        Game.Logger.Warn(Tag,
+                            $"{_ownerName} 跳过**求不出路径**的路点 {wp}（格 {_unreachableCell}，世界 {c.x:F1},{c.z:F1}；" +
+                            $"路线 '{_marker}'，第 {_index + 1}/{_route.Count} 个）—— 该格与当前位置不连通" +
+                            "（位图孤立分量），继续追它只会原地卡住");
                     }
                     _index++;
                     continue;
@@ -430,6 +570,7 @@ namespace Cs16.Module.Bot
             if (map == null || !map.Loaded || map.CellSize <= 0f)
             {
                 _path = null;
+                WarnPathFailed(target, "地图位图未加载 / 格边长非法（Game.Map 不可用）");
                 return false;
             }
 
@@ -441,7 +582,8 @@ namespace Cs16.Module.Bot
             if (!SnapToWalkable(ref from) || !SnapToWalkable(ref to))
             {
                 InvalidatePath();
-                WarnPathFailed(target);
+                WarnPathFailed(target, $"起点格或终点格在 {CsBotConst.PathSnapRadiusCells} 格内找不到可走格" +
+                                       $"（起点 {from} / 终点 {to}）");
                 return false;
             }
 
@@ -457,15 +599,65 @@ namespace Cs16.Module.Bot
             var path = AStar.FindSmoothed(WalkableCell, from, to, AStar.DefaultMaxNodes);
             if (path == null || path.Count == 0)
             {
+                // ★ 切片BJ：走到这一支 ⇒ **起点与终点都已通过 `WalkableCell`**（引擎 `AStar.Find` 对不可走的
+                //   起/终点会**先**返回 null 并打 `badstart`/`badgoal`），所以这一支的真实含义是
+                //   **「两格都可走，但位图上不连通」**（`AStar.cs:130` 的 `astar.nopath`）——
+                //   与"位图不可用""起终点不可走"是三件不同的事，⛔ 不许混在一句日志里（旧日志写
+                //   "位图不可用 / 目标点不可达"，实测会把人引到错误的方向）。
+                //   连续 `PathFailStreakToUnreachable` 次同端点求不出 ⇒ 记入"不可达格"备忘 + 上报"必须换目标"：
+                //   目标格本身走不到时，换向/跳点都救不了，只有换目标或跳掉该路点两条路（都不许无限循环）。
+                NotePathFail(to);
                 InvalidatePath();
-                WarnPathFailed(target);
+                WarnPathFailed(target, path == null
+                    ? $"**两格都可走但位图不连通**（起点 {from} / 终点 {to}）—— 位图孤立分量（单层 2D 位图 + 多层几何）"
+                    : $"A* 返回空路径（起点 {from} / 终点 {to}）");
                 return false;
             }
 
             _path = path;
             _pathIndex = 0;
             _pathGoalCell = to;
+            ClearPathFail();
             return true;
+        }
+
+        /// <summary>
+        /// 记一次"这个终点格求不出路径"。同一格连续 <see cref="CsBotConst.PathFailStreakToUnreachable"/> 次之后：
+        /// ① 记入 <see cref="_unreachableCell"/> 备忘（<see cref="ResolveNextTarget"/> 据此跳掉对应路点）；
+        /// ② 立刻上报"卡住 + 必须换目标"（<c>_stuckEvent</c> 必须一起置位 —— 否则
+        /// <see cref="ConsumeStuck"/> 会因 <c>_stuckEvent == false</c> 直接 return，escalate 永远送不到上层）。
+        /// </summary>
+        private void NotePathFail(Vector2Int to)
+        {
+            if (_pathFailCell != to)
+            {
+                _pathFailCell = to;
+                _pathFailStreak = 0;
+            }
+
+            _pathFailStreak++;
+            if (_pathFailStreak < CsBotConst.PathFailStreakToUnreachable) return;
+
+            _hasUnreachableCell = true;
+            _unreachableCell = to;
+
+            _stuckEvent = true;          // 让 ConsumeStuck 真的把 escalate 送出去（见方法注释）
+            _stuckEscalate = true;
+            _lastStuckDistance = 0f;
+
+            if (Time.time < _nextUnreachableLogAt) return;
+            _nextUnreachableLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+            var c = CellCenter(to);
+            Game.Logger.Warn(Tag,
+                $"{_ownerName} 目标格 {to}（世界 {c.x:F1},{c.z:F1}）**与当前位置不连通**" +
+                $"（连续 {_pathFailStreak} 次 AStar 求路径失败，两端都可走）→ 记入不可达备忘并上报换目标。" +
+                "位图连通性问题：判据与数字见 tools/probes/astar-adj-diag.py / marker-connectivity.py");
+        }
+
+        /// <summary>求路径成功 ⇒ 清掉"连续失败"计数（备忘本身留到换路线时清，见 <see cref="InvalidateUnreachable"/>）。</summary>
+        private void ClearPathFail()
+        {
+            _pathFailStreak = 0;
         }
 
         /// <summary>
@@ -574,14 +766,15 @@ namespace Cs16.Module.Bot
         /// <para>注：引擎 <see cref="AStar.Find"/> 自己也会按 <c>astar.badstart / badgoal / budget / nopath</c>
         /// 键降频打日志（见 <c>Runtime/Core/AStar.cs</c>），本条是**业务侧**的"我因此退化成了什么行为"。</para>
         /// </summary>
-        private void WarnPathFailed(Vector3 target)
+        private void WarnPathFailed(Vector3 target, string why)
         {
             if (Time.time < _nextPathFailLogAt) return;
             _nextPathFailLogAt = Time.time + CsBotConst.StuckWarnCooldown;
 
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 求路径失败（位图不可用 / 目标点不可达）：目标 ({target.x:F1},{target.z:F1})，" +
-                $"路线 '{_marker ?? "无"}'，剩余路点 {RemainingWaypoints} → 退化为朝目标直线走（仍带局部避障）");
+                $"路线 '{_marker ?? "无"}'，剩余路点 {RemainingWaypoints} → 退化为朝目标直线走（仍带局部避障）" +
+                $"；具体原因：{why}");
         }
 
         // ==================================================================
