@@ -49,8 +49,10 @@ namespace Cs16.Module.Bot
 
         /// <summary>判定"跑动出声"的水平速度阈值（米/秒）。低于它 = 慢走/站定，不出声。
         /// 出处：**本项目新增**（bot 听觉阈值）。⚠️ 原版对应的"脚步噪声判定"在服务端 <c>mp.dll</c>
-        /// （按 <c>mp_footsteps</c> 开关 + 速度档判定），该载体不在盘（<c>原版资源/cs16src</c> 已空，
-        /// 见 <c>client/资源欠缺清单.md:76</c>）⇒ 已登记 <c>策划/差异登记.tsv</c>。</summary>
+        /// （按 <c>mp_footsteps</c> 开关 + 速度档判定），该载体**已在盘、但尚未反汇编**
+        /// （<c>原版资源/cs16src/cstrike/dlls/mp.dll</c>，1,640,960 B / SHA256 <c>D7294D9B…1F2974</c>，
+        /// 片AW 取回，见 <c>原版资源/清单.md</c>「切片AW」§1）⇒ 取不到 <c>文件:偏移</c> 级出处，
+        /// 已登记 <c>策划/差异登记.tsv</c>（#58 的「脚步噪声阈值」条）。</summary>
         public const float RunNoiseSpeed = 2.5f;
 
         /// <summary>听觉记忆时长（秒）。出处：**本项目新增**（bot 听觉模型参数，A 无 bot AI）。</summary>
@@ -72,6 +74,30 @@ namespace Cs16.Module.Bot
 
         /// <summary>默认目标点到达半径（米）。出处：**本项目新增**（同 <see cref="WaypointArriveRadius"/>）。</summary>
         public const float DefaultObjectiveRadius = 2f;
+
+        /// <summary>
+        /// 重求全局路径（引擎 <c>AStar.FindSmoothed</c>）的兜底间隔（秒）：到点就重求一次，兼作"被挤开后自我纠偏"。
+        ///
+        /// <para>为什么需要一个闸：<c>AStar</c> 一次求解最多展开 <c>DefaultMaxNodes</c>(20000) 个节点，⛔ 不能每帧对
+        /// 每个 bot 求一次。<see cref="BotNavigator"/> 只在"没有路径 / 目标格变了 / 路径走完 / 判到卡住"之外再按这个间隔兜底。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航实现参数，A 无 bot AI；与同文件里 <see cref="StuckCheckInterval"/> 同一量级，
+        /// 但**不复用**它 —— 卡住检测的周期与"路径新鲜度"是两件事，混用会让调其中一个时另一个跟着变）。</para>
+        /// </summary>
+        public const float PathReplanInterval = 1f;
+
+        /// <summary>
+        /// "起点/终点格不可走时"向外找最近可走格的半径（格）。
+        ///
+        /// <para>必要性：引擎 <c>AStar.Find</c> 对"起点不可走"直接返回 null ⇒ 机器人被挤进位图判阻挡的格子
+        /// （1 米格 + <c>CsConst.PlayerRadius</c> 角色半径，贴墙时常见）时若不 snap，就**永远**求不出路径、
+        /// 整体退化成直线走。角色半径 &lt; 1 格边长 ⇒ 2 格足以覆盖"被挤进相邻格"。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航实现参数）；snap 的**做法**出处 =
+        /// <c>Assets/Editor/MapGen/MapConnectivityProbe.cs</c> 的 <c>SnapToWalkable</c>（逐环扩张搜最近可走格，
+        /// 本类只把它的半径 24 收到 2）。</para>
+        /// </summary>
+        public const int PathSnapRadiusCells = 2;
 
         /// <summary>包点/买枪区半径 —— 复用地图契约里的值，保证与模拟的判定口径一致。
         /// 出处：<c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius = 7f</c>
@@ -256,9 +282,12 @@ namespace Cs16.Module.Bot
         public const float HeadshotRollSeconds = 1.2f;
 
         /// <summary>瞄胸时的高度比例（占角色身高的比例）。
-        /// 出处：**本项目新增**。⚠️ 原版**有**对应量（玩家模型三组 hitbox 的高度偏移，写在
-        /// <c>mp.dll</c> / mdl 的 hitbox 表里），但载体不在盘（<c>原版资源/cs16src</c> 已空，
-        /// 见 <c>client/资源欠缺清单.md:76</c>）⇒ 已登记 <c>策划/差异登记.tsv</c>，不许当"有出处"。</summary>
+        /// 出处：**本项目新增**。⚠️ 原版**有**对应量（玩家模型三组 hitbox 的高度偏移，写在 mdl 的 hitbox 表里，
+        /// 由 <c>mp.dll</c> 消费），但承载它的原版 <c>models/player/*.mdl</c> 本机不在盘
+        /// （<c>原版资源/</c> 实测只有 <c>cs16src/</c> 73 份 cstrike 资源 · <c>hlsdk/</c> · <c>备份/</c> ·
+        /// <c>_moved-out-from-assets/</c>，无 <c>models/</c>；<c>mp.dll</c> 本身已在盘但尚未反汇编，
+        /// 见 <c>原版资源/清单.md</c>「切片AW」§1）⇒ 已登记 <c>策划/差异登记.tsv</c>（#58 的「瞄胸高度比例」条），
+        /// 不许当"有出处"。</summary>
         public const float ChestHeightRatio = 0.78f;
 
         /// <summary>预瞄提前量的最大秒数（按难度插值：Normal 0 → Hard 满值）。

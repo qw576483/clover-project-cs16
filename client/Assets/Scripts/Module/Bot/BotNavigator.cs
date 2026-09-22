@@ -6,11 +6,17 @@ using UnityEngine;
 namespace Cs16.Module.Bot
 {
     /// <summary>
-    /// 机器人导航：路点推进 + 简单避障 + 卡住检测 + **卡住自恢复**。
+    /// 机器人导航：**全局 A\* 路径** + 路点推进 + 简单避障 + 卡住检测 + **卡住自恢复**。
     ///
     /// <para><b>刻意不用 Unity NavMesh</b>：本工程的 <c>StageDust2</c> 场景没有烘焙 NavMesh，用了之后
     /// <c>NavMeshAgent</c> 会**静默不动**（不报错、不告警）—— 这正是任务书 §2.7 点名的坑。
-    /// 所以走法只有两条：<see cref="ICsMap.Points"/> 的路点 + <see cref="ICsMap.WalkableAt"/> 的"这一格能不能走"。</para>
+    /// 所以走法只有两条：<see cref="ICsMap.Points"/> 的路点（**去哪**）+ 引擎 <see cref="AStar"/>
+    /// 在 <see cref="ICsMap.WalkableAt"/> 这张可走位图上求出的路径（**怎么绕过去**）。</para>
+    ///
+    /// <para><b>⛔ 不自建寻路</b>：格子 A* 是引擎能力（<c>clover-client-unity-engine/Runtime/Core/AStar.cs</c>，
+    /// 8 邻接 / 对角要求两侧可走 / octile 启发 / 视线拉直 <c>FindSmoothed</c> / <c>DefaultMaxNodes</c>），
+    /// 本类只提供 <c>walkable</c> 回调与"格 ↔ 世界"换算。旧实现（差异 #77）是"沿标记点最近邻走直线"，
+    /// 绕不开整片墙；本片起改为"求路径再沿路径走"，**局部避障 <see cref="Avoid"/> 原样保留、两者叠加**。</para>
     ///
     /// <para><b>职责边界</b>：本类只输出"这一帧往哪个世界方向走"（已归一化、y=0）。
     /// 真正的位置解算（分轴滑墙 / 台阶 / 重力）由比赛模拟内部的 <c>ICsMap.ResolveMove</c> 负责 ——
@@ -62,6 +68,18 @@ namespace Cs16.Module.Bot
         private Vector3 _blockedDir;       // 最近一次"想走却走不动"的方向
         private float _blockedUntil;
 
+        // ---- 全局路径（引擎 A*；消除差异 #77「业务零使用 A*」）----
+        /// <summary>当前路径（引擎 <see cref="AStar"/> 的**格坐标**序列；null = 没有可用路径，退化为"朝目标直线走"）。</summary>
+        private List<Vector2Int> _path;
+        /// <summary>沿 <see cref="_path"/> 推进到的下标。</summary>
+        private int _pathIndex;
+        /// <summary><see cref="_path"/> 的终点格：终点格一变就必须重求（这就是"目标变了"的判据）。</summary>
+        private Vector2Int _pathGoalCell;
+        /// <summary>下一次最早允许重求路径的时刻（性能闸：⛔ 不许每帧求路径）。</summary>
+        private float _nextRepathAt;
+        /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
+        private float _nextPathFailLogAt;
+
         /// <summary>当前路线是否至少有一个路点（false = 退化成"朝目标直线走"）。</summary>
         public bool HasRoute => _route.Count > 0;
         /// <summary>当前路线名（日志/自检用）。</summary>
@@ -97,9 +115,11 @@ namespace Cs16.Module.Bot
             _hasCheckPos = false;
             ClearEscape();
             ClearStuckState();
+            InvalidatePath();
             _stuckLogCounts.Clear();
             _nextStuckLogAt = 0f;
             _nextSkipLogAt = 0f;
+            _nextPathFailLogAt = 0f;
             _warnedNoRunway = false;
         }
 
@@ -122,6 +142,7 @@ namespace Cs16.Module.Bot
             _hasCheckPos = false;
             ClearEscape();
             ClearStuckState();
+            InvalidatePath();
 
             if (map == null)
             {
@@ -167,6 +188,7 @@ namespace Cs16.Module.Bot
             _hasCheckPos = false;
             ClearEscape();
             ClearStuckState();
+            InvalidatePath();
         }
 
         /// <summary>
@@ -232,6 +254,11 @@ namespace Cs16.Module.Bot
                 if (++_stuckStreak >= CsBotConst.StuckReplanStreak) _stuckEscalate = true;
                 ReportStuck(moved, now);
 
+                // 判到卡住 ⇒ 当前位置已经偏离原路径（被挤开 / 物理走不动）⇒ 强制重求：
+                // 全局路径是"计划"，这一帧的事实是"计划失效了"。下一帧 <see cref="EnsurePath"/> 会立刻重求，
+                // 再由 <see cref="Avoid"/> 负责把这一帧走出去。
+                InvalidatePath();
+
                 // 记住"这个方向走不动"：贴墙/被挤住时 WalkableAt 可能说能走、物理却说走不动，
                 // 只有把失败方向记下来，下一次"换向"才会真的换到别处（否则永远在同一个方向上反复）。
                 if (_lastDir.sqrMagnitude > 0.5f)
@@ -280,8 +307,27 @@ namespace Cs16.Module.Bot
         public bool StuckEscalated => _stuckEscalate;
 
         // ==================================================================
-        //  路点推进
+        //  路点推进 = ① 路线点推进（既有） + ② **全局**格子 A* 求路径（本片新增）
         // ==================================================================
+        /// <summary>
+        /// 这一帧追哪个点：先按既有口径推进"路线点"（<see cref="ICsMap.Points"/> 的标记点），
+        /// 再在**可走位图**上用引擎 <see cref="AStar"/> 求一条路径，返回路径上的下一个拐点。
+        ///
+        /// <para><b>为什么改成求路径</b>：旧实现是"把标记点按最近邻排序成一条路线，然后逐点走**直线**"——
+        /// 直线不看几何，机器人于是贴着墙角磨、绕不开整片墙（差异 #77：业务零使用引擎 A*，
+        /// 而引擎 <c>Runtime/Core/AStar.cs</c> 早就有 A* + 视线拉直）。现在"绕开墙"由 A* 负责。</para>
+        ///
+        /// <para><b>与 <see cref="Avoid"/> 的分工（两者叠加，缺一不可，⛔ 不是二选一）</b>：
+        /// ① **全局** = 本方法 + <see cref="EnsurePath"/>：用 <see cref="AStar.FindSmoothed"/> 在可走位图上
+        /// 求"从我在哪到目标该走哪几格"，解决"绕开整片墙 / 走哪条通道"；
+        /// ② **局部** = <see cref="Avoid"/>：A* 只给"格子级"的通行方向，1m 格内仍会贴墙角、被别的角色挤住、
+        /// 被<see cref="ICsMap.WalkableAt"/> 说可走而物理走不动的落差卡住 —— 那一段由前向试探 / 偏角 /
+        /// 跑道扫描 / 逃逸负责。A* 看不见"这一帧被谁挤住"，<see cref="Avoid"/> 不知道"该绕远路"。</para>
+        ///
+        /// <para><b>退化口径（⛔ 不许比旧实现更差）</b>：地图位图未加载 / 起点终点都 snap 不到可走格 /
+        /// 不可达（<see cref="AStar.Find"/> 返回 null）⇒ 走**既有**的"朝标记点（或 goal）直线走"，
+        /// 并留一条降频 Warn（见 <see cref="WarnPathFailed"/>，⛔ 不许静默）。</para>
+        /// </summary>
         private Vector3 ResolveNextTarget(Vector3 selfPosition, Vector3 goal)
         {
             while (_index < _route.Count)
@@ -313,7 +359,186 @@ namespace Cs16.Module.Bot
                 break;
             }
 
-            return _index < _route.Count ? _route[_index] : goal;
+            var target = _index < _route.Count ? _route[_index] : goal;
+
+            // 全局路径可用 → 追路径上的下一个拐点；不可用 → 追目标本身（旧行为，已留 Warn）。
+            if (EnsurePath(selfPosition, target)) return AdvancePath(selfPosition, target);
+
+            return target;
+        }
+
+        // ==================================================================
+        //  全局路径（引擎 A*）——「这一帧往哪走」的**全局**那一半
+        // ==================================================================
+        /// <summary>
+        /// 保证 <see cref="_path"/> 是"从我所在格到 <paramref name="target"/> 所在格"的一条可用路径。
+        /// 返回 false = 位图不可用 / 求不出（调用方退化为直线走）。
+        ///
+        /// <para><b>重求时机（都不是"每帧"，性能闸就靠它）</b>：① 还没有路径；② 目标格变了（"目标变了"）；
+        /// ③ 路径已经走完；④ 兜底时间闸 <see cref="CsBotConst.PathReplanInterval"/> 到点（兼作"被挤开后自我纠偏"）；
+        /// ⑤ 判到卡住时由 <see cref="ComputeMove"/> 主动 <see cref="InvalidatePath"/> 强制重求。</para>
+        /// </summary>
+        private bool EnsurePath(Vector3 selfPosition, Vector3 target)
+        {
+            // 出处：引擎门面 `Runtime/Core/Game.cs:265` 的 `Game.Map`（IMapData）——它给出位图的**格边长 / 原点**
+            // （`clover-client-unity-engine/Runtime/Core/PresentationContracts.cs:552-559`），
+            // 而"世界坐标可走吗"仍走 <see cref="ICsMap.WalkableAt"/>（与 Avoid/Runway 同一份空间事实）。
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f)
+            {
+                _path = null;
+                return false;
+            }
+
+            var from = CellOf(map, selfPosition);
+            var to = CellOf(map, target);
+
+            // `AStar.Find` 的入参契约 = 起点/终点格**必须可走**，否则直接返回 null。机器人被挤进位图判阻挡的
+            // 格子（1m 格 + 0.4m 角色半径，贴墙时很常见）时若不 snap，就会**永远**求不出路径。
+            if (!SnapToWalkable(ref from) || !SnapToWalkable(ref to))
+            {
+                InvalidatePath();
+                WarnPathFailed(target);
+                return false;
+            }
+
+            if (_path != null && _pathGoalCell == to && _pathIndex < _path.Count && Time.time < _nextRepathAt)
+            {
+                return true;                       // 沿用既有路径（时间闸未到）
+            }
+
+            _nextRepathAt = Time.time + CsBotConst.PathReplanInterval;
+
+            // `FindSmoothed` = `Find`（8 邻接、对角要求两侧可走）+ 视线拉直（拐角变成长直线，正合走位）。
+            // 节点上限用引擎既有的 `DefaultMaxNodes`（⛔ 不自己加魔法数）。
+            var path = AStar.FindSmoothed(WalkableCell, from, to, AStar.DefaultMaxNodes);
+            if (path == null || path.Count == 0)
+            {
+                InvalidatePath();
+                WarnPathFailed(target);
+                return false;
+            }
+
+            _path = path;
+            _pathIndex = 0;
+            _pathGoalCell = to;
+            return true;
+        }
+
+        /// <summary>
+        /// 沿 <see cref="_path"/> 取"这一帧该追的点"：**用"离下一个拐点是否比离当前拐点更近"推进游标**。
+        ///
+        /// <para>⛔ 不能拿 <see cref="CsBotConst.WaypointArriveRadius"/>（2.5m）当格子级的到达半径：
+        /// 那是给稀疏标记点的，用在 1m 的格子上会一口气跳过好几个拐点 —— 路径就白求了
+        /// （等于又退化成直线走）。</para>
+        /// </summary>
+        private Vector3 AdvancePath(Vector3 selfPosition, Vector3 target)
+        {
+            if (_path == null) return target;
+
+            while (_pathIndex + 1 < _path.Count)
+            {
+                var dNow = FlatDistance(selfPosition, _path[_pathIndex]);
+                var dNext = FlatDistance(selfPosition, _path[_pathIndex + 1]);
+                if (dNext >= dNow) break;          // 还在往当前拐点走
+                _pathIndex++;
+            }
+
+            return _pathIndex < _path.Count ? CellCenter(_path[_pathIndex]) : target;
+        }
+
+        /// <summary>
+        /// A* 的 <c>walkable</c> 回调（契约见 <see cref="AStar"/> 的类注释：<c>Func&lt;Vector2Int,bool&gt;</c>，
+        /// 8 邻接、对角要求两侧可走由 A* 内部保证）。查的是**格心**世界坐标是否可走。
+        /// </summary>
+        private bool WalkableCell(Vector2Int cell)
+        {
+            var map = Game.Map;
+            if (map == null || map.CellSize <= 0f) return false;
+            var c = CellCenter(cell);
+            return _map != null ? _map.WalkableAt(c.x, c.z) : map.WalkableAt(c.x, c.z);
+        }
+
+        /// <summary>
+        /// 把一个格坐标挪到最近的可走格（只看半径 ≤ <see cref="CsBotConst.PathSnapRadiusCells"/> 的那几环），
+        /// 挪不动返回 false。
+        /// <para>口径出处：<c>Assets/Editor/MapGen/MapConnectivityProbe.cs</c> 的 <c>SnapToWalkable</c>
+        /// （逐环扩张搜最近可走格）——本类只把半径收小：角色半径 0.4m &lt; 1 格边长，`AStar.Find` 对"起点不可走"
+        /// 直接判 null，snap 半径取 2 格足以覆盖"被挤进相邻格"的情形。</para>
+        /// </summary>
+        private bool SnapToWalkable(ref Vector2Int cell)
+        {
+            if (WalkableCell(cell)) return true;
+
+            for (var r = 1; r <= CsBotConst.PathSnapRadiusCells; r++)
+            {
+                for (var dz = -r; dz <= r; dz++)
+                {
+                    for (var dx = -r; dx <= r; dx++)
+                    {
+                        if (Mathf.Abs(dx) != r && Mathf.Abs(dz) != r) continue;   // 只看这一环（里环已经查过）
+                        var c = new Vector2Int(cell.x + dx, cell.y + dz);
+                        if (!WalkableCell(c)) continue;
+                        cell = c;
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 格坐标 → 格心世界坐标。
+        /// <para>口径出处（逐字一致，⛔ 不是自定的换算）：<c>clover-client-unity-engine/Runtime/Presentation/MapFormat.cs:243-252</c>
+        /// 的 floor 取整反解，与 <c>Assets/Editor/MapGen/Dust2GeoData.cs:201-203</c> 的 <c>CellCenter</c>：
+        /// 格 (ix,iz) 的世界中心 = <c>(Origin.x + (ix+0.5)*CellSize, ·, Origin.z + (iz+0.5)*CellSize)</c>。</para>
+        /// </summary>
+        private static Vector3 CellCenter(Vector2Int cell)
+        {
+            var map = Game.Map;
+            return new Vector3(map.Origin.x + (cell.x + 0.5f) * map.CellSize, 0f,
+                               map.Origin.z + (cell.y + 0.5f) * map.CellSize);
+        }
+
+        /// <summary>世界坐标 → 格坐标（与 <c>MapFormat.cs:247-248</c> 逐字同口径：<c>FloorToInt((x-Origin)/CellSize)</c>）。</summary>
+        private static Vector2Int CellOf(IMapData map, Vector3 p)
+        {
+            return new Vector2Int(Mathf.FloorToInt((p.x - map.Origin.x) / map.CellSize),
+                                  Mathf.FloorToInt((p.z - map.Origin.z) / map.CellSize));
+        }
+
+        /// <summary>水平距离（**忽略 y**：格心 y 取 0，机器人可能站在高台上，比 3D 距离会把"同一格"判成很远）。</summary>
+        private static float FlatDistance(Vector3 position, Vector2Int cell)
+        {
+            var c = CellCenter(cell);
+            var dx = c.x - position.x;
+            var dz = c.z - position.z;
+            return Mathf.Sqrt(dx * dx + dz * dz);
+        }
+
+        /// <summary>丢弃当前路径（下一次 <see cref="EnsurePath"/> 立即重求）。</summary>
+        private void InvalidatePath()
+        {
+            _path = null;
+            _pathIndex = 0;
+            _nextRepathAt = 0f;
+        }
+
+        /// <summary>
+        /// "求不出路径"必须留痕（⛔ 不许静默退化）。降频口径 = <see cref="CsBotConst.StuckWarnCooldown"/>
+        /// （与"跳过不可走路点"同一个闸："这是一个 bot 每帧都会碰到的分支，只许按时间降频，不许每次打"）。
+        /// <para>注：引擎 <see cref="AStar.Find"/> 自己也会按 <c>astar.badstart / badgoal / budget / nopath</c>
+        /// 键降频打日志（见 <c>Runtime/Core/AStar.cs</c>），本条是**业务侧**的"我因此退化成了什么行为"。</para>
+        /// </summary>
+        private void WarnPathFailed(Vector3 target)
+        {
+            if (Time.time < _nextPathFailLogAt) return;
+            _nextPathFailLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+
+            Game.Logger.Warn(Tag,
+                $"{_ownerName} 求路径失败（位图不可用 / 目标点不可达）：目标 ({target.x:F1},{target.z:F1})，" +
+                $"路线 '{_marker ?? "无"}'，剩余路点 {RemainingWaypoints} → 退化为朝目标直线走（仍带局部避障）");
         }
 
         // ==================================================================
