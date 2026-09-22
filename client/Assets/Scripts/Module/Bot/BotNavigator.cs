@@ -159,7 +159,50 @@ namespace Cs16.Module.Bot
                 return;
             }
 
-            var remaining = new List<Vector3>(pts);
+            // ★ 兜底（切片BC）：抽点后**排掉站不住的点**（`!CanStand`）。
+            //
+            // 为什么要有这一层：标记点的坐标是**数据**（生成侧已在 DumpMarkers / ExportMarkerResource 里
+            // 把"落在阻挡格上"的点吸附到最近可走格心，见 Dust2Builder.SnapMarkerToWalkable），而
+            // `CanStand` 是**运行时**才有的判据（位图 8 向 + 地面一步台阶 + 身体高度带几何复核）——
+            // 只有它知道"这一格上是否真的站得下一个 radius 半径的人"。两者不一致时（地图资产过期、
+            // 手改场景、几何与位图口径漂移），机器人会一路走到一个站不住的点上再卡住。
+            // 兜底排掉 = 让路线只含"真正能站的格"，而不是到地方才发现过不去。
+            //
+            // ⛔ 不许**静默**排点：每有一个点被排掉都必须留痕（降频，见下），
+            //    且"整条路线全被排掉"要打 Error 并**退回未过滤的路线**（⛔ 不许比旧实现更差）。
+            var kept = new List<Vector3>(pts.Length);
+            var dropped = 0;
+            for (var i = 0; i < pts.Length; i++)
+            {
+                if (map.CanStand(pts[i]))
+                {
+                    kept.Add(pts[i]);
+                    continue;
+                }
+
+                dropped++;
+                // 降频口径 = CsBotConst.StuckWarnCooldown（与「跳过不可走的路点」同一个闸：这是
+                // 每个 bot 每次换目标都会碰到的分支，只许按时间降频，不许每次打）。
+                if (Time.time >= _nextSkipLogAt)
+                {
+                    _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                    Game.Logger.Warn(Tag,
+                        $"{_ownerName} 路线 '{marker}' 第 {i + 1}/{pts.Length} 个路点 " +
+                        $"({pts[i].x:F1},{pts[i].y:F1},{pts[i].z:F1}) 站不住（ICsMap.CanStand=false）" +
+                        $"→ 已从路线里排掉（累计已排 {dropped} 个；本日志按 {CsBotConst.StuckWarnCooldown:F0}s 降频）");
+                }
+            }
+
+            if (kept.Count == 0)
+            {
+                Game.Logger.Error(Tag,
+                    $"{_ownerName} 路线 '{marker}' 的 {pts.Length} 个标记点**全部** CanStand=false " +
+                    "（多半是地图资产与几何口径不一致，或场景里的标记对象被改过）→ " +
+                    "退回未过滤的路线（⛔ 不复现「整条路线为空」这种更差的行为）；请检查 de_dust2 生成器与标记表");
+                kept = new List<Vector3>(pts);
+            }
+
+            var remaining = kept;
             var cursor = fromPosition;
             while (remaining.Count > 0)
             {

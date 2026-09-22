@@ -4,6 +4,7 @@ using System.Globalization;
 using System.IO;
 using System.Text;
 using Cs16.Core;
+using Cs16.Module.Bot;
 using Cs16.Module.Map;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -291,21 +292,113 @@ namespace Cs16.EditorTools
                 if (pts.Length < req.MinCount) missing.Add($"{req.Marker}({pts.Length}<{req.MinCount})");
             }
 
-            int total = 0;
+            // ★ 标记点先做「落阻挡格 ⇒ 吸附到最近可走格心」（见 SnapMarkerToWalkable 的长注释）：
+            //   采样点落在箱子/台阶上时，运行时的 A*/CanStand 拿到的起点就是"站不住"的格。
+            //   这里改一次，**场景对象与运行时表**（ExportMarkerResource 走同一段逻辑）同时生效。
+            var blocked = geo.BuildBlockedBitmap();
+
+            int total = 0, snapped = 0, notFound = 0;
             foreach (var kv in geo.Markers)
             {
                 for (int i = 0; i < kv.Value.Count; i++)
                 {
+                    var src = kv.Value[i];
+                    var pos = SnapMarkerToWalkable(geo, blocked, src, out var moved);
+                    if (moved > 0)
+                    {
+                        snapped++;
+                        Debug.LogWarning($"{Tag} 标记点吸附：{kv.Key}[{i}] ({src.x:F3},{src.y:F3},{src.z:F3}) → " +
+                                         $"({pos.x:F3},{pos.y:F3},{pos.z:F3})｜原格在阻挡盒内，已挪 {moved} 环到最近可走格心（只动 XZ）");
+                    }
+                    else if (moved < 0)
+                    {
+                        notFound++;
+                        Debug.LogWarning($"{Tag} 标记点吸附失败：{kv.Key}[{i}] ({src.x:F3},{src.y:F3},{src.z:F3}) " +
+                                         $"在 {CsBotConst.PathSnapRadiusCells} 环内没有可走格（原因 {(moved == -2 ? "几何/位图不可用，无法判定" : "整片阻挡")}）" +
+                                         " ⇒ **保留原值**（不丢点；运行时会由 BotNavigator 跳过它）");
+                    }
+
                     var go = new GameObject(kv.Key);   // ★ 名字就是标记名本身（消费方按名取点）
                     go.transform.SetParent(markerRoot.transform, false);
-                    go.transform.position = kv.Value[i];
+                    go.transform.position = pos;
                     total++;
                 }
             }
 
             if (missing.Count > 0)
                 Debug.LogError($"{Tag} 标记点不足（AI/包点/买枪区会失效）：{string.Join("、", missing)}");
-            Debug.Log($"{Tag} 标记点：{geo.Markers.Count} 类 / {total} 个空物体已摆放");
+            Debug.Log($"{Tag} 标记点：{geo.Markers.Count} 类 / {total} 个空物体已摆放" +
+                      $"｜落阻挡格吸附 {snapped} 点 / 吸不到（保留原值）{notFound} 点（吸附半径 ≤ {CsBotConst.PathSnapRadiusCells} 格）");
+        }
+
+        // ==================================================================
+        //  标记点吸附（落阻挡格 ⇒ 最近可走格心）
+        // ==================================================================
+
+        /// <summary>
+        /// 把一个标记点从"落在阻挡格上"挪到**最近的可走格心**（只改 XZ，⛔ y 原样不动）。
+        ///
+        /// <para><b>为什么必须有</b>：标记点来自 BSP 实体原点（<c>info_player_*</c> / <c>func_bomb_target</c> /
+        /// <c>func_buyzone</c>）与位图 BFS 采样，采样点会落在箱子、台阶、墙沿上 —— 那一格在
+        /// <c>de_dust2.bytes</c> 里是**阻挡**。运行时消费方（<see cref="BotNavigator"/> 的
+        /// <c>AStar.Find</c> / <c>ICsMap.CanStand</c>）对"起点不可走"直接判失败，于是机器人在这些路点上
+        /// 集体退化（片BA 实测 19 个点落阻挡格：Bombsite_A 4 / Bombsite_B 5 / BuyZone_CT 7 / BuyZone_T 2 /
+        /// Route_CT_Mid 1）。**治本只能在生成侧**：把点挪到最近的可走格心。</para>
+        ///
+        /// <para><b>判据口径与引擎逐字一致</b>：格坐标 = <see cref="Dust2GeoData.CellOf"/>（
+        /// <c>FloorToInt((x-OriginX)/CellSize)</c>，同 <c>MapFormat.cs:243-252</c>）；
+        /// 格心 = <see cref="Dust2GeoData.CellCenter"/>；"这一格可走吗" = 不在
+        /// <see cref="Dust2GeoData.BuildBlockedBitmap"/> 的阻挡位上（该位图与引擎 <c>MapBaker</c> 的逐格判定
+        /// 同语义，见其注释）。⇒ 这里判"可走"的那一格，与运行时 <c>WalkableAt</c> 读到的是同一格。</para>
+        ///
+        /// <para><b>逐环扩张</b>：先看原格；不可走则按切比雪夫半径 1、2 …（上限
+        /// <see cref="CsBotConst.PathSnapRadiusCells"/> = 2，与运行时 <c>BotNavigator.SnapToWalkable</c> 同一半径）
+        /// 逐环找第一个可走格 —— 环内按固定的 <c>dz</c> 外 <c>dx</c> 内顺序扫，结果**确定性可复现**
+        /// （同一输入两次生成必须得到同一个点，否则生成器不幂等）。</para>
+        ///
+        /// <para><b>返回值 / <paramref name="moved"/> 口径</b>：<c>0</c> = 原本就在可走格（点未动）；
+        /// <c>&gt;0</c> = 挪了几环（切比雪夫半径）；<c>-1</c> = 半径内没有可走格（**保留原值**，⛔ 不许丢点）；
+        /// <c>-2</c> = 几何/位图不可用，无法判定（**保留原值**）。调用方对一切负值都必须留痕。</para>
+        /// </summary>
+        private static Vector3 SnapMarkerToWalkable(Dust2GeoData geo, bool[] blocked, Vector3 p, out int moved)
+        {
+            if (geo == null || blocked == null || blocked.Length != geo.Width * geo.Depth)
+            {
+                moved = -2;
+                return p;
+            }
+
+            geo.CellOf(p.x, p.z, out var ix, out var iz);
+            if (IsWalkableCell(geo, blocked, ix, iz))
+            {
+                moved = 0;
+                return p;
+            }
+
+            for (var r = 1; r <= CsBotConst.PathSnapRadiusCells; r++)
+            {
+                for (var dz = -r; dz <= r; dz++)
+                {
+                    for (var dx = -r; dx <= r; dx++)
+                    {
+                        if (Mathf.Abs(dx) != r && Mathf.Abs(dz) != r) continue;   // 只看这一环（里环已经查过）
+                        if (!IsWalkableCell(geo, blocked, ix + dx, iz + dz)) continue;
+                        var c = geo.CellCenter(ix + dx, iz + dz);
+                        moved = r;
+                        return new Vector3(c.x, p.y, c.z);      // ★ 只改 XZ：y 是 BSP 实体的高度，不许动
+                    }
+                }
+            }
+
+            moved = -1;
+            return p;                                           // 吸不到 ⇒ 保留原值（调用方 Warn，⛔ 不丢点）
+        }
+
+        /// <summary>这一格可走吗（图外 = 不可走；与引擎烘焙位图的取整口径一致）。</summary>
+        private static bool IsWalkableCell(Dust2GeoData geo, bool[] blocked, int ix, int iz)
+        {
+            if (ix < 0 || iz < 0 || ix >= geo.Width || iz >= geo.Depth) return false;
+            return !blocked[iz * geo.Width + ix];
         }
 
         private static int CountMarkers(Dust2GeoData geo)
@@ -487,12 +580,22 @@ namespace Cs16.EditorTools
                 return;
             }
 
+            // ★ 与 DumpMarkers **同一段吸附逻辑**（本方法可能被 RefreshMarkerTable 在"未重建场景"时单独调用，
+            //   那时场景里的标记对象还是旧坐标 ⇒ 吸附必须在这里也做一遍，才能保证"运行时表 == 场景对象应有位置"）。
+            //   幂等：已经在可走格上的点 moved == 0，不会二次位移。
+            var geo = Dust2GeoData.Load(Dust2Layout.GeoFile);
+            var blocked = geo != null ? geo.BuildBlockedBitmap() : null;
+            if (geo == null)
+                Debug.LogWarning($"{Tag} 导出运行时标记表时读不到 {Dust2Layout.GeoFile} ⇒ " +
+                                 "**不做**「落阻挡格吸附」（表按场景对象原值导出，可能有标记点仍落在阻挡格上）");
+
             var known = new HashSet<string>();
             foreach (var req in Dust2Layout.RequiredMarkers) known.Add(req.Marker);
 
             var order = new List<string>();
             var table = new Dictionary<string, List<Vector3>>();
             var unknown = new List<string>();
+            int snapped = 0, notFound = 0;
 
             foreach (var t in root.GetComponentsInChildren<Transform>(true))
             {
@@ -509,7 +612,23 @@ namespace Cs16.EditorTools
                     table[n] = list;
                     order.Add(n);
                 }
-                list.Add(t.position);
+
+                var src = t.position;
+                var pos = SnapMarkerToWalkable(geo, blocked, src, out var moved);
+                if (moved > 0)
+                {
+                    snapped++;
+                    Debug.LogWarning($"{Tag} 运行时表吸附：{n}[{list.Count}] ({src.x:F3},{src.y:F3},{src.z:F3}) → " +
+                                     $"({pos.x:F3},{pos.y:F3},{pos.z:F3})｜原格在阻挡盒内，已挪 {moved} 环到最近可走格心（只动 XZ）");
+                }
+                else if (moved < 0)
+                {
+                    notFound++;
+                    Debug.LogWarning($"{Tag} 运行时表吸附失败：{n}[{list.Count}] ({src.x:F3},{src.y:F3},{src.z:F3}) " +
+                                     $"在 {CsBotConst.PathSnapRadiusCells} 环内没有可走格（原因 {(moved == -2 ? "几何/位图不可用，无法判定" : "整片阻挡")}）" +
+                                     " ⇒ **保留原值**（不丢点；运行时会由 BotNavigator 跳过它）");
+                }
+                list.Add(pos);
             }
 
             if (unknown.Count > 0)
@@ -545,7 +664,53 @@ namespace Cs16.EditorTools
 
             if (missing.Count > 0)
                 Debug.LogError($"{Tag} 标记点数不足（机器人/包点/买枪区会失效）：{string.Join("、", missing)}");
-            Debug.Log($"{Tag} 运行时标记表：{Dust2Layout.MarkerResourceFile}（{order.Count} 类 / {total} 点）");
+            Debug.Log($"{Tag} 运行时标记表：{Dust2Layout.MarkerResourceFile}（{order.Count} 类 / {total} 点）" +
+                      $"｜落阻挡格吸附 {snapped} 点 / 吸不到（保留原值）{notFound} 点（吸附半径 ≤ {CsBotConst.PathSnapRadiusCells} 格）");
+        }
+
+        /// <summary>
+        /// **重生成运行时标记表（不重建场景）**：读几何 → 打开已生成场景 → 重新走一遍
+        /// <see cref="ExportMarkerResource"/>。
+        ///
+        /// <para><b>为什么要有这条单独入口</b>：标记点的吸附口径改动只影响
+        /// <c>Resources/MapData/de_dust2_markers.bytes</c> 这一个产物；重跑整条生成链
+        /// （<see cref="GenerateFromCommandLine"/>）会连带重写全部网格 / 材质 / 贴图导入设置 —— 那是
+        /// 几百 MB 资产的无谓改写。这条入口只碰标记表，且**幂等**（吸附过的点在可走格上 ⇒ moved == 0，不再位移）。</para>
+        ///
+        /// <para>命令行：<c>unity command eval 'Cs16.EditorTools.Dust2Builder.RefreshMarkerTable();'</c></para>
+        /// </summary>
+        public static void RefreshMarkerTable()
+        {
+            var geo = Dust2GeoData.Load(Dust2Layout.GeoFile);
+            if (geo == null)
+            {
+                Debug.LogError($"{Tag} 重生成标记表中止：读不到 {Dust2Layout.GeoFile}");
+                return;
+            }
+
+            if (EditorApplication.isPlaying)
+            {
+                Debug.LogError($"{Tag} 正在 Play 模式：重生成标记表会切换场景，请先停止 Play 再执行");
+                return;
+            }
+
+            // 与 Generate() 同一个口径：**不许**弹「是否保存当前场景？」原生模态框（Pipeline 看不到、点不掉，
+            // 会把编辑器主线程连 AI 驱动一起卡死，见 skill P-5）。本入口只读场景里的标记对象，不改场景内容。
+            var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
+            if (!Application.isBatchMode && activeScene.isDirty)
+            {
+                Debug.LogWarning($"{Tag} 当前场景有未保存修改，重生成标记表会切换到 {Dust2Layout.ScenePath}" +
+                                 "（不做保存询问，以免卡死自动化驱动）");
+            }
+
+            if (!File.Exists(Dust2Layout.ScenePath))
+            {
+                Debug.LogError($"{Tag} 重生成标记表中止：场景不存在 {Dust2Layout.ScenePath}（先跑一次生成器）");
+                return;
+            }
+
+            var scene = EditorSceneManager.OpenScene(Dust2Layout.ScenePath, OpenSceneMode.Single);
+            ExportMarkerResource(scene);
         }
 
         // ==================================================================

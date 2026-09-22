@@ -25,8 +25,15 @@ namespace Cs16.Module.Bot
     /// 重决策间隔）**一律只从 <see cref="CsBotProfile.For"/> 取**，本文件里不许再写第二套；
     /// 连发节奏与瞄准误差的落地由比赛模拟（agent-03 的 <c>CsMatch.UpdateBots</c>）执行，
     /// 这里只放"模拟没有、AI 才需要"的阈值。</para>
+    ///
+    /// <para><b>可见性 = public（切片BC 起）</b>：<c>Assets/Scripts/</c> 有独立程序集
+    /// <c>Cs16.asmdef</c>，而 Editor 生成器在 <c>Assembly-CSharp-Editor</c> ⇒ <c>internal</c> 跨不过去。
+    /// 生成侧（<c>Editor/MapGen/Dust2Builder.cs</c> 的标记点吸附）**必须**用本类
+    /// <c>PathSnapRadiusCells</c> 这**同一个半径**，否则"生成侧吸附半径 / 消费侧 snap 半径"
+    /// 会各写一份、必然漂移。所以本类由 <c>internal</c> 放宽为 <c>public</c>（⛔ 未改任何常量值、
+    /// 未改任何签名，只是可见性）。</para>
     /// </summary>
-    internal static class CsBotConst
+    public static class CsBotConst
     {
         // ==================== 感知 ====================
         /// <summary>

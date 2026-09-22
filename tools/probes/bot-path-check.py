@@ -29,7 +29,16 @@
 
 数据来源（都是工程内既有载体，不需要 Unity）：
     client/Assets/Resources/MapData/de_dust2.bytes       可行走位图（CloverMap v1，与服务端同源）
-    client/Assets/ThirdParty/Dust2/de_dust2_geo.bin      标记点表 + 几何（用于定位"B 点旋转楼梯"）
+    client/Assets/Resources/MapData/de_dust2_markers.bytes   **运行时**标记表（判定用真源）
+    client/Assets/ThirdParty/Dust2/de_dust2_geo.bin      原始采样表（**对照行**）+ 几何（"B 点旋转楼梯"）
+
+标记点真源口径（切片BC 改，差异 #2/#67/#76/#77 的判据侧）：
+    运行时 `CsMap.Points(marker)` 读的是 **`Resources/MapData/de_dust2_markers.bytes`**
+    （由 `Dust2Builder.ExportMarkerResource` 生成，文本每行 `标记名 x y z`），**不是** geo.bin。
+    所以本探针的"marker point walkability"与全部用例端点都改读运行时表 —— 否则判据与被判对象不同源，
+    生成侧修好了探针也看不见（这正是切片BB 的原状）。geo.bin 的原始采样表**保留为对照行**：
+    左列 = 运行时表（吸附后）/ 右列 = geo.bin（吸附前），一眼能看出生成侧吸附生效了多少点。
+    ⛔ geo.bin 是只读采样源，本探针不改它、也不改任何坐标。
 
 用法（幂等，只读）：
     python tools/probes/bot-path-check.py
@@ -43,6 +52,7 @@ from heapq import heappush, heappop
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 MAP = os.path.join(ROOT, 'client', 'Assets', 'Resources', 'MapData', 'de_dust2.bytes')
+MARKERS = os.path.join(ROOT, 'client', 'Assets', 'Resources', 'MapData', 'de_dust2_markers.bytes')
 GEO = os.path.join(ROOT, 'client', 'Assets', 'ThirdParty', 'Dust2', 'de_dust2_geo.bin')
 
 MAX_NODES = 20000        # = 引擎 AStar.DefaultMaxNodes（Runtime/Core/AStar.cs:32）
@@ -123,8 +133,29 @@ def read_geo(path):
     return dict(markers=markers, tri_up=tri_up)
 
 
+def read_marker_table(path):
+    """读**运行时**标记表 `de_dust2_markers.bytes`（文本：每行 `标记名 x y z`）。
+
+    格式真源 = `Editor/MapGen/Dust2Builder.cs` 的 `ExportMarkerResource`
+    （首行 `# clover cs16 markers v1 (marker x y z) ...`；`F3` 定点 + 不变文化 ⇒ 小数点就是 '.'）。
+    解析口径同 `tools/probes/locate-overview-letters.py` 的几何尾部标记段（同名聚成一组）。
+    """
+    out = {}
+    with open(path, 'r', encoding='utf-8') as fh:
+        for ln in fh:
+            ln = ln.strip()
+            if not ln or ln.startswith('#'):
+                continue
+            parts = ln.split()
+            if len(parts) != 4:
+                raise ValueError('%s: bad marker row %r' % (path, ln))
+            out.setdefault(parts[0], []).append(tuple(float(v) for v in parts[1:]))
+    return out
+
+
 M = read_map(MAP)
-G = read_geo(GEO)
+RT = read_marker_table(MARKERS)      # ★ 判定真源：运行时表（CsMap.Points 读的就是它）
+G = read_geo(GEO)                    # 对照 + 几何：geo.bin（吸附前的原始采样表）
 W, D = M['w'], M['d']
 CELL = M['cell']
 ORIGIN = M['origin']
@@ -335,7 +366,8 @@ def check_smoothed(path, frm, to):
 
 # ── 用例 ─────────────────────────────────────────────────────────────────────
 def first(marker):
-    pts = G['markers'].get(marker, [])
+    """用例端点 = 运行时口径：读**运行时标记表**（`CsMap.Points` 的真源），不是 geo.bin。"""
+    pts = RT.get(marker, [])
     return pts[0] if pts else None
 
 
@@ -349,7 +381,7 @@ def stair_cases():
     """
     out = []
     for (name, tag) in (('Route_T_To_B', 'T side'), ('Route_CT_To_B', 'CT side')):
-        pts = G['markers'].get(name, [])
+        pts = RT.get(name, [])
         if len(pts) < 2:
             print('[SKIP] %s (marker missing)' % name)
             continue
@@ -376,10 +408,41 @@ def main():
     print('')
 
     print('marker point walkability (points whose cell is walkable / total):')
-    for name in sorted(G['markers']):
-        pts = G['markers'][name]
-        ok = sum(1 for p in pts if walkable(*cell_of(p[0], p[2])))
-        print('  %-16s %2d/%2d' % (name, ok, len(pts)))
+    print('  runtime = %s' % os.path.relpath(MARKERS, ROOT).replace('\\', '/'))
+    print('  geo.bin = %s   (对照：吸附前的原始采样表)' % os.path.relpath(GEO, ROOT).replace('\\', '/'))
+    print('  %-16s %-9s %-9s %s' % ('marker', 'runtime', 'geo.bin', 'delta'))
+    rt_ok = rt_all = 0
+    geo_ok = geo_all = 0
+    for name in sorted(set(RT) | set(G['markers'])):
+        rp = RT.get(name, [])
+        gp = G['markers'].get(name, [])
+        r_ok = sum(1 for p in rp if walkable(*cell_of(p[0], p[2])))
+        g_ok = sum(1 for p in gp if walkable(*cell_of(p[0], p[2])))
+        rt_ok += r_ok
+        rt_all += len(rp)
+        geo_ok += g_ok
+        geo_all += len(gp)
+        flag = 'OK' if len(rp) and r_ok == len(rp) else ('FAIL' if len(rp) else 'MISSING')
+        print('  %-16s %2d/%-6d %2d/%-6d %+d  %s'
+              % (name, r_ok, len(rp), g_ok, len(gp), r_ok - g_ok, flag))
+    print('  %-16s %2d/%-6d %2d/%-6d %+d'
+          % ('TOTAL', rt_ok, rt_all, geo_ok, geo_all, rt_ok - geo_ok))
+    print('')
+
+    # A6（切片BC 新增，⛔ 只加不降）：**运行时标记表的每个点**所在格必须可走。
+    # 口径：生成侧 `Dust2Builder.SnapMarkerToWalkable` 的目标就是"表里不再有落阻挡格的点"；
+    # 这一格可不可走的判据与运行时同源（这里用烘焙位图，生成侧用 geo 阻挡盒复算的位图 ——
+    # 两者同语义，见 Dust2GeoData.BuildBlockedBitmap 的注释）。
+    # ⛔ geo.bin 对照行**不参与**本断言：它是吸附前的原始采样源，本来就允许有落阻挡格的点。
+    a6_bad = [(n, i) for n in sorted(RT) for i, p in enumerate(RT[n])
+              if not walkable(*cell_of(p[0], p[2]))]
+    if a6_bad:
+        print('A6 FAIL: runtime marker table has %d point(s) whose cell is blocked:' % len(a6_bad))
+        for (n, i) in a6_bad[:24]:
+            c = cell_of(RT[n][i][0], RT[n][i][2])
+            print('    %-16s [%2d] (%.3f,%.3f,%.3f) cell %s' % (n, i, RT[n][i][0], RT[n][i][1], RT[n][i][2], c))
+    else:
+        print('A6 PASS: every runtime marker point sits on a walkable cell (%d points)' % rt_all)
     print('')
 
     cases = []
@@ -412,7 +475,7 @@ def main():
           % ('case', 'from', 'to', 'cells', 'cost', 'meters', 'snap', 'ok', 'reason'))
     print('-' * 104)
 
-    n_fail = 0
+    n_fail = len(a6_bad)          # A6（运行时标记表无落阻挡格点）计入总失败数
     for (label, frm, to, sn) in cases:
         raw, why = find(frm, to)
         if raw is None:
