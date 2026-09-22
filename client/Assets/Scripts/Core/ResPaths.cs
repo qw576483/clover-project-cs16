@@ -132,6 +132,28 @@ namespace Cs16.Core
         /// </summary>
         public const string MenuLogoHover = "UI/Art/game_menu_mouseover";
 
+        /// <summary>
+        /// 勾选框里那个"勾"的贴图（真实文件 <c>Resources/UI/Art/menu_check.png</c>，**132×140 RGBA**）——
+        /// 原版 **Marlett** 字体 <c>gid 12</c> 的预渲染件（可达码位 <c>U+F061</c>）。
+        ///
+        /// <para><b>载体</b>：<c>原版资源\cs16src\marlett.ttf</c>（27,724 B，本机
+        /// <c>C:\Windows\Fonts\marlett.ttf</c> 的字节副本）；**渲染器** = <c>tools/probes/make-check-glyph.py</c>
+        /// （判据资产，与 <c>tools/probes/marlett-glyphs.py</c> 同口径：补一张 (3,1) cmap → FreeType 光栅化 →
+        /// 裁到紧致 ink 框）。**未拉伸、未自绘**：尺寸 = 判据 <c>bbox</c>，逐像素来自原版字形。</para>
+        ///
+        /// <para><b>判据数字</b>（<c>--size 300</c>，与 <c>marlett-glyphs.py</c> 同一量法）：
+        /// <c>ink=7523  bbox=132x140  ratio=0.943  comps=1  vx=0.352  arm=0.264  tick=Y</c>。
+        /// PNG 的 <c>alpha&gt;=32</c> 像素数 = <c>7523</c>（与判据逐数相等）。</para>
+        ///
+        /// <para><b>颜色</b>：RGB 逐像素 = 原版 <c>CheckButtonCheck</c> → <c>BrightControlText
+        /// "255 176 0 255"</c>（<c>clientscheme.res:30/179</c>）= 本工程常量 <see cref="Cs16.UI.CsUiStyle"/>-侧
+        /// 的 <c>CheckMark</c>；面板上 <c>Image.color</c> 给**白**即得原版橙色勾。</para>
+        ///
+        /// <para>⛔ 为什么是贴图而不是字符：见 <see cref="CheckGlyphFont"/> 的实测结论（该字体在 Unity
+        /// 侧取不到自己的字形）。</para>
+        /// </summary>
+        public const string MenuCheckGlyph = "UI/Art/menu_check";
+
         // ==================================================================
         //  菜单背景拼图 —— 落在 Resources/Background/（原版 12 张 TGA）
         // ==================================================================
@@ -163,6 +185,45 @@ namespace Cs16.Core
         /// 用法固定是"前缀 + 短名"，与 <see cref="SoundSfxPrefix"/> 同款（⛔ 不改调用点语义）。
         /// </summary>
         public const string BackgroundMenuDir = "Background/";
+
+        // ==================================================================
+        //  原版图标字体 —— 落在 Resources/UI/Fonts/
+        // ==================================================================
+
+        /// <summary>
+        /// 原版 Windows 图标字体 **Marlett**（真实文件 <c>Resources/UI/Fonts/marlett.ttf</c>，
+        /// 27,724 B，SHA1 <c>2d9e6a4751ece0ede6790acbea5e604b3f3c2241</c>）——
+        /// 用来画菜单里的"勾 / 箭头 / 圆点"这类原版 VGUI 图标字形（uGUI 的字符集中没有）。
+        ///
+        /// <para><b>载体出处</b>：原版 CS 1.6 安装目录的 <c>marlett.ttf</c>
+        /// （<c>原版资源\cs16src\marlett.ttf</c>）；本机 <c>C:\Windows\Fonts\marlett.ttf</c> 与它
+        /// SHA1 前 12 位相同（<c>2d9e6a4751ec</c>），即同一个字体文件。按 skill §8「原版资源」
+        /// 只把**被引用的那一个文件**复制进工程。</para>
+        ///
+        /// <para><b>码位出处</b>：判据资产 <c>tools/probes/marlett-glyphs.py</c>（<c>--size 300</c>）
+        /// 与决定性读图 <c>.ai-tmp/test/marlett-check-ascii.png</c>（勾 = <c>U+F061</c>，gid12）。</para>
+        ///
+        /// <para>⚠️ <b>片AU 的 Unity 侧实测结论（重要，别当它可用）</b>：本字体是 Windows **符号字体**，
+        /// <c>cmap</c> 只有 <c>(1,0) Mac-Roman format 0</c> 与 <c>(3,0) MS-Symbol format 4</c>、
+        /// **没有 (3,1) Unicode 子表** ⇒ Unity 的字体引擎加载后<b>取不到它自己的任何字形</b>：
+        /// <c>U+F061</c> / <c>U+F062</c>（判据资产给出的勾与其孪生）在 Unity 里渲染为**空字形**
+        /// （图集块 2x2、<c>ink=0</c>、<c>advance=0</c>）；<c>U+0029</c> 渲染出来的是**系统 fallback
+        /// 拉丁字体的 ")" 弧线**（不是 Marlett 的勾）。证据 = 探针 <c>.ai-tmp/test/probe-marlett-*.cs</c>
+        /// + 读图 <c>.ai-tmp/test/unity-marlett-candidates.png</c>、<c>unity-marlett-fallback.png</c>；
+        /// 已扫 <c>0x20-0xFF</c> 与 <c>0xF020-0xF0FF</c> 共 448 个码位，**没有一个**渲染成判据描述的勾。
+        /// ⇒ 要在面板上画原版的勾，**不能走 uGUI 字符路**，须换"预渲染贴图"或字体转换（下一片）。
+        /// 本常量只是"字体已入库、路径已收敛"的登记，⛔ 现在**没有**任何调用点。</para>
+        ///
+        /// <para>⛔ <b>切片AV 定案（2026-09-22）：字体路到此为止，别再试第二次</b> —— 上面的实测已经
+        /// 把 uGUI 字符路走死（448 码位 × 47 块尺寸、<c>tick=Y</c> 计数 0），唯一的解锁办法是改该字体的
+        /// <c>cmap</c>，那会破坏"原版素材逐字节"口径 ⇒ **不推荐**。已改走"预渲染贴图"路：
+        /// <see cref="MenuCheckGlyph"/>（勾 = gid 12 的带 alpha PNG）。本常量**保留为登记**
+        /// （字体文件仍在 <c>Resources/UI/Fonts/marlett.ttf</c>，是那份 PNG 的载体出处）——
+        /// ⛔ 不要删它。</para>
+        ///
+        /// <para>⛔ 不要在调用点另写字面量或 <c>Resources.Load</c> 路径 —— 一律走本常量。</para>
+        /// </summary>
+        public const string CheckGlyphFont = "UI/Fonts/marlett";
 
         /// <summary>
         /// 取某一块背景拼图的加载路径（不带扩展名）：<c>BackgroundMenuTile("800_1_a_loading")</c>

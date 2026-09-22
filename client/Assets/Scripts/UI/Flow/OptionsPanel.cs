@@ -598,6 +598,11 @@ namespace Cs16.UI
                             };
                             if (row.Mark == null)
                                 Game.Logger.Warn(Tag, $"Options 勾选框「{key}」找不到 Mark 子节点，勾选态不会显示");
+                            else
+                                // 勾标记的**原版勾字形贴图**：预制体存不下（生成期 Game.Res 还没起来）
+                                // ⇒ 在这里（每次 OnOpen 走树）贴上。贴图一次请求、贴满所有勾选框；
+                                // 未到手时保持建件时的原色小方块（绝不留"没有 sprite 的白块"）。
+                                CsUiStyle.ApplyCheckMarkSprite(row.Mark);
 
                             Action<bool> real;
                             var hasReal = _realChecks.TryGetValue(key, out real);

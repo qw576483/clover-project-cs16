@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Generic;
 using CloverEngine;
+using Cs16.Core;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -613,15 +615,117 @@ namespace Cs16.UI
             return ready;
         }
 
+        // ═══════════ 原版勾选框的"勾"字形（**预渲染贴图**，不再是纯色方块）═══════════
+        //
+        // 出处链：原版 `clientscheme.res:483-492` 声明的符号字体 **Marlett**；勾 = 该字体 **gid 12**
+        //（可达码位 `U+F061`，判据资产 `tools/probes/marlett-glyphs.py` 定案）。载体 =
+        // `原版资源\cs16src\marlett.ttf`（27,724 B）⟶ 由 `tools/probes/make-check-glyph.py` **同口径**
+        // 渲成带 alpha 的 PNG = `ResPaths.MenuCheckGlyph`（`Resources/UI/Art/menu_check.png`，132×140）。
+        // 判据数字（`--size 300`）：`ink=7523 / bbox=132x140 / ratio=0.943 / comps=1 / vx=0.352 / arm=0.264`。
+        //
+        // ⛔ **为什么用 `Image` 而不是 `Text`**：① `ApplyOriginalFonts()` 会把整棵子树的 `Text.font`
+        //    刷成 Verdana ⇒ 用 `Text` 画勾会被覆写；② 该载体是 Windows **符号字体**（`cmap` 只有
+        //    (1,0) Mac-Roman + (3,0) MS-Symbol、**没有 (3,1) Unicode**）⇒ Unity 侧根本取不到它自己的
+        //    字形（切片AU 实测：`U+F061` 是空字形 ink=0，`U+0029` 拿到的是系统 fallback 的 ")"）；
+        //    ③ 贴图自带原版勾色（`CheckButtonCheck` → `BrightControlText "255 176 0 255"`，
+        //    `clientscheme.res:30/179`），`Image.color` 只做白 tint。
+
+        private static Sprite _checkMarkSprite;
+        private static bool _checkMarkRequested;
+        private static bool _checkMarkWarned;
+        /// <summary>已建出、待贴（或需重刷）的勾标记。数量 = 面板上的勾选框数，**有界**。</summary>
+        private static readonly List<Image> CheckMarkTargets = new List<Image>();
+
+        /// <summary>
+        /// 把原版勾字形贴到一个勾标记 <see cref="Image"/> 上（<see cref="CheckRow.Mark"/>）。
+        ///
+        /// <para>预制体里**存不下**这张贴图（生成器建预制体时 <c>Game.Res</c> 还没起来）⇒ 运行期由
+        /// <c>OptionsPanel</c> 走树时逐格调本方法；贴图只请求一次，到手后统一刷所有已登记的目标。
+        /// ⛔ 在手之前**不要**给勾标记留一个没有 sprite 的 `Image` —— uGUI 会把它画成**实心白块**
+        /// （`Graphic.OnPopulateMesh` 的实心分支）。所以建件时的底色仍是 <see cref="CheckMark"/>
+        /// （万一贴图取不到，退化成的正是改造前那块**原色**小方块，而不是白块）。</para>
+        /// </summary>
+        public static void ApplyCheckMarkSprite(Image mark)
+        {
+            if (mark == null) return;
+            if (_checkMarkSprite != null)
+            {
+                ApplyCheckMarkSpriteNow(mark, _checkMarkSprite);
+                return;
+            }
+            if (!CheckMarkTargets.Contains(mark)) CheckMarkTargets.Add(mark);
+            RequestCheckMarkSprite();
+        }
+
+        /// <summary>取一次原版勾字形贴图（`Resources/UI/Art/menu_check`）；取不到只 `Warn` 一次。</summary>
+        private static void RequestCheckMarkSprite()
+        {
+            if (_checkMarkRequested) return;
+
+            var res = Game.Res;
+            if (res == null)
+            {
+                WarnCheckMarkOnce("Game.Res 为 null（CloverRes.Init 未执行？），原版勾字形贴图加载不了");
+                return;
+            }
+
+            _checkMarkRequested = true;
+            res.LoadAsset<Sprite>(ResPaths.MenuCheckGlyph, s =>
+            {
+                if (s == null)
+                {
+                    _checkMarkRequested = false;      // 允许下次再试（比如资源后补上）
+                    WarnCheckMarkOnce($"原版勾字形贴图加载失败（sprite 为空）：Resources/{ResPaths.MenuCheckGlyph}");
+                    return;
+                }
+
+                _checkMarkSprite = s;
+                var applied = 0;
+                for (var i = CheckMarkTargets.Count - 1; i >= 0; i--)
+                {
+                    var target = CheckMarkTargets[i];
+                    if (target == null) { CheckMarkTargets.RemoveAt(i); continue; }   // 已销毁（Unity 假 null）
+                    ApplyCheckMarkSpriteNow(target, s);
+                    applied++;
+                }
+                Game.Logger?.Info("UI",
+                    $"原版勾字形贴图就绪：{s.name}({s.rect.width}×{s.rect.height})（Marlett gid 12 / U+F061），" +
+                    $"已贴到 {applied} 个勾标记上");
+            });
+        }
+
+        /// <summary>
+        /// 把贴图写到勾标记上：**白 tint**（贴图 RGB 就是原版勾色 `255 176 0`）+ 保持长宽比
+        /// （字形 132×140 不是方的，拉伸会把勾压歪）。
+        /// </summary>
+        private static void ApplyCheckMarkSpriteNow(Image mark, Sprite sprite)
+        {
+            mark.sprite = sprite;
+            mark.color = Color.white;
+            mark.type = Image.Type.Simple;
+            mark.preserveAspect = true;
+            mark.enabled = true;
+        }
+
+        private static void WarnCheckMarkOnce(string message)
+        {
+            if (_checkMarkWarned) return;
+            _checkMarkWarned = true;
+            Game.Logger?.Warn("UI", message);
+        }
+
         /// <summary>
         /// 原版 `CheckButton` 的复刻件：一个带边的方框 + 右侧文案，点整行切换。
         ///
         /// <para>方框边色 = 原版 `CheckButtonBorder1/2`（→ `BorderDark`/`BorderBright`，scheme:177-178），
         /// 勾选标记色 = `CheckButtonCheck`（→ `BrightControlText`，scheme:179）。</para>
         ///
-        /// <para>⚠️ 原版勾选框里的"勾"是 **Marlett 字体**的字形（scheme:483-492），本工程没有该字体
-        /// ⇒ 用一块同色的实心小方块表达"已勾选"。方框边长（<see cref="CheckBoxSize"/>）与文案起点
-        /// （<see cref="CheckTextIndent"/>）也是**本项目新增**的量（原版由 Marlett 字模决定，无像素值可引）。</para>
+        /// <para>勾选框里的"勾" = 原版 **Marlett** 字体字形（scheme:483-492）的**预渲染贴图**
+        /// （<see cref="ResPaths.MenuCheckGlyph"/>，勾 = 该字体 gid 12 / 可达码位 `U+F061`；
+        /// 渲染器 = 判据资产 `tools/probes/make-check-glyph.py`）。⛔ 不再是一块纯色方块。</para>
+        ///
+        /// <para>方框边长（<see cref="CheckBoxSize"/>）与文案起点（<see cref="CheckTextIndent"/>）仍是
+        /// **本项目新增**的量（原版由 Marlett 字模决定，无像素值可引）。</para>
         /// </summary>
         public static CheckRow CreateCheckButton(string name, Transform parent, string label, Vector2 pos,
             Vector2 size, bool initial, Action<bool> onToggle)
@@ -645,10 +749,17 @@ namespace Cs16.UI
                 new Vector2(CheckBoxSize, 2f), BorderDark);
             CreateBoxRect("BorderBottom", holder, new Vector2(0f, boxTop - (CheckBoxSize - 2f)),
                 new Vector2(CheckBoxSize, 2f), BorderBright);
+            // 勾 = 原版 Marlett gid 12 的**预渲染贴图**（`ResPaths.MenuCheckGlyph`，渲染器 =
+            // 判据资产 `tools/probes/make-check-glyph.py`，出处见本类「勾字形」段）。
+            // ⛔ 位置 / 尺寸**沿用原值** `4f / boxTop-4f` + `CheckBoxSize-8f`：动它会波及 options
+            //    面板的全部几何证据（8×8 的画框，贴图按 preserveAspect 缩进去画）。
             var mark = CreateBoxRect("Mark", holder,
                 new Vector2(4f, boxTop - 4f),
                 new Vector2(CheckBoxSize - 8f, CheckBoxSize - 8f), CheckMark);
             mark.gameObject.SetActive(initial);
+            // 生成期 `Game.Res` 通常还没起来 ⇒ 这里往往落空；运行期由 `OptionsPanel` 走树时
+            // 再调一次（`ApplyCheckMarkSprite`），贴图到手前保持旧行为 = 一块**原色**小方块。
+            ApplyCheckMarkSprite(mark);
 
             var text = CreateLabel("Label", holder, label, OriginalFontSize,
                 new Vector2(CheckTextIndent, 0f), new Vector2(size.x - CheckTextIndent, size.y),
