@@ -15,12 +15,32 @@
 //   首次发生时补一行 `E STUCK`（带完整诊断），每个 bot 每回合最多一次。
 //
 // 列（TSV，全部是数字或短标记，分析脚本直接读）：
+//   列号（0 基，离线脚本按此取值）：3 name / 5 team / 7,8,9 pos / 10-12 goal / 13 goalValid /
+//     14 distXZ / 15 goalDy / 16 canStand / 17 groundY / 18 normalY / 19 pos-groundY / 20 dirsMovable /
+//     21 goalStepLen / 22 goalStepLenYFollow / 23 wantGroundY / 24 wantNormalY / 25 wantCanStand /
+//     26 wantStepDy / 27 reason / 28 routeEndY / 29 rwp / 30 planRoute / 31 holdSite / 32 holdSlot /
+//     33 wantTopGroundY / 34 wantTopNormalY / 35 wantTopDy / 36 wantHighGroundY / 37 wantHighNormalY / 38 wantHighDy
+//
 //   B <frame> <t> <name> <id> <team> <state> \
 //     <x> <y> <z> <goalX> <goalY> <goalZ> <goalValid> <distXZ> <goalDy> \
 //     <canStandPos> <groundY> <normalY> <posMinusGround> \
 //     <dirsMovable> <goalStepLen> <goalStepLenYFollow> \
 //     <wantGroundY> <wantNormalY> <wantCanStand> <wantStepDy> <reason> \
-//     <routeEndY> <rwp> <planRoute> <holdSite> <holdSlot>
+//     <routeEndY> <rwp> <planRoute> <holdSite> <holdSlot> \
+//     <wantTopGroundY> <wantTopNormalY> <wantTopDy> <wantHighGroundY> <wantHighNormalY> <wantHighDy>
+//
+// 片BM 新增的 6 列（**追加在行尾**，⛔ 不改既有列序 —— 既有聚合脚本按列号取值）：
+//   为什么加：`want-no-ground`（"位图说这一格可走、朝目标迈一步的落点却探不到地面"）曾
+//     无法区分 (a) 落点是真空洞 / (b) 落点地面**高于脚底**（台阶、落差）/ (c) 落点地面低于脚底。
+//     既有列 `wantGroundY` 在 `hasWG==False` 时写 na ⇒ 三种读法全是空值（片BL-R2 的盲点）。
+//   口径（与 TrySampleGround **同源**：同一个 GroundMask、同一个 GroundCheckDistance）：
+//     wantTop*  = 从 `want.y + 3` 向下射（3 m / 8 m 落差）—— 任务书点的那一条；
+//     wantHigh* = 从 `want.y + 24` 向下射、丢 50 m。**必须同时采这条**：
+//                 "+3" 的起点可能已经在台阶实体内部（恰是 (b) 的形状）⇒ 射线不收"内部
+//                 起步"的命中 ⇒ 会把它**误判成空洞**。+24 的起点在台阶之上，才看得到那个面；
+//     *Dy       = 命中面 y − 当前脚底 y（可直接与 CsConst.StepUpHeight 比大小）。
+//   判据（离线聚合 tools/probes/analyze-bot-phys.py 第 3c 段按此实现，⛔ 不另立定义）：
+//     wantHighGroundY == na ⇒ (a) 空洞；wantHighDy > 0 ⇒ (b) 面高于脚底；否则 ⇒ (c) 面低于脚底。
 //
 // 口径出处（⛔ 全部复用产品同源判据，不另立定义）：
 //   可站       CsMap.CanStand(pos, CsConst.PlayerRadius)            Module/Map/CsMap.cs:290
@@ -81,6 +101,12 @@ public sealed class BotPhysTick : MonoBehaviour
     private const float MovableEps = 0.2f;         // 位移 > 0.2m 才算"这个方向迈得动"
     private const float StuckEps = 0.15f;          // 2 s 内位移 < 0.15m ⇒ 卡住
     private const float StuckWindow = 2.0f;
+
+    // 片BM：`want` 处的"从上方起射"补测（列序见文件头；两档起点都要采，理由见文件头）
+    private const float WantTopUp = 3f;            // 任务书口径：want.y + 3 起射
+    private const float WantTopDrop = 8f;          // 与 CsMap.TrySampleGround 默认 maxDrop 同值
+    private const float WantHighUp = 24f;          // 高于本图任何面：起点不会落在实体内部
+    private const float WantHighDrop = 50f;
 
     private static readonly float[] DirX = { 1f, 0.7071f, 0f, -0.7071f, -1f, -0.7071f, 0f, 0.7071f };
     private static readonly float[] DirZ = { 0f, 0.7071f, 1f, 0.7071f, 0f, -0.7071f, -1f, -0.7071f };
@@ -322,6 +348,13 @@ public sealed class BotPhysTick : MonoBehaviour
             var wantNormalY = float.NegativeInfinity;
             var wantCanStand = true;
             var wantStepDy = float.NegativeInfinity;
+            // 片BM 新增 6 列（行尾追加；口径见文件头）
+            var wantTopGroundY = float.NegativeInfinity;
+            var wantTopNormalY = float.NegativeInfinity;
+            var wantTopDy = float.NegativeInfinity;
+            var wantHighGroundY = float.NegativeInfinity;
+            var wantHighNormalY = float.NegativeInfinity;
+            var wantHighDy = float.NegativeInfinity;
             var reason = "-";
             var distXZ = float.NegativeInfinity;
             var goalDy = float.NegativeInfinity;
@@ -353,6 +386,25 @@ public sealed class BotPhysTick : MonoBehaviour
                     wantStepDy = wp.y - pos.y;
                 }
 
+                // 片BM：从上方起射（两档）—— 把"探不到地面"拆成 (a) 空洞 / (b) 面高于脚底 / (c) 面低于脚底。
+                // 起点抬升与探测深度复用产品同源口径：TrySampleGround 自己会把起点抬 GroundCheckDistance、
+                // 把射线长取 maxDrop + GroundCheckDistance（Module/Map/CsMap.cs:542-557）。
+                // ⛔ 两档都采：+3 的起点可能已在台阶实体内部（正是 (b) 的形状）⇒ 会把 (b) 误判成 (a)。
+                var wantTopOrigin = new Vector3(want.x, pos.y + WantTopUp, want.z);
+                if (_map.TrySampleGround(wantTopOrigin, out var tp, out var tn, WantTopDrop))
+                {
+                    wantTopGroundY = tp.y;
+                    wantTopNormalY = tn.y;
+                    wantTopDy = tp.y - pos.y;
+                }
+                var wantHighOrigin = new Vector3(want.x, pos.y + WantHighUp, want.z);
+                if (_map.TrySampleGround(wantHighOrigin, out var hp, out var hn, WantHighDrop))
+                {
+                    wantHighGroundY = hp.y;
+                    wantHighNormalY = hn.y;
+                    wantHighDy = hp.y - pos.y;
+                }
+
                 reason = "ok";
                 if (goalStepLen <= MovableEps)
                 {
@@ -376,7 +428,9 @@ public sealed class BotPhysTick : MonoBehaviour
                 (canStand ? 1 : 0) + "\t" + F(groundY) + "\t" + F(normalY) + "\t" + F(pos.y - groundY) + "\t" +
                 movable + "\t" + F(goalStepLen) + "\t" + F(goalStepLenYFollow) + "\t" +
                 F(wantGroundY) + "\t" + F(wantNormalY) + "\t" + (wantCanStand ? 1 : 0) + "\t" + F(wantStepDy) + "\t" +
-                reason + "\t" + F(routeEndY) + "\t" + rwp + "\t" + planRoute + "\t" + holdSite + "\t" + holdSlot);
+                reason + "\t" + F(routeEndY) + "\t" + rwp + "\t" + planRoute + "\t" + holdSite + "\t" + holdSlot + "\t" +
+                F(wantTopGroundY) + "\t" + F(wantTopNormalY) + "\t" + F(wantTopDy) + "\t" +
+                F(wantHighGroundY) + "\t" + F(wantHighNormalY) + "\t" + F(wantHighDy));
 
             // ---- 卡住检测（2 s 内位移 < 0.15m）----
             var now = Time.realtimeSinceStartup;

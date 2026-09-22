@@ -24,10 +24,14 @@ from collections import Counter, OrderedDict
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROJECT = os.path.dirname(os.path.dirname(HERE))
-TSV = os.path.join(PROJECT, ".ai-tmp", "test", "bk-bot-phys.tsv")
+# Default = the frozen slice-BK/BL product. Pass a path as argv[1] to analyse another
+# Play product (slice BM uses this to check .ai-tmp/test/bm-bot-phys.tsv, which carries
+# the six new columns, WITHOUT overwriting the frozen bk-bot-phys.tsv).
+TSV = sys.argv[1] if len(sys.argv) > 1 else os.path.join(PROJECT, ".ai-tmp", "test", "bk-bot-phys.tsv")
 
-MAX_STANDABLE_SLOPE_NORMAL_Y = 0.70   # CsConst.MaxStandableSlopeNormalZ
+MAX_STANDABLE_SLOPE_NORMAL_Y = 0.70   # CsConst.MaxStandableSlopeNormalZ (Core/CsConst.cs:135)
 FOOT_EPS = 0.05                       # "float gap" threshold (m)
+STEP_UP = 0.45                        # CsConst.StepUpHeight (Core/CsConst.cs:113)
 
 
 def f(v):
@@ -156,6 +160,39 @@ def main():
     for team in ("CT", "T"):
         rt = Counter(p[27] for p in brows if p[5] == team)
         print("  reason[%s] %s" % (team, ", ".join("%s=%d" % kv for kv in rt.most_common())))
+    print("")
+
+    # ---- 3c. slice BM: WHERE the `want` point actually is (columns 33..38) ----------
+    # 33 wantTopGroundY / 34 wantTopNormalY / 35 wantTopDy / 36 wantHighGroundY /
+    # 37 wantHighNormalY / 38 wantHighDy (0-based; column list in tools/probes/bot-phys.cs header).
+    # Rows written before slice BM have only 33 columns, so guard on len(p): an old tsv must
+    # not silently look like "0 holes".
+    print("--- 3c. slice BM: split `want-no-ground` into (a) hole / (b) face above / (c) face below ---")
+    wide = [p for p in brows if len(p) >= 39]
+    print("  rows carrying the slice-BM columns  : %d / %d" % (len(wide), len(brows)))
+    if wide:
+        wng = [p for p in wide if p[27].startswith("want-no-ground")]
+        hole = [p for p in wng if p[36] == "na"]
+        hi = [p for p in wng if p[36] != "na"]
+        above = [p for p in hi if f(p[38]) > 0]
+        below = [p for p in hi if f(p[38]) <= 0]
+        print("  want-no-ground rows                 : %d" % len(wng))
+        print("  (a) +24m ray misses  (hole)          : %d" % len(hole))
+        print("  (b) +24m face ABOVE the foot         : %d" % len(above))
+        print("  (c) +24m face at/below the foot      : %d" % len(below))
+        for label, lst in (("(b) wantHighDy", above), ("(c) wantHighDy", below)):
+            v = sorted(f(p[38]) for p in lst)
+            if v:
+                print("  %-20s min=%.3f p50=%.3f max=%.3f  (> StepUpHeight %.2f m: %d / %d)" %
+                      (label, v[0], v[len(v) // 2], v[-1], STEP_UP,
+                       len([x for x in v if x > STEP_UP]), len(v)))
+        if above:
+            print("  of the (b) rows, the +3m origin ALSO hits : %d / %d" %
+                  (len([p for p in above if p[33] != "na"]), len(above)))
+            print("  (b) face normal.y min                 : %.3f" %
+                  min(f(p[37]) for p in above if p[37] != "na"))
+    else:
+        print("  (this tsv was produced by a probe older than slice BM -- columns 33..38 absent)")
     print("")
 
     print("--- 4. the cells the bots were stuck on (first STUCK row per actor/cell) ---")
