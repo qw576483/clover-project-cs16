@@ -24,7 +24,9 @@ namespace Cs16.UI
     /// （<see cref="CsHudTheme.RadarOther"/>）、已安放炸弹 = 红闪
     /// （<see cref="CsHudTheme.RadarBomb"/>）。上一版把"自己"画成白的、队友画成阵营色，
     /// 与判据不符，本片改掉。</item>
-    /// <item><b>朝向</b>：正北朝上、**不随视角旋转**（CS 1.6 默认即如此）；世界 → 雷达的映射
+    /// <item><b>朝向</b>：**不随视角旋转**（CS 1.6 默认即如此），且与原版底图同向 ——
+    /// 屏幕右 ← 世界 <c>-Z</c>、屏幕上 ← 世界 <c>+X</c>（cs16-AO 由包点地标判据定下，见
+    /// <see cref="Refresh"/> 里 scale 那段的注释）；世界 → 雷达的映射
     /// 与底图生成器**同一套**（等比、以地图包围盒中心为中心）⇒ 点必然落在底图对应位置上。</item>
     /// </list>
     ///
@@ -215,7 +217,14 @@ namespace Cs16.UI
             // 底图生成器（tools/probes/render-overview.py）用的是**同一口径**
             // （正方形窗口、边长 = max(地图X跨度, 地图Z跨度)、以包围盒中心为中心）
             // ⇒ 这里的 scale / cx / cz 与底图像素一一对应，点不会偏。
-            var scale = Mathf.Min(field.width / w, field.height / h);
+            //
+            // 轴对（cs16-AO 改）：**雷达的水平方向是世界的 Z 轴、垂直方向是世界的 X 轴**。
+            // 依据不是"看起来像"：原版底图 `overviews/de_dust2.bmp` 自带两处包点标记，把它们的
+            // 图上向量与本工程包点表的世界向量比角度 —— 新轴对残差 1.55°，旧的"X→右"残差 88.45°
+            // （tools/probes/locate-overview-letters.py）；同一替换把轮廓配准 IoU 从 0.5169 抬到
+            // 0.8419（tools/probes/register-overview.py）。所以 scale 的两个跨度角色要对调：
+            // 水平方向用 Z 跨度 h、垂直方向用 X 跨度 w。
+            var scale = Mathf.Min(field.width / h, field.height / w);
             var cx = (minX + maxX) * 0.5f;
             var cz = (minZ + maxZ) * 0.5f;
 
@@ -279,10 +288,12 @@ namespace Cs16.UI
                 if (!img.gameObject.activeSelf) img.gameObject.SetActive(true);
                 img.color = color;
                 img.rectTransform.sizeDelta = new Vector2(size, size);
-                // 正北朝上、不随视角旋转：世界 +X → 屏幕右，世界 +Z（北）→ 屏幕上
+                // 不随视角旋转（CS 1.6 默认即如此），但**不是正北朝上**：与原版底图同向 ⇒
+                // 屏幕右 ← 世界 -Z、屏幕上 ← 世界 +X（轴对依据见上面 scale 那段的注释与
+                // tools/probes/locate-overview-letters.py 的数字）。改前是 (+X, +Z)。
                 img.rectTransform.anchoredPosition = new Vector2(
-                    (dot.X - cx) * scale,
-                    (dot.Z - cz) * scale);
+                    -(dot.Z - cz) * scale,
+                    (dot.X - cx) * scale);
                 drawn++;
             }
 

@@ -47,8 +47,12 @@ Coordinate convention (identical to `client/Assets/Editor/MapGen/Dust2GeoData.cs
     u32 blockerCount   each: u32 ix0 iz0 ix1 iz1  f32 yMin yMax
     u32 markerCount    each: u8 name[32] u32 ptCount f32 xyz[3]*ptCount
 Unity left-handed: X east, Y up, Z north, metres.  The radar draws world -> image as
-    u = (x - worldMinX) / (worldMaxX - worldMinX)
-    v = 1 - (z - worldMinZ) / (worldMaxZ - worldMinZ)      (image row 0 = north/north-most z)
+    u = 1 - (z - worldMinZ) / (worldMaxZ - worldMinZ)     (image column 0 = the LARGEST z)
+    v = 1 - (x - worldMinX) / (worldMaxX - worldMinX)     (image row 0 = the LARGEST x)
+The axis pair was swapped in slice cs16-AO: the ORIGINAL carrier's own bomb-site marks put
+its vertical axis on world X, with a 1.55 deg residual against 88.45 deg for the old
+X->right pair (tools/probes/locate-overview-letters.py), and `register-overview.py`
+jumps from IoU 0.5169 to 0.8419 on the swap.  See the `AXIS PAIR` note in render_top_down.
 
 Usage
 -----
@@ -241,12 +245,24 @@ def render_top_down(geo, size, supersample=3, lo=None, hi=None):
 
     n = size * supersample
     mpp_s = mpp / supersample
-    # note: y is *up* in world, image row grows downwards => row 0 is the north-most (+z) row
-    def px(x):
-        return (x - x0) / mpp_s
+    # ---- AXIS PAIR (slice cs16-AO) --------------------------------------------------------
+    # This used to be u <- world X and v <- world Z (row 0 = the north-most z row).  Slice AO
+    # measured the ORIGINAL carrier's own two bomb-site marks (tools/probes/
+    # locate-overview-letters.py) and got, for the world A->B vector, an image residual of
+    #   1.55 deg with the vertical axis = world X   vs   88.45 deg with the current pair,
+    # and the silhouette registration (register-overview.py) jumps from IoU 0.5169 to 0.8419
+    # when the pair is swapped, with the mirror settled in the same run
+    # (u<-Z mirror_u=1 mirror_v=0 => 0.8419 against 0.45-0.47 for the other three mirrors).
+    # register-overview.py's own parameterisation: u axis world coord = A - u*sm (fu=1) and
+    # v axis world coord = B - v*sm (fv=0), with X = va and Z = ua => u <- world -Z, v <- world -X.
+    # So:      u = -Z      (image column grows as world Z decreases)
+    #          v = -X      (image row grows as world X decreases)
+    # which is exactly "the original overview is rotated 90 deg from the X->right pair".
+    def pu(z):
+        return (z0 - z) / mpp_s + n          # max +Z -> column 0, min -Z -> column n
 
-    def py(z):
-        return (z0 + n * mpp_s - z) / mpp_s
+    def pv(x):
+        return (x0 + n * mpp_s - x) / mpp_s  # min -X -> row n (down), max +X -> row 0
 
     # ---- floor-plan look: classify each original triangle by its OWN 3d normal -------------
     # `Walkable` (n.y >= 0.7) = a surface a player can stand on (sand floor, ramps, box tops) --
@@ -288,9 +304,9 @@ def render_top_down(geo, size, supersample=3, lo=None, hi=None):
                 n_skip += 1
             dst = floor_mask if kind == 0 else (wall_mask if kind == 1 else None)
 
-            ax_, az_ = px(ax), py(az)
-            bx_, bz_ = px(bx), py(bz)
-            cx_, cz_ = px(cxx), py(cz)
+            ax_, az_ = pu(az), pv(ax)          # image col from world Z, image row from world X
+            bx_, bz_ = pu(bz), pv(bx)
+            cx_, cz_ = pu(cz), pv(cxx)
             minx = max(0, int(math.floor(min(ax_, bx_, cx_))))
             maxx = min(n - 1, int(math.ceil(max(ax_, bx_, cx_))))
             miny = max(0, int(math.floor(min(az_, bz_, cz_))))
@@ -364,8 +380,8 @@ def render_top_down(geo, size, supersample=3, lo=None, hi=None):
             continue
         mx = sum(p[0] for p in pts) / len(pts)
         mz = sum(p[2] for p in pts) / len(pts)
-        u = (mx - x0) / mpp
-        v = (z0 + size * mpp - mz) / mpp
+        u = (z0 - mz) / mpp + size              # same axis pair as the rasteriser (u <- -Z)
+        v = (x0 + size * mpp - mx) / mpp        #                              (v <- -X)
         sites.append({"name": name, "letter": letter, "world": [round(mx, 3), round(mz, 3)],
                       "px": [round(u, 2), round(v, 2)]})
         draw_site_letter(draw, letter, u, v, size)
@@ -472,7 +488,20 @@ def main():
     os.makedirs(os.path.dirname(os.path.abspath(out)), exist_ok=True)
     img, meta = render_top_down(geo, args.size, max(1, args.supersample))
     img.save(out)
-    meta_path = args.meta or (os.path.splitext(out)[0] + ".json")
+    if args.meta:
+        meta_path = args.meta
+    else:
+        # A sibling .json next to a build asset would itself become an asset inside
+        # `Resources/` (and ship).  Slice AO hit exactly that: writing
+        # client/Assets/Resources/UI/Art/overview_de_dust2.png produced a stray
+        # overview_de_dust2.json asset.  The default therefore keeps the metadata out of
+        # Assets/ and drops it in the project's one temp directory instead.
+        if os.path.abspath(out).startswith(os.path.join(PROJECT_ROOT, "client", "Assets")):
+            meta_path = os.path.join(PROJECT_ROOT, ".ai-tmp", "test",
+                                     os.path.splitext(os.path.basename(out))[0] + ".json")
+        else:
+            meta_path = os.path.splitext(out)[0] + ".json"
+    os.makedirs(os.path.dirname(os.path.abspath(meta_path)), exist_ok=True)
     with open(meta_path, "w", encoding="utf-8") as fh:
         json.dump(meta, fh, ensure_ascii=False, indent=1)
     print("out   : %s (%dx%d, %.3f m/px)" % (out, args.size, args.size, meta["metresPerPixel"]))
