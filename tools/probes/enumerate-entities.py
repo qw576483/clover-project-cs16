@@ -1301,18 +1301,21 @@ AZ_ENT = [
      'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin',
      '用户本轮报#1；运行时口径 `Module/Map/CsMap.cs:514-531`（TryStepUp）+ `Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7）',
      4, T_SCRIPT, K_ALLOWED,
-     '离线判据缺：`tools/probes/geom-check.py` 只做 A5「低矮障碍 71 候选」（来路判挡 / 顶面可站 / 横跨窗口），'
-     '**没有**"沿楼梯从底部逐级走到顶"这条链（多级台阶 × 膝盖射线 × StepUp 闸门）。'
-     '运行时四道闸门见 `client/Assets/Scripts/Module/Map/CsMap.cs:514-531`（① 中心格可走 ② 落点地面高差 ≤ 0.45m '
-     '③ 落点法线 y ≥ 0.7 ≈45.573° ④ 膝盖高度射线通畅）与 `:298-299`（CanStand 位图层 + 几何层）⇒ 差异 #66'),
+     '【片BD 2026-09-22 **实测（数值类）**】判据资产 `tools/probes/bstairs-walkline.cs` → 产物 `tools/probes/bstairs-walkline.txt`：'
+     '沿**真实走廊路径**（A* 独立复算，契约同引擎 `AStar`；与 `tools/probes/bot-path-check.py` 同一张位图、同一组端点）'
+     '逐帧（≤0.25 m/帧）推进 —— **两侧都到顶**：T 侧 frames=162 / 被钳住帧=0 / 到顶=True；CT 侧 frames=125 / 被钳住帧=0 / 到顶=True。'
+     '逐格四道闸门（`CsMap.cs:514-531`：① 中心格可走 ② 落点地面高差 ≤ 0.45m ③ 落点法线 y ≥ 0.70 ④ 膝盖射线）'
+     '被拒格 = T 侧 0/32、CT 侧 1/24（CT 第 0 格是"标记点自带 y 与实测地面 y 的初值差 0.553 m"造成的判据初值残差，'
+     '不是真实阻断：`(E)` 段第 0 帧先把 y 贴地后 125 帧内到顶）。⇒ 位图层面（`bot-path-check.py`）与物理层面（本探针）**都通**'),
     ('D2', 'B 点旋转楼梯（几何形态：连续斜面 vs 台阶）',
      'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin + de_dust2.bsp',
      '用户本轮报#1；工程几何组名/三角数见 `策划/对照表.md` §1；原版 .bsp 载体本机不在盘（降级链第 5 级：待补）',
      2, T_SCRIPT, K_ALLOWED,
-     '`geom-check.py` 里**没有**"楼梯"这一类（只有 A5 低矮障碍），⇒ 本工程 B 点那段到底是**整片斜楔**还是**多级台阶**'
-     '（以及原版是同形还是台阶）**未离线判定**。判据 = 从 `CsMarkers` 的路线路点逐格推进到 B 点平台，'
-     '记录每步 `TryStepUp` 四道闸门的通过情况；需要的载体 = 原版 `de_dust2.bsp`（降级链：① 原始数据 ✗ 盘上无 ⇒ '
-     '待补（第 1 级：原始 .bsp 几何 → 第 3 级：bsp 专用格式原始结构））⇒ 差异 #66'),
+     '【片BD 2026-09-22 **实测**，`tools/probes/bstairs-walkline.txt` 的 (B)/(D) 段】形态**已定案**：本工程 B 点那两段'
+     '**不是多级台阶，是整片斜楔（连续斜面）** —— T 侧自 (-11.5,29.5) 起 10 格 × 1.000 m **连续**抬升、每格 +0.333 m、'
+     '地面法线 y 恒为 0.949（≈18.4° 斜面）；CT 侧是 3 格 × 1.000 m 每格 −0.125 m 的下坡接平台（法线 0.992/1.000）。'
+     '⚠️ **仍未做**：与**原版** .bsp 的 brush 形态对账（载体 `client/Assets/ThirdParty/Dust2/de_dust2.bsp` 2,057,288 B 在盘，'
+     '本片未解析 brush 几何/平面表）⇒ 差异 #66 **降级**为「形态待与原版对账」，可走性本身已判通'),
     ('D2', '全图楼梯 / 坡道 / 台阶（同类漏检：#1 只报了 B 旋转楼梯）',
      'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin',
      'T0 同类漏检；口径同 `Module/Map/CsMap.cs:514-531`',
@@ -1572,7 +1575,7 @@ DIF = [
     ('56', '切片K：hit_wall 的「按材质分流」只落到一条采样，且刀「砍空」没有独立采样', '原版打沙 / 打木箱 / 打金属是**不同采样**，刀砍中人与砍空也是两条采样；盘上只有 hit_wall.wav（打墙）与 knife_hit.wav（刀命中）各一条 ⇒ 材质分类（CsAudioTuning.ClassifyImpact）已做、日志可逐类核对，但各材质现在落同一 clip；刀砍空（CsInventory.RaycastActor 返回 null）无音', 'Module/Audio/CsAudioTuning.cs（ClassifyImpact / HitWall / KnifeHit）；Module/Combat/CombatModule.cs（弹着音挂点）；Module/Match/CsDamage.cs（刀命中挂点）', '拿到原版按材质的弹着采样与刀挥空采样后，只改 CsAudioTuning 的分类→短名映射'),
     ('57', 'C4 蜂鸣的「加速档分界 10s」与两档间隔（1.0s / 0.25s）无原版出处', '原版 C4 蜂鸣节奏写在 `mp.dll` 的 C4 逻辑里（不是 cvar，`settings.scr` / `server.cfg` 都查不到），而 `mp.dll` **已在盘、但尚未反汇编**（`原版资源/cs16src/cstrike/dlls/mp.dll`，1,640,960 B / SHA256 `D7294D9BE016C79E5E3B0D9E78C14CF385FCC3F1DB6057018052ABC4219F2974`，片AW 取回，见 `原版资源/清单.md`「切片AW」§1）⇒ 拿不到 C4 逻辑里那两个立即数，该分界只能按本工程自己的口径统一（CsConst.BombBeepIntervalSlow/Fast 的 10s 注释 + CsAudioTuning.BombBeepFastBelow）', 'Core/CsConst.cs（BombBeepIntervalSlow / BombBeepIntervalFast）；Module/Audio/CsAudioTuning.cs（BombBeepFastBelow）', '解出 mp.dll 的 C4 蜂鸣节奏后'),
     ('58', 'CsBotConst 的绝大多数阈值无原版出处（**本项目新增**）', 'A = CS 1.6 本体**不含机器人 AI**（官方 bot 属 Condition Zero / PodBot，不在本工程的载体范围）⇒ "bot 手感阈值"在 A 里没有对应量；规格 §2.4 只给三档的反应时间 / 瞄准误差（±6° / ±3° / ±1.2°）与行为特征，不含这些阈值。三条有对应量却取不到载体的（瞄胸高度比例 / 脚步噪声阈值 / 预瞄节奏）见下面两条与 CsBotConst 各行的注释', 'Module/Bot/CsBotConst.cs（66 行逐条注释已标"本项目新增"或指到定义真源）；策划/策划案/CS1.6单机参考规格.md:113-118（§2.4 三档表）；Module/Match/CsTypes.cs:148（CsBotProfile）', '若主 agent 决定改为「逐条对齐 PodBot / CZ bot 源码」则另开片'),
-    ('59', '脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）', '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件仍不在盘（`原版资源/cs16src` 现存 73 份 = 片AW 取回的 `cstrike/**` 资源 + `marlett.ttf`，**没有 GoldSrc 源码树**；`原版资源/hlsdk/` 是 HLSDK 的另一份拷贝、本行未从中取口径）；② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值', 'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76', '用户补回原版载体（原版资源/cs16src）后对账脚步节拍；落地音属"A 本来就没有"，不消除'),
+    ('59', '脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）', '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件**已在盘**：`原版资源/hlsdk/pm_shared/pm_shared.c`（片AY 落盘；片BD 2026-09-22 实测复核：`原版资源/hlsdk/` 下有 `cl_dll/`、`common/`、`dlls/`、`pm_shared/pm_shared.c` 共 10 份）—— **但本行尚未逐行读它取口径**（`原版资源/cs16src/` 现存 73 份 = 片AW 取回的 `cstrike/**` 资源 + `marlett.ttf`，其中没有 GoldSrc 源码树；`原版资源/hlsdk/` 才是源码树那一份拷贝）；② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值', 'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76', '读 `原版资源/hlsdk/pm_shared/pm_shared.c` 的 `PM_PlayStepSound` 逐行对账脚步节拍（载体已在盘，缺的是"读"这一步）；落地音属"A 本来就没有"，不消除'),
     ('60', '切片K（D8）：Defuser / Vest / VestHelm 三个被动装备没有开火 / 换弹音', '它们不是武器：原版 CS 1.6 里既没有"手持并开火"、也没有换弹动作 ⇒ **原版也没有**这两个采样。旧判据（D8 的"每个 id 都要有 <id>_fire.wav / <id>_reload.wav"）把它们当武器，要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"', 'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
     ('61', '切片L（S1）：操作 / 表现层的可调旋钮没有原版出处（CsCombatTuning 全 31 条；CsMatch / CsViewTuning / CsConst 里标「本项目新增」的那些）', '这些量（后坐力时间常数 / 散布倍率 / 准星扩散 / bob / 开镜过渡 / 受击晃动 / 枪口火焰时长 / 各类实现容量上限）在 A 里对应的是**客户端手感**，原版把它们写死在 `cstrike/cl_dlls/client.dll` 与 `mp.dll` 的逐武器代码里（不是 cvar、也不是数据表 —— 见 `策划/对照表.md` §6 BLOCKED-1 / BLOCKED-2）；本机原版载体**已在盘、但尚未反汇编**（`原版资源/cs16src/cstrike/cl_dlls/client.dll` 1,093,128 B / `cstrike/dlls/mp.dll` 1,640,960 B，片AW 取回，SHA256 见 `原版资源/清单.md`「切片AW」§1）⇒ 拿不到 `文件:偏移` 级出处，只能取本工程自定值并逐条如实标注', 'client/Assets/Scripts/Module/Combat/CsCombatTuning.cs（31 条逐行已标「本项目新增」+ 该条与 A 的关系）；Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36', '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
     ('62', '切片N（S1）：Defuser / Vest / VestHelm **没有第一人称 viewmodel / AnimatorController**', '它们是**被动装备** —— A（CS 1.6）里既不能"手持"、也没有第一人称动作 ⇒ **原版本身就没有**这三个 v_ 模型。旧判据把 CsWeapons 里所有 id 都当武器、要求 vm_<id>.controller 存在，对它们不成立；要满足它只能去 Editor/Views **生成**这三个控制器 = 造 A 没有的素材（skill §0 铁律 1）⇒ 判据已改为「A 也无此 viewmodel ⇒ 一致」', 'tools/probes/enumerate-entities.py（S1 段的 S1_PASSIVE_EQUIPMENT 分支）；依据 = client/Assets/Editor/Views/ModelData/*.cs16anim 共 38 个（29 个 vm_* + 9 个 player_*，装备类 0 命中）+ client/Assets/Resources/Art/Anim 的 29 个 vm_*.controller；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
@@ -1585,16 +1588,24 @@ DIF = [
     # ---- 片AZ（2026-09-22）：用户本轮 10 条报告（#66~#75）+ 同类漏检（#77）的差异四要素 ----
     #  编号与 `策划/验收表.md`「允许的差异」段逐条一一对应（闸门第 24 条 differences-source-of-truth 每次校验）。
     ('66', 'B 点旋转楼梯（及**全图所有楼梯/坡道/台阶**）上不去',
-     '离线判据里**没有"沿楼梯从底走到顶"这条链**：`tools/probes/geom-check.py` 只做 A5「低矮障碍 71 候选」'
-     '（来路判挡 / 顶面可站 / 横跨窗口），没有"多级台阶 × 膝盖射线 × StepUp 闸门"的逐级推进判据；'
-     '运行时四道闸门在 `client/Assets/Scripts/Module/Map/CsMap.cs:514-531`（① 中心格可走 ② 落点地面高差 ≤ `CsConst.StepUpHeight`=0.45m ③ 落点法线 y ≥ `CsConst.MaxStandableSlopeNormalZ`=0.70 ≈45.573° ④ 膝盖高度射线通畅），'
-     '两层判据入口 `:298-299`。另：本工程 B 点那段几何到底是**整片斜楔**还是**多级台阶**、与原版是否同形，**未离线判定**；'
-     '同类扩样：全图 T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台**都没有**同类判据（`策划/对照表.md:730` 只有一条常量级"坡道可站立阈值 差 0"）',
-     '用户本轮原话"B旋转楼梯上不去"；判据出处 `tools/probes/geom-check.py`（A5 段）/ `client/Assets/Scripts/Module/Map/CsMap.cs:298-299,514-531`；'
-     '常量出处 `client/Assets/Scripts/Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7，≈45.573° —— 与 GoldSrc `pm_shared.c` 的 `if (trace.plane.normal[2] < 0.7) goto usedown;` 同口径）；'
-     '几何载体 `client/Assets/ThirdParty/Dust2/de_dust2_geo.bin` + `de_dust2.bsp`；原版 .bsp 本机不在盘 ⇒ **待补**（降级链第 1 级：原始数据；退到第 3 级 = bsp 专用格式原始结构）',
-     '开「楼梯/坡道可走性」片时：先补离线判据（高差 ≤0.45m 的连续落差面分类成台阶/斜面，逐段做底→顶可走断言），'
-     '再按判据结果改 `CsMap.TryStepUp` / 几何；修后按**数值类**采一次运行时日志行 + 断言（⛔ 不靠截图）'),
+     '【片BD 2026-09-22 实测 ⇒ 本条**降级**：走向**可走性已判通**，残留的是"与原版是否同形"】'
+     '① 此前缺的判据链已补齐：`tools/probes/bstairs-walkline.cs` → `tools/probes/bstairs-walkline.txt`，'
+     '沿**真实走廊路径**（A* 独立复算，契约同引擎 `AStar`）逐帧（≤0.25 m/帧）走 底→顶 —— '
+     '**T 侧 frames=162 / 被钳住帧=0 / 到顶=True；CT 侧 frames=125 / 被钳住帧=0 / 到顶=True**；'
+     '逐格四道闸门（`CsMap.cs:514-531`）被拒格 T 0/32、CT 1/24（那 1 格是标记点自带 y 与实测地面 y 的初值差 0.553 m，非真实阻断）。'
+     '② **形态已定案**：本工程 B 点是**整片斜楔（连续斜面）不是多级台阶** —— T 侧 10 格 × 1.000 m 连续抬升、每格 +0.333 m、'
+     '地面法线 y 恒 0.949（≈18.4°）；CT 侧 3 格 × 1.000 m 每格 −0.125 m 下坡接平台。'
+     '⚠️ **与原版 .bsp 的 brush 形态尚未对账**（载体在盘、本片未解析 brush/平面表）。'
+     '③ **仍存的同类缺口**：全图 T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台只有 B 这两段有本探针覆盖，其余未纳入'
+     '（`策划/对照表.md:730` 只有一条常量级"坡道可站立阈值 差 0"）',
+     '用户本轮原话"B旋转楼梯上不去"；判据与数字出处 `tools/probes/bstairs-walkline.txt`（(B) 地面剖面 / (D) 逐格 / (E) 逐帧）'
+     ' + `tools/probes/bot-path-check.py`（位图层面 32/32/24/24 格 all cells walkable）；'
+     '运行时口径 `client/Assets/Scripts/Module/Map/CsMap.cs:298-299,514-531`；'
+     '常量出处 `client/Assets/Scripts/Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7，≈45.573°，与 GoldSrc `pm_shared.c` 的 `if (trace.plane.normal[2] < 0.7) goto usedown;` 同口径）；'
+     '几何载体 `client/Assets/ThirdParty/Dust2/de_dust2_geo.bin` + `de_dust2.bsp`（2,057,288 B，**在盘**）',
+     '① 可走性：**不消除**（实测本来就通 —— 用户报的"上不去"在本工程盘上复现不出来，已如实登记，未改任何阈值/几何）；'
+     '② 形态对账：开「B 点几何与原版同形」片时解析 `de_dust2.bsp` 的 brush/平面表，给出"几级台阶 / 每级高宽 / 斜面角度"数字，'
+     '再决定改几何还是改阈值；③ 全图其余楼梯/坡道扩样另片'),
     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步',
      '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：'
      '① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0）⇒ 只能沿标记点最近邻序列走直线；'
