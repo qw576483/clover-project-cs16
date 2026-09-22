@@ -36,6 +36,10 @@ namespace Cs16.Module.Bot
     {
         private const string Tag = BotModule.Tag;
 
+        /// <summary>走到守位上"算到了"的水平距离（米）。出处：**本项目新增**（守位实现参数，A 无 bot AI）；
+        /// 取值 = 略小于 <c>CsConst.PlayerRadius</c>×2（0.72m），保证人确实落在守位格上而不是擦着过。</summary>
+        private const float CampSpotArriveRadius = 0.6f;
+
         private readonly ICsMatch _match;
         private readonly ICsMap _map;
         private readonly BotSense _sense;
@@ -80,6 +84,18 @@ namespace Cs16.Module.Bot
         private float _campMoveUntil;
         private float _campPickAt;
         private Vector3 _campSpot;
+
+        // ---- 包点守位表（切片BG：守卫在包点内**多点分布 + 定时换位**，而不是单点站桩）----
+        /// <summary>本包点的守位表（数据源 = 该包点的地图标记点，全部经 <c>ICsMap.CanStand</c> 过滤）。</summary>
+        private readonly List<Vector3> _holdSpots = new List<Vector3>(16);
+        /// <summary>自己当前占的守位下标（<c>-1</c> = 还没选过）。</summary>
+        private int _holdSlot = -1;
+        /// <summary>下一次换位的时刻（<c>0</c> = 还没起算，到达守位时才起算）。</summary>
+        private float _holdSwapAt;
+        /// <summary>本包点的标记名（<see cref="CsMarkers.BombsiteA"/> / <see cref="CsMarkers.BombsiteB"/>；null = 本轮不在包点守卫）。</summary>
+        private string _holdSiteMarker;
+        /// <summary>本回合累计换位次数（写进日志，是"真的换位了"的证据载体）。</summary>
+        private long _holdSwapCount;
 
         // ---- 路线走完之后的后续行为（换目标 / 重寻路）----
         /// <summary>第几次"重新选目标"（用来交替"换一条路线"与"去巡逻"）。</summary>
@@ -240,6 +256,11 @@ namespace Cs16.Module.Bot
             _heardTime = 0f;
             _campMoveUntil = 0f;
             _campPickAt = 0f;
+            _holdSpots.Clear();
+            _holdSlot = -1;
+            _holdSwapAt = 0f;
+            _holdSiteMarker = null;
+            _holdSwapCount = 0;
             _switchCooldownUntil = 0f;
             _strafeFlipAt = 0f;
             _engageEvent = false;
@@ -381,6 +402,78 @@ namespace Cs16.Module.Bot
             _stallCount = 0;
             _campPickAt = 0f;
             _campMoveUntil = 0f;
+
+            // 包点守卫 → 构造守位表（数据源 = 包点标记点，见 CsBotHoldSpots）。
+            // 非包点目标（中路 / 巡逻 / 出生点）清空守位表 ⇒ 那几个目标仍走旧的"守够就换目标"。
+            _holdSpots.Clear();
+            _holdSlot = -1;
+            _holdSwapAt = 0f;
+            _holdSiteMarker = null;
+
+            if (_goalValid && _goalIsSite && self.Team == CsTeam.CT)
+            {
+                NearestBombsitePoint(_goalPos, out var siteDist, out var siteName);
+                if (siteDist <= CsBotConst.SiteRadius)
+                {
+                    _holdSiteMarker = siteName == "Bombsite A" ? CsMarkers.BombsiteA : CsMarkers.BombsiteB;
+                    var n = CsBotHoldSpots.Build(_map, _holdSiteMarker, _holdSpots);
+                    if (n >= 2)
+                    {
+                        _holdSlot = CsBotHoldSpots.PickSlot(_holdSpots, -1, self, _match.Actors);
+                        Game.Logger.Info(Tag,
+                            $"守位表就绪：{_name}（CT）包点 {_holdSiteMarker} 守位 {n} 个 " +
+                            $"起始守位 {_holdSlot + 1}/{n} @ {_holdSpots[_holdSlot]} " +
+                            $"（每 {CsBotConst.HoldSwapSeconds:F0}s 换位一次；守位间距 ≥ {CsBotConst.HoldSpotMinSeparation:F1}m）");
+                    }
+                    else
+                    {
+                        _holdSiteMarker = null;   // 取不到多点 ⇒ 明确退回单点守点（并已由 Build 打 Warn）
+                    }
+                }
+                else
+                {
+                    Game.Logger?.Warn(Tag,
+                        $"{_name} 的目标被判为包点（_goalIsSite）但离最近的包点标记 {siteDist:F1}m > {CsBotConst.SiteRadius:F0}m " +
+                        "→ 不构造守位表，退回单点守点");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 离 <paramref name="pos"/> 最近的**包点标记点**（A/B 一起比），并给出这个距离与包点名。
+        ///
+        /// <para>这就是"在不在包点里"的判据 —— 与 <c>CsBomb.IsInBombsite</c>（<c>Module/Match/CsBomb.cs:478</c>）
+        /// 同一口径：到**任一**包点标记的水平距离 ≤ <c>CsMarkers.BombsiteRadius</c>（= <see cref="CsBotConst.SiteRadius"/>）。</para>
+        /// </summary>
+        /// <returns>最近的包点标记点；地图/标记不可用时返回 <paramref name="pos"/> 且距离 = <c>float.MaxValue</c>。</returns>
+        private Vector3 NearestBombsitePoint(Vector3 pos, out float dist, out string siteName)
+        {
+            dist = float.MaxValue;
+            siteName = null;
+            var point = pos;
+
+            if (_map == null || !_map.IsLoaded) return point;
+
+            for (var s = 0; s < 2; s++)
+            {
+                var isA = s == 0;
+                var pts = _map.Points(isA ? CsMarkers.BombsiteA : CsMarkers.BombsiteB);
+                if (pts == null) continue;
+
+                for (var i = 0; i < pts.Length; i++)
+                {
+                    var d = pts[i] - pos;
+                    d.y = 0f;
+                    var len = d.magnitude;
+                    if (len >= dist) continue;
+
+                    dist = len;
+                    point = pts[i];
+                    siteName = isA ? "Bombsite A" : "Bombsite B";
+                }
+            }
+
+            return point;
         }
 
         /// <summary>
@@ -1201,36 +1294,55 @@ namespace Cs16.Module.Bot
 
             if (self.HasBomb)
             {
-                if (!_goalValid)
-                {
-                    RateWarn("plant.nogoal", $"{_name} 拿着 C4 但没有可用包点标记 → 无法下包");
-                    return false;
-                }
+                // ★ 切片BG · 下包决策：判据 = **离最近的包点标记**的水平距离 ≤ SiteRadius
+                //   （与 CsBomb.IsInBombsite 同口径，见 NearestBombsitePoint 注释）。
+                //   ⛔ 旧行为用"到本轮计划目标点"的距离 + 用 SiteRadius 当**停步半径** ⇒
+                //      机器人正好停在判定球面上，CanPlant 的 IsInBombsite 随浮点误差真假 ⇒ 表现为"到了又走了"。
+                var near = NearestBombsitePoint(self.Position, out var zoneDist, out var zoneName);
 
-                var d = _goalPos - self.Position;
-                d.y = 0f;
-                if (d.magnitude <= CsBotConst.SiteRadius)
+                if (zoneDist <= CsBotConst.SiteRadius)
                 {
                     SetState(CsBotState.Plant, now);
                     intent.State = CsBotState.Plant;
-                    intent.Move = Vector3.zero;
+                    intent.Move = Vector3.zero;   // CanPlant 要求"停下"（CsBomb.IsMoving ⇒ 不许下包）
                     intent.Use = true;
                     intent.Fire = false;
-                    intent.AimPoint = WithEyeHeight(_goalPos);
+                    intent.AimPoint = WithEyeHeight(near);
 
                     if (now >= _lastUseLogAt)
                     {
                         _lastUseLogAt = now + CsBotConst.StateLogMinInterval;
                         Game.Logger.Info(Tag,
-                            $"{_name} 已进入包点（距标记 {d.magnitude:F1}m ≤ {CsBotConst.SiteRadius:F0}m）→ 按住 E 下包");
+                            $"[C4] {_name} 在包点 {zoneName} 内（距最近包点标记 {zoneDist:F2}m ≤ {CsBotConst.SiteRadius:F0}m）" +
+                            $"→ 下包决策：停住 + 按住 E（需 {CsConst.PlantTime:F1}s）");
                     }
                     return true;
                 }
 
+                // 还没进包点：朝"本轮计划的包点"推进；计划不可用时退化为"离自己最近的包点"。
+                // 目标点 = 该包点里**离自己最近的那个标记点**；停步半径 = PlantStopRadius（⛔ 不是 SiteRadius）。
+                if (!_goalValid)
+                {
+                    RateWarn("plant.nogoal",
+                        $"{_name} 拿着 C4 但没有可用包点标记（本轮计划无目标）→ 只能朝最近的包点标记走");
+                }
+
+                var dest = _goalValid ? _goalPos : near;
+                var destNear = NearestBombsitePoint(dest, out _, out _);
+                var aim = destNear.sqrMagnitude > 0.0001f ? destNear : dest;
+
                 SetState(CsBotState.Plant, now);
                 intent.State = CsBotState.Plant;
-                intent.Move = _nav.ComputeMove(self.Position, _goalPos, CsBotConst.SiteRadius, now);
-                intent.AimPoint = LookPoint(self, WithEyeHeight(_nav.CurrentTarget(self.Position, _goalPos)));
+                intent.Move = _nav.ComputeMove(self.Position, aim, CsBotConst.PlantStopRadius, now);
+                intent.AimPoint = LookPoint(self, WithEyeHeight(_nav.CurrentTarget(self.Position, aim)));
+
+                if (now >= _lastUseLogAt)
+                {
+                    _lastUseLogAt = now + CsBotConst.StateLogMinInterval;
+                    Game.Logger.Info(Tag,
+                        $"[C4] {_name} 携带 C4 冲向包点：目标={aim} 距最近包点标记 {zoneDist:F2}m " +
+                        $"(> {CsBotConst.SiteRadius:F0}m) 停步半径={CsBotConst.PlantStopRadius:F1}m");
+                }
                 return true;
             }
 
@@ -1324,6 +1436,30 @@ namespace Cs16.Module.Bot
                 }
             }
 
+            // ★ 切片BG · 包点守卫：**站住 + 定时换位**（守位表 ≥2 个时才走这条路）。
+            //   ⛔ 关键差别：这里**不会**走下面的 ③"守够时间就换目标" ——
+            //   守卫整回合留在自己这个包点，只是在包点内的 2~3 个守位之间轮换。
+            //   （旧行为 = 守 ObjectiveHoldSeconds（2.5~4.8s）就换路线/去巡逻/回出生点 ⇒ 用户报的"原地踱步、警不去守点"。）
+            if (HoldSiteActive(self))
+            {
+                if (_holdSwapAt <= 0f) _holdSwapAt = now + CsBotConst.HoldSwapSeconds;   // 到达才起算换位计时
+                HoldRotate(self, now);
+
+                var spot = _holdSpots[_holdSlot];
+                var ds = spot - self.Position;
+                ds.y = 0f;
+                if (ds.magnitude > CampSpotArriveRadius)
+                {
+                    intent.Move = _nav.ComputeMove(self.Position, spot, CampSpotArriveRadius, now, viaRoute: false);
+                    intent.AimPoint = WithEyeHeight(spot);
+                    return intent;
+                }
+
+                intent.Move = Vector3.zero;
+                intent.AimPoint = WithEyeHeight(HoldWatchPoint(self, goal));
+                return intent;
+            }
+
             // ② 周期性挪窝
             if (now >= _campPickAt)
             {
@@ -1412,6 +1548,80 @@ namespace Cs16.Module.Bot
             }
 
             return best;
+        }
+
+        // ==================================================================
+        //  包点守卫：站住 + 定时换位（切片BG）
+        // ==================================================================
+        /// <summary>
+        /// 是否处于"包点守卫"模式：CT + 包未下 + 本轮目标是包点 + 该包点构造出了 ≥2 个可用守位。
+        /// 任一不满足 ⇒ 走旧的"守够就换目标"路径（缺守位表时不许假装能多点分布）。
+        /// </summary>
+        private bool HoldSiteActive(CsActor self)
+        {
+            return self.Team == CsTeam.CT
+                && !_match.BombPlanted
+                && _goalIsSite
+                && _holdSiteMarker != null
+                && _holdSpots.Count >= 2
+                && _holdSlot >= 0
+                && _holdSlot < _holdSpots.Count;
+        }
+
+        /// <summary>到点就换到下一个守位（<see cref="CsBotHoldSpots.PickSlot"/> 取"离队友最远"的那个），并打一条带数字的 Info。</summary>
+        private void HoldRotate(CsActor self, float now)
+        {
+            if (now < _holdSwapAt) return;
+
+            _holdSwapAt = now + CsBotConst.HoldSwapSeconds;
+
+            var next = CsBotHoldSpots.PickSlot(_holdSpots, _holdSlot, self, _match.Actors);
+            if (next < 0 || next == _holdSlot) return;    // 守位只有 1 个 → 不"换"
+
+            var from = _holdSlot;
+            _holdSlot = next;
+            _holdSwapCount++;
+
+            Game.Logger.Info(Tag,
+                $"守点换位：{_name}（CT）包点 {_holdSiteMarker} 第 {_holdSwapCount} 次换位 " +
+                $"守位 {from + 1}→{next + 1}/{_holdSpots.Count} 新位置={_holdSpots[next]} " +
+                $"（下次换位 {CsBotConst.HoldSwapSeconds:F0}s 后）");
+        }
+
+        /// <summary>
+        /// 守卫的注视点：看向**本方包点被进攻的那条路**（A ↔ <see cref="CsMarkers.TAttackA"/>、
+        /// B ↔ <see cref="CsMarkers.TAttackB"/>）里离自己最近的标记点 —— 即"盯住入口方向"。
+        /// 取不到（标记缺失）就用包点目标点兜底，保证 <c>AimPoint</c> 非零。
+        /// </summary>
+        private Vector3 HoldWatchPoint(CsActor self, Vector3 goal)
+        {
+            if (_map != null && _map.IsLoaded && _holdSiteMarker != null)
+            {
+                var route = _holdSiteMarker == CsMarkers.BombsiteB ? CsMarkers.TAttackB : CsMarkers.TAttackA;
+                var pts = _map.Points(route);
+                if (pts != null && pts.Length > 0)
+                {
+                    var best = -1f;
+                    var watch = Vector3.zero;
+                    for (var i = 0; i < pts.Length; i++)
+                    {
+                        var d = pts[i] - self.Position;
+                        d.y = 0f;
+                        var dist = d.magnitude;
+
+                        // 只看自己这一侧的入口（守位半径的 8 倍内），避免盯着地图另一头的路点
+                        if (dist > CsBotConst.CampRepositionRadius * 8f) continue;
+                        if (best >= 0f && dist >= best) continue;
+
+                        best = dist;
+                        watch = pts[i];
+                    }
+
+                    if (best >= 0f) return watch;
+                }
+            }
+
+            return goal;
         }
 
         // ==================================================================

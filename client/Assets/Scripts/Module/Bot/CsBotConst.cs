@@ -355,6 +355,42 @@ namespace Cs16.Module.Bot
         /// 出处：行为口径见规格 §2.4 的 Hard 行「会换位」；**半径值本项目新增**。</summary>
         public const float CampRepositionRadius = 6f;
 
+        // ==================== 包点守位表（切片BG） ====================
+        /// <summary>
+        /// 包点守卫**换位间隔**（秒）：CT 在自己的守位表里每这么多秒挪到下一个守位。
+        ///
+        /// <para>为什么不是"到点就走"（旧行为 = 守 <see cref="ObjectiveHoldSeconds"/> 就换目标 ⇒ 观感"原地踱步"）：
+        /// 守位表把"守点"拆成**站住 + 定时换位** —— 人始终留在包点，只是在包点内的 2~3 个守位之间轮换。</para>
+        ///
+        /// <para>出处：**本项目新增**（A = CS 1.6 本体不含 bot AI，见本文件 :18-19，本量在 A 里没有对应载体）。
+        /// 取值理由：① 明显大于旧 <see cref="CampRepositionSeconds"/>=2.5s 的"抖动"量级，移动是"换位"而不是来回蹭；
+        /// ② 小于单个 C4 周期 <c>CsConst.BombTimer</c>=35s（出处 <c>server.cfg:43</c> 的 <c>mp_c4timer 35</c>）的 1/4，
+        /// 使一次守包窗口内每个守位都至少被转移到一次。</para>
+        /// </summary>
+        public const float HoldSwapSeconds = 8f;
+
+        /// <summary>
+        /// 同一包点内两个守位之间的**最小间距**（米）：间距小于它的标记点会被折叠成同一个守位。
+        ///
+        /// <para>出处：**本项目新增**（守位表实现参数，A 无 bot AI）。取值理由 = 远大于两人贴身距离
+        /// （<c>CsConst.PlayerRadius</c> = 0.36m 直径 0.72m）：否则"多点分布"退化成一格上叠两个人。</para>
+        /// </summary>
+        public const float HoldSpotMinSeparation = 3f;
+
+        /// <summary>
+        /// 携带 C4 的 T 走到离**最近的包点标记**多远就停下开下（米）。
+        ///
+        /// <para>⛔ 为什么必须**远小于**包点判定半径 <see cref="SiteRadius"/>（= 7m，
+        /// 真源 <c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius</c>）：
+        /// 停步半径 == 判定半径（旧行为用 <see cref="SiteRadius"/> 同时当"走到哪算到"与"能不能下"）时，
+        /// 机器人会**正好停在判定球面上**，`CsBomb.CanPlant` 的 `IsInBombsite` 随浮点误差反复真假 ⇒
+        /// 表现为"到了包点又走了"（下包永远起不来）。这里取 1.5m，保证站定时
+        /// "到最近包点标记的距离" 恒 &lt; 判定半径。</para>
+        ///
+        /// <para>出处：**本项目新增**（下包实现参数，A 无 bot AI；被保护的量 <c>BombsiteRadius=7</c> 有出处）。</para>
+        /// </summary>
+        public const float PlantStopRadius = 1.5f;
+
         /// <summary>
         /// 只有 <c>id % 它 == 0</c> 的 T 会去捡掉落的 C4（4 人一队时通常只有 1 个人去，避免全队扑向同一个点）。
         /// 出处：**本项目新增**（分工实现参数，A 无 bot AI）。
