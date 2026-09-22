@@ -1774,7 +1774,40 @@ DIF = [
      '开「AI 移动 / 地形」片时：① **先接寻路**（#67 ①）让 bot 不再朝不可走方向推进；'
      '② 加"多帧贴地一致性"断言（`Position.y` 与 `SampleGround` 之差 ≤ 一个台阶，且不得低于它）；'
      '③ 判据 = 一次实机 + 逐帧数值日志（⛔ 不靠截图）；若步 (b) 坐实"软地板把人贴低"，改 `TrySoftFloor` 的回落条件（需另开片，⛔ 本片未改引擎/未改该链）'),
-    # --- 差异 #77 已于切片BO 2026-09-22 **核销**（事实不成立），⛔ 不再作为差异行登记 ---
+    # ---- 片BQ（2026-09-22）：位图孤立分量的**定案 = 乙**（真有几何挡/真实落差，原版也走不过去）
+    #   ⇒ 按 T0「宁可登记为差异，不许放水」登记四要素；⛔ 本片**未改**位图 / 未重烘（定案不是甲、也不是丙）。
+    ('77', 'de_dust2 的可走位图**不是单连通**：宽口径 46 个连通分量（主分量 4393 / 5312 格 = 82.7%，非主 919 格）、'
+     '本片按引擎 A* 移动规则（对角要求两侧正交格可走）的严格口径 53 个（主分量 4369 / 5312 = 82.2%，非主 943 格）；'
+     '11 / 117 个运行时标记点落在非主分量里 —— Bombsite_B[5]、Bombsite_B[8]、BuyZone_CT[2]、BuyZone_CT[3]、BuyZone_CT[8]、'
+     'Route_CT_Mid[1]、Route_T_To_A[4]、Route_Patrol[1]、Route_Patrol[4]、Route_Patrol[5]、Route_Patrol[6] '
+     '⇒ bot 对这些目标求不出路径，`BotNavigator.EnsurePath` 落进「两格都可走但位图不连通」那一支（实测日志 ×N）。'
+     '⛔ 这不是"判据写错"（甲不成立：规则是"最低地面层的人体高度带 [f+0.10, f+1.75] 里没有墙"，'
+     '出处 `client/Assets/Editor/MapGen/Dust2GeoData.cs:213-247` + 转换侧 `tools/probes/rebuild-blockers.py` 的规则段），'
+     '也⛔不是"烘焙过期"（丙不成立，见第 ③ 条证据）。',
+     '这些分量与原版几何的**真实落差 / 真实墙面**重合。三条同批盘上证据：'
+     '① 把位图整个拿掉、只留产品自己的台阶判据（抬升 ≤ `CsConst.StepUpHeight`=0.45 m）从 T 出生点格 (56,20) 扩张，'
+     '**每一个**非主分量的可达格数都是 **0%**（#43=323、#29=192、#50=103、#22=84、#40=24、#0=21、#26=19、#42=19、#52=16、#1=15、#51=15 格）'
+     '⇒ 是几何落差把位图切成岛，位图无责；'
+     '② 产品日志那一对「起点 (56, 20) / 终点 (45, 15)」**同在主分量 #2**（位图上零阻隔格、严格 A* 距离仅 13 格）——'
+     '失败发生在位图**之上**的「高度一致性层」（`Module/Bot/BotNavigator.cs` 的 `BuildHeightReach`）：'
+     '离线按同一式复算的高度可达集 = **4173 格**，与产品日志的「可达集 4173 格」**逐字相同**；'
+     '而 (45,15) 的落脚面 y = **8.941 m**、其南侧步行面 y ≈ 3.8 m ⇒ 落差 **5.11 m ≫ 0.45**；'
+     '③ 逐格复算「官方生成路径」（场景 `Level/Blockers` 的 811 个格盒 → 引擎 MapBaker 的「格柱 ∩ 障碍 AABB」）'
+     '与当前 `client/Assets/MapData/de_dust2.bytes` 的位图 **0 / 18415 格不一致** ⇒ 重烘不会改变任何一格（⛔ 排除丙）。'
+     '⇒ 定案 **乙**：真的有几何挡，原版玩家也走不过去。',
+     '本片证据（均可直接打开）：`tools/probes/marker-connectivity.py`（宽口径分量 + 每点归属 + 每条 `Route_*` 相邻路点可达性）、'
+     '`tools/probes/astar-pocket-diag.py`、`tools/probes/bq-analysis.py` + 输出 `.ai-tmp/test/bq-analysis.txt`'
+     '（分量表 + 「忽略位图」可达性 + 逐格面 y/净空）、`tools/probes/bq-bakepath.py` + 输出 `.ai-tmp/test/bq-bakepath.txt`'
+     '（官方生成口径逐格复算 0/18415）、`tools/probes/bq-blockers.py`（对格逐格打印面 y/法线）；'
+     '产品日志 `.ai-tmp/test/bp-hold-plant-log.tsv`（`两格都可走但位图不连通（起点 (56, 20) / 终点 (45, 15)）` + `可达集 4173 格`）；'
+     '位图生成侧 `client/Assets/Editor/MapGen/Dust2GeoData.cs:213-247`、'
+     '`client/Assets/Editor/MapGen/MapBakeRunner.cs:90-109`、`client/Assets/Editor/MapGen/Dust2Builder.cs:251-279`；'
+     '落差判据 `client/Assets/Scripts/Module/Map/CsMap.cs:514-523` 与 `client/Assets/Scripts/Core/CsConst.cs`（StepUpHeight）；'
+     '同根差异见本表 #49（`MapFormat.FlagHeightField` 未实现 ⇒ 位图只有单层）与 #76（单层位图 + 软地板 + 无寻路）。',
+     '把单层 2D 位图换成带高度层/多层的导航数据（引擎 `MapFormat` 的 `FlagHeightField` V1）之后；'
+     '在那之前，取点侧 `Dust2Builder.SnapMarkerToWalkable` 只能保证「点可走」，⛔ 保证不了「走得到」'
+     '—— 消掉这条差异要么让取点侧也做高度一致性检查，要么把落在不可达分量里的 11 个标记点全部迁到主分量。'),
+    # --- 差异 #77（旧）已于切片BO 2026-09-22 **核销**（事实不成立）；编号 77 现由片BQ 的上述事实使用 ---
     # 原登记内容：「有寻路能力但业务零使用：引擎通用格子 A*（Runtime/Core/AStar.cs）从未被业务调用」。
     # 核销依据（同批盘上证据，均可直接打开）：
     #   ① 能力侧：client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（8 邻接 + octile，
