@@ -221,6 +221,60 @@ if (Test-Path $nextMd) { $bad++; Note 'MISS  .ai-tmp/test/NEXT.md was left behin
 if (-not (Test-Path $envChk)) { $bad++; Note 'MISS  tools/env-check.ps1 was not restored' }
 foreach ($p in $loose) { if (Test-Path $p) { $bad++; Note ('MISS  loose probe png left behind: ' + (Split-Path $p -Leaf)) } }
 
+# =====================================================================
+#  5) slice AX: reference-table-refs (verify.ps1 item 8b)
+#     Two samples, per SKILL 8.3: (1) the pristine reference table PASSES,
+#     (2) an INJECTED dangling carrier FAILS,
+#     (3) a REGISTERED carrier made reachable again (stale silencer) FAILS,
+#     (4) restored => PASS again, with a hash self-check.
+#     The injected carrier name is assembled at RUNTIME: a literal here would sit in
+#     this script's own text, and a future grep-style check would count this file as a
+#     citation of it -- the defect would then heal itself (the trap verify.ps1 item 26
+#     documents).
+# =====================================================================
+Note ''
+Note '--- slice AX: reference-table-refs (reachable OR registered) ---'
+$refTbl = Join-Path $plan ((([char[]]@(0x5BF9, 0x7167, 0x8868)) -join '') + '.md')
+$cYbzy = ([char[]]@(0x539F, 0x7248, 0x8D44, 0x6E90) -join '')
+$regTsv = Join-Path $plan ((([char[]]@(0x8F7D, 0x4F53, 0x53EF, 0x8FBE, 0x6027, 0x767B, 0x8BB0)) -join '') + '.tsv')
+$tblBak = Join-Path $Project '.ai-tmp\test\ax-selftest-reftable.bak'
+$ghostCarrier = $cYbzy + '/cs16src/ax-selftest-' + [guid]::NewGuid().ToString('N').Substring(0, 10) + '.md'
+$regProbe = Join-Path $Project ($cYbzy + '\cs16src\cs16_anim.py')   # a registered (unavailable) carrier
+if (-not (Test-Path $refTbl)) {
+  Note ('FAIL  reference-table-refs : reference table not found at ' + $refTbl)
+  $bad++
+} else {
+  Copy-Item $refTbl $tblBak -Force
+  $hT0 = HashOf $refTbl
+  Expect 'reference-table-refs / good (pristine table)' (Invoke-Gate 'reference-table-refs') 'PASS'
+
+  # (a) injected defect: one carrier path that resolves to nothing and has no row.
+  $t = [IO.File]::ReadAllText($refTbl, [Text.Encoding]::UTF8)
+  [IO.File]::WriteAllText($refTbl, $t + "`r`n<!-- ax-selftest --> " + $ghostCarrier + "`r`n",
+                          (New-Object Text.UTF8Encoding($false)))
+  Note ('  injected ghost carrier: ' + $ghostCarrier)
+  Expect 'reference-table-refs / bad (dangling carrier, no row)' (Invoke-Gate 'reference-table-refs') 'FAIL'
+  Copy-Item $tblBak $refTbl -Force
+
+  # (b) injected defect: a registered-but-unavailable carrier is now ON DISK =>
+  #     the registry row is a stale silencer and must be reported.
+  if (Test-Path $regProbe) {
+    Note ('WARN  reference-table-refs / stale : ' + $regProbe + ' already exists -- sample skipped')
+  } elseif (-not (Test-Path $regTsv)) {
+    Note ('WARN  reference-table-refs / stale : registry not found at ' + $regTsv)
+  } else {
+    [IO.File]::WriteAllText($regProbe, 'ax-selftest', (New-Object Text.UTF8Encoding($false)))
+    Expect 'reference-table-refs / bad (registered carrier reachable again)' (Invoke-Gate 'reference-table-refs') 'FAIL'
+    Remove-Item $regProbe -Force -ErrorAction Continue
+  }
+
+  Expect 'reference-table-refs / restored' (Invoke-Gate 'reference-table-refs') 'PASS'
+  Note ('  hash self-check: before=' + $hT0 + ' after=' + (HashOf $refTbl) + ' identical=' + ($hT0 -eq (HashOf $refTbl)))
+  if ($hT0 -ne (HashOf $refTbl)) { $bad++; Note 'MISS  the reference table was not restored byte-identically' }
+  if ((Test-Path $regProbe)) { $bad++; Note 'MISS  the ax-selftest carrier probe file was left behind' }
+  Remove-Item $tblBak -Force -ErrorAction Continue
+}
+
 Note ''
 Note ('===== gate-selftest summary: unmet-expectations=' + $bad + ' =====')
 exit $(if ($bad -gt 0) { 1 } else { 0 })

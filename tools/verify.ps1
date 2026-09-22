@@ -343,6 +343,52 @@ function Invoke-Checks {
   if (Test-Path $refTable) { Say 'PASS' 'reference-table' $refTable }
   else { $script:fail++; Say 'FAIL' 'reference-table' ("missing: " + $refTable + " -- every replicated element needs original / ours / delta") }
 
+  # --- 8b) reference table: every cited carrier reachable OR registered ------
+  # WHY (slice AX, 2026-09-22): item 8 above only ever asserted that the table FILE
+  # exists -- it never looked INSIDE it, and item 5 (screenshot-refs) resolves the
+  # ACCEPTANCE table's citations only.  So every dangling carrier path written in the
+  # reference table was untested for the whole life of the project: measured that day,
+  # section 0 alone cited 4 carrier paths that were not on disk, one of them labelled
+  # `Test-Path = True`.  SKILL 0.6: a rule that cannot be tested red is not a gate.
+  # Judgement (computable, no eyeball): tools/probes/scan-reftable-refs.py resolves every
+  # yuan-ban-zi-yuan path / CL path / `file:line` citation (line <= file line count,
+  # 0x offset <= file size) and FAILs on any carrier that is neither on disk NOR
+  # registered (with the four elements what / why / source / expiry) in the
+  # plan-dir carrier-reachability registry (path built from code points below).
+  # A registry row whose carrier is reachable again FAILs too (a silencer left behind
+  # is worse than no gate at all).
+  # Scope is deliberately the reference table ONLY -- the acceptance table stays item 5's
+  # territory, otherwise the same citation is counted twice.
+  # The two-sample proof lives in tools/probes/gate-selftest.ps1 (inject a dangling path
+  # => FAIL, restore => PASS).
+  $cCarrierReg = ([char[]]@(0x8F7D, 0x4F53, 0x53EF, 0x8FBE, 0x6027, 0x767B, 0x8BB0) -join '') + '.tsv'
+  $refScan = Join-Path $root 'tools\probes\scan-reftable-refs.py'
+  if (-not (Test-Path $refScan)) {
+    $script:fail++
+    Say 'FAIL' 'reference-table-refs' ('missing ' + $refScan + ' -- the reference table is unverifiable')
+  } elseif ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+    $script:fail++
+    Say 'FAIL' 'reference-table-refs' 'python is not on PATH -- cannot run scan-reftable-refs.py'
+  } else {
+    $refTmp = Join-Path $tmpRoot 'verify-reftable-refs.txt'
+    & python $refScan | Set-Content -Encoding UTF8 $refTmp
+    $refRc = $LASTEXITCODE
+    $refOut = @(Get-Content $refTmp -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 })
+    $refLast = if ($refOut.Count -gt 0) { $refOut[$refOut.Count - 1] } else { '(no output)' }
+    $refHead = if ($refOut.Count -gt 0) { $refOut[0] } else { '(no output)' }
+    if ($refRc -eq 0) {
+      Say 'PASS' 'reference-table-refs' $refLast
+      Sub $refHead
+      $refOut | Where-Object { $_ -match '^\s+index:|^\s+reachable-or-registered:' } | Select-Object -First 3 | ForEach-Object { Sub $_.Trim() }
+    } else {
+      $script:fail++
+      Say 'FAIL' 'reference-table-refs' $refLast
+      Sub $refHead
+      $refOut | Where-Object { $_ -match '^\s+(DANGLING|STALE-REGISTRY)' } | ForEach-Object { Sub $_.Trim() }
+      Sub ('registry = ' + (Join-Path $planDir $cCarrierReg) + ' -- every dangling carrier needs a row with what / why / source / expiry')
+    }
+  }
+
   # --- 9) handover / progress documents must not exist ---------------------
   $bad9 = @(Get-ChildItem $root -Recurse -Filter *.md -File -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -notmatch '\\Library\\' } |
