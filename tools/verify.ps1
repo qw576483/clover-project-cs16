@@ -702,8 +702,8 @@ if (-not (Test-Path $irPath)) {
 #  cannot be tested red is not a gate -- and on 2026-09-21 this entry found 8 stale
 #  aggregates out of 21 (68 vs 72 ok, 4 vs 0 blocked, 36 vs 46 differences ...), i.e. the
 #  old wording really was hiding a drift.
-#  Python is used because the parse is markdown-structure work; the script is a 判据资产
-#  (tools/probes/) and prints an ASCII-only PASS/FAIL with the per-claim detail.
+#  Python is used because the parse is markdown-structure work; the script is a JUDGEMENT
+#  ASSET (tools/probes/) and prints an ASCII-only PASS/FAIL with the per-claim detail.
 $sumsScript = Join-Path $root 'tools\probes\check-acceptance-sums.py'
 if (-not (Test-Path $sumsScript)) {
   $script:fail++
@@ -1024,7 +1024,7 @@ if (-not (Test-Path $playLedger)) {
 #              failed here: this item's rule is "log/assertion, not a picture",
 #              while "a verdict row must anchor to a machine-produced artifact"
 #              is template item `evidence-anchor`, which is still `planned` and
-#              not enforced by this project yet.  ⛔ Deliberately not conflated.
+#              not enforced by this project yet.  HARD RULE: deliberately not conflated.
 #  All acceptance rows of the A-F sections are scanned (not just A-E): the F
 #  resource section carries numeric rows too.
 $probesDir = Join-Path $root 'tools\probes'
@@ -1104,7 +1104,7 @@ if (($teamLive.Count -eq 0) -and ($teamLog.Count -eq 0)) {
 #  pins the BATCH: the evidence of the newest contact-sheet manifest is the batch,
 #  its earliest png is the freeze point T0, and every (row, batch shot) pair is
 #  judged -- a shot is void only when it is older than ITS OWN row implementation
-#  file.  ⛔ NOT "any file in the project changed => everything is void": that
+#  file.  HARD RULE: NOT "any file in the project changed => everything is void": that
 #  global reading is exactly what made one edited .cs void 59 shots.
 #  Main-agent ruling (slice AI): do NOT merge this into `evidence-freshness`.
 #  That item scores every cited shot of every row; this one records the batch and

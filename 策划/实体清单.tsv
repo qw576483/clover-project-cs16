@@ -1400,6 +1400,9 @@ D1	client/Assets/ThirdParty/Dust2/Textures/wall_w.png	client/Assets/ThirdParty/D
 D1	client/Assets/ThirdParty/Dust2/Textures/white.png	client/Assets/ThirdParty/Dust2/Textures/white.png	Assets/client/Assets/ThirdParty/Dust2/Textures/white.png	1	脚本断言	D1D2D3 资产几何
 D1	client/Assets/ThirdParty/Dust2/de_dust2.bsp	client/Assets/ThirdParty/Dust2/de_dust2.bsp	Assets/client/Assets/ThirdParty/Dust2/de_dust2.bsp	1	脚本断言	D1D2D3 资产几何
 D1	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	1	脚本断言	D1D2D3 资产几何
+D1	世界武器模型（w_*.mdl）载体与中间数据（同类漏检：#9 的载体侧）	client/Assets/Editor/Views/ModelData/（38 份 = 9 角色 + 29 视模型，**无任何 w_* / 世界武器**）	用户本轮报#9；口径出处 `策划/对照表.md:135`（M-02：31 个 `v_*.mdl`）与 `:150`（M-17：38 份 cs16mdl = 9 + 29）	2	脚本断言	D1D2D3 资产几何
+D1	角色模型（9 皮肤：T/CT player_*.prefab）	client/Assets/Resources/Art/{T,CT}/**.prefab + client/Assets/Editor/Views/ModelData/player_*.cs16mdl/.cs16anim	用户本轮报#6；派生链出处 `策划/对照表.md:134,136,137,149,150`（M-01/M-03/M-04/M-16/M-17）→ `原版资源/cs16src/cs16_anim.py` / `cs16_build.py`（本机不在盘）	3	并排图	D1D2D3 资产几何
+D2	B 点旋转楼梯（几何形态：连续斜面 vs 台阶）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin + de_dust2.bsp	用户本轮报#1；工程几何组名/三角数见 `策划/对照表.md` §1；原版 .bsp 载体本机不在盘（降级链第 5 级：待补）	2	脚本断言	D1D2D3 资产几何
 D2	MltryCrteSd.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	51	脚本断言	D1D2D3 资产几何
 D2	MltryCrteSd2.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	72	脚本断言	D1D2D3 资产几何
 D2	MltryCrteTp.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	54	脚本断言	D1D2D3 资产几何
@@ -1436,6 +1439,7 @@ D2	djCredit1.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdPar
 D2	djCredit2.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	6	脚本断言	D1D2D3 资产几何
 D2	white.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	72	脚本断言	D1D2D3 资产几何
 D2	低矮障碍（含楼梯扶手/台阶沿）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	tools/probes/geom-check.py（A5）	71	脚本断言	D1D2D3 资产几何
+D2	全图楼梯 / 坡道 / 台阶（同类漏检：#1 只报了 B 旋转楼梯）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	T0 同类漏检；口径同 `Module/Map/CsMap.cs:514-531`	3	脚本断言	D1D2D3 资产几何
 D2	物件树/Blocker_xxxx（子物件）	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	811	脚本断言	D1D2D3 资产几何
 D2	物件树/Blockers	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	1	脚本断言	D1D2D3 资产几何
 D2	物件树/Bombsite_A	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	6	脚本断言	D1D2D3 资产几何
@@ -1457,6 +1461,7 @@ D2	物件树/Spawn_CT	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes
 D2	物件树/Spawn_T	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	20	脚本断言	D1D2D3 资产几何
 D2	物件树/Sun (dust2 light_environment)	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	1	脚本断言	D1D2D3 资产几何
 D2	物件树/Visual	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	1	脚本断言	D1D2D3 资产几何
+D2	第三人称手持武器（角色身上看不到拿什么枪）	client/Assets/Resources/Art/T/player.prefab + Resources/Art/CT/*.prefab	用户本轮报#9；预制体实测（`Art/T/player.prefab` 全量子节点 = Bip01 骨架 + Skin0/Skin1 + 4 个 Hitbox_* + Bomb，**无任何武器节点**）	2	并排图	D1D2D3 资产几何
 D2	箱子/box.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	36	脚本断言	D1D2D3 资产几何
 D2	箱子/box_x.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	Assets/ThirdParty/Dust2/SOURCES.txt	216	脚本断言	D1D2D3 资产几何
 D2	门组/SandWllDoor.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	135	脚本断言	D1D2D3 资产几何
@@ -1543,6 +1548,8 @@ D3	client/Assets/ThirdParty/Dust2/Materials/wall_h.mat	client/Assets/ThirdParty/
 D3	client/Assets/ThirdParty/Dust2/Materials/wall_w.mat	client/Assets/ThirdParty/Dust2/Materials/wall_w.mat	client/Assets/ThirdParty/Dust2/Materials/wall_w.mat	1	脚本断言	D1D2D3 资产几何
 D3	client/Assets/ThirdParty/Dust2/Materials/white.mat	client/Assets/ThirdParty/Dust2/Materials/white.mat	client/Assets/ThirdParty/Dust2/Materials/white.mat	1	脚本断言	D1D2D3 资产几何
 D3	client/Assets/ThirdParty/Dust2/Skybox/Dust2Sky.mat	client/Assets/ThirdParty/Dust2/Skybox/Dust2Sky.mat	client/Assets/ThirdParty/Dust2/Skybox/Dust2Sky.mat	6	脚本断言	D1D2D3 资产几何
+D3	弹痕的按材质 / 多变体表现（同类漏检：#4 只报了"痕迹不对"）	client/Assets/Resources/UI/Art/fx_bullethole + 原版 decals.wad	用户本轮报#4；原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，片AW 已取回，SHA256 记在 `原版资源/清单.md`）	3	并排图	D1D2D3 资产几何
+D3	角色模型的贴图 / skin 绑定（同类漏检：#6 只报了"模型不对"）	client/Assets/Resources/Art/Tex/*.png（242 张模型内嵌贴图）	同类漏检；口径出处 `策划/对照表.md:149`（M-16：terror.mdl 2 张 / v_ak47 11 张 / v_knife 4 张）与 `:162`（T-04 共 243 张）	2	并排图	D1D2D3 资产几何
 D4	BootPanel.prefab/AccentBar	client/Assets/Resources/UI/BootPanel.prefab	client/Assets/Resources/UI/BootPanel.prefab	1	并排图	D4 UI
 D4	BootPanel.prefab/Backdrop	client/Assets/Resources/UI/BootPanel.prefab	client/Assets/Resources/UI/BootPanel.prefab	1	并排图	D4 UI
 D4	BootPanel.prefab/Copyright	client/Assets/Resources/UI/BootPanel.prefab	client/Assets/Resources/UI/BootPanel.prefab	1	并排图	D4 UI
@@ -1880,7 +1887,9 @@ D4	client/Assets/Resources/UI/ScoreboardPanel.prefab	client/Assets/Resources/UI/
 D4	client/Assets/Resources/UI/ServerListPanel.prefab	client/Assets/Resources/UI/ServerListPanel.prefab	client/Assets/Resources/UI/ServerListPanel.prefab	13	脚本断言	D4 UI
 D4	client/Assets/Resources/UI/TeamSelectPanel.prefab	client/Assets/Resources/UI/TeamSelectPanel.prefab	client/Assets/Resources/UI/TeamSelectPanel.prefab	16	脚本断言	D4 UI
 D4	client/Assets/Resources/UI/WorldNameplate.prefab	client/Assets/Resources/UI/WorldNameplate.prefab	client/Assets/Resources/UI/WorldNameplate.prefab	5	脚本断言	D4 UI
+D4	买枪界面（BuyMenuPanel）	client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs	用户本轮报#5；落点出处 `UI/InGame/BuyMenuPanel.cs:27-38`（DialogWidth 1020 / DialogHeight 640 / RowHeight 46 … 全是本项目常量，注释写"规格 G3，任务书 §4.2"）	3	并排图	D4 UI
 D4	交叉 D4×D12 UI×流程状态	跨维度因果对	patterns/full-coverage-audit.md §4	2	并排图	D4 UI
+D4	选人（选兵种）界面（TeamSelectPanel / classmenu）	client/Assets/Scripts/UI/Flow/TeamSelectPanel.cs	用户本轮报#5；原版载体 `原版资源/cs16src/cs16game/app/cstrike/resource/ui/classmenu_ct.res` / `classmenu_ter.res`（本机不在盘 ⇒ 降级链待补）；差异 #36 已登记"未做"	2	并排图	D4 UI
 D4	雷达/世界范围映射（引擎 Game.Map 原点/尺寸）	client/Assets/Scripts/UI/InGame/CsRadarWidget.cs	client/Assets/Scripts/UI/InGame/CsRadarWidget.cs	3	脚本断言	D4 UI
 D4	雷达/小地图显示与可见性门控（用户报“雷达不对”）	client/Assets/Scripts/UI/InGame/CsRadarWidget.cs	client/Assets/Scripts/UI/InGame/CsRadarWidget.cs	4	并排图	D4 UI
 D4	雷达/底图 overview_de_dust2	client/Assets/Resources/UI/Art/overview_de_dust2	client/Assets/Scripts/UI/InGame/CsRadarWidget.cs	2	脚本断言	D4 UI
@@ -3153,10 +3162,14 @@ D5	动画资产/vm_xm1014_fire3.anim	Resources/Art/Anim/vm_xm1014_fire3.anim	Res
 D5	动画资产/vm_xm1014_firelast.anim	Resources/Art/Anim/vm_xm1014_firelast.anim	Resources/Art/Anim/vm_xm1014_firelast.anim	1	脚本断言	D5 动画
 D5	动画资产/vm_xm1014_idle.anim	Resources/Art/Anim/vm_xm1014_idle.anim	Resources/Art/Anim/vm_xm1014_idle.anim	1	脚本断言	D5 动画
 D5	动画资产/vm_xm1014_reload.anim	Resources/Art/Anim/vm_xm1014_reload.anim	Resources/Art/Anim/vm_xm1014_reload.anim	1	脚本断言	D5 动画
+D5	换弹动画（第三人称 ref_reload_* / 第一人称 v_* reload）	client/Assets/Scripts/Module/View/ActorView.cs + ViewModelRig.cs + Module/View/CsViewTuning.cs	用户本轮报#7；实现出处 `ActorView.cs:249-274`（按 `ReloadEndTime` 前推触发）、`CsViewTuning.cs:318-327`（`PlayerReloadStates` 候选）、`:254`（`VmStateReload`）	4	并排图	D5 动画
+D5	死亡动画与尸体（倒地序列 + 尸体是否留在地上）	client/Assets/Scripts/Module/View/ActorView.cs + Module/View/CsViewTuning.cs	用户本轮报#8；实现出处 `ActorView.cs:451-464`（死亡先播序列，`OnComplete` 后 `SetShown(false)`）、`:293-312`（`PlayDeath`）、`CsViewTuning.cs:194`（`PStateDeath`）	3	并排图	D5 动画
 D6	BulletImpact/弹痕	client/Assets/Resources/UI/Art/fx_bullethole.png	client/Assets/Scripts/Module/Combat/CombatEffects.cs	1	脚本断言	D6 特效
 D6	MuzzleFlash	client/Assets/Resources/UI/Art/fx_muzzleflash.png	client/Assets/Scripts/Module/Combat/CombatEffects.cs	1	脚本断言	D6 特效
 D6	Spark	client/Assets/Resources/UI/Art/fx_spark.png	client/Assets/Scripts/Module/Combat/CombatEffects.cs	1	脚本断言	D6 特效
 D6	交叉 D6×D3 特效×命中材质	跨维度因果对	patterns/full-coverage-audit.md §4	2	并排图	D6 特效
+D6	受伤特效（血雾 / 命中反馈）与"没血"	client/Assets/Scripts/Module/Combat/CombatEffects.cs + UI/InGame/CsDamageIndicatorWidget.cs	用户本轮报#8；实现出处 `CombatEffects.cs:10-19`（只有枪口火焰/弹道/弹痕/爆炸四类）、`CsDamageIndicatorWidget.cs:46-104`（屏幕边缘方向红框）	2	并排图	D6 特效
+D6	命中墙弹痕贴片（fx_bullethole 单变体）	client/Assets/Resources/UI/Art/fx_bullethole（16×16，234 B）+ Module/Combat/CombatEffects.cs	用户本轮报#4；实现出处 `Module/Combat/CombatEffects.cs:180-190`（贴面 + 沿法线抬 1cm + `DecalSize`）、`Module/Combat/CsCombatTuning.cs:178`（DecalSize=0.075）/`:181`（DecalDuration=25）/`:184`（MaxDecals=64）	3	并排图	D6 特效
 D7	client/Assets/Resources/Sound/BGM/gamestartup.mp3	client/Assets/Resources/Sound/BGM/gamestartup.mp3	client/Assets/Resources/Sound/BGM/gamestartup.mp3	1	脚本断言	D7D8 音频
 D7	client/Assets/Resources/Sound/BGM/gamestartup.mp3.meta	client/Assets/Resources/Sound/BGM/gamestartup.mp3.meta	client/Assets/Resources/Sound/BGM/gamestartup.mp3.meta	1	脚本断言	D7D8 音频
 D7	主菜单启动曲	client/Assets/Resources/Sound/BGM/gamestartup.mp3	client/Assets/Scripts/Module/Flow/AppFlow.cs	1	脚本断言	D7D8 音频
@@ -3286,11 +3299,13 @@ D8	武器事件/Xm1014	Sound/SFX/sfx/	client/Assets/Scripts/Core/CsWeapons.cs	2	
 D8	装备音效/Defuser	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Scripts/Module/Audio/CsAudioTuning.cs	2	脚本断言	D7D8 音频
 D8	装备音效/Vest	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Scripts/Module/Audio/CsAudioTuning.cs	2	脚本断言	D7D8 音频
 D8	装备音效/VestHelm	client/Assets/Scripts/Core/CsWeapons.cs	client/Assets/Scripts/Module/Audio/CsAudioTuning.cs	2	脚本断言	D7D8 音频
+D9	B 点旋转楼梯（可行走性：台阶高差 / 斜面法线 / 膝盖射线）	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	用户本轮报#1；运行时口径 `Module/Map/CsMap.cs:514-531`（TryStepUp）+ `Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7）	4	脚本断言	D9 碰撞与可走
 D9	交叉 D9×角色类型 碰撞×角色类型	跨维度因果对	patterns/full-coverage-audit.md §4	2	脚本断言	D9 碰撞与可走
 D9	可站立坡度法线阈值	Core/CsConst.cs	Core/CsConst.cs	4	脚本断言	D9 碰撞与可走
 D9	可走位图（de_dust2.bytes）	client/Assets/Resources/MapData/de_dust2.bytes	client/Assets/Resources/MapData/de_dust2.bytes	18415	脚本断言	D9 碰撞与可走
 D9	可迈上台阶高 StepUpHeight	Core/CsConst.cs	Core/CsConst.cs	4	脚本断言	D9 碰撞与可走
 D9	场景碰撞体总数	client/Assets/Scenes/StageDust2.unity	client/Assets/Scenes/StageDust2.unity	844	脚本断言	D9 碰撞与可走
+D9	机器人地形贴合（"钻地"）	client/Assets/Scripts/Module/Match/CsMatch.cs（StepActorPhysics）+ Module/Map/CsMap.cs	用户本轮报#10；实现出处 `CsMatch.cs:1762-1894`（`StepActorPhysics`：重力→`ResolveMove`→`TrySampleGround`→贴地/陡坡/软地板）	4	脚本断言	D9 碰撞与可走
 D9	箱子水平阻挡/box.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	tools/probes/geom-check.py（A4）	40	脚本断言	D9 碰撞与可走
 D9	箱子水平阻挡/box_x.png	client/Assets/ThirdParty/Dust2/de_dust2_geo.bin	tools/probes/geom-check.py（A4）	9	脚本断言	D9 碰撞与可走
 D9	角色间碰撞（player↔player）	client/Assets/Scripts/Module/Map/CsActorSeparation.cs	client/Assets/Scripts/Module/Map/CsActorSeparation.cs	2	脚本断言	D9 碰撞与可走
@@ -3307,18 +3322,23 @@ D10	伤害模型	client/Assets/Scripts/Module/Match/CsDamage.cs	client/Assets/Sc
 D10	冻结期禁移动	client/Assets/Scripts/Module/Player/PlayerMotor.cs	client/Assets/Scripts/Module/Player/PlayerMotor.cs:118	3	脚本断言	D10 玩法逻辑
 D10	切枪/切槽	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:806	3	脚本断言	D10 玩法逻辑
 D10	半场交换	client/Assets/Scripts/Module/Match/CsRound.cs	client/Assets/Scripts/Module/Match/CsRound.cs:319	3	脚本断言	D10 玩法逻辑
+D10	原版 attack2 的逐武器语义（USP/M4A1 消音器 · Glock 连发切换）	client/Assets/Scripts/Core/CsWeapons.cs + Module/Combat/CsCombatTuning.cs	用户本轮报#3；原版语义载体**在盘**（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，片AW 取回）但未反汇编 ⇒ 待补（第 2 级：可执行里的常量/分支，载体已具备）；`原版资源/hlsdk/dlls/weapons.cpp` 是 HL1 武器实现，只能证明"开火/切换是写死在类里"这一机制，⛔ 不是 CS 的语义出处）	3	脚本断言	D10 玩法逻辑
 D10	受击结算	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:981	3	脚本断言	D10 玩法逻辑
 D10	命中部位枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:65	3	脚本断言	D10 玩法逻辑
 D10	回合流程（Freeze→Live→RoundEnd）	client/Assets/Scripts/Module/Match/CsRound.cs	client/Assets/Scripts/Module/Match/CsRound.cs:178	3	脚本断言	D10 玩法逻辑
 D10	回合阶段枚举	client/Assets/Scripts/Core/CsEnums.cs	client/Assets/Scripts/Core/CsEnums.cs:12	3	脚本断言	D10 玩法逻辑
 D10	开火事件消费	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1013	3	脚本断言	D10 玩法逻辑
 D10	开火统计日志	client/Assets/Scripts/Module/Combat/CombatSelfTest.cs	client/Assets/Scripts/Module/Combat/CombatSelfTest.cs:24	3	脚本断言	D10 玩法逻辑
+D10	引擎网格寻路 AStar（能力已在，业务零使用）	client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（325 行）	用户本轮报#10 直接问"引擎里没有寻路机制吗"；能力出处 `AStar.cs（第 16-19 行）`（契约）/`:52-132`（`Find`）/`:138-174`（`FindSmoothed`）/`:180-219`（`HasLineOfSight`），另有 `Presentation/MapFormat.cs（第 243-252 行）`（`WalkableAt`）	3	脚本断言	D10 玩法逻辑
 D10	强制结束回合	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1245	3	脚本断言	D10 玩法逻辑
 D10	换弹	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:797	3	脚本断言	D10 玩法逻辑
 D10	换阵营	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1200	3	脚本断言	D10 玩法逻辑
 D10	暂停	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:219	3	脚本断言	D10 玩法逻辑
+D10	机器人战术行为（守点 / 下包 / 突破 / 寻路）	client/Assets/Scripts/Module/Bot/CsBotBrain.cs（72,536 B）+ BotModule.cs + BotNavigator.cs + CsBotConst.cs	用户本轮报#2；机制出处 `CsBotBrain.cs:11`（Idle→Patrol→Engage→(Plant|Defuse|Camp)）、`BotNavigator.cs:9-29`（路点推进+局部避障+卡住自恢复）、`:115-161`（路线=最近邻排序路点）、`:269-277`（连续卡住→上层换目标）	5	脚本断言	D10 玩法逻辑
+D10	机器人移动执行（本地碰撞 vs 寻路）	client/Assets/Scripts/Module/Bot/BotNavigator.cs + Module/Match/CsMatch.cs	用户本轮报#10；实现出处 `BotNavigator.cs:183-248`（输出方向）→ `CsMatch.cs:2271-2292`（写速度→`StepActorPhysics`）	3	脚本断言	D10 玩法逻辑
 D10	机器人难度切换	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1087	3	脚本断言	D10 玩法逻辑
 D10	步行/蹲伏/跳跃采集	client/Assets/Scripts/Module/Player/PlayerMotor.cs	client/Assets/Scripts/Module/Player/PlayerMotor.cs:119	3	脚本断言	D10 玩法逻辑
+D10	死亡结算（尸体实体 / 掉落武器 / 掉落物进场景）	client/Assets/Scripts/Module/Match/CsInventory.cs（DropWeapon）+ Module/Match/CsMatch.cs	用户本轮报#8；实现出处 `CsInventory.cs:255-285`（`DropWeapon` 只改库存字段，不生成任何世界实体）、`CsMatch.cs:931`（调用点）	3	脚本断言	D10 玩法逻辑
 D10	添加/踢出机器人	client/Assets/Scripts/Module/Match/CsMatch.cs	client/Assets/Scripts/Module/Match/CsMatch.cs:1036	3	脚本断言	D10 玩法逻辑
 D10	灼弹 C4 下包/拆包/爆炸	client/Assets/Scripts/Module/Match/CsBomb.cs	client/Assets/Scripts/Module/Match/CsBomb.cs:12	3	脚本断言	D10 玩法逻辑
 D10	经济（起始/上限/连败递增）	client/Assets/Scripts/Module/Match/CsEconomy.cs	client/Assets/Scripts/Module/Match/CsEconomy.cs:46	3	脚本断言	D10 玩法逻辑
@@ -3354,6 +3374,7 @@ D11	`~@游戏内	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 
 D11	交叉 D11×上下文 输入×上下文掩蔽	跨维度因果对	patterns/full-coverage-audit.md §4	2	脚本断言	D11 输入
 D11	数字键@买枪菜单	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入
 D11	数字键@无线电菜单	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入
+D11	武器右键（次级攻击 attack2）	client/Assets/Scripts/Module/Match/ICsMatch.cs（CsInputState）+ Module/Combat/CombatModule.cs	用户本轮报#3；实现出处 `Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）、`Module/Match/ICsMatch.cs`（CsInputState 只有 Zoom）	3	脚本断言	D11 输入
 D11	鼠标点击@菜单/面板	脚本绑定表	Core/CsConst.cs + Module/**	2	脚本断言	D11 输入
 D12	回主菜单	client/Assets/Scripts/Module/Flow/AppFlow.cs	client/Assets/Scripts/Module/Flow/AppFlow.cs	1	脚本断言	D12 流程
 D12	暂停态时间不推进	client/Assets/Scripts/Module/Flow/AppFlow.cs	client/Assets/Scripts/Module/Flow/AppFlow.cs	1	脚本断言	D12 流程

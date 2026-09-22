@@ -50,8 +50,9 @@ server.cfg	不可得	原版配置脚本	原版资源/ 本机已被清理，不�
 原版资源/cs16src/cs16game/app/valve/halflife.wad	不可得	原版 WAD3 容器	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 原版资源/解包产物/dust2_build.py	不可得	原版解包/导出脚本	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 原版资源/cs16src/cs16game/app/hw.dll	不可得	原版可执行	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
-common/ref_params.h	不可得	GoldSrc SDK 头	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
-HLSDK/common/ref_params.h	不可得	GoldSrc SDK 头	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
+# 切片AY（2026-09-22）删除两行：`common/ref_params.h` 与 `HLSDK/common/ref_params.h`。
+# 原因 = 该载体已真落盘到 `原版资源/hlsdk/common/ref_params.h`（见 `原版资源/清单.md` 的「切片AY」节）
+# ⇒ 登记行的「何时消除」条件已达成 ⇒ 按 reference-table-refs 的 stale 规则必须删除，留在表里就是静音器。
 dust2_build.py	不可得	原版解包/导出脚本	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 in_camera.cpp:619,624	不可得	GoldSrc SDK 源码	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 原版资源/cs16src/cs16game/app/cstrike/spectatormenu.txt	不可得	原版文本数据	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回

@@ -1286,6 +1286,223 @@ for dim, nm, note, vt, vd in CROSS:
     sta(dim, nm, '\u4ea4\u53c9\u72b6\u6001', '-', note, '\u5730\u57df\u7814\u5224', vd, 'patterns/full-coverage-audit.md \u00a74')
 
 # ============================================================================
+#  片AZ（2026-09-22 · 诊断+登记片）：用户本轮 10 条原话 + 登记中发现的同类漏检
+#
+#  ⛔ 本片只做「逐条登记 + 根因定位」，**不修**任何一条（修由后续按维度的切片做）。
+#  一条报多维度 ⇒ 逐维度各一行（#8 = D5 + D6 + D10；#10 = D9 + D10；#1 = D9 + D2 …）。
+#  结论一律 `允许的差异(→ 差异登记.tsv)`：这些是**已知未做/已知不符**，
+#  四要素（是什么 / 为什么 / 出处 / 何时消除）写在 `策划/差异登记.tsv` #66~#77。
+#  出处一律指到 `文件:行`；原版行为取不到载体的按降级链写「待补（第 N 级）」。
+# ============================================================================
+AZ_ENT = [
+    # ---- #1 B 旋转楼梯上不去 ----
+    ('D9', 'B 点旋转楼梯（可行走性：台阶高差 / 斜面法线 / 膝盖射线）',
+     'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin',
+     '用户本轮报#1；运行时口径 `Module/Map/CsMap.cs:514-531`（TryStepUp）+ `Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7）',
+     4, T_SCRIPT, K_ALLOWED,
+     '离线判据缺：`tools/probes/geom-check.py` 只做 A5「低矮障碍 71 候选」（来路判挡 / 顶面可站 / 横跨窗口），'
+     '**没有**"沿楼梯从底部逐级走到顶"这条链（多级台阶 × 膝盖射线 × StepUp 闸门）。'
+     '运行时四道闸门见 `client/Assets/Scripts/Module/Map/CsMap.cs:514-531`（① 中心格可走 ② 落点地面高差 ≤ 0.45m '
+     '③ 落点法线 y ≥ 0.7 ≈45.573° ④ 膝盖高度射线通畅）与 `:298-299`（CanStand 位图层 + 几何层）⇒ 差异 #66'),
+    ('D2', 'B 点旋转楼梯（几何形态：连续斜面 vs 台阶）',
+     'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin + de_dust2.bsp',
+     '用户本轮报#1；工程几何组名/三角数见 `策划/对照表.md` §1；原版 .bsp 载体本机不在盘（降级链第 5 级：待补）',
+     2, T_SCRIPT, K_ALLOWED,
+     '`geom-check.py` 里**没有**"楼梯"这一类（只有 A5 低矮障碍），⇒ 本工程 B 点那段到底是**整片斜楔**还是**多级台阶**'
+     '（以及原版是同形还是台阶）**未离线判定**。判据 = 从 `CsMarkers` 的路线路点逐格推进到 B 点平台，'
+     '记录每步 `TryStepUp` 四道闸门的通过情况；需要的载体 = 原版 `de_dust2.bsp`（降级链：① 原始数据 ✗ 盘上无 ⇒ '
+     '待补（第 1 级：原始 .bsp 几何 → 第 3 级：bsp 专用格式原始结构））⇒ 差异 #66'),
+    ('D2', '全图楼梯 / 坡道 / 台阶（同类漏检：#1 只报了 B 旋转楼梯）',
+     'client/Assets/ThirdParty/Dust2/de_dust2_geo.bin',
+     'T0 同类漏检；口径同 `Module/Map/CsMap.cs:514-531`',
+     3, T_SCRIPT, K_ALLOWED,
+     '登记 #1 时顺手查同类：`策划/对照表.md` 只登记了"坡道可站立阈值 = MaxStandableSlopeNormalZ 0.7（差 0）"一条**常量级**判据，'
+     '`geom-check.py` 的 A5 只覆盖"低矮障碍"，⇒ **全图所有楼梯/坡道/台阶没有任何 A→B 可走性判据**'
+     '（T 坡道、A 点斜坡、B 门台阶、CT 出生台…）。判据 = 把全图"高差 ≤ 0.45m 的连续落差面"分类成台阶/斜面/台沿，'
+     '逐段做底→顶可走断言 ⇒ 与 #66 同一行登记（⛔ 不是新差异号，属 #1 的同类扩样）'),
+    # ---- #2 人机 AI 太傻 ----
+    ('D10', '机器人战术行为（守点 / 下包 / 突破 / 寻路）',
+     'client/Assets/Scripts/Module/Bot/CsBotBrain.cs（72,536 B）+ BotModule.cs + BotNavigator.cs + CsBotConst.cs',
+     '用户本轮报#2；机制出处 `CsBotBrain.cs:11`（Idle→Patrol→Engage→(Plant|Defuse|Camp)）、`BotNavigator.cs:9-29`（路点推进+局部避障+卡住自恢复）、`:115-161`（路线=最近邻排序路点）、`:269-277`（连续卡住→上层换目标）',
+     5, T_SCRIPT, K_ALLOWED,
+     '离线可判的现状（机制层，不是"没写"）：① **无寻路层** —— 引擎 `AStar`（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）'
+     '在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0），机器人只能"沿标记点最近邻序列走直线 + 局部避障"（`BotNavigator.cs:226` `Avoid`）；'
+     '② 目标粒度极粗 —— 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299,574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），'
+     '**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds / `:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）'
+     '⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但是**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），'
+     '没有"多点突破 / 掩护 / 换点位"这类协同 ⇒ **缺的行为清单 = 守点位表（多点/换位）、下包决策（去哪个包点 + 何时下包）、'
+     '突破协同（分批推进/闪光掩护）、基于代价图的 A→B 走法**。三档难度只改反应时间与瞄准误差（`CsTypes.cs:148`）。'
+     '⇒ 差异 #67；解法依赖引擎寻路能力结论（见 `Runtime/Core/AStar.cs（第 16~19 行）` 的回调式格子 A* 契约）'),
+    # ---- #3 右键没效果 ----
+    ('D11', '武器右键（次级攻击 attack2）',
+     'client/Assets/Scripts/Module/Match/ICsMatch.cs（CsInputState）+ Module/Combat/CombatModule.cs',
+     '用户本轮报#3；实现出处 `Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）、`Module/Match/ICsMatch.cs`（CsInputState 只有 Zoom）',
+     3, T_SCRIPT, K_ALLOWED,
+     '离线已判（不需要实机）：输入结构 `CsInputState`（`client/Assets/Scripts/Module/Match/ICsMatch.cs`）里**只有 `Zoom`**'
+     '（注释逐字："右键（AWP/Scout 开镜）"），**没有 attack2 / 次级开火**字段；唯一消费点 = `CombatModule.cs:174`。'
+     '⇒ 除狙击开镜外，任何"右键要有别的效果"的武器在本工程**结构性无效果**（不是某把枪漏了）。⇒ 差异 #68'),
+    ('D10', '原版 attack2 的逐武器语义（USP/M4A1 消音器 · Glock 连发切换）',
+     'client/Assets/Scripts/Core/CsWeapons.cs + Module/Combat/CsCombatTuning.cs',
+     '用户本轮报#3；原版语义载体**在盘**（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，片AW 取回）但未反汇编 ⇒ 待补（第 2 级：可执行里的常量/分支，载体已具备）；`原版资源/hlsdk/dlls/weapons.cpp` 是 HL1 武器实现，'
+     '只能证明"开火/切换是写死在类里"这一机制，⛔ 不是 CS 的语义出处）',
+     3, T_SCRIPT, K_ALLOWED,
+     '同类漏检（登记 #3 时顺手查）：原版 CS 1.6 的右键语义**至少**有 USP 拆装消音器、M4A1 拆装消音器、Glock18 连发切换三条，'
+     '本工程一条都没有；`CsWeapons.cs` 的 `CsWeaponDef`（`:34-46`）里也没有"是否支持消音器/连发"的字段 ⇒ 契约层缺口。'
+     '⇒ 与 #68 同一差异行登记；实现前必须先取回 `client.dll` 的 attack2 分支或一份原版行为证据'),
+    # ---- #4 弹痕 ----
+    ('D6', '命中墙弹痕贴片（fx_bullethole 单变体）',
+     'client/Assets/Resources/UI/Art/fx_bullethole（16×16，234 B）+ Module/Combat/CombatEffects.cs',
+     '用户本轮报#4；实现出处 `Module/Combat/CombatEffects.cs:180-190`（贴面 + 沿法线抬 1cm + `DecalSize`）、`Module/Combat/CsCombatTuning.cs:178`（DecalSize=0.075）/`:181`（DecalDuration=25）/`:184`（MaxDecals=64）',
+     3, T_SIDE, K_ALLOWED,
+     '离线可判的两条：① **尺寸无出处** —— `CsCombatTuning.cs:178` 的 `DecalSize = 0.075f`（7.5cm）在源码注释里自认是'
+     '"按原版 decal 的观感（~7cm）"；原版弹痕尺寸由 `decals.wad` 贴图原生尺寸 + 世界单位映射决定，本机拿不到该映射 ⇒ 待补。'
+     '② **注记过期**：`Core/ResPaths.cs:177` 仍写"弹痕精灵（真实文件 …，32×32）"，而盘上 `fx_bullethole` 实测 **16×16**'
+     '（`struct.unpack` 读 IHDR = (16,16)）—— 片AW 用 WAD3 解出的 `{shot1` 覆盖后注释没同步。'
+     '③ 变体只有 1 张（原版 `{shot1..5` 随机 + `{bigshot*` 大口径），见差异 #52 未消除部分 ⇒ 差异 #69'),
+    ('D3', '弹痕的按材质 / 多变体表现（同类漏检：#4 只报了"痕迹不对"）',
+     'client/Assets/Resources/UI/Art/fx_bullethole + 原版 decals.wad',
+     '用户本轮报#4；原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，片AW 已取回，SHA256 记在 `原版资源/清单.md`）',
+     3, T_SIDE, K_ALLOWED,
+     '同类漏检：弹痕的**表现类**判据（贴面朝向 / 尺寸 / 变体 / 按命中材质的观感）在本工程**没有任何并排图或格号**证据 '
+     '（`策划/验收表.md` 的联络图索引里只有弹着**音**的交叉行，弹痕贴片本身在 §G 里是"一致"，'
+     '而片AW 才刚换图 ⇒ 那张图的表现从未被并排图判过）。⇒ 与 #69 同一差异行；'
+     '修法：`wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来，工程侧支持多变体后按"同机位并排图"采一次'),
+    # ---- #5 买枪 / 选人界面 ----
+    ('D4', '买枪界面（BuyMenuPanel）',
+     'client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs',
+     '用户本轮报#5；落点出处 `UI/InGame/BuyMenuPanel.cs:27-38`（DialogWidth 1020 / DialogHeight 640 / RowHeight 46 … 全是本项目常量，注释写"规格 G3，任务书 §4.2"）',
+     3, T_SIDE, K_ALLOWED,
+     '离线可判：`BuyMenuPanel.cs` 的**全部布局常量是自建**（`:27-38` 的 Dialog/Category/List/Row 十项），出处是"任务书 §4.2 / 规格 G3"——'
+     '⛔ 不是原版载体。原版口径的载体**已在盘**：`原版资源/cs16src/cstrike/sprites/weapon_*.txt`（31 份，片AW 取回；'
+     '每份逐字给出 320/640 两档下 `weapon/ammo/crosshair` 部件取自哪张 HUD 精灵 + 源矩形 + 屏幕落点）'
+     '与 `640hud10/640hud11.spr`（`原版资源/cs16src/cstrike/cstrike__sprites__640hud10.spr`）⇒ **有出处但未接** ⇒ 差异 #70'),
+    ('D4', '选人（选兵种）界面（TeamSelectPanel / classmenu）',
+     'client/Assets/Scripts/UI/Flow/TeamSelectPanel.cs',
+     '用户本轮报#5；原版载体 `原版资源/cs16src/cs16game/app/cstrike/resource/ui/classmenu_ct.res` / `classmenu_ter.res`（本机不在盘 ⇒ 降级链待补）；差异 #36 已登记"未做"',
+     2, T_SIDE, K_ALLOWED,
+     '本工程**没有**选兵种界面（只有选阵营 `TeamSelectPanel.cs`，其载体 `teammenu.res` 已实现见差异 #25/#27/#38）；'
+     '差异 #36 早先已登记"原版 `classmenu_*.res` 未做"，本片按用户本轮 #5 把它**并进同一条**（同一差异 #70），'
+     '⛔ 不新开差异号（避免同一件事两个号）。判据 = 原版 `.res` 到位后按控件逐条落 + 并排图'),
+    # ---- #6 角色模型 ----
+    ('D1', '角色模型（9 皮肤：T/CT player_*.prefab）',
+     'client/Assets/Resources/Art/{T,CT}/**.prefab + client/Assets/Editor/Views/ModelData/player_*.cs16mdl/.cs16anim',
+     '用户本轮报#6；派生链出处 `策划/对照表.md:134,136,137,149,150`（M-01/M-03/M-04/M-16/M-17）→ `原版资源/cs16src/cs16_anim.py` / `cs16_build.py`（本机不在盘）',
+     3, T_SIDE, K_ALLOWED,
+     '离线核对结论（**无字节级证据，如实登记**）：① 工程模型数据的**全部来源**是 '
+     '`原版资源/cs16src/cs16game/app/cstrike/models/player/*/*.mdl`（9 皮肤）经 `cs16_build.py` / `cs16_anim.py` 转成 '
+     '`*.cs16mdl`（几何/蒙皮）+ `*.cs16anim`（骨骼动画）；② 中间格式头实测 **`C16M`/`C16A` v1 + 角色名 + 贴图名**'
+     '（`player_T.cs16mdl` 头 = `C16M\\x01…player_T…player_T_TERROR.png`），**不记录源 mdl 的 SHA256**（17,743 B 全量扫过）'
+     '⇒ 本工程**无法自证**这些是原版 mdl；③ 能站得住的证据只有"与那份 mdl 逐值一致"：骨骼 23（M-03）、序列 111（M-04）、'
+     '`idle1` fps15/61 帧（M-05）… M-12/M-14（对照表逐条"本片重读一致"）；④ 该 mdl 属**社区 repack**'
+     '（路径 `cs16game/app/cstrike/models/…`，见 `策划/基线图/场景清单.md:20-39` 对这份 repack 的记录）'
+     '⇒ 用户"感觉是社区版模型"这件事**离线既不能证实也不能证伪**。'
+     '可执行路径：照片AR 的 `codeload` 路径重新取回同一 repack 的 `models/**`，逐文件 SHA256 与工程中间数据对账 '
+     '⇒ 差异 #71'),
+    ('D3', '角色模型的贴图 / skin 绑定（同类漏检：#6 只报了"模型不对"）',
+     'client/Assets/Resources/Art/Tex/*.png（242 张模型内嵌贴图）',
+     '同类漏检；口径出处 `策划/对照表.md:149`（M-16：terror.mdl 2 张 / v_ak47 11 张 / v_knife 4 张）与 `:162`（T-04 共 243 张）',
+     2, T_SIDE, K_ALLOWED,
+     '登记 #6 时顺手查同类：M-16 明写"我方按 md5 去重合并，**不再与 mdl 一一对应**"⇒ "模型看起来不对"的另一半（skin/贴图）'
+     '在本工程**没有按材质槽逐条对账过的判据**。判据 = 逐 skin（`Art/Mat` × `Art/Tex`）× 每个 Renderer 的材质槽，'
+     '与 mdl 的 `numtextures` 一一对上 ⇒ 并进差异 #71（⛔ 不新开号）'),
+    # ---- #7 换弹动画 ----
+    ('D5', '换弹动画（第三人称 ref_reload_* / 第一人称 v_* reload）',
+     'client/Assets/Scripts/Module/View/ActorView.cs + ViewModelRig.cs + Module/View/CsViewTuning.cs',
+     '用户本轮报#7；实现出处 `ActorView.cs:249-274`（按 `ReloadEndTime` 前推触发）、`CsViewTuning.cs:318-327`（`PlayerReloadStates` 候选）、`:254`（`VmStateReload`）',
+     4, T_SIDE, K_ALLOWED,
+     '离线可判：**触发方式是"边沿检测前置时间戳 `ReloadEndTime` 变大"**（`ActorView.cs:268` `actor.ReloadEndTime > _preReloadEndTime + 1e-4`），'
+     '而不是"模拟发出的换弹事件"；`CsInventory.Reload`（`Module/Match/CsInventory.cs:403-439`）会在 '
+     '**没有武器 / 弹匣已满 / 正在切枪**三条分支上直接 `return`（`:408/413/419/426`）⇒ 那些分支下换弹动画当然不播；'
+     '更要紧的是"丢"的形态：`ReloadEndTime` 若在同一帧被重设（连点 R / 换弹中途切枪再切回 / 上一发未结算），'
+     '边沿检测可能采不到 → 动画整段丢失。判据缺失：**没有"请求换弹 → 动画必须播一次"的运行时断言**。'
+     '`CsViewTuning.cs:318-327` 还写明"原版没有 ref_reload_grenade / ref_reload_knife"（group0 实测）⇒ 那两类**本来就没有**'
+     '（⛔ 不算缺陷）。⇒ 差异 #72'),
+    # ---- #8 死亡 / 尸体 / 掉落 / 受伤特效 ----
+    ('D5', '死亡动画与尸体（倒地序列 + 尸体是否留在地上）',
+     'client/Assets/Scripts/Module/View/ActorView.cs + Module/View/CsViewTuning.cs',
+     '用户本轮报#8；实现出处 `ActorView.cs:451-464`（死亡先播序列，`OnComplete` 后 `SetShown(false)`）、`:293-312`（`PlayDeath`）、`CsViewTuning.cs:194`（`PStateDeath`）',
+     3, T_SIDE, K_ALLOWED,
+     '离线可判：现在的死亡链是"播 `death1..3` 之一（按 `actorId%3` 取）→ 播完 `SetShown(false)` **整具身体隐藏**"'
+     '（`ActorView.cs:456-464` + 差异 #12 已登记的实测时间线）。**原版是留一具尸体（`gib`/corpse 实体）在地上的**，'
+     '本工程没有任何 corpse/尸体实体（全仓 grep `Corpse|尸体` 命中 0）⇒ 用户看到的"尸体不在地上"是**结构性未做**。'
+     '另：`death1..3` 是"倒地"序列，播完即隐藏 ⇒ 用户看到的"死亡动画没有"很可能是**播得极快 + 立刻消失**的合成观感。'
+     '⇒ 差异 #73'),
+    ('D10', '死亡结算（尸体实体 / 掉落武器 / 掉落物进场景）',
+     'client/Assets/Scripts/Module/Match/CsInventory.cs（DropWeapon）+ Module/Match/CsMatch.cs',
+     '用户本轮报#8；实现出处 `CsInventory.cs:255-285`（`DropWeapon` 只改库存字段，不生成任何世界实体）、`CsMatch.cs:931`（调用点）',
+     3, T_SCRIPT, K_ALLOWED,
+     '离线已判：`DropWeapon`（`CsInventory.cs:255-285`）**只从库存里摘掉字段**（Primary/Secondary/C4），'
+     '`a.ActiveWeapon == weaponId` 时再 `SelectBestWeapon`；**不生成任何掉落到世界的实体** ⇒ "枪也不在地上"是结构性未做。'
+     '（对照：C4 有掉落链 `CsBomb.cs:393-434` + `CsMatch.cs:2559`，⛔ 但 C4 掉的是**状态点**，也不是世界实体。）'
+     '⇒ 与 #75（无世界武器模型 w_*）同根：**工程里根本没有"世界中的武器"这个对象**。⇒ 差异 #75'),
+    ('D6', '受伤特效（血雾 / 命中反馈）与"没血"',
+     'client/Assets/Scripts/Module/Combat/CombatEffects.cs + UI/InGame/CsDamageIndicatorWidget.cs',
+     '用户本轮报#8；实现出处 `CombatEffects.cs:10-19`（只有枪口火焰/弹道/弹痕/爆炸四类）、`CsDamageIndicatorWidget.cs:46-104`（屏幕边缘方向红框）',
+     2, T_SIDE, K_ALLOWED,
+     '离线已判：`CombatEffects` 的四类特效里**没有 blood**（全仓 grep `Blood|血雾` 命中 0；`HudPanel.cs:878-882` 的注释还明确记着'
+     '"原版 HUD 的伤害数字已下架（差异 #63），留下的只有受击**方向**红框 `CsDamageIndicatorWidget`"）⇒ 受击时**屏幕上没有任何血/命中反馈**，'
+     '只有屏幕边缘的方向指示器（且它只给**本地玩家**写，`CsDamage.WriteLocalDamageIndicator`）。'
+     '用户"受伤特效没有"= 结构性未做；"没血"= 同一件事（没有 hit 的血雾/击中提示）。'
+     '⚠️ 原版 CS 1.6 受击时屏幕上究竟有什么（血雾贴花 / 只扣血条）**需要原版实机证据** ⇒ 待补（第 4 级：参考图/视频量化）。⇒ 差异 #74'),
+    # ---- #9 第三人称武器 ----
+    ('D2', '第三人称手持武器（角色身上看不到拿什么枪）',
+     'client/Assets/Resources/Art/T/player.prefab + Resources/Art/CT/*.prefab',
+     '用户本轮报#9；预制体实测（`Art/T/player.prefab` 全量子节点 = Bip01 骨架 + Skin0/Skin1 + 4 个 Hitbox_* + Bomb，**无任何武器节点**）',
+     2, T_SIDE, K_ALLOWED,
+     '离线已判：角色预制体里**没有武器节点、也没有挂点**（`Art/T/player.prefab` / `Art/CT/*.prefab` 的 `m_Name` 全量列表里 '
+     '只有骨架/皮肤/命中盒/`Bomb`；全仓 grep `weapon|w_` 在该 prefab 命中 0）。`ActorView` 的装配只有 '
+     '`transform.SetPositionAndRotation` + `Body` 缩放 + 动画（`ActorView.cs:434-496`），**不挂任何武器**。'
+     '⇒ "第三人称看不到他拿什么枪"= 结构性未做（与"枪不在地方"同根：没有世界武器对象）⇒ 差异 #75'),
+    ('D1', '世界武器模型（w_*.mdl）载体与中间数据（同类漏检：#9 的载体侧）',
+     'client/Assets/Editor/Views/ModelData/（38 份 = 9 角色 + 29 视模型，**无任何 w_* / 世界武器**）',
+     '用户本轮报#9；口径出处 `策划/对照表.md:135`（M-02：31 个 `v_*.mdl`）与 `:150`（M-17：38 份 cs16mdl = 9 + 29）',
+     2, T_SCRIPT, K_ALLOWED,
+     '同类漏检（登记 #9 时顺手查）：原版的"世界里的武器"是 `models/w_*.mdl`（第三人称手持 + 掉落物都用它），'
+     '本工程的 38 份模型数据里**只有 29 个 `vm_*`（第一人称视模型）**，`w_*` **一份都没有**（`Art/{T,CT}/viewmodel_*.prefab` 亦然）。'
+     '⇒ 差异 #75/#76 的载体侧根因：**载体没搬**（不是"搬了没接"）。来源 = 与 M-01/M-02 同一份 repack 的 `models/w_*.mdl`'
+     '（照片AR 的 `codeload` 路径可取回）⇒ 并进 #75（⛔ 不新开号）'),
+    # ---- #10 AI 钻地 ----
+    ('D9', '机器人地形贴合（"钻地"）',
+     'client/Assets/Scripts/Module/Match/CsMatch.cs（StepActorPhysics）+ Module/Map/CsMap.cs',
+     '用户本轮报#10；实现出处 `CsMatch.cs:1762-1894`（`StepActorPhysics`：重力→`ResolveMove`→`TrySampleGround`→贴地/陡坡/软地板）',
+     4, T_SCRIPT, K_ALLOWED,
+     '离线可判的机制链（bot 与真人**走同一条**：`CsMatch.cs:2292` 与 `:1752` 都调 `StepActorPhysics`）'
+     '① 移动 = `a.Position = resolved`（直接改位置，**不是** `CharacterController`/刚体）；'
+     '② 水平 = `_map.ResolveMove`（扫掠 ≤0.25m + 分轴滑墙 + 台阶，`CsMap.cs:444-531`）；'
+     '③ 竖直 = `TrySampleGround` 向下射线（`CsMap.cs:542-557`，只打 `CsWorld` 层 `:571-603`）；'
+     '④ 探不到地面 → **软地板**（`CsMatch.cs:1853-1887` `_lastGroundY` / `TrySoftFloor`）+ 掉图兜底 `:1894-1904`。'
+     '⇒ "钻地"的**可判据候选根因（离线不能定案，需一次实机）**：(a) 贴地位图是**单层 2D**（`MapFormat.cs（第 29-30 行）` 的 '
+     '`FlagHeightField` V1 未实现；差异 #49），上层平台/桥面在 XZ 上与下层同格 ⇒ 探地只取"第一个交点"，'
+     '当角色从上层掉到下层时射线首交在**上面那层**⇒ 被拉回上层（观感＝钻进/穿出地面）；'
+     '(b) 软地板（`:1863-1877`）在"连续探不到地面"时把人**贴到最后一次已知地面高度**⇒ 若 bot 正在上/下坡或站在'
+     '`collision-mesh-gap.tsv` 列的"碰空气格"上，就会被贴在**低于视觉地面**的位置（外形像钻地）；'
+     '(c) 走路点（`BotNavigator`）没有代价图，bot 会朝不可走方向推进并由逃逸逻辑乱走 ⇒ 在坡/台阶处反复进出几何。'
+     '判据 = 一次实机 + 逐帧 `actor.Position.y` vs `SampleGround` 的数值日志（本片不采）⇒ 差异 #76'),
+    ('D10', '机器人移动执行（本地碰撞 vs 寻路）',
+     'client/Assets/Scripts/Module/Bot/BotNavigator.cs + Module/Match/CsMatch.cs',
+     '用户本轮报#10；实现出处 `BotNavigator.cs:183-248`（输出方向）→ `CsMatch.cs:2271-2292`（写速度→`StepActorPhysics`）',
+     3, T_SCRIPT, K_ALLOWED,
+     '离线已判的职责链：bot 大脑只产出**方向**（`BotNavigator.ComputeMove`：目标 `/` 路点 + `Avoid` 局部避障 + 逃逸），'
+     '速度由 `CsMatch.cs:2278-2279` 写成，位置由 `ResolveMove` 解 → **bot 与玩家共用同一套地形碰撞**，'
+     '所以"不是真正的地形碰撞 AI"这个判断**不成立**（有地形碰撞）；成立的是"**没有寻路**"（引擎 `AStar` 零调用，见 #77）'
+     '⇒ 钻地/乱走属"路径层缺失 + 单层位图上限"，不属"没有碰撞"。⇒ 与 #67/#76 同一组差异'),
+    # ---- 同类漏检：引擎能力未被业务使用 ----
+    ('D10', '引擎网格寻路 AStar（能力已在，业务零使用）',
+     'client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（325 行）',
+     '用户本轮报#10 直接问"引擎里没有寻路机制吗"；能力出处 `AStar.cs（第 16-19 行）`（契约）/`:52-132`（`Find`）/`:138-174`（`FindSmoothed`）/`:180-219`（`HasLineOfSight`），另有 `Presentation/MapFormat.cs（第 243-252 行）`（`WalkableAt`）',
+     3, T_SCRIPT, K_ALLOWED,
+     '登记 #2/#10 时顺手查到的同类漏检（**这是"有没有分叉树/寻路"的正面答复**）：引擎**有**通用格子 A*'
+     '（8 邻接、对角需两侧可走、octile 启发式、`DefaultMaxNodes=20000`、`MinHeap` 惰性删除、路径拉直 `Smooth`），'
+     '契约就是回调式 `Func<Vector2Int,bool> walkable` ⇒ 地图 `.bytes` 的可走位图（`Game.Map.WalkableAt`，`Map.cs（第 149 行）`）'
+     '**直接就能当寻路网格**；但 `client/Assets/**` 全仓 grep `AStar` **命中 0** ⇒ 引擎能力从未被业务使用。'
+     '⇒ 差异 #77（解法依赖它）'),
+]
+for _dim, _nm, _car, _src, _sc, _vt, _vd, _ev in AZ_ENT:
+    add(_dim, _nm, _car, _src, _sc, _vt, _vd, _ev)
+    sta(_dim, _nm, '用户本轮报的场景', '真实机 / 本片只诊断（修在后续切片）',
+        '复现用户描述的现象', '未修（登记为允许的差异）', _vd, _ev)
+
+# ============================================================================
 #  差异登记（四要素）
 # ============================================================================
 DIF = [
@@ -1341,13 +1558,13 @@ DIF = [
     ('46', '原版 GameUI 字标 logo_game.tga 已复制但未使用', '任务书把「怎么用」划给主菜单片；本片只负责把它从原版搬进工程（见验收表「允许的差异」#37）', 'client/Assets/Resources/UI/Art/logo_game.tga；源 = 原版资源/cs16src/cs16game/app/cstrike/resource/logo_game.tga', '主菜单片把它接进 ResPaths 并上屏后'),
     ('47', '`Q` / `G` / `M` 三键**在切片H 才补上绑定**；`M`（原版 `chooseteam`）的**行为等价为"直接换到另一边"**而非打开阵营菜单', '三键的原版默认绑定有出处（`bind "q" "lastinv"` / `bind "g" "drop"` / `bind "m" "chooseteam"`，见 `策划/策划案/CS1.6单机参考规格.md` §1 游戏内按键段）⇒ 有出处故补绑定（落点 `Module/Combat/CombatModule.cs` 的 `FillInput`）。但**本工程局内没有"再开一次 TeamMenu"的流程入口** ⇒ `M` 只能等价成直接换边（H 菜单「换阵营」就是这条链），已如实打日志，**不编一个不存在的阵营菜单**', '绑定出处 = `策划/策划案/CS1.6单机参考规格.md`；落点 = `client/Assets/Scripts/Module/Combat/CombatModule.cs`（`FillInput`）；判据 = `tools/probes/enumerate-entities.py` 的 D11 段', '工程做出局内阵营菜单后把 `M` 改回"打开菜单"（届时本行删除）'),
     ('48', '修前/修后 2x2 合成图 92_fix_before_after_2x2 采不到（修前帧不可复现）', '修前帧 80_fix_pre_char_invisible / 81_fix_pre_vm_nogun 是 bug 现场抓的诊断图；bug 修好后（AnimSetup.Fill 按值传参 ⇒ 蒙皮 bindpose 全零 ⇒ 几何塌成一点）同形态的修前帧再也出不了。拿别的图冒充或临时改回旧实现去"复现"都属伪造 ⇒ 改为「修后帧 93_fix_post_char_closeup / 97_fix_post_char_front + 逐骨骼/包围盒数值」作为判据', 'client/Assets/Editor/Views/AnimSetup.cs（Fill 的修复处）；策划/验收表.md「允许的差异」新增行；R1/R2 行的旧图名已按「不可采」改写', '不消除（修前态本就不可复现；若将来又出现同类蒙皮 bug，则在现场重采 2x2）'),
-    ('49', '位图（CloverMap v1）是单层 2D：箱子所在格记为“可走”（箱顶是朝上的面）', '格式层没有高度（FlagHeightField 预留但 V1 解码器拒绝）⇒ 一格一位，表达不了“同一格在 y=0 被挡、在 y=1.2 通畅”；带来的边界：箱子进不去（已由 CsMap.CanStand 的“地面一步闸门”拦住），但位图本身仍不能单独回答“能不能穿”', 'Assets/Scripts/Module/Map/CsMap.cs（CanStand/BodyHeightClear）；Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs:30（FlagHeightField）', '引擎开出 V2 高度场（FlagHeightField）后'),
+    ('49', '位图（CloverMap v1）是单层 2D：箱子所在格记为“可走”（箱顶是朝上的面）', '格式层没有高度（FlagHeightField 预留但 V1 解码器拒绝）⇒ 一格一位，表达不了“同一格在 y=0 被挡、在 y=1.2 通畅”；带来的边界：箱子进不去（已由 CsMap.CanStand 的“地面一步闸门”拦住），但位图本身仍不能单独回答“能不能穿”', 'Assets/Scripts/Module/Map/CsMap.cs（CanStand/BodyHeightClear）；Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs（FlagHeightField，第 30 行）', '引擎开出 V2 高度场（FlagHeightField）后'),
     ('50', '投掷物与角色之间不互相挡/推开', '本片只把“角色对角色”这一层做出来（CsActorSeparation 只收 CsActor）；原版投掷物是 MOVETYPE_BOUNCE 实体，与角色是否互相阻挡本机取不到可信出处（原版 mp.dll **已由切片AW 取回盘**，1,640,960 B / `D7294D9B…1F2974`，见 `原版资源/清单.md`「切片AW」节；其 solid/movetype 立即数未定位）', 'Assets/Scripts/Module/Map/CsActorSeparation.cs（只收 actor）；Module/Match/CsInventory.cs（投掷物落点）', '解出原版投掷物的 solid/movetype 后'),
     ('51', '雷达底图 ~~非原版~~ → **已消除（片AS 2026-09-22）**：底图已换成原版 `overviews/de_dust2.bmp`',
      '旧状态：原版 overviews/de_dust2.bmp + .txt 本机不在盘 ⇒ 降级链退到级①（由工程内 de_dust2_geo.bin 离线俯视栅格化）。片AR 把该载体从公开 repack 取回（SHA256 记在 原版资源/清单.md 切片AR 节），片AS 用 tools/probes/import-original-overview.py 把它**逐像素**转成 Resources/UI/Art/overview_de_dust2（重解码自检 rgb_mismatch=0 / alpha_mismatch=0，绿键色 → alpha 0 与 GoldSrc 同语义）⇒ 底图现在是**原版像素**，不再是几何栅格化',
      'client/Assets/Resources/UI/Art/overview_de_dust2（1024×768）；tools/probes/import-original-overview.py（判据资产）；载体 原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp；Core/ResPaths.cs:117',
      '已消除（片AS：底图 = 原版 BMP 的逐像素 PNG；同名覆盖，代码路径不变）'),
-    ('52', '枪口火焰 / 弹痕已换原版像素（火星仍程序生成）', '**已部分消除（切片AM 2026-09-22；弹痕部分切片AW 2026-09-22 补）**：`sprites/muzzleflash2.spr` 帧 0 → 覆盖 `Resources/UI/Art/fx_muzzleflash.png`（64×64 尺寸不变、ink 1328→2044，由 `tools/probes/spr-extract.py` 从原版载体解出）；`decals.wad` 的 `{shot1`（16×16 载体原生尺寸）→ 覆盖 `Resources/UI/Art/fx_bullethole.png`（原为 32×32 程序化替身），由 `tools/probes/wad3-extract.py` 解出（225/225 lump 过三重自洽断言）。未消除部分：① 火星无独立原版载体；② 原版按武器类别在 `client.dll` 里选 muzzleflash 1..4 并播 3 帧动画，本工程所有武器共用帧 0（该映射无载体出处）；③ 原版弹痕是 `{shot1..5` 五变体随机 + `{bigshot*` 大口径，本工程只有一张贴图 ⇒ 取 `{shot1`（同名覆盖，png 不增）', 'Core/ResPaths.cs:147-159 / tools/probes/spr-extract.py / tools/probes/wad3-extract.py；载体 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr`、`原版资源/cs16src/cstrike/decals.wad`（960,012 B / SHA256 `C9E852B60197177F1E6F54992C3F0E886425AB6E6CAFE9F1B1E5E6B3BF80850C`）', '② 解出 `client.dll` 的武器→muzzleflash 映射并实现逐帧播放；③ 工程侧支持弹痕多图变体（`{shot2..5` / `{bigshot*`）后接入'),
+    ('52', '枪口火焰 / 弹痕已换原版像素（火星仍程序生成）', '**已部分消除（切片AM 2026-09-22；弹痕部分切片AW 2026-09-22 补）**：`sprites/muzzleflash2.spr` 帧 0 → 覆盖 `Resources/UI/Art/fx_muzzleflash.png`（64×64 尺寸不变、ink 1328→2044，由 `tools/probes/spr-extract.py` 从原版载体解出）；`decals.wad` 的 `{shot1`（16×16 载体原生尺寸）→ 覆盖 `Resources/UI/Art/fx_bullethole`（原为 32×32 程序化替身），由 `tools/probes/wad3-extract.py` 解出（225/225 lump 过三重自洽断言）。未消除部分：① 火星无独立原版载体；② 原版按武器类别在 `client.dll` 里选 muzzleflash 1..4 并播 3 帧动画，本工程所有武器共用帧 0（该映射无载体出处）；③ 原版弹痕是 `{shot1..5` 五变体随机 + `{bigshot*` 大口径，本工程只有一张贴图 ⇒ 取 `{shot1`（同名覆盖，png 不增）', 'Core/ResPaths.cs:147-159 / tools/probes/spr-extract.py / tools/probes/wad3-extract.py；载体 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr`、`原版资源/cs16src/cstrike/decals.wad`（960,012 B / SHA256 `C9E852B60197177F1E6F54992C3F0E886425AB6E6CAFE9F1B1E5E6B3BF80850C`）', '② 解出 `client.dll` 的武器→muzzleflash 映射并实现逐帧播放；③ 工程侧支持弹痕多图变体（`{shot2..5` / `{bigshot*`）后接入'),
     ('53', 'de_dust2.bsp func_breakable 木箱（×10）未实现可破坏', '工程把箱子当静态几何（box.png / box_x.png），没有受击碎裂逻辑', 'Assets/ThirdParty/Dust2/de_dust2.bsp（entity lump）', '实现 func_breakable 后'),
     ('54', '已移出工程（切片H）：Assets/Scenes/SampleScene.unity、Resources/Sound/SFX/sfx/reload_unused.wav', 'Unity 模板自带场景（未登记 Build Settings、无代码引用）与一个名字就是 unused 的通用换弹音（本工程换弹音按武器逐把拼名）—— 两者都不属于参考物的必备引用，不应进工程', 'Assets/Scenes/SampleScene.unity；Assets/Resources/Sound/SFX/sfx/reload_unused.wav', '已消除（2026-09-21 切片H 移出到 原版资源/_moved-out-from-assets/）'),
     ('55', '切片K：dryfire / hit_wall / knife_hit / bomb_beep_fast / round_start2 这 5 条 wav 的**原版源文件名映射未记录**', '它们确是原版 CS 1.6 的音效（空仓击发 / 弹着 / 刀命中 / C4 快蜂鸣 / 备用回合开始），但 `client/资源欠缺清单.md:37` 第 11 项只记了 c4_beep1 / c4_plant / c4_disarm / c4_explode1 / hegrenade-1 / flashbang-1 / radio/bombpl / radio/bombdef 这 8 条映射；原版 sound/ 树（`原版资源/cs16src`）已空 ⇒ 无法把短名逐条对回原版文件名', 'client/Assets/Resources/Sound/SFX/sfx/{dryfire,hit_wall,knife_hit,bomb_beep_fast,round_start2}.wav（在盘）；client/资源欠缺清单.md:37；原版资源/清单.md（cs16src 已空）', '用户补回 CS 1.6 客户端本体（原版资源/cs16src）后逐条对账'),
@@ -1364,6 +1581,166 @@ DIF = [
      '雷达底图换成**原版** overviews/de_dust2.bmp 后，雷达"显示哪块世界"由**原版窗口**决定（片AS 口径：X 中心 ± 2048 单位、Z 中心 ± 2730.6667 单位）。原版那张图的窗口装不下本工程几何的最东/最西两端 —— 但**这恰恰是原版行为**：原版 de_dust2 的 overview 本来就只覆盖 4096×5461 单位，多出来的 384 单位是**外挂笔刷/越界顶点**（去掉 0.5% 分位后 X 跨度 = 4064，与原版 4096 只差 0.8%，Z 轴 5461 vs 几何 5312 装得下）。主 agent 已裁决：**不剪几何 / 不改 de_dust2_geo.bin / 不重建场景**（为了"装下离群顶点"去改几何 = 1:1 复刻的反面）⇒ 只登记，不修',
      'tools/probes/overview-window.py（containment 判据原文：`X window 4096 units  footprint 4480 units  -> OUTSIDE by 384 units (9.4%)`；`0.5%-trimmed X [-1872..+2192] span 4064`）；client/Assets/ThirdParty/Dust2/de_dust2_geo.bin 的顶点外接框；窗口公式真源 原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193',
      '地图几何域另片处理（⛔ 本片不剪几何）'),
+    # ---- 片AZ（2026-09-22）：用户本轮 10 条报告（#66~#75）+ 同类漏检（#77）的差异四要素 ----
+    #  编号与 `策划/验收表.md`「允许的差异」段逐条一一对应（闸门第 24 条 differences-source-of-truth 每次校验）。
+    ('66', 'B 点旋转楼梯（及**全图所有楼梯/坡道/台阶**）上不去',
+     '离线判据里**没有"沿楼梯从底走到顶"这条链**：`tools/probes/geom-check.py` 只做 A5「低矮障碍 71 候选」'
+     '（来路判挡 / 顶面可站 / 横跨窗口），没有"多级台阶 × 膝盖射线 × StepUp 闸门"的逐级推进判据；'
+     '运行时四道闸门在 `client/Assets/Scripts/Module/Map/CsMap.cs:514-531`（① 中心格可走 ② 落点地面高差 ≤ `CsConst.StepUpHeight`=0.45m ③ 落点法线 y ≥ `CsConst.MaxStandableSlopeNormalZ`=0.70 ≈45.573° ④ 膝盖高度射线通畅），'
+     '两层判据入口 `:298-299`。另：本工程 B 点那段几何到底是**整片斜楔**还是**多级台阶**、与原版是否同形，**未离线判定**；'
+     '同类扩样：全图 T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台**都没有**同类判据（`策划/对照表.md:730` 只有一条常量级"坡道可站立阈值 差 0"）',
+     '用户本轮原话"B旋转楼梯上不去"；判据出处 `tools/probes/geom-check.py`（A5 段）/ `client/Assets/Scripts/Module/Map/CsMap.cs:298-299,514-531`；'
+     '常量出处 `client/Assets/Scripts/Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7，≈45.573° —— 与 GoldSrc `pm_shared.c` 的 `if (trace.plane.normal[2] < 0.7) goto usedown;` 同口径）；'
+     '几何载体 `client/Assets/ThirdParty/Dust2/de_dust2_geo.bin` + `de_dust2.bsp`；原版 .bsp 本机不在盘 ⇒ **待补**（降级链第 1 级：原始数据；退到第 3 级 = bsp 专用格式原始结构）',
+     '开「楼梯/坡道可走性」片时：先补离线判据（高差 ≤0.45m 的连续落差面分类成台阶/斜面，逐段做底→顶可走断言），'
+     '再按判据结果改 `CsMap.TryStepUp` / 几何；修后按**数值类**采一次运行时日志行 + 断言（⛔ 不靠截图）'),
+    ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步',
+     '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：'
+     '① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0）⇒ 只能沿标记点最近邻序列走直线；'
+     '② 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299`/`:574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds、`:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）⇒ 观感就是"原地踱步、不知道在干啥"；'
+     '③ 下包/拆包有实现但**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），没有多点突破/掩护/换点位。',
+     '用户本轮原话"人机的ai太傻逼了。一直在原地踱步…警不去守点，匪不去下包 不去突破"；'
+     '实现出处 `client/Assets/Scripts/Module/Bot/CsBotBrain.cs:11,29-31,298-299,338,406-455,494-516,574-575,697-701`、'
+     '`client/Assets/Scripts/Module/Bot/BotNavigator.cs:9-29,115-161,183-248,269-277,322-495`、'
+     '`client/Assets/Scripts/Module/Bot/CsBotConst.cs:323`（"只有 id % N == 0 的 T 去捡掉落 C4"）；'
+     '难度只改反应时间/瞄准误差 `client/Assets/Scripts/Module/Match/CsTypes.cs:148`（CsBotProfile）；'
+     '原版口径：**A（CS 1.6）本体不含 bot AI**（官方 bot 属 CZ/PodBot，不在本工程载体范围）⇒ 行为基线按规格 §2.4 三档表 + 差异 #58；'
+     '缺的战术表（守点位/下包决策）**待补**（降级链第 4 级：参考坐标可自定，但须逐条标"本项目新增"）',
+     '开「机器人 AI」片时：① 先把 `.bytes` 可走位图接上引擎 `AStar.FindSmoothed`（契约见 `AStar.cs（第 16-19 行）`）当**寻路层**；'
+     '② 再加**位置层**：从 `de_dust2.bsp` 的实体/几何取点位，建"CT 守点位表 / T 下包点表 / 突破线"；'
+     '③ 判据 = 离线断言（"守点位上有人 ≥X s"、"回合内至少 1 次下包"、"T 进点路径可达"）+ 一次实机联络图'),
+    ('68', '武器右键（attack2）**整条链缺失**：USP / M4A1 不能拆装消音器、Glock18 不能切连发',
+     '① 输入层结构里**只有 `Zoom`**：`CsInputState`（`client/Assets/Scripts/Module/Match/ICsMatch.cs`）的字段逐字是 '
+     '`Move / Jump / Crouch / Walk / Fire（左键按住） / Zoom（右键，AWP/Scout 开镜） / Yaw / Pitch`，**没有 attack2 / 次级开火**；'
+     '唯一的右键消费点 = `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）；'
+     '② 武器表里也没有"是否支持消音器/连发切换"的字段（`client/Assets/Scripts/Core/CsWeapons.cs:34-46` 的 `CsWeaponDef`）'
+     '⇒ 除狙击开镜外，任何武器的右键在本工程**结构性无效果**（不是某把枪漏了）。',
+     '用户本轮原话"很多枪右键没效果，就像警的默认小手枪，右键不是拆消音吗？"；'
+     '实现出处 `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`、`client/Assets/Scripts/Module/Match/ICsMatch.cs`（CsInputState）、`client/Assets/Scripts/Core/CsWeapons.cs:34-46`；'
+     '原版语义载体 **在盘**：CS 1.6 的逐武器 attack2 写在 `cstrike/cl_dlls/client.dll` 里（不是 cvar / 不是数据表）—— 片AW 已把它取回（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B），但**尚未反汇编**定位 attack2 分支 ⇒ 出处待补（降级链第 2 级：可执行里的常量/分支，**载体已具备**）。'
+     '⚠️ `原版资源/hlsdk/dlls/weapons.cpp` 是 **HL1** 的武器实现，只能证明"开火/切换写死在类里"这一机制，⛔ 不是 CS 语义出处',
+     '开「输入 × 玩法」片时：① 先取回 `client.dll` 的 attack2 分支（或一份原版行为证据）定死逐武器语义（USP/M4A1 消音、Glock 连发）；'
+     '② 契约扩 `CsInputState.Attack2` + `CsWeaponDef` 的支持位；③ 判据 = 离线断言（换弹/开火链在 attack2 下的状态变化）+ 硝音器模型的载体（`v_usp`/`w_usp` 的 silencer 变体）'),
+    ('69', '墙上弹痕与原版不符：只有 1 张变体、尺寸无出处、载体注记过期',
+     '① 变体只有 1 张（原版是 `decals.wad` 的 `{shot1..5` 随机 + `{bigshot*` 大口径）；'
+     '② 尺寸 `CsCombatTuning.DecalSize = 0.075f`（`Module/Combat/CsCombatTuning.cs:178`）源码注释自认是"按原版 decal 的观感（~7cm）"= **观感值不是出处**；'
+     '③ `Core/ResPaths.cs:177` 的注释还写"弹痕精灵（真实文件 …，32×32）"，而盘上 `client/Assets/Resources/UI/Art/fx_bullethole` 实测 **16×16 / 234 B**（片AW 用 WAD3 解出的 `{shot1` 覆盖后注释未同步）；'
+     '④ 弹痕的**表现类**判据（贴面朝向/尺寸/按材质观感）在 `策划/验收表.md` 的联络图索引里**没有格号**（片AW 只做了"换图 + 三重自洽断言"，没有并排图判过）。',
+     '用户本轮原话"子弹落在墙上痕迹不对"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:172-190`（贴面 + 沿法线抬 1cm + `DecalSize` 缩放）、'
+     '`client/Assets/Scripts/Module/Combat/CsCombatTuning.cs:178/181/184`（DecalSize/DecalDuration/MaxDecals）、`client/Assets/Scripts/Core/ResPaths.cs:177-178`；'
+     '原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，SHA256 记在 `原版资源/清单.md` 片AW 节）；'
+     '尺寸映射的原始出处（原版 decal 的世界单位换算）**待补**（降级链第 2 级：可执行里的常量；`)`；差异 #52 已登记"多变体未接"',
+     '开「特效 × 材质」片时：① `tools/probes/wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来；'
+     '② 工程侧支持弹痕多图变体 + 随机取一；③ 尺寸按"贴图原生尺寸 × 原版世界单位映射"重算（映射取不到 ⇒ 保持自定值并留在本行）；'
+     '④ 判据 = 同机位并排图采一次（贴面朝向：朝地与朝墙两格）'),
+    ('70', '买枪界面 / 选人（兵种）界面 UI 未按原版载体重建',
+     '① 买枪界面 `client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs` 的**全部布局常量是自建**（`:27-38` DialogWidth 1020 / DialogHeight 640 / CategoryY −104 / RowHeight 46 / RowsPerColumn 6 / ColumnWidth 470 …），'
+     '注释写的出处是"规格 G3，任务书 §4.2"⇒ ⛔ 不是原版载体；而原版口径的载体**已在盘**：'
+     '`原版资源/cs16src/cstrike/sprites/weapon_*.txt`（31 份，片AW 取回；逐字给出 320/640 两档下 weapon/ammo/crosshair 部件取自哪张 HUD 精灵 + 源矩形 + 屏幕落点）'
+     '与 `cstrike__sprites__640hud10.spr` / `640hud11.spr`；'
+     '② 选人（兵种）界面**本工程没有**（只有选阵营 `UI/Flow/TeamSelectPanel.cs`）；原版载体 `classmenu_ct.res` / `classmenu_ter.res` 本机不在盘'
+     '（差异 #36 早已登记"未做"，本行按用户本轮 #5 并入，⛔ 不新开号）。',
+     '用户本轮原话"买枪界面ui不对， 选人界面ui不对。"；实现出处 `client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs:27-38`、`client/Assets/Scripts/UI/Flow/TeamSelectPanel.cs`；'
+     '原版载体出处 `原版资源/cs16src/cstrike/sprites/weapon_*.txt`（31 份）+ `cstrike__sprites__640hud10.spr`/`640hud11.spr` + `原版资源/清单.md`（片AW 节，逐字样例已抄录）；'
+     '选兵种 `.res` 本机不在盘 ⇒ **待补**（降级链第 1 级：原始数据）',
+     '开「UI × 面板」片时：① 用 `weapon_*.txt` + `640hud10/11.spr` 重建买枪界面的部件矩形与落点（⛔ 不许再自定常量）；'
+     '② 取回 `classmenu_*.res` 后建选兵种界面；③ 判据 = 同机位并排图 + 控件落点的数值断言（`策划/对照表.md` §4 的 U-* 口径）'),
+    ('71', '角色模型（9 皮肤）**无法自证是原版 mdl**，且派生链只到一份社区 repack',
+     '① 工程模型数据的全部来源 = `原版资源/cs16src/cs16game/app/cstrike/models/player/*/*.mdl` 经 `cs16_build.py` / `cs16_anim.py` 转成 '
+     '`client/Assets/Editor/Views/ModelData/player_*.cs16mdl`（几何/蒙皮）+ `*.cs16anim`（骨骼动画）；'
+     '② 中间格式头实测 = `C16M`/`C16A` v1 + 角色名 + 贴图名（`player_T.cs16mdl` 17,743 B 头 `C16M\\x01…player_T…player_T_TERROR.png`），**不记录源 mdl 的 SHA256** ⇒ 工程内**无法自证**；'
+     '③ 能站得住的证据只有"与那份 mdl 逐值一致"（`策划/对照表.md:136` M-03 骨骼 23 / `:137` M-04 序列 111 / `:138` M-05 idle1 fps15/61 帧 / `:145` M-12 / `:147` M-14）；'
+     '④ 那份 mdl 属**社区 repack**（路径 `cs16game/app/cstrike/models/…`；`策划/基线图/场景清单.md:20-39` 记录了这份 repack 的授权链缺件问题）；'
+     '⑤ 贴图侧同源缺口：M-16（`:149`）自认"按 md5 去重合并，不再与 mdl 一一对应"。',
+     '用户本轮原话"人物模型还是不对，感觉你是社区版本的模型，不是原版模型"；'
+     '派生链出处 `策划/对照表.md:134,136,137,145,147,149,150`；中间数据 `client/Assets/Editor/Views/ModelData/`（38 份 cs16mdl + 38 份 cs16anim）；'
+     '标签/骨架实测口径 `原版资源/cs16src/cs16_anim.py`（本机不在盘 ⇒ 引用不可达，见 `策划/载体可达性登记.tsv`）；'
+     '原版官方发布版的 mdl 载体**本机没有**（`原版资源/` 实测无 `models/`）⇒ **待补**（降级链第 1 级：原始数据；'
+     '可取路径 = 照片AR 的 `codeload` tarball 重新取回同一 repack 的 `models/**`，或用户给一份官方客户端）',
+     '开「角色模型」片时：① 照片AR 的 `codeload` 路径取回该 repack 的 `models/player/**` 与 `models/v_*.mdl`，逐文件算 SHA256；'
+     '② 与工程中间数据的头字段（骨骼/序列/贴图数）与顶点数对账，把"逐值一致"升级成"逐字节一致"；'
+     '③ 若用户能提供**官方**客户端，则补一次跨来源比对（当前只能证明"与这份 repack 一致"）'),
+    ('72', '换弹动画会丢',
+     '① 触发方式是**边沿检测时间戳变大**，不是模拟发出的换弹事件：`client/Assets/Scripts/Module/View/ActorView.cs:268` '
+     '（`actor.ReloadEndTime > _preReloadEndTime + 0.0001`）→ `:270` 取 `CsViewTuning.PlayerReloadStates(...)`；'
+     '`Module/Match/CsInventory.cs:403-439` 的 `Reload` 在三条分支上直接 `return`（`:408` 没武器 / `:413` 不支持换弹 / `:419` 正在切枪 / `:426` 弹匣已满），'
+     '`ReloadEndTime` 也可能被同帧重设（连点 R / 换弹中切枪再切回）⇒ 边沿检测采不到 ⇒ 整段动画丢失；'
+     '② **没有"请求换弹 → 动画必须播一次"的运行时断言**（`策划/验收表.md` R6 只看"`HasState`=T + 数值"，不判"每次请求都播"）；'
+     '③ 本来就该没有的两类（⛔ 不算缺陷）：`CsViewTuning.cs:318-327` 注明原版 group0 实测**没有** `ref_reload_grenade` / `ref_reload_knife`。'
+     '第一人称侧同理：`CsViewTuning.cs:254`（`VmStateReload = { "reload" }`）。',
+     '用户本轮原话"换弹动画有时候会丢"；实现出处 `client/Assets/Scripts/Module/View/ActorView.cs:249-274`、'
+     '`client/Assets/Scripts/Module/Match/CsInventory.cs:403-439`、`client/Assets/Scripts/Module/View/CsViewTuning.cs:254,318-327`；'
+     '原版口径 `HLSDK` 无 CS 的客户端动画选择（差异 #19/#20/#21 同源）⇒ 序列名与候选表按 mdl 实测（`策划/对照表.md:144` M-11 / `:147` M-14）',
+     '开「动画 × 换弹」片时：① 把"换弹开始"改成**模拟侧事件**（或在 `Reload` 成功分支置一个单调递增的计数）而不是时间戳比较；'
+     '② 加断言："每次成功换弹 → 动画状态至少进入一次 reload"；③ 判据 = 数值类（运行时日志行 + 断言），连点 R / 中途切枪两个边界各一条'),
+    ('73', '死亡后**没有尸体**，且死亡动画播完立刻整具身体消失',
+     '① 现在的死亡链 = 播 `death1..3` 之一（按 `actorId % 3` 取）→ 播完 `OnComplete` 里 `SetShown(false)` **整具身体隐藏**'
+     '（`client/Assets/Scripts/Module/View/ActorView.cs:451-464` + `:293-312`；差异 #12 已登记实测时间线 `death2 clipLen=1.367 → t=1524ms 时 shown=False`）；'
+     '② **工程里没有任何 corpse / 尸体实体**（`client/Assets/**` 全仓 grep `Corpse` / `尸体` 命中 0）；'
+     '③ 原版是把尸体留在地上的（GoldSrc 的 ragdoll 近似 = 尸体实体留在原位），所以用户看到的"尸体怎么不在地上"是**结构性未做**；'
+     '④ 顺带：`death1..3` 是"倒地"序列，播完即隐藏 ⇒ 用户感知的"死亡动画没有"很可能是"播得很快 + 立刻消失"的合成观感（本片 ⛔ 不下断言，留一次实机）。',
+     '用户本轮原话"死亡动画没有，尸体怎么不在地上？"；实现出处 `client/Assets/Scripts/Module/View/ActorView.cs:293-312,451-464`、'
+     '`client/Assets/Scripts/Module/View/CsViewTuning.cs:194`（`PStateDeath`）；原版序列节奏 `策划/对照表.md:143`（M-10，逐条 fps/帧数已对齐）；'
+     '原版“尸体留在地上”的**直证载体在盘但未反汇编**（GoldSrc 死亡/尸体逻辑在 `mp.dll`：`原版资源/cs16src/cstrike/dlls/mp.dll`，1,640,960 B，片AW 取回，SHA256 见 `原版资源/清单.md`）⇒ 出处仍按"待补（降级链第 2 级：可执行里的常量/分支）"记，但**载体已具备**',
+     '开「死亡 × 表现」片时：① 先取回 `mp.dll` 或一份原版死亡实拍（定死"尸体留多久/什么姿态/是否可穿过"）；'
+     '② 加"尸体实体"（复用 ActorView 的最后一帧姿态或一个静态姿态体）；③ 判据 = 一次实机联络图（死亡 → 尸体在地上 → 回合结束清场）'),
+    ('74', '受击时**没有任何血雾 / 命中反馈特效**',
+     '`client/Assets/Scripts/Module/Combat/CombatEffects.cs:10-19` 的四类特效 = 枪口火焰 / 弹道 / 弹痕 / 爆炸，**没有 blood**'
+     '（`client/Assets/**` 全仓 grep `Blood` / `血雾` 命中 0）；受击的屏幕反馈只剩"屏幕边缘方向红框" '
+     '（`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`），而且**只给本地玩家**写（`Module/Match/CsDamage.cs:160-165` 的 `WriteLocalDamageIndicator`）；'
+     '差异 #63 已把"伤害数字飘字"按 skill §0 铁律 1 下架（A 没有 ⇒ 不加）⇒ 于是"打中了"这件事在屏幕上**没有任何反馈**。'
+     '⚠️ 原版到底有没有血雾/击中提示（还是只有扣血条）需要原版实机证据。',
+     '用户本轮原话"受伤特效没有，没血"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:10-19`、'
+     '`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`、`client/Assets/Scripts/Module/Match/CsDamage.cs:160-165`、`client/Assets/Scripts/UI/InGame/HudPanel.cs:878-882`；'
+     '原版口径 **待补**：直证载体 `client.dll` **在盘**（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B，片AW 取回）但**未反汇编** ⇒ 优选路 = 反汇编 `client.dll` 的受击渲染分支；次选 = 原版实拍/视频量化（降级链第 4 级）',
+     '开「特效 × 受击」片时：① 先拿到原版受击瞬间的证据（实拍/视频）定死"屏幕上有/没有血雾"；'
+     '② 若原版有 ⇒ 按素材来源补血雾贴图（`原版资源/` 或降级链逐级退）并挂到 `CsDamage.ApplyHit`；'
+     '③ 判据 = 一次实机联络图（命中敌人 / 被命中两格）'),
+    ('75', '掉落的枪**不在世界里**（同一个根因：工程里没有"世界中的武器"这个对象）',
+     '① `client/Assets/Scripts/Module/Match/CsInventory.cs:255-285` 的 `DropWeapon` **只改库存字段**'
+     '（摘掉 `PrimaryWeapon` / `SecondaryWeapon`，或对 C4 走 `Bomb.OnCarrierLost`），再 `SelectBestWeapon`，'
+     '**不生成任何世界实体**；（`CsMatch.cs:931` 是唯一调用点。）'
+     '② 工程里也没有世界武器模型：`client/Assets/Editor/Views/ModelData/` 的 38 份模型数据 = 9 角色 + **29 个第一人称视模型 `vm_*`**，'
+     '**没有任何 `w_*.mdl`**（原版的第三人称手持与掉落物都用 `w_*`）；`client/Assets/Resources/Art/{T,CT}/viewmodel_*.prefab` 同理（29×2 全是视模型）。'
+     '⇒ 用户看到的"枪也不在地上"是**结构性未做**（不是掉落逻辑写错）。',
+     '用户本轮原话"枪也不在地上？"；实现出处 `client/Assets/Scripts/Module/Match/CsInventory.cs:255-285`、`client/Assets/Scripts/Module/Match/CsMatch.cs:931`；'
+     '建模数据口径 `策划/对照表.md:135`（M-02）与 `:150`（M-17：38 份 = 9 + 29）；'
+     '原版载体 `models/w_*.mdl` 本机不在盘（`原版资源/` 无 `models/`）⇒ 需照片AR 的 `codeload` 路径从同一 repack 取回 ⇒ **待补**（降级链第 1 级：原始数据）',
+     '开「世界物件（掉落武器）」片时：① 取回 `models/w_*.mdl` 并转成 `w_*.cs16mdl`（复用 `Cs16MdlData` 链）；'
+     '② 加"掉落武器实体"（位置 = 死亡点 / 丢弃点，绕 Y 轴微转，可被 `+use` 拾取）；③ 判据 = 数值类（掉落/拾取的运行时日志 + 断言）+ 一次联络图'),
+    ('76', '机器人"钻地"（地形贴合的边界：单层位图 + 软地板 + 无寻路）',
+     '**bot 与真人走同一条物理**（`client/Assets/Scripts/Module/Match/CsMatch.cs:1752` 与 `:2292` 都调 `StepActorPhysics`），'
+     '所以"没有地形碰撞"**不成立**；可判的三条边界：'
+     '① 贴地位图是**单层 2D**（`client/Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs（第 29~30 行）`：`FlagHeightField` V1 未实现、见到即明确拒绝解码；差异 #49），'
+     '上层平台/桥面与下层在 XZ 上同格 ⇒ `CsMap.TrySampleGround`（`:542-557`，只取**第一个**交点）无法区分"该站哪层"；'
+     '② **软地板**：连续探不到地面时把人贴到最后一次已知地面 y（`CsMatch.cs:1853-1887` 的 `_lastGroundY` / `TrySoftFloor`）⇒ 在坡/台阶/`collision-mesh-gap.tsv` 列的"碰空气格"上会被贴到低于视觉地面的位置（形态像钻地）；'
+     '③ **无寻路**（`BotNavigator` 只有路点 + 逃逸；引擎 `AStar` 零调用）⇒ bot 会朝不可走方向推进、在坡道处反复进出几何。'
+     '本片 ⛔ 不进 Play，故"钻地"的**具体一格**未定案 ⇒ 判据留给下一次实机（逐帧 `actor.Position.y` vs `SampleGround` 的数值行）。',
+     '用户本轮原话"ai人机会钻地不是真正的地形碰撞ai吗？"；实现出处 `client/Assets/Scripts/Module/Match/CsMatch.cs:1762-1904`（重力 → `ResolveMove` → `TrySampleGround` → 贴地/陡坡闸门 `:1802-1819` / 软地板 `:1853-1887` / 掉图兜底 `:1894-1904`）、'
+     '`client/Assets/Scripts/Module/Map/CsMap.cs:444-531`（扫掠 ≤0.25m + 分轴滑墙 + 台阶）、`:542-557`（地面射线）、`:571-603`（`GroundMask`，只打 `CsWorld` 层）；'
+     '单层位图出处 `client/Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs（第 29~30 / 87~93 行）`；'
+     '几何-碰撞缺口判据 `tools/probes/collision-mesh-gap.py`（输出 `.ai-tmp/test/collision-mesh-gap.tsv`，分类 a/a2/b/c）；'
+     '原版口径 `pm_shared.c`（`原版资源/hlsdk/pm_shared/pm_shared.c`，片AY 已落盘）⇒ 可对照 `PM_CatagorizePosition` / `PM_WalkMove`',
+     '开「AI 移动 / 地形」片时：① **先接寻路**（#67 ①）让 bot 不再朝不可走方向推进；'
+     '② 加"多帧贴地一致性"断言（`Position.y` 与 `SampleGround` 之差 ≤ 一个台阶，且不得低于它）；'
+     '③ 判据 = 一次实机 + 逐帧数值日志（⛔ 不靠截图）；若步 (b) 坐实"软地板把人贴低"，改 `TrySoftFloor` 的回落条件（需另开片，⛔ 本片未改引擎/未改该链）'),
+    ('77', '**有寻路能力但业务零使用**：引擎通用格子 A*（`Runtime/Core/AStar.cs`）从未被业务调用',
+     '引擎**有**通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`，325 行）：'
+     '8 邻接（对角要求两侧均可走，`:114-119`）、octile 启发式（`:236-244`）、`DefaultMaxNodes=20000`（`:32`）、二叉最小堆惰性删除（`:274-323`）、'
+     '路径拉直 `Smooth` / `FindSmoothed`（`:138-174`）、Bresenham 视线 `HasLineOfSight`（`:180-219`）；'
+     '契约是**回调式** `Func<Vector2Int,bool> walkable`（`:16-19`：任何位图/格子地图都能直接复用，"不必重造二进制格式"）；'
+     '而地图侧已有 `Game.Map.WalkableAt(x,z)`（`Runtime/Presentation/Map.cs（第 149 行）` → `MapFormat.cs（第 243-252 行）` 的位图查询，与服务端 `mapdata.WalkableAt` 同算法）'
+     '⇒ `.bytes` 的可走位图**本身就是一张天然寻路网格**。'
+     '但 `client/Assets/**` 全仓 grep `AStar` **命中 0**（`BotNavigator` 只走路点 + 局部避障）⇒ 能力与业务之间是断的。'
+     '（引擎**没有**的能力：NavMesh / NavMeshAgent 封装、BSP/四叉树/八叉树的导航结构、高度场 —— `FlagHeightField` 只有位标记、V1 解码器明确拒绝。）',
+     '用户本轮原话"是我引擎里没有寻路机制吗？没有分叉树判断之类的玩意吗？"；'
+     '能力出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16~19 / 32 / 52~132 / 138~174 / 180~219 / 236~244 / 274~323 行）`；'
+     '地图接口 `Runtime/Presentation/Map.cs（第 149 行）`（`WalkableAt`）、`Runtime/Presentation/MapFormat.cs（第 27~30 / 87~93 / 243~252 行）`、`Runtime/Game.cs（第 265 / 628 行）`（`Game.Map` 门面）；'
+     '业务侧反证 = `client/Assets/**` grep `AStar` 命中 0（本片实测）；'
+     '⚠️ 引擎**没有** NavMesh/BSP 导航（本片实测 grep `NavMesh|Pathfind|QuadTree|Octree|BSP` 于引擎包命中 0；`BSP` 只出现在本项目自带的 `de_dust2.bsp` 解析链里）',
+     '开「机器人 AI」片时与本行一起做：把 `.bytes` 位图包成 `walkable` 回调喂 `AStar.FindSmoothed`，'
+     '在 `BotNavigator` 里用它替换"最近邻路点直线"；判据 = 离线断言（给定 from/to，路径全程可走 + 长度 ≤ 直线 × 系数）+ 一次实机（bot 能从出生点走到包点）。'
+     '⛔ 本行**不是**"引擎缺能力"，而是"能力未被业务使用" —— 登记它是为了消除"是不是引擎没有寻路"这个疑问'),
 
 ]
 
