@@ -1063,19 +1063,25 @@ if ($numRows.Count -eq 0) {
   $numTextOnly | ForEach-Object { Sub $_ }
 }
 
-# --- 33) no-team-sessions -- template item `no-team-sessions` (added slice AI) --
-#  SKILL 2 item 2: the ONLY sanctioned channel is a plain SYNCHRONOUS sub-agent.
-#  An async / team / member channel bypasses `model: inherit` and silently lands a
-#  weaker model, so the channel form is part of the contract, not a style choice.
-#  Two computable traces:
-#    (a) a team / member / session directory under the workspace host dir whose
-#        content was created or modified INSIDE the 24h window;
-#    (b) a dispatch-log row (the ledger is mandatory anyway, SKILL 2 item 5) that
-#        names a team / member / async channel.
+# --- 33) no-sync-subagents -- template item `no-sync-subagents` (was `no-team-sessions`) --
+#  SKILL 2 item 2 -- POLICY REVERSED 2026-09-22: dispatch goes ONLY through team
+#  members (async: subagent_name + name + team_name). The SYNC channel stalls
+#  (code=10003 This operation was aborted / No result found) and leaves the caller
+#  with no report, so the channel form is part of the contract, not a style choice.
+#
+#  Do NOT try to check the model here: a member's model string is an injected
+#  self-description it cannot verify, and the host's member metadata records no
+#  model. That criterion was measured twice and discarded (2026-09-22).
+#
+#  What IS computable is the trace a team dispatch leaves:
+#    (a) a team/member directory under the workspace host dir, created or modified
+#        INSIDE the 24h window  ->  that is the SANCTIONED form (informational);
+#    (b) dispatch-log rows (the ledger is mandatory anyway, SKILL 2 item 5) must
+#        name a team / member.
+#  => the check is INVERTED: a dispatch row carrying NO team/member name means the
+#     work went out over the sync channel.
 #  Residue older than the window is printed, never failed: template item 11 --
-#  a check that reports historical residue as a violation is worse than no check
-#  (measured: a nine-day-old directory from another task was once reported as a
-#  live violation and almost stopped a healthy flow).
+#  a check that reports historical residue as a violation is worse than no check.
 $teamRels = @('.codebuddy\teams', '.codebuddy\team', '.codebuddy\members', '.codebuddy\sessions', '.codebuddy\agents')
 $teamLive = @(); $teamStale = @()
 foreach ($rel in $teamRels) {
@@ -1086,23 +1092,25 @@ foreach ($rel in $teamRels) {
   if ($inWin.Count -gt 0) { $teamLive += ($rel + ' (' + $inWin.Count + ' in-window item(s))') }
   else { $teamStale += $rel }
 }
-$teamLog = @()
+$dispatchRows = @()
 if (Test-Path $logPath) {
   foreach ($line in @([System.IO.File]::ReadAllLines($logPath))) {
     $l = [string]$line
     if ($l.Trim().Length -eq 0 -or $l.TrimStart().StartsWith('#')) { continue }
-    if ($l -match '(?i)\b(teams?|members?)\b' -or $l -match '(?i)clover-(teammate|worker|team)') {
-      $teamLog += ($l.Substring(0, [Math]::Min(110, $l.Length)))
-    }
+    $dispatchRows += $l
   }
 }
-if (($teamLive.Count -eq 0) -and ($teamLog.Count -eq 0)) {
-  $note = ''
-  if ($teamStale.Count -gt 0) { $note = '; pre-window residue, NOT a violation (template item 11): ' + ($teamStale -join ', ') }
-  Say 'PASS' 'no-team-sessions' ('no in-window team / member / session trace under the workspace host dir, and no dispatch-log row names a team / member / async channel' + $note)
-} else {
+$noTeamTrace = @($dispatchRows | Where-Object { $_ -notmatch '(?i)\b(teams?|members?)\b' })
+$note = ''
+if ($teamStale.Count -gt 0) { $note = '; pre-window residue, NOT a violation (template item 11): ' + ($teamStale -join ', ') }
+if ($dispatchRows.Count -eq 0) {
+  Say 'PASS' 'no-sync-subagents' ('no dispatch in this window -- nothing to classify' + $note)
+} elseif ($noTeamTrace.Count -gt 0) {
   $script:fail++
-  Say 'FAIL' 'no-team-sessions' ('async / team / member channel trace(s): ' + (($teamLive + $teamLog) -join ' | ') + ' => the only sanctioned channel is a plain synchronous sub-agent (SKILL 2 item 2)')
+  $first = $noTeamTrace[0]
+  Say 'FAIL' 'no-sync-subagents' ('' + $noTeamTrace.Count + ' dispatch row(s) name no team/member => those went out over the SYNC channel, which stalls (code=10003) and leaves no report; first: ' + $first.Substring(0, [Math]::Min(100, $first.Length)) + $note)
+} else {
+  Say 'PASS' 'no-sync-subagents' ('all ' + $dispatchRows.Count + ' dispatch row(s) name a team member; in-window team trace: ' + $(if ($teamLive.Count -gt 0) { $teamLive -join ', ' } else { 'none (ledger-only)' }) + $note)
 }
 
 # --- 34) freeze-before-capture -- template item `freeze-before-capture` --------

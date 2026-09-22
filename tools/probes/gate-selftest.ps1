@@ -105,7 +105,7 @@ Expect 'shot-refs-audited / restored' (Invoke-Gate 'shot-refs-audited') 'PASS'
 
 # =====================================================================
 #  4) slice AI: the 3 renamed checks (+ the no-handoff-docs name) and the
-#     4 added checks (numeric-log-only / no-team-sessions /
+#     4 added checks (numeric-log-only / no-sync-subagents /
 #     freeze-before-capture / evidence-economy).
 #     Two samples, batched: every defect is injected at once so the whole
 #     thing costs THREE gate runs (good / injected / restored) instead of
@@ -138,7 +138,7 @@ $loose  = @()
 1..60 | ForEach-Object { $loose += (Join-Path $shots ('gx-selftest-loose-' + $_ + '.png')) }
 
 $renamed = @('allowed-diff', 'screenshot-refs', 'verify-entry', 'no-handoff-docs')
-$added   = @('numeric-log-only', 'no-team-sessions', 'freeze-before-capture', 'evidence-economy')
+$added   = @('numeric-log-only', 'no-sync-subagents', 'freeze-before-capture', 'evidence-economy')
 $oldNames = @('differences-registry', 'refs-reachable', 'gate-present', 'no-handover-docs', 'handoff-doc-found')
 
 Note ''
@@ -183,8 +183,9 @@ try {
   # (e) verify-entry: hide one companion script of the entry surface.
   Move-Item $envChk $envBak -Force
 
-  # (f) no-team-sessions: a dispatch-log row naming a team channel.
-  [IO.File]::AppendAllText($dlog, ((Get-Date).ToString('yyyy-MM-dd HH:mm') + "`tgx-selftest`tgx-selftest team channel probe`t" + $Project + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+  # (f) no-sync-subagents (was no-team-sessions; REVERSED 2026-09-22):
+  #     the defect is now a dispatch row that names NO team/member (= sync channel).
+  [IO.File]::AppendAllText($dlog, ((Get-Date).ToString('yyyy-MM-dd HH:mm') + "`tgx-selftest`tgx-selftest sync-channel probe`t" + $Project + "`r`n"), (New-Object Text.UTF8Encoding($false)))
 
   # (g) freeze-before-capture: age the oldest png of the newest contact sheet,
   #     so its own row implementation file is newer than the shot.
