@@ -53,8 +53,82 @@ def dist(vals):
     return "n=%d min=%.3f p50=%.3f p90=%.3f max=%.3f" % (m, v[0], v[m // 2], v[(m * 9) // 10], v[-1])
 
 
+# ---------------------------------------------------------------------------
+# slice BO: the SAME instrument, second mode -- the TWO-SIDED verdict.
+#
+# Why it exists: slice BN's mode above judges the *frozen probe columns* (a prediction). Slice BO had to
+# judge the real geometry, and the real de_dust2 colliders only exist while a map session is live, so the
+# raycasts were done by .ai-tmp/test/bo-reach.cs (same CsWorld mask, same CsMap.TrySampleGround
+# semantics, same StepUpHeight; that script also validates ITSELF against the frozen probe's own columns:
+# `prodY == recWantGY` on every control row and `highY == recHighGY`).
+# This mode reads those two products and prints both halves of the two-sided criterion, side by side:
+#   ① reach set from the spawn cells (must NOT collapse: old -> new)
+#   ② the 1592 misjudged rows must STAY dead, and the 12581 control rows must STAY alive
+# usage: python height-consistent-predict.py <dir with bo-want-verdict.tsv + bo-reach.tsv>
+# ---------------------------------------------------------------------------
+def two_sided(d):
+    wf = os.path.join(d, "bo-want-verdict.tsv")
+    rf = os.path.join(d, "bo-reach.tsv")
+    if not os.path.exists(wf):
+        print("missing %s" % wf)
+        return 2
+    rows = []
+    with io.open(wf, "r", encoding="utf-8", errors="replace") as fh:
+        for ln in fh:
+            p = ln.rstrip("\r\n").split("\t")
+            if len(p) < 16 or p[0].startswith("#"):
+                continue
+            rows.append(p)
+    print("=== slice BO two-sided criterion (measured on the live de_dust2 geometry) ===")
+    print("verdict rows : %d" % len(rows))
+    # instrument self-validation (the raycasts are only trusted if they reproduce the frozen columns)
+    pm = len([r for r in rows if r[7] == "ok"])
+    pmAll = len([r for r in rows if r[7] in ("ok", "MISMATCH")])
+    hm = len([r for r in rows if r[10] == "ok"])
+    hmAll = len([r for r in rows if r[10] in ("ok", "MISMATCH")])
+    print("self-check   : product ground probe reproduced %d/%d ; +24 m ray reproduced %d/%d"
+          % (pm, pmAll, hm, hmAll))
+    print("")
+    for group, want_dead in (("want-no-ground", True), ("ok", False), ("want-not-standable", None)):
+        g = [r for r in rows if r[0] == group]
+        if not g:
+            continue
+        old_dead = [r for r in g if r[12] == "1"]
+        new_dead = [r for r in g if r[15] == "1"]
+        inband = [r for r in g if r[14] != "na"]
+        print("--- %-18s rows=%d ---" % (group, len(g)))
+        print("  OLD sampling (slice BN GroundYAbove) : dead %d/%d = %.1f%%"
+              % (len(old_dead), len(g), 100.0 * len(old_dead) / len(g)))
+        print("  NEW sampling (highest in-band face)  : dead %d/%d = %.1f%%"
+              % (len(new_dead), len(g), 100.0 * len(new_dead) / len(g)))
+        print("  rows with a face inside [foot-8, foot+0.45] : %d / %d = %.1f%%"
+              % (len(inband), len(g), 100.0 * len(inband) / len(g)))
+        if want_dead is not None:
+            tag = "MUST stay dead" if want_dead else "MUST stay alive"
+            print("  -> %s: OLD %s ; NEW %s"
+                  % (tag, "OK" if (len(old_dead) == len(g)) == want_dead else "VIOLATED",
+                     "OK" if (len(new_dead) == len(g)) == want_dead else "VIOLATED"))
+    print("")
+    if os.path.exists(rf):
+        print("--- ① reach set from the spawn cells (cell, old, oldBlocked, new, newBlocked) ---")
+        with io.open(rf, "r", encoding="utf-8", errors="replace") as fh:
+            for ln in fh:
+                p = ln.rstrip("\r\n").split("\t")
+                if len(p) < 9 or p[0].startswith("#"):
+                    continue
+                if not p[4].isdigit():        # header row / skipped neighbour rows carry no BFS result
+                    continue
+                if p[4] == "skipped":
+                    continue
+                print("  %-10s cell (%s,%s) footY=%s : OLD reach %s (blocked %s) -> NEW reach %s (blocked %s)"
+                      % (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]))
+    return 0
+
+
 def main():
     src = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_SRC
+    if os.path.isdir(src):
+        return two_sided(src)
     if not os.path.exists(src):
         print("missing probe tsv: %s" % src)
         return 2

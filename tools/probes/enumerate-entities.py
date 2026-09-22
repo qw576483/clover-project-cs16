@@ -1774,25 +1774,19 @@ DIF = [
      '开「AI 移动 / 地形」片时：① **先接寻路**（#67 ①）让 bot 不再朝不可走方向推进；'
      '② 加"多帧贴地一致性"断言（`Position.y` 与 `SampleGround` 之差 ≤ 一个台阶，且不得低于它）；'
      '③ 判据 = 一次实机 + 逐帧数值日志（⛔ 不靠截图）；若步 (b) 坐实"软地板把人贴低"，改 `TrySoftFloor` 的回落条件（需另开片，⛔ 本片未改引擎/未改该链）'),
-    ('77', '**有寻路能力但业务零使用**：引擎通用格子 A*（`Runtime/Core/AStar.cs`）从未被业务调用',
-     '引擎**有**通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`，325 行）：'
-     '8 邻接（对角要求两侧均可走，`:114-119`）、octile 启发式（`:236-244`）、`DefaultMaxNodes=20000`（`:32`）、二叉最小堆惰性删除（`:274-323`）、'
-     '路径拉直 `Smooth` / `FindSmoothed`（`:138-174`）、Bresenham 视线 `HasLineOfSight`（`:180-219`）；'
-     '契约是**回调式** `Func<Vector2Int,bool> walkable`（`:16-19`：任何位图/格子地图都能直接复用，"不必重造二进制格式"）；'
-     '而地图侧已有 `Game.Map.WalkableAt(x,z)`（`Runtime/Presentation/Map.cs（第 149 行）` → `MapFormat.cs（第 243-252 行）` 的位图查询，与服务端 `mapdata.WalkableAt` 同算法）'
-     '⇒ `.bytes` 的可走位图**本身就是一张天然寻路网格**。'
-     '但 `client/Assets/**` 全仓 grep `AStar` **命中 0**（`BotNavigator` 只走路点 + 局部避障）⇒ 能力与业务之间是断的。'
-     '（引擎**没有**的能力：NavMesh / NavMeshAgent 封装、BSP/四叉树/八叉树的导航结构、高度场 —— `FlagHeightField` 只有位标记、V1 解码器明确拒绝。）',
-     '用户本轮原话"是我引擎里没有寻路机制吗？没有分叉树判断之类的玩意吗？"；'
-     '能力出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16~19 / 32 / 52~132 / 138~174 / 180~219 / 236~244 / 274~323 行）`；'
-     '地图接口 `Runtime/Presentation/Map.cs（第 149 行）`（`WalkableAt`）、`Runtime/Presentation/MapFormat.cs（第 27~30 / 87~93 / 243~252 行）`、`Runtime/Game.cs（第 265 / 628 行）`（`Game.Map` 门面）；'
-     '业务侧反证 = `client/Assets/**` grep `AStar` 命中 0（本片实测）；'
-     '⚠️ 引擎**没有** NavMesh/BSP 导航（本片实测 grep `NavMesh|Pathfind|QuadTree|Octree|BSP` 于引擎包命中 0；`BSP` 只出现在本项目自带的 `de_dust2.bsp` 解析链里）',
-     '开「机器人 AI」片时与本行一起做：把 `.bytes` 位图包成 `walkable` 回调喂 `AStar.FindSmoothed`，'
-     '在 `BotNavigator` 里用它替换"最近邻路点直线"；判据 = 离线断言（给定 from/to，路径全程可走 + 长度 ≤ 直线 × 系数）+ 一次实机（bot 能从出生点走到包点）。'
-     '⛔ 本行**不是**"引擎缺能力"，而是"能力未被业务使用" —— 登记它是为了消除"是不是引擎没有寻路"这个疑问'),
-
-]
+    # --- 差异 #77 已于切片BO 2026-09-22 **核销**（事实不成立），⛔ 不再作为差异行登记 ---
+    # 原登记内容：「有寻路能力但业务零使用：引擎通用格子 A*（Runtime/Core/AStar.cs）从未被业务调用」。
+    # 核销依据（同批盘上证据，均可直接打开）：
+    #   ① 能力侧：client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（8 邻接 + octile，
+    #      Find L52 / FindSmoothed L138 / Smooth L148 / DefaultMaxNodes L32 / HasLineOfSight L180）；
+    #   ② 业务侧：client/Assets/Scripts/Module/Bot/BotNavigator.cs:637
+    #      `var path = AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);`
+    #      —— 切片BN 落的"可走回调 + 高度一致性"判据就是在 EnsurePath 里喂给引擎 A* 的（本片复测仍在使用）。
+    #      （主 agent 任务书引的 `:601` 是切片BN 改动**之前**的行号，改动后为 `:637`。）
+    # ⇒ "零调用"不再成立 ⇒ 该差异不存在。删除本行后 差异登记.tsv 行数 77 → 76，
+    #    验收表「允许的差异」段与聚合数由本生成器 --inject 同步重写（闸门 differences-source-of-truth /
+    #    acceptance-sums 必须仍 PASS，见切片BO 回执）。
+    ]
 
 # ============================================================================
 #  输出
