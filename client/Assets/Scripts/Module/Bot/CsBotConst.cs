@@ -107,6 +107,20 @@ namespace Cs16.Module.Bot
         public const int PathSnapRadiusCells = 2;
 
         /// <summary>
+        /// 高度一致性层（<see cref="BotNavigator"/> 的 <c>BuildHeightReach</c>）单次扩张的**规模上限**（格）。
+        ///
+        /// <para>用途：不是玩法判据，而是"这次扩张是不是已经把整张图刷完了"的护栏 ——
+        /// 一旦超过就**整层关掉**并打 Warn（宁可回到既有行为，也绝不许拿"半个可达集"把合法路径判死）。</para>
+        ///
+        /// <para>取值出处：引擎自己的节点预算 <c>CloverEngine.AStar.DefaultMaxNodes</c> = <b>20000</b>
+        /// （<c>Runtime/Core/AStar.cs:52</c> 一带，<see cref="BotNavigator"/> 求路径用的就是它）——
+        /// 同量级即可：切片BJ 离线实测那张 127×145 位图**全部可走格约 5.3k**（46 个连通分量，
+        /// 主分量 4393 + 其余 919，见 <c>tools/probes/marker-connectivity.py</c>），离 20000 有 4 倍余量。
+        /// 出处：**本项目新增**（护栏，不是玩法阈值；⛔ 与 <c>CsConst.StepUpHeight</c> 无关）。</para>
+        /// </summary>
+        public const int HeightReachMaxCells = 20000;
+
+        /// <summary>
         /// "同一对端点上连续求不出路径几次" ⇒ 判为**终点格与起点格不连通**（位图连通性问题，不是偶发）。
         ///
         /// <para>必要性（切片BJ 实测根因）：引擎 <c>AStar.Find</c> 在**起终点都可走**但位图上不连通时返回 null

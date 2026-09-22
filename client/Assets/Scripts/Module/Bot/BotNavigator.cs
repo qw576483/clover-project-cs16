@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using CloverEngine;
+using Cs16.Core;
 using Cs16.Module.Map;
 using UnityEngine;
 
@@ -81,6 +82,36 @@ namespace Cs16.Module.Bot
         private float _nextRepathAt;
         /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
         private float _nextPathFailLogAt;
+
+        // ---- 高度一致性（切片BN）------------------------------------------------
+        /// <summary>
+        /// 8 邻接的格偏移（与引擎 <see cref="AStar"/> 的邻接一致：4 正 + 4 斜）。只用于
+        /// <see cref="BuildHeightReach"/> 的高度可达扩张（⛔ 不是寻路）。
+        /// </summary>
+        private static readonly int[] CellStepX = { 1, 1, 0, -1, -1, -1, 0, 1 };
+        private static readonly int[] CellStepZ = { 0, 1, 1, 1, 0, -1, -1, -1 };
+
+        /// <summary>
+        /// <see cref="_heightReachCache"/> 的条目上限（**内存护栏**，不是玩法阈值）：一个条目 ≈ 可达格数 × 每格
+        /// 一个 <c>Vector2Int</c>（实测主分量 ~4.4k 格 ≈ 70 KB）⇒ 8 条 ≈ 0.6 MB；满了**整表清空**
+        /// （代价只是下一次多打一遍射线，比"无上限增长"安全）。出处：**本项目新增**。
+        /// </summary>
+        private const int HeightReachCacheCap = 8;
+
+        /// <summary>
+        /// "从当前位置按**抬升 ≤ <see cref="CsConst.StepUpHeight"/>** 逐格走得到"的格集合
+        /// （= 高度一致性层；见 <see cref="BuildHeightReach"/>）。null / <see cref="_hasHeightReach"/> == false
+        /// ⇒ 本帧**不加**这一层（行为与既有完全一致，⛔ 不许比旧实现更差）。
+        /// </summary>
+        private HashSet<Vector2Int> _heightReach;
+        private Vector2Int _heightReachFrom;
+        private bool _hasHeightReach;
+        /// <summary><see cref="_heightReach"/> 的备忘（键 = 起点格）：卡住的 bot 会一直从同一格重求，命中它就不必重算。</summary>
+        private readonly Dictionary<Vector2Int, HashSet<Vector2Int>> _heightReachCache =
+            new Dictionary<Vector2Int, HashSet<Vector2Int>>(8);
+        private IMapData _heightCachedMap;
+        /// <summary>"高度层这次为何没生效"的时间闸（同原因 <see cref="CsBotConst.StuckWarnCooldown"/> 内只报一条）。</summary>
+        private float _nextHeightLogAt;
 
         // ---- 连通性（切片BJ）：可走 ≠ 走得到 ----
         /// <summary>
@@ -596,9 +627,14 @@ namespace Cs16.Module.Bot
 
             _nextRepathAt = Time.time + CsBotConst.PathReplanInterval;
 
+            // ★ 切片BN：**高度一致性**层 —— 只给 bot 这一次求路径的可走判据补一层"落脚高度"，
+            //   位图本体与 `ICsMap.WalkableAt` / `CsMap.WalkableAt` 的语义**一字不动**（玩家行为零影响）。
+            //   失败（位图不可用 / 自己脚下探不到地面 / 可达规模超上限）⇒ 不加这一层，行为同既有。
+            var heightOk = BuildHeightReach(from, selfPosition) != null;
+
             // `FindSmoothed` = `Find`（8 邻接、对角要求两侧可走）+ 视线拉直（拐角变成长直线，正合走位）。
             // 节点上限用引擎既有的 `DefaultMaxNodes`（⛔ 不自己加魔法数）。
-            var path = AStar.FindSmoothed(WalkableCell, from, to, AStar.DefaultMaxNodes);
+            var path = AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);
             if (path == null || path.Count == 0)
             {
                 // ★ 切片BJ：走到这一支 ⇒ **起点与终点都已通过 `WalkableCell`**（引擎 `AStar.Find` 对不可走的
@@ -612,6 +648,7 @@ namespace Cs16.Module.Bot
                 InvalidatePath();
                 WarnPathFailed(target, path == null
                     ? $"**两格都可走但位图不连通**（起点 {from} / 终点 {to}）—— 位图孤立分量（单层 2D 位图 + 多层几何）"
+                      + HeightVerdict(from, to, heightOk)
                     : $"A* 返回空路径（起点 {from} / 终点 {to}）");
                 return false;
             }
@@ -694,6 +731,181 @@ namespace Cs16.Module.Bot
             if (map == null || map.CellSize <= 0f) return false;
             var c = CellCenter(cell);
             return _map != null ? _map.WalkableAt(c.x, c.z) : map.WalkableAt(c.x, c.z);
+        }
+
+        // ==================================================================
+        //  高度一致性层（切片BN）——"这一格的地面，我从当前位置抬得起腿走过去吗"
+        // ==================================================================
+        /// <summary>
+        /// A* 的 <c>walkable</c> 回调 + **高度一致性**（⛔ 只在 <see cref="EnsurePath"/> 的求路径上用；
+        /// <see cref="SnapToWalkable"/> / <see cref="DropUnreachableWaypoints"/> 仍用纯位图的
+        /// <see cref="WalkableCell"/>，行为与既有逐字一致）。
+        ///
+        /// <para>没有可用的高度层（<see cref="_hasHeightReach"/> == false）⇒ 与 <see cref="WalkableCell"/> 等价。</para>
+        /// </summary>
+        private bool WalkableCellHeightAware(Vector2Int cell)
+            => WalkableCell(cell) && (!_hasHeightReach || _heightReach.Contains(cell));
+
+        /// <summary>
+        /// 建立"抬起腿 ≤ <see cref="CsConst.StepUpHeight"/> 逐格走得到"的格集合（高度一致性层的**全部**内容）。
+        ///
+        /// <para><b>为什么需要它</b>（切片BM 定案，两个独立仪器同一结论）：可走位图是**单层 2D**，
+        /// 它把一个 0.8~3.2 m 的**抬升面**（台阶/台沿）标成了"可走落脚格" ⇒ A* 求出的路径直接指过那个面
+        /// ⇒ 机器人贴面磨：运行时探针 1592 行 / 离线射线 754 行，全部是"落脚面高于脚底"，
+        /// 其中 `wantTopDy`（命中面 y − 脚底 y）min 0.823 / p50 2.297 / max 3.193，
+        /// 而 `CsConst.StepUpHeight` = 0.45 —— **100% 超过一个台阶**。实证见
+        /// <c>.ai-tmp/test/bm-want-top.tsv</c> 与派生脚本 <c>tools/probes/height-consistent-predict.py</c>。</para>
+        ///
+        /// <para><b>判据出处（⛔ 不另立定义、⛔ 不新增阈值）</b>：与产品自己的台阶判据同源同式 ——
+        /// <c>Module/Map/CsMap.cs:514-523</c> 的 <c>TryStepUp</c>：
+        /// <c>if (hasGround &amp;&amp; point.y - from.y &gt; CsConst.StepUpHeight) return false;</c>
+        /// 即"落点地面比当前脚底高出超过一个台阶 ⇒ 那是一堵台沿，不许神抬腿迈上去"。
+        /// 本层把同一式用在**相邻两格**上：<c>h(下一格) − h(当前格) &gt; StepUpHeight ⇒ 这条边不通</c>。
+        /// 下降方向**不设限**（与 <c>TryStepUp</c> 同为**单向**判据：重力/坠落由
+        /// <c>CsMatch.StepActorPhysics</c> 负责，跳下去是合法移动）。</para>
+        ///
+        /// <para><b>高度怎么来（⛔ 不许拍一个高度、⛔ 不许把位图当高度）</b>：射线起点抬
+        /// <see cref="CsConst.StepUpHeight"/>（= 站到下一格后的脚面高度上限），向下射
+        /// <c>ICsMap.SampleGround</c> 的**默认**探测深度（<c>Module/Map/CsMap.cs:534</c> 的
+        /// <c>maxDrop = 8f</c>）—— 与机器人自己的贴地判据**同一份**射线口径。起点抬到"一个台阶之上"而不是
+        /// "头顶之上"是关键：从头顶起射会命中**头顶的屋顶/挑檐**（实测 CONTROL 组里
+        /// <c>highDy</c> 最大 8.634 m）⇒ 会把隧道/桥下这些合法格误杀。两次探针的区分力已在盘上验证：
+        /// 754 个误判格用"脚底高度起射"**全部探不到地面**（0/754 命中），404 个 CONTROL 行**全部**命中在脚面
+        /// （Δy max 0.000 / min −0.159）⇒ 本层复现两者、零误杀。</para>
+        ///
+        /// <para><b>代价（⛔ 不是每帧每格打射线）</b>：每次**重求路径**（<see cref="CsBotConst.PathReplanInterval"/>
+        /// = 1 s 一次，且只在起点格变了时才重算）对可达格各打 1 根射线（实测主分量 ~4.4k 格）；
+        /// 结果按**起点格**备忘（<see cref="_heightReachCache"/>）⇒ 卡住不动时（起点格不变）零重算。</para>
+        /// </summary>
+        /// <returns>可达格集合；null = 本帧不加这一层（调用方按既有行为走）。</returns>
+        private HashSet<Vector2Int> BuildHeightReach(Vector2Int from, Vector3 selfPosition)
+        {
+            _hasHeightReach = false;
+
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) return null;
+            if (_map == null || !_map.IsLoaded) return null;
+
+            // 换图 ⇒ 位图换了 ⇒ 高度层整片作废（⛔ 不许拿旧图的结论判新图）。
+            if (!ReferenceEquals(_heightCachedMap, map))
+            {
+                _heightCachedMap = map;
+                _heightReachCache.Clear();
+            }
+
+            if (_heightReachCache.TryGetValue(from, out var cached))
+            {
+                _heightReach = cached;
+                _heightReachFrom = from;
+                _hasHeightReach = true;
+                return cached;
+            }
+
+            // 基准高度 = 机器人**脚下的地面**（产品同源：ICsMap.SampleGround → Module/Map/CsMap.cs:534）。
+            // 探不到（人在空中 / 图外）⇒ 本帧不加这一层（⛔ 不许瞎猜一个基准高度）。
+            var baseY = _map.SampleGround(selfPosition);
+            if (float.IsNegativeInfinity(baseY))
+            {
+                HeightLayerOff("自己脚下探不到地面（SampleGround = -inf）", from, selfPosition);
+                return null;
+            }
+
+            var reach = new HashSet<Vector2Int> { from };
+            var height = new Dictionary<Vector2Int, float> { { from, baseY } };
+            var queue = new Queue<Vector2Int>();
+            queue.Enqueue(from);
+            var blocked = 0;
+
+            while (queue.Count > 0)
+            {
+                if (reach.Count > CsBotConst.HeightReachMaxCells)
+                {
+                    // 退化口径：规模超上限 ⇒ **整层关掉**（宁可回到既有行为，也不许拿半个可达集把合法路径判死）。
+                    HeightLayerOff($"可达格数超过上限 {CsBotConst.HeightReachMaxCells}", from, selfPosition);
+                    return null;
+                }
+
+                var cur = queue.Dequeue();
+                var hCur = height[cur];
+
+                for (var k = 0; k < 8; k++)
+                {
+                    var n = new Vector2Int(cur.x + CellStepX[k], cur.y + CellStepZ[k]);
+                    if (reach.Contains(n)) continue;
+                    if (!WalkableCell(n)) continue;                 // 层①：位图（语义一字不动）
+
+                    var hN = GroundYAbove(n, hCur);                  // 层②：落脚高度
+                    if (hN < 0f)
+                    {
+                        blocked++;
+                        continue;                                    // 探不到地面（台沿内部 / 空洞）⇒ 边不通
+                    }
+                    if (hN - hCur > CsConst.StepUpHeight)
+                    {
+                        blocked++;                                   // CsMap.cs:522 同一式
+                        continue;
+                    }
+
+                    reach.Add(n);
+                    height[n] = hN;
+                    queue.Enqueue(n);
+                }
+            }
+
+            if (_heightReachCache.Count >= HeightReachCacheCap) _heightReachCache.Clear();
+            _heightReachCache[from] = reach;
+
+            _heightReach = reach;
+            _heightReachFrom = from;
+            _hasHeightReach = true;
+
+            if (Time.time >= _nextHeightLogAt)
+            {
+                _nextHeightLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                Game.Logger.Info(Tag,
+                    $"{_ownerName} 高度一致性层：从格 {from}（脚下地面 y={baseY:F3}）起按抬升 ≤ " +
+                    $"CsConst.StepUpHeight（{CsConst.StepUpHeight:F2}）扩张 ⇒ 可达 {reach.Count} 格，" +
+                    $"被高度判死 {blocked} 格（判据出处 Module/Map/CsMap.cs:514-523，⛔ 不改位图）");
+            }
+            return reach;
+        }
+
+        /// <summary>
+        /// 把 <paramref name="cell"/> 的格心放到"从 <paramref name="fromY"/> 抬一个台阶"的高度上向下打射线，
+        /// 返回命中的地面高度；<b>探不到返回负数</b>（= 从这一层没有落脚面 ⇒ 这条边不通）。
+        /// <para>起点抬 <see cref="CsConst.StepUpHeight"/>：高于它的面**不构成落脚面**（那正是"抬升面"的形状：
+        /// 从脚底起射会落在实体内部 ⇒ 不收"内部起步"的命中 ⇒ 探不到 ⇒ 判不通，与实证 0/754 一致）。</para>
+        /// </summary>
+        private float GroundYAbove(Vector2Int cell, float fromY)
+        {
+            var c = CellCenter(cell);
+            var origin = new Vector3(c.x, fromY + CsConst.StepUpHeight, c.z);
+            return _map.SampleGround(origin);      // 默认 maxDrop（CsMap.cs:534）= 产品自己的探测深度
+        }
+
+        /// <summary>高度层"这次没生效"的原因（⛔ 不许静默退化；同一原因按 <see cref="CsBotConst.StuckWarnCooldown"/> 降频）。</summary>
+        private void HeightLayerOff(string why, Vector2Int from, Vector3 selfPosition)
+        {
+            if (Time.time < _nextHeightLogAt) return;
+            _nextHeightLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+            Game.Logger.Warn(Tag,
+                $"{_ownerName} 高度一致性层本帧**未生效**（原因：{why}）⇒ 本次求路径只用可走位图（既有行为）。" +
+                $"起点格 {from}，位置 ({selfPosition.x:F1},{selfPosition.y:F1},{selfPosition.z:F1})");
+        }
+
+        /// <summary>求路径失败时补一句"高度层怎么说"（⛔ 与"位图不连通"是三件不同的事，不许混在一句里）。</summary>
+        private string HeightVerdict(Vector2Int from, Vector2Int to, bool heightOk)
+        {
+            if (!heightOk)
+                return "；（高度一致性层本帧未生效，见上一条 Warn）";
+            if (!_hasHeightReach)
+                return "；（高度一致性层本帧未生效）";
+
+            var sb = new System.Text.StringBuilder("；高度一致性层：");
+            sb.Append(_heightReach.Contains(to) ? $"终点格 {to} 在可达集内" : $"**终点格 {to} 不可达**");
+            sb.Append(_heightReach.Contains(from) ? $"，起点格 {from} 在可达集内" : $"，**起点格 {from} 不可达**");
+            sb.Append($"（可达集 {_heightReach.Count} 格；判据 = 抬升 > {CsConst.StepUpHeight:F2} m 的边不通，出处 Module/Map/CsMap.cs:514-523）");
+            return sb.ToString();
         }
 
         /// <summary>

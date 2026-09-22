@@ -42,17 +42,28 @@ using UnityEngine;
 
 public static class BotHoldPlant
 {
-    public const string OutPath =
+    /// <summary>**默认**产物路径（保持历史值不变）。片BN 起它是"默认值"，可由 <see cref="Begin"/> 覆盖
+    /// —— 理由与 <c>BotPhys.DefaultOutPath</c> 完全相同：编译期常量会让派驱动传的路径失效、
+    /// 并覆盖上一片已冻结的产物。</summary>
+    public const string DefaultOutPath =
         @"C:\Work\Server\f-v2\clover-project-cs16\.ai-tmp\test\bh-hold-plant.tsv";
-    public const string LogPath =
+    public const string DefaultLogPath =
         @"C:\Work\Server\f-v2\clover-project-cs16\.ai-tmp\test\bh-hold-plant-log.tsv";
 
-    public static string Begin()
+    /// <summary>本实例实际使用的产物路径（<see cref="BotHoldPlantTick"/> 在 Awake 里读它）。</summary>
+    public static string OutPath = DefaultOutPath;
+    public static string LogPath = DefaultLogPath;
+
+    /// <param name="outPath">快照 .tsv 的绝对路径；null / 空 = 用 <see cref="DefaultOutPath"/>。</param>
+    /// <param name="logPath">日志转发 .tsv 的绝对路径；null / 空 = 用 <see cref="DefaultLogPath"/>。</param>
+    public static string Begin(string outPath = null, string logPath = null)
     {
+        OutPath = string.IsNullOrEmpty(outPath) ? DefaultOutPath : outPath;
+        LogPath = string.IsNullOrEmpty(logPath) ? DefaultLogPath : logPath;
         var go = new GameObject("BotHoldPlantTick");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.AddComponent<BotHoldPlantTick>();
-        return "BotHoldPlant started (order=200) -> " + OutPath;
+        return "BotHoldPlant started (order=200) -> " + OutPath + " / " + LogPath;
     }
 
     public static string Stop()

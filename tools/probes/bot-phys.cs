@@ -71,11 +71,28 @@ using UnityEngine;
 
 public static class BotPhys
 {
-    public const string OutPath =
+    /// <summary>
+    /// **默认**产物路径（保持历史值不变）。
+    ///
+    /// <para>⚠️ 片BN 修的坑：它是 `const` ⇒ 派驱动传 <c>$outF</c> **无效**，探针固定写这一个文件，
+    /// 于是片BL-R2 那次把冻结产物 <c>bk-bot-phys.tsv</c>（18952×33）**覆盖**成了 14192×39。
+    /// 现在它是"默认值"，实际路径由 <see cref="Begin"/> 的 <paramref name="outPath"/> 决定，
+    /// 而参数由 <c>unity command run_script --file … --entry BotPhys.Begin --args '["&lt;路径&gt;"]'</c>
+    /// 传入（参数 schema 见 <c>unity command --format json</c> 的 <c>run_script.args</c>）。</para>
+    /// </summary>
+    public const string DefaultOutPath =
         @"C:\Work\Server\f-v2\clover-project-cs16\.ai-tmp\test\bk-bot-phys.tsv";
 
-    public static string Begin()
+    /// <summary>本实例实际使用的产物路径（<see cref="BotPhysTick"/> 在 Awake 里读它）。</summary>
+    public static string OutPath = DefaultOutPath;
+
+    /// <param name="outPath">
+    /// 产物 .tsv 的绝对路径；null / 空 = 用 <see cref="DefaultOutPath"/>。
+    /// ⛔ 传进来的路径**不会**再被默认值覆盖 —— 这正是片BN 要修的行为。
+    /// </param>
+    public static string Begin(string outPath = null)
     {
+        OutPath = string.IsNullOrEmpty(outPath) ? DefaultOutPath : outPath;
         var go = new GameObject("BotPhysTick");
         UnityEngine.Object.DontDestroyOnLoad(go);
         go.AddComponent<BotPhysTick>();
