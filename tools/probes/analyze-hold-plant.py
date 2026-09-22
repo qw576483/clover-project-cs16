@@ -352,8 +352,19 @@ def main():
           "CT bots in site = %d" % len(ct_in_site))
     check("S5 zero hold-swap L3 markers", etags.get("SWAP", 0) == 0,
           "SWAP events = %d" % etags.get("SWAP", 0))
-    check("S6 zero hold-table L3 markers", etags.get("HOLDTABLE", 0) == 0,
-          "HOLDTABLE events = %d" % etags.get("HOLDTABLE", 0))
+    # S6 -- direction ruling (slice BK, main agent):
+    #   HOLDTABLE is the business code's OWN "<hold table ready>" L3 log line, i.e.
+    #   the marker that CsBotBrain's hold-spot-table branch was ENTERED (the CT
+    #   defenders got a real hold table to pick slots from). It is therefore a
+    #   POSITIVE signal of the feature working, not a defect to be absent.
+    #   Slice BJ measured it going 0 -> 6 when the navigation fix landed (4 -> 6
+    #   rows here). The original "== 0" assertion demanded the very branch stay
+    #   dead -- the direction was inverted. Ruling: HOLDTABLE >= 1 is PASS.
+    #   (S1..S5 are unchanged: they assert reachability of the data, and that no
+    #   CT bot leaks into a site / no spot swap happens *in this run*.)
+    check("S6 hold-table L3 marker present", etags.get("HOLDTABLE", 0) >= 1,
+          "HOLDTABLE events = %d (>=1 required: the hold-table branch must have run)"
+          % etags.get("HOLDTABLE", 0))
 
     print("=== checks ===")
     for name, ok, detail in checks:
