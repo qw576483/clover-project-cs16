@@ -1336,7 +1336,14 @@ AZ_ENT = [
      '⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但是**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），'
      '没有"多点突破 / 掩护 / 换点位"这类协同 ⇒ **缺的行为清单 = 守点位表（多点/换位）、下包决策（去哪个包点 + 何时下包）、'
      '突破协同（分批推进/闪光掩护）、基于代价图的 A→B 走法**。三档难度只改反应时间与瞄准误差（`CsTypes.cs:148`）。'
-     '⇒ 差异 #67；解法依赖引擎寻路能力结论（见 `Runtime/Core/AStar.cs（第 16~19 行）` 的回调式格子 A* 契约）'),
+     '⇒ 差异 #67；解法依赖引擎寻路能力结论（见 `Runtime/Core/AStar.cs（第 16~19 行）` 的回调式格子 A* 契约）。'
+     '**【片BL-R2 2026-09-22 实测（数值类）】** 一次 Play（4v4 双阵营 bot、local=CT、3 回合 / 289 s）逐条量三项：'
+     '① **守点 = 0** —— `analyze-hold-plant.py` 的 CT 进点计数 `CTSITE` = **0**，4 个 CT bot 到最近包点 A 的最近距离 '
+     'Cliffe 17.89 / Spliff 20.08 / Darrell 22.07 / Scuzzy 26.36 m（包点半径 7.0 m）；`HOLDTABLE`（业务自己的守点表就绪标记）= **6** '
+     '⇒ 守点表**建了**、bot **走不到**。② **下包 = 0** —— `CARRIER`=3（C4 已分配），`TARRIVE`=**0**、`TPLANTSTART`=**0**、`TPLANTED`=**0**，'
+     '驱动打印 `bot plant observed = False`；T 侧 4 个 bot 全场到 A 的最近距离 85.9-90.7 m ⇒ **整场未离开出生点区**。'
+     '③ **突破 = 0** —— T 侧每回合 x/z 位移跨度最大 1.77 m（Minh/S1），Gooseman、ZBot 在 S2 整回合 0.00 m。'
+     '⇒ 三项都**有实现但走不动**：缺口在走这一层，不在决策这一层'),
     # ---- #3 右键没效果 ----
     ('D11', '武器右键（次级攻击 attack2）',
      'client/Assets/Scripts/Module/Match/ICsMatch.cs（CsInputState）+ Module/Combat/CombatModule.cs',
@@ -1481,7 +1488,16 @@ AZ_ENT = [
      '(b) 软地板（`:1863-1877`）在"连续探不到地面"时把人**贴到最后一次已知地面高度**⇒ 若 bot 正在上/下坡或站在'
      '`collision-mesh-gap.tsv` 列的"碰空气格"上，就会被贴在**低于视觉地面**的位置（外形像钻地）；'
      '(c) 走路点（`BotNavigator`）没有代价图，bot 会朝不可走方向推进并由逃逸逻辑乱走 ⇒ 在坡/台阶处反复进出几何。'
-     '判据 = 一次实机 + 逐帧 `actor.Position.y` vs `SampleGround` 的数值日志（本片不采）⇒ 差异 #76'),
+     '判据 = 一次实机 + 逐帧 `actor.Position.y` vs `SampleGround` 的数值日志（本片不采）⇒ 差异 #76。'
+     '**【片BL-R2 2026-09-22 实测（数值类）】** 探针 `tools/probes/bot-phys.cs` + 聚合 `tools/probes/analyze-bot-phys.py` → '
+     '产物 `.ai-tmp/test/bk-bot-phys.tsv`（3595181 B / 18952 B 行 / 8 actor x 2369 采样；一次 Play，`play-log.tsv` 有本片行）：'
+     '**脚底间隙** `|pos.y - groundY| > 0.05 m` 的行 = **3 / 18952**（最大 0.128 m，Minh）；地面法线 < 0.70（陡坡）行 = **0 / 18952**；'
+     '`CanStand(pos)==0` 行 = **1 / 18952**；`dirsMovable==0`（被物理围死）行 = **0 / 18952** ⇒ **探针口径下没有观测到钻地**'
+     '（间隙量级 0.13 m，不是穿层）。相邻机制只出现在业务日志：`[Warn] [Match] 连续探不到地面…贴到最后一次探测到的地面 y=-3.25` = **2 条**'
+     '（窗口 18:35-18:42，`tools/probes/analyze-bot-ai-log.py --since`）⇒ 与 (b) 软地板同源、规模极小。'
+     '**未定案**：探针列 27 `reason=want-no-ground` = **754 / 18952 行**（CT 751 / T 3）表示朝目标迈一步的落点在脚底高度 '
+     '`TrySampleGround` 探不到地面，它同时兼容 (a) 落点是空洞/悬崖 与 (b) 落点地面高于脚底（跨层台阶 3.25 m 远大于 StepUpHeight 0.45）'
+     '两种读法，现有列 `wantGroundY=na` 无法区分；区分需给探针加从高处起射的射线列 ⇒ 改动要带同批重采，本片不做，留给下一片'),
     ('D10', '机器人移动执行（本地碰撞 vs 寻路）',
      'client/Assets/Scripts/Module/Bot/BotNavigator.cs + Module/Match/CsMatch.cs',
      '用户本轮报#10；实现出处 `BotNavigator.cs:183-248`（输出方向）→ `CsMatch.cs:2271-2292`（写速度→`StepActorPhysics`）',
@@ -1489,7 +1505,14 @@ AZ_ENT = [
      '离线已判的职责链：bot 大脑只产出**方向**（`BotNavigator.ComputeMove`：目标 `/` 路点 + `Avoid` 局部避障 + 逃逸），'
      '速度由 `CsMatch.cs:2278-2279` 写成，位置由 `ResolveMove` 解 → **bot 与玩家共用同一套地形碰撞**，'
      '所以"不是真正的地形碰撞 AI"这个判断**不成立**（有地形碰撞）；成立的是"**没有寻路**"（引擎 `AStar` 零调用，见 #77）'
-     '⇒ 钻地/乱走属"路径层缺失 + 单层位图上限"，不属"没有碰撞"。⇒ 与 #67/#76 同一组差异'),
+     '⇒ 钻地/乱走属"路径层缺失 + 单层位图上限"，不属"没有碰撞"。⇒ 与 #67/#76 同一组差异。'
+     '**【片BL-R2 2026-09-22 实测（数值类）】** ① **物理层面走得动**：`analyze-bot-phys.py` 的 `goalStepLen`（朝目标迈 1 m 时 '
+     '`ResolveMove` 的实际水平位移）min 0.150 / **p50 1.000** / p90 1.000 / max 1.000，`<= 0.001 m`（完全迈不动）的行 = **0 / 18952**；'
+     '8 方向 `dirsMovable` 最小 6、`==0` 的行 = **0 / 18952** ⇒ **没有任何一帧是被物理围死**。② **但 bot 就是不走**：每回合内 x/z '
+     '位移跨度最大值，8 个 bot 中 7 个 <= 2.6 m（仅 Scuzzy 3.46 m）；能动 actor（位移 > 5.8 m）口径本轮 = **0**（全场口径也只有 Scuzzy 6.59 m）。'
+     '③ **卡在哪**：探针列 27 `reason` 直方图 = `ok` 18160 / **`want-no-ground` 754**（CT 751、T 3）/ `want-not-standable` 38（全 CT）'
+     '⇒ 机制是位图说这一格可走、朝目标的落点在脚底高度探不到地面 = **单层 2D 位图 vs 多层真实几何**（与 #76(a) 同源），'
+     '**不是**位图判不可走（那条已修到 0 条）⇒ 片BL-R 的 `PhysRunway`/物理复核在这个机制上**不触发**，故对走不动无改善'),
     # ---- 同类漏检：引擎能力未被业务使用 ----
     ('D10', '引擎网格寻路 AStar（能力已在，业务零使用）',
      'client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（325 行）',
@@ -1499,7 +1522,11 @@ AZ_ENT = [
      '（8 邻接、对角需两侧可走、octile 启发式、`DefaultMaxNodes=20000`、`MinHeap` 惰性删除、路径拉直 `Smooth`），'
      '契约就是回调式 `Func<Vector2Int,bool> walkable` ⇒ 地图 `.bytes` 的可走位图（`Game.Map.WalkableAt`，`Map.cs（第 149 行）`）'
      '**直接就能当寻路网格**；但 `client/Assets/**` 全仓 grep `AStar` **命中 0** ⇒ 引擎能力从未被业务使用。'
-     '⇒ 差异 #77（解法依赖它）'),
+     '⇒ 差异 #77（解法依赖它）。'
+     '**【片BL-R2 2026-09-22 实测（数值类）】** 一次 Play（18:35-18:42）复核，引擎有寻路、业务零使用**仍成立**：业务日志窗口内 '
+     '`[Bot] 求路径失败（位图不可用 / 目标点不可达）` = **0 条**（修前 30 → 0，保持）、`不可走的路点` = **0 条**（修前 101 → 0，保持）；'
+     '但 bot 依旧不动（数字见机器人地形贴合 / 战术行为 / 移动执行三行的实测块）⇒ 阻塞点**不在 A* 这一层**，而在其**之上**：'
+     '`BotNavigator` 仍只走路点最近邻 + 局部避障，`client/Assets/**` 仍零调用 `AStar`'),
 ]
 for _dim, _nm, _car, _src, _sc, _vt, _vd, _ev in AZ_ENT:
     add(_dim, _nm, _car, _src, _sc, _vt, _vd, _ev)

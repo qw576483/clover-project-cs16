@@ -133,6 +133,31 @@ def main():
           (len([p for p in brows if p[13] == "1"]), len(brows)))
     print("")
 
+    # ---- 3b. ResolveMove step toward the goal + the probe's reason histogram ----
+    # column map (tools/probes/bot-phys.cs:371-379): 21 goalStepLen, 22 goalStepLenYFollow,
+    # 27 reason. reason is the probe's own verdict for "why the 1 m step toward the goal
+    # went the way it did" -- it separates "the bitmap says no" (nothing in the product's
+    # log any more) from "the physical landing spot has no ground" (want-no-ground).
+    print("--- 3b. ResolveMove step toward the goal (column 21) + reason histogram (column 27) ---")
+    steps = [f(p[21]) for p in brows]
+    steps = [s for s in steps if s == s]
+    steps.sort()
+    if steps:
+        n = len(steps)
+        print("  goalStepLen  min=%.3f  p50=%.3f  p90=%.3f  max=%.3f  (requested = min(1.000, distXZ))" %
+              (steps[0], steps[n // 2], steps[(n * 9) // 10], steps[-1]))
+        print("  goalStepLen < 0.99 m (partly/fully blocked)     : %d / %d" %
+              (len([s for s in steps if s < 0.99]), n))
+        print("  goalStepLen <= 0.001 m (not moved at all)       : %d / %d" %
+              (len([s for s in steps if s <= 0.001]), n))
+    rc = Counter(p[27] for p in brows)
+    for k, v in rc.most_common():
+        print("  reason %-20s : %d" % (k, v))
+    for team in ("CT", "T"):
+        rt = Counter(p[27] for p in brows if p[5] == team)
+        print("  reason[%s] %s" % (team, ", ".join("%s=%d" % kv for kv in rt.most_common())))
+    print("")
+
     print("--- 4. the cells the bots were stuck on (first STUCK row per actor/cell) ---")
     seen = set()
     for p in stuck:
