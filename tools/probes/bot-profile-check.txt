@@ -1,0 +1,8 @@
+# CsBotProfile 离线断言（规格 S2.4 三档表 -> CsTypes.cs:148 CsBotProfile.For）
+# 区间出处：策划/策划案/CS1.6单机参考规格.md:117-121
+PASS  Easy 档参数  反应=0.65s in [0.5,0.8]  瞄准误差=+/-6deg <= +/-6deg
+PASS  Normal 档参数  反应=0.32s in [0.25,0.4]  瞄准误差=+/-3deg <= +/-3deg
+PASS  Hard 档参数  反应=0.15s in [0.1,0.2]  瞄准误差=+/-1.2deg <= +/-1.2deg
+PASS  反应时间单调递减  Hard=0.15 < Normal=0.32 < Easy=0.65
+PASS  瞄准误差单调递减  Hard=+/-1.2 < Normal=+/-3 < Easy=+/-6
+SUMMARY PASS=5 FAIL=0
