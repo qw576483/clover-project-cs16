@@ -103,6 +103,124 @@ Expect 'shot-refs-audited / bad (zero-ref png added)' (Invoke-Gate 'shot-refs-au
 Remove-Item $probePng -Force
 Expect 'shot-refs-audited / restored' (Invoke-Gate 'shot-refs-audited') 'PASS'
 
+# =====================================================================
+#  4) slice AI: the 3 renamed checks (+ the no-handoff-docs name) and the
+#     4 added checks (numeric-log-only / no-team-sessions /
+#     freeze-before-capture / evidence-economy).
+#     Two samples, batched: every defect is injected at once so the whole
+#     thing costs THREE gate runs (good / injected / restored) instead of
+#     24 -- a gate run is ~8 s here, and per-item runs would be minutes.
+#     The old item names must be GONE: a stale name has to yield NO-VERDICT.
+# =====================================================================
+function Invoke-GateTable {
+  $gate = Join-Path $Project 'tools\verify.ps1'
+  $out = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $gate 2>&1 | ForEach-Object { [string]$_ })
+  $tbl = @{}
+  foreach ($ln in $out) {
+    $m = [regex]::Match($ln, '^(PASS|FAIL|HUMAN-ONLY)\s+([a-z0-9\-]+)(\s|$)')
+    if ($m.Success) { $tbl[$m.Groups[2].Value] = $m.Groups[1].Value }
+  }
+  return $tbl
+}
+
+$plan   = Join-Path $Project ([char[]]@(0x7B56,0x5212) -join '')                              # ce hua
+$sp     = Join-Path $plan ((([char[]]@(0x9A8C,0x6536,0x8868)) -join '') + '.md')              # yan shou biao
+$cNum   = ([char[]]@(0x6570,0x503C,0x7C7B) -join '')                                          # numeric class
+$cVis   = ([char[]]@(0x8868,0x73B0,0x7C7B) -join '')                                          # visual class
+$shots  = Join-Path $Project '.ai-tmp\screenshots'
+$dlog   = Join-Path $Project '.ai-tmp\test\dispatch-log.tsv'
+$nextMd = Join-Path $Project '.ai-tmp\test\NEXT.md'
+$envChk = Join-Path $Project 'tools\env-check.ps1'
+$envBak = Join-Path $Project '.ai-tmp\test\gx-selftest-env-check.bak'
+$spBak  = $sp + '.gx-selftest.bak'
+$dgBak  = $dlog + '.gx-selftest.bak'
+$loose  = @()
+1..60 | ForEach-Object { $loose += (Join-Path $shots ('gx-selftest-loose-' + $_ + '.png')) }
+
+$renamed = @('allowed-diff', 'screenshot-refs', 'verify-entry', 'no-handoff-docs')
+$added   = @('numeric-log-only', 'no-team-sessions', 'freeze-before-capture', 'evidence-economy')
+$oldNames = @('differences-registry', 'refs-reachable', 'gate-present', 'no-handover-docs', 'handoff-doc-found')
+
+Note ''
+Note '--- slice AI: renamed + added items ---'
+$good = Invoke-GateTable
+foreach ($n in ($renamed + $added)) { Expect ('good sample / ' + $n) ([string]$good[$n]) 'PASS' }
+foreach ($o in $oldNames) { Expect ('renamed away (must be gone) / ' + $o) ([string]$good[$o]) '' }
+
+# --- one batch injection, then one gate run --------------------------------
+$hSp0 = HashOf $sp
+$hDg0 = HashOf $dlog
+$agedPng = ''
+$agedAt = $null
+Copy-Item $sp $spBak -Force
+Copy-Item $dlog $dgBak -Force
+try {
+  $txt = [IO.File]::ReadAllText($sp, [Text.Encoding]::UTF8)
+  $ls  = @($txt -split "`r?`n")
+
+  # (a) allowed-diff: a differences row with empty why / source / expiry cells.
+  $i1 = -1
+  for ($i = 0; $i -lt $ls.Count; $i++) { if ($ls[$i] -match '^\|\s*1\s*\|') { $i1 = $i; break } }
+  if ($i1 -lt 0) { Note 'WARN  allowed-diff / bad : no "| 1 |" differences row found' }
+  else { $ls = @($ls[0..($i1 - 1)]) + @('| 999 | gx-selftest bogus difference |  |  |  |') + @($ls[$i1..($ls.Count - 1)]) }
+
+  # (b) numeric-log-only: a numeric-class row whose evidence is a screenshot only.
+  $i2 = -1
+  for ($i = 0; $i -lt $ls.Count; $i++) { if ($ls[$i] -match '^\|\s*B8\s*\|') { $i2 = $i; break } }
+  if ($i2 -lt 0) { Note 'WARN  numeric-log-only / bad : no "| B8 |" row found' }
+  else {
+    $bogus = '| B9 | gx-selftest | ' + $cNum + ' | x | y | ' + [char]0x2705 + ' | ' + [char]0x56FE + ' `gx-selftest-shot.png` |'
+    $ls = @($ls[0..$i2]) + @($bogus) + @($ls[($i2 + 1)..($ls.Count - 1)])
+  }
+
+  # (c) screenshot-refs: a cited png that does not exist.
+  $ls += @('', '<!-- gx-selftest --> gx-selftest-missing-shot.png')
+  [IO.File]::WriteAllText($sp, ($ls -join "`n"), (New-Object Text.UTF8Encoding($false)))
+
+  # (d) no-handoff-docs: a NEXT*.md anywhere inside the project.
+  [IO.File]::WriteAllText($nextMd, 'gx-selftest', (New-Object Text.UTF8Encoding($false)))
+
+  # (e) verify-entry: hide one companion script of the entry surface.
+  Move-Item $envChk $envBak -Force
+
+  # (f) no-team-sessions: a dispatch-log row naming a team channel.
+  [IO.File]::AppendAllText($dlog, ((Get-Date).ToString('yyyy-MM-dd HH:mm') + "`tgx-selftest`tgx-selftest team channel probe`t" + $Project + "`r`n"), (New-Object Text.UTF8Encoding($false)))
+
+  # (g) freeze-before-capture: age the oldest png of the newest contact sheet,
+  #     so its own row implementation file is newer than the shot.
+  $mf = @(Get-ChildItem (Join-Path $Project 'tools\probes') -Filter '*.manifest.tsv' -File | Sort-Object LastWriteTime | Select-Object -Last 1)
+  if ($mf.Count -eq 0) { Note 'WARN  freeze-before-capture / bad : no contact-sheet manifest found' }
+  else {
+    $mn = @([regex]::Matches([IO.File]::ReadAllText($mf[0].FullName, [Text.Encoding]::UTF8), '([0-9A-Za-z_\-\.]+\.png)') | ForEach-Object { $_.Groups[1].Value })
+    foreach ($n in $mn) { $cand = Join-Path $shots $n; if (Test-Path $cand) { $agedPng = $cand; break } }
+    if ($agedPng -eq '') { Note 'WARN  freeze-before-capture / bad : no manifest png is on disk' }
+    else { $agedAt = (Get-Item -LiteralPath $agedPng).LastWriteTime; (Get-Item -LiteralPath $agedPng).LastWriteTime = [datetime]'2000-01-01' }
+  }
+
+  # (h) evidence-economy: 60 loose pngs push the count past max(12, visual*2).
+  foreach ($p in $loose) { [IO.File]::WriteAllBytes($p, [byte[]](0x89,0x50,0x4E,0x47,0x0D,0x0A,0x1A,0x0A,0x00)) }
+
+  $badRun = Invoke-GateTable
+  foreach ($n in ($renamed + $added)) { Expect ('injected defect / ' + $n) ([string]$badRun[$n]) 'FAIL' }
+} finally {
+  Copy-Item $spBak $sp -Force
+  Copy-Item $dgBak $dlog -Force
+  Remove-Item $spBak, $dgBak -Force -ErrorAction Continue
+  Remove-Item $nextMd -Force -ErrorAction Continue
+  if (Test-Path $envBak) { Move-Item $envBak $envChk -Force }
+  if (($agedPng -ne '') -and ($agedAt -ne $null)) { (Get-Item -LiteralPath $agedPng).LastWriteTime = $agedAt }
+  foreach ($p in $loose) { Remove-Item $p -Force -ErrorAction Continue }
+}
+
+$back = Invoke-GateTable
+foreach ($n in ($renamed + $added)) { Expect ('restored sample / ' + $n) ([string]$back[$n]) 'PASS' }
+Note ('  hash self-check: spec ' + ($hSp0 -eq (HashOf $sp)) + ' / dispatch-log ' + ($hDg0 -eq (HashOf $dlog)))
+if ($hSp0 -ne (HashOf $sp)) { $bad++; Note 'MISS  the acceptance table was not restored byte-identically' }
+if ($hDg0 -ne (HashOf $dlog)) { $bad++; Note 'MISS  the dispatch log was not restored byte-identically' }
+if (Test-Path $nextMd) { $bad++; Note 'MISS  .ai-tmp/test/NEXT.md was left behind' }
+if (-not (Test-Path $envChk)) { $bad++; Note 'MISS  tools/env-check.ps1 was not restored' }
+foreach ($p in $loose) { if (Test-Path $p) { $bad++; Note ('MISS  loose probe png left behind: ' + (Split-Path $p -Leaf)) } }
+
 Note ''
 Note ('===== gate-selftest summary: unmet-expectations=' + $bad + ' =====')
 exit $(if ($bad -gt 0) { 1 } else { 0 })

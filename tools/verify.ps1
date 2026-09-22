@@ -163,17 +163,17 @@ function Invoke-Checks {
       if ($cells.Count -lt 6 -or $cells[3].Length -eq 0 -or $cells[4].Length -eq 0 -or $cells[5].Length -eq 0) { $bad += $r.Trim() }
     }
     if ($block.Count -eq 0) {
-      if ($script:hrHits -eq 0) { Say 'PASS' 'differences-registry' 'registry empty (consistent: hard-rule hits are 0)' }
-      else { $script:fail++; Say 'FAIL' 'differences-registry' "registry empty but $($script:hrHits) hard-rule hit(s) exist" }
+      if ($script:hrHits -eq 0) { Say 'PASS' 'allowed-diff' 'registry empty (consistent: hard-rule hits are 0)' }
+      else { $script:fail++; Say 'FAIL' 'allowed-diff' "registry empty but $($script:hrHits) hard-rule hit(s) exist" }
     } elseif (-not ($header.Contains($cWhy) -and $header.Contains($cSrc) -and $header.Contains($cWhen))) {
       $script:fail++
-      Say 'FAIL' 'differences-registry' 'header lacks the why (col 3) / source (col 4) / expiry (col 5) columns'
+      Say 'FAIL' 'allowed-diff' 'header lacks the why (col 3) / source (col 4) / expiry (col 5) columns'
     } elseif ($bad.Count -gt 0) {
       $script:fail++
-      Say 'FAIL' 'differences-registry' "$($bad.Count) row(s) with an empty why/source/expiry cell"
+      Say 'FAIL' 'allowed-diff' "$($bad.Count) row(s) with an empty why/source/expiry cell"
       $bad | ForEach-Object { Sub $_ }
     } else {
-      Say 'PASS' 'differences-registry' "$($body.Count) rows, each with why + source + expiry"
+      Say 'PASS' 'allowed-diff' "$($body.Count) rows, each with why + source + expiry"
     }
   }
 
@@ -211,10 +211,10 @@ function Invoke-Checks {
       }
     }
     if ($missing.Count -eq 0) {
-      Say 'PASS' 'refs-reachable' "$($pngs.Count) screenshot refs + $($refs.Count) file:line refs all resolve"
+      Say 'PASS' 'screenshot-refs' "$($pngs.Count) screenshot refs + $($refs.Count) file:line refs all resolve"
     } else {
       $script:fail++
-      Say 'FAIL' 'refs-reachable' "$($missing.Count) citation(s) do not resolve"
+      Say 'FAIL' 'screenshot-refs' "$($missing.Count) citation(s) do not resolve"
       $missing | ForEach-Object { Sub $_ }
     }
   }
@@ -306,7 +306,7 @@ function Invoke-Checks {
       $script:human++
       Say 'HUMAN-ONLY' 'evidence-freshness' "no (row,shot) pair could be compared (rows without a shot: $noShotRows; rows without a resolvable implementation file: $noImplRows; cited shot names that do not resolve to a file: $goneShots) - needs a manual check"
     } elseif ($void.Count -eq 0) {
-      Say 'PASS' 'evidence-freshness' "$cmpRows acceptance row(s) / $cmpPairs (row,shot) pair(s) compared per row: every cited shot is at least as new as its own row implementation file; $noShotRows row(s) without a shot and $noImplRows row(s) without a resolvable implementation file are HUMAN-ONLY (SKILL 1.11 item 11); $goneShots unroutable shot name(s) are left to refs-reachable"
+      Say 'PASS' 'evidence-freshness' "$cmpRows acceptance row(s) / $cmpPairs (row,shot) pair(s) compared per row: every cited shot is at least as new as its own row implementation file; $noShotRows row(s) without a shot and $noImplRows row(s) without a resolvable implementation file are HUMAN-ONLY (SKILL 1.11 item 11); $goneShots unroutable shot name(s) are left to screenshot-refs"
     } else {
       $script:fail++
       Say 'FAIL' 'evidence-freshness' "$($void.Count) of $cmpPairs (row,shot) pair(s) are stale => only those rows are void, the rest stay valid"
@@ -315,7 +315,29 @@ function Invoke-Checks {
   } else { $script:human++; Say 'HUMAN-ONLY' 'evidence-freshness' 'screenshot dir, screenshots, acceptance rows or sources missing - needs a manual check' }
 
   # --- 7) the one-command re-check entry point itself ----------------------
-  Say 'PASS' 'gate-present' 'tools\verify.ps1 executed'
+  # Item name aligned to the template's `verify-entry` (slice AI; name only -- the
+  # judgement is unchanged and stays strict): the entry script must be
+  # on disk, non-empty, AND its two companion scripts (the ones copied from the
+  # skill by SKILL 0.7 item 1) must be there too -- a bare "I am running, so I
+  # exist" line could never be tested red from inside itself, which is why the
+  # entry SURFACE (3 scripts) is what gets judged.  The red sample lives in
+  # tools/probes/gate-selftest.ps1 (hide tools/env-check.ps1 => FAIL).
+  $selfPath = Join-Path $root 'tools\verify.ps1'
+  $companions = @()
+  foreach ($cp in @('tools\gate-sync.ps1', 'tools\env-check.ps1')) {
+    $pp = Join-Path $root $cp
+    if (-not (Test-Path $pp)) { $companions += $cp }
+    elseif ((Get-Item $pp).Length -le 0) { $companions += ($cp + ' (empty)') }
+  }
+  if (-not (Test-Path $selfPath)) {
+    $script:fail++
+    Say 'FAIL' 'verify-entry' 'tools\verify.ps1 is not on disk -- the one-command re-check entry is missing'
+  } elseif ($companions.Count -gt 0) {
+    $script:fail++
+    Say 'FAIL' 'verify-entry' ('entry surface incomplete, missing/empty: ' + ($companions -join ', '))
+  } else {
+    Say 'PASS' 'verify-entry' ('tools\verify.ps1 executed (' + (Get-Item $selfPath).Length + ' bytes) with both companion scripts present (gate-sync.ps1 / env-check.ps1)')
+  }
 
   # --- 8) original-value reference table -----------------------------------
   if (Test-Path $refTable) { Say 'PASS' 'reference-table' $refTable }
@@ -326,8 +348,8 @@ function Invoke-Checks {
             Where-Object { $_.FullName -notmatch '\\Library\\' } |
             Where-Object { $_.Name -like 'NEXT*' -or $_.Name.Contains($cProg) -or $_.Name.Contains($cHand) } |
             ForEach-Object { $_.Name })
-  if ($bad9.Count -eq 0) { Say 'PASS' 'no-handover-docs' 'none' }
-  else { $script:fail++; Say 'FAIL' 'handoff-doc-found' ($bad9 -join ', ') }
+  if ($bad9.Count -eq 0) { Say 'PASS' 'no-handoff-docs' 'none' }
+  else { $script:fail++; Say 'FAIL' 'no-handoff-docs' ($bad9 -join ', ') }
 
   # --- 10) engine self-name: the literal `clover-engine` must exist in sources ---
   # This item is the COMPUTABLE half only: the literal is present in the sources.
@@ -939,6 +961,234 @@ if (-not (Test-Path $playLedger)) {
   if ($pRows -eq 0) { $script:human++; Say 'HUMAN-ONLY' 'play-ledger' 'the play ledger carries no session row yet' }
   elseif ($pBad -eq 0) { Say 'PASS' 'play-ledger' ($pRows.ToString() + ' Play session(s) logged, every one with a non-empty reason') }
   else { $script:fail++; Say 'FAIL' 'play-ledger' ($pBad.ToString() + ' of ' + $pRows.ToString() + ' session row(s) carry no reason (column 4)') }
+}
+
+# --- 32) numeric-log-only -- template item `numeric-log-only` (added slice AI) --
+#  SKILL 4 item 9: a `numeric` acceptance row is judged by a RUNTIME LOG LINE /
+#  ASSERTION OUTPUT, never by a screenshot ("biao xian" rows are the ones that
+#  need a picture).  The failure mode this item exists to block is a numeric row
+#  whose whole evidence is a png: a number resting on a picture is unverifiable
+#  and, worse, silently "green" -- the picture is never re-read.
+#  Judgement:
+#    * FAIL  : a numeric row whose backticked evidence set is a screenshot only
+#              (i.e. it cites a png and no non-png token at all).
+#    * PASS  : every numeric row cites at least one non-screenshot evidence token.
+#    * listed: numeric rows that cite NO backticked token whatsoever (bare text).
+#              They are printed so the residual stays visible, but they are NOT
+#              failed here: this item's rule is "log/assertion, not a picture",
+#              while "a verdict row must anchor to a machine-produced artifact"
+#              is template item `evidence-anchor`, which is still `planned` and
+#              not enforced by this project yet.  ⛔ Deliberately not conflated.
+#  All acceptance rows of the A-F sections are scanned (not just A-E): the F
+#  resource section carries numeric rows too.
+$probesDir = Join-Path $root 'tools\probes'
+$afRows = @()
+$inAF = $false
+foreach ($ln in @((Read-Text $specTable) -split "`r?`n")) {
+  if ($ln.StartsWith('## ')) { $inAF = ($ln -match '^##\s+[A-F]\.'); continue }
+  if ($inAF -and $ln -match '^\|\s*[A-Z]?\d+\s*\|') { $afRows += $ln }
+}
+$numRows = @($afRows | Where-Object { $_.Contains($cNumeric) })
+$numShotOnly = @(); $numTextOnly = @(); $numAnchored = 0
+foreach ($r in $numRows) {
+  $rid = ($r -split '\|')[1].Trim()
+  $toks = @([regex]::Matches($r, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+  $shotT = @($toks | Where-Object { $_ -match '\.png$' })
+  $nonT = @($toks | Where-Object { $_ -notmatch '\.png$' })
+  if ($nonT.Count -gt 0) { $numAnchored++ }
+  elseif ($shotT.Count -gt 0) { $numShotOnly += ($rid + ' -- evidence is a screenshot only') }
+  else { $numTextOnly += ($rid + ' -- no backticked evidence token at all') }
+}
+if ($numRows.Count -eq 0) {
+  $script:human++
+  Say 'HUMAN-ONLY' 'numeric-log-only' 'no numeric-class acceptance row -- an empty set is unjudged, not a pass'
+} elseif ($numShotOnly.Count -gt 0) {
+  $script:fail++
+  Say 'FAIL' 'numeric-log-only' ('' + $numShotOnly.Count + ' of ' + $numRows.Count + ' numeric-class row(s) rest on a screenshot only -- a number must rest on a runtime log line / assertion output, never on a picture (SKILL 4 item 9)')
+  $numShotOnly | ForEach-Object { Sub $_ }
+} else {
+  Say 'PASS' 'numeric-log-only' ('' + $numRows.Count + ' numeric-class row(s): ' + $numAnchored + ' cite a non-screenshot log / assertion token, 0 rest on a screenshot only; ' + $numTextOnly.Count + ' cite no backticked token at all (listed below; that residual belongs to template item evidence-anchor, still planned)')
+  $numTextOnly | ForEach-Object { Sub $_ }
+}
+
+# --- 33) no-team-sessions -- template item `no-team-sessions` (added slice AI) --
+#  SKILL 2 item 2: the ONLY sanctioned channel is a plain SYNCHRONOUS sub-agent.
+#  An async / team / member channel bypasses `model: inherit` and silently lands a
+#  weaker model, so the channel form is part of the contract, not a style choice.
+#  Two computable traces:
+#    (a) a team / member / session directory under the workspace host dir whose
+#        content was created or modified INSIDE the 24h window;
+#    (b) a dispatch-log row (the ledger is mandatory anyway, SKILL 2 item 5) that
+#        names a team / member / async channel.
+#  Residue older than the window is printed, never failed: template item 11 --
+#  a check that reports historical residue as a violation is worse than no check
+#  (measured: a nine-day-old directory from another task was once reported as a
+#  live violation and almost stopped a healthy flow).
+$teamRels = @('.codebuddy\teams', '.codebuddy\team', '.codebuddy\members', '.codebuddy\sessions', '.codebuddy\agents')
+$teamLive = @(); $teamStale = @()
+foreach ($rel in $teamRels) {
+  $d = Join-Path $wsRoot $rel
+  if (-not (Test-Path $d)) { continue }
+  $inWin = @(Get-ChildItem $d -Recurse -Force -ErrorAction SilentlyContinue |
+             Where-Object { $_.CreationTime -gt $cut24 -or $_.LastWriteTime -gt $cut24 })
+  if ($inWin.Count -gt 0) { $teamLive += ($rel + ' (' + $inWin.Count + ' in-window item(s))') }
+  else { $teamStale += $rel }
+}
+$teamLog = @()
+if (Test-Path $logPath) {
+  foreach ($line in @([System.IO.File]::ReadAllLines($logPath))) {
+    $l = [string]$line
+    if ($l.Trim().Length -eq 0 -or $l.TrimStart().StartsWith('#')) { continue }
+    if ($l -match '(?i)\b(teams?|members?)\b' -or $l -match '(?i)clover-(teammate|worker|team)') {
+      $teamLog += ($l.Substring(0, [Math]::Min(110, $l.Length)))
+    }
+  }
+}
+if (($teamLive.Count -eq 0) -and ($teamLog.Count -eq 0)) {
+  $note = ''
+  if ($teamStale.Count -gt 0) { $note = '; pre-window residue, NOT a violation (template item 11): ' + ($teamStale -join ', ') }
+  Say 'PASS' 'no-team-sessions' ('no in-window team / member / session trace under the workspace host dir, and no dispatch-log row names a team / member / async channel' + $note)
+} else {
+  $script:fail++
+  Say 'FAIL' 'no-team-sessions' ('async / team / member channel trace(s): ' + (($teamLive + $teamLog) -join ' | ') + ' => the only sanctioned channel is a plain synchronous sub-agent (SKILL 2 item 2)')
+}
+
+# --- 34) freeze-before-capture -- template item `freeze-before-capture` --------
+#  SKILL 4 item 6 (capture after freeze) + item 8 (expiry is CAUSAL).  This item
+#  pins the BATCH: the evidence of the newest contact-sheet manifest is the batch,
+#  its earliest png is the freeze point T0, and every (row, batch shot) pair is
+#  judged -- a shot is void only when it is older than ITS OWN row implementation
+#  file.  ⛔ NOT "any file in the project changed => everything is void": that
+#  global reading is exactly what made one edited .cs void 59 shots.
+#  Main-agent ruling (slice AI): do NOT merge this into `evidence-freshness`.
+#  That item scores every cited shot of every row; this one records the batch and
+#  prints T0 so the freeze point itself is auditable.
+#  The row set and the implementation resolver are intentionally the SAME as item
+#  6 (A-E sections, backticked file / class tokens): this item must never be
+#  looser than item 6, and reusing the resolver keeps the two comparable.
+$shotMap2 = @{}
+if (Test-Path $shotDir) {
+  foreach ($f in @(Get-ChildItem $shotDir -Filter *.png -File -ErrorAction SilentlyContinue)) { $shotMap2[$f.Name.ToLower()] = $f }
+}
+$newestManifest = @(Get-ChildItem $probesDir -Filter '*.manifest.tsv' -File -ErrorAction SilentlyContinue |
+                    Sort-Object LastWriteTime | Select-Object -Last 1)
+if (($newestManifest.Count -eq 0) -or ($shotMap2.Count -eq 0)) {
+  # an empty batch is unjudged, never a vacuous PASS
+  $script:human++
+  Say 'HUMAN-ONLY' 'freeze-before-capture' 'no contact-sheet manifest / no evidence png -> the batch freeze point cannot be computed'
+} else {
+  $batchNames = @(([regex]::Matches((Read-Text $newestManifest[0].FullName), '([0-9A-Za-z_\-\.]+\.png)') |
+                   ForEach-Object { $_.Groups[1].Value.ToLower() }) | Sort-Object -Unique)
+  $batch = @($batchNames | Where-Object { $shotMap2.ContainsKey($_) })
+  if ($batch.Count -eq 0) {
+    $script:human++
+    Say 'HUMAN-ONLY' 'freeze-before-capture' ('the newest manifest (' + $newestManifest[0].Name + ') names no png that is on disk -> batch cannot be pinned')
+  } else {
+    $t0 = ($batch | ForEach-Object { $shotMap2[$_].LastWriteTime } | Sort-Object | Select-Object -First 1)
+    # implementation resolver -- same shapes as item 6 (keep the two in step)
+    $csIndex2 = @{}
+    foreach ($d in @($codeDir, $editorDir)) {
+      if (-not (Test-Path $d)) { continue }
+      foreach ($f in @(Get-ChildItem $d -Recurse -Filter *.cs -File -ErrorAction SilentlyContinue)) {
+        $k2 = $f.Name.ToLower()
+        if (-not $csIndex2.ContainsKey($k2)) { $csIndex2[$k2] = @() }
+        $csIndex2[$k2] += $f.FullName
+      }
+    }
+    $clsPat2 = '([A-Za-z_][A-Za-z0-9_]*Panel|[A-Za-z_][A-Za-z0-9_]*Module|Cs[A-Za-z0-9_]+)'
+    $aeRows = @()
+    $inAE = $false
+    foreach ($ln in @((Read-Text $specTable) -split "`r?`n")) {
+      if ($ln.StartsWith('## ')) { $inAE = ($ln -match '^##\s+[A-E]\.'); continue }
+      if ($inAE -and $ln -match '^\|\s*[A-Z]?\d+\s*\|') { $aeRows += $ln }
+    }
+    $voidPairs = @(); $compared2 = 0; $noImpl2 = 0; $batchRows = 0
+    foreach ($row in $aeRows) {
+      $toks = @([regex]::Matches($row, '`([^`]+)`') | ForEach-Object { $_.Groups[1].Value })
+      $cited = @()
+      foreach ($t in $toks) {
+        if ($t -match '\.png$') {
+          $bn = ($t -replace '.*[\\/]', '').Trim().ToLower()
+          if (($bn.Length -gt 0) -and ($cited -notcontains $bn)) { $cited += $bn }
+        }
+      }
+      $inBatch = @($cited | Where-Object { $batch -contains $_ })
+      if ($inBatch.Count -eq 0) { continue }
+      $batchRows++
+      $names2 = @()
+      foreach ($t in $toks) {
+        foreach ($m in [regex]::Matches($t, '([A-Za-z_][A-Za-z0-9_]*\.cs)')) {
+          $b2 = $m.Groups[1].Value.ToLower()
+          if ($names2 -notcontains $b2) { $names2 += $b2 }
+        }
+        foreach ($m in [regex]::Matches($t, $clsPat2)) {
+          $b2 = ($m.Groups[1].Value + '.cs').ToLower()
+          if ($names2 -notcontains $b2) { $names2 += $b2 }
+        }
+      }
+      $impls2 = @()
+      foreach ($b2 in $names2) { if ($csIndex2.ContainsKey($b2)) { $impls2 += @($csIndex2[$b2]) } }
+      $impls2 = @($impls2 | Sort-Object -Unique)
+      if ($impls2.Count -eq 0) { $noImpl2++; continue }
+      $newestImpl = @($impls2 | Sort-Object { (Get-Item -LiteralPath $_).LastWriteTime } -Descending)[0]
+      $tImpl2 = (Get-Item -LiteralPath $newestImpl).LastWriteTime
+      foreach ($b2 in $inBatch) {
+        $compared2++
+        if ($shotMap2[$b2].LastWriteTime -lt $tImpl2) {
+          $voidPairs += ('batch png ' + $shotMap2[$b2].Name + ' (' + $shotMap2[$b2].LastWriteTime.ToString('MM-dd HH:mm') + ') is older than its own row implementation file ' + (Split-Path $newestImpl -Leaf) + ' (' + $tImpl2.ToString('MM-dd HH:mm') + ')')
+        }
+      }
+    }
+    if ($compared2 -eq 0) {
+      $script:human++
+      Say 'HUMAN-ONLY' 'freeze-before-capture' ('batch = ' + $batch.Count + ' png from ' + $newestManifest[0].Name + ' but no (batch row, batch shot) pair could be compared -> unjudged, never a pass')
+    } elseif ($voidPairs.Count -eq 0) {
+      Say 'PASS' 'freeze-before-capture' ('batch freeze point T0 = ' + $t0.ToString('MM-dd HH:mm:ss') + ' (' + $batch.Count + ' png of ' + $newestManifest[0].Name + '); ' + $batchRows + ' batch row(s) / ' + $compared2 + ' (row,shot) pair(s) compared causally: every batch shot is at least as new as its OWN row implementation file; ' + $noImpl2 + ' batch row(s) without a resolvable implementation file are HUMAN-ONLY; no global invalidation (SKILL 4 item 6/8)')
+    } else {
+      $script:fail++
+      Say 'FAIL' 'freeze-before-capture' ('' + $voidPairs.Count + ' of ' + $compared2 + ' (row, batch shot) pair(s) were captured BEFORE their own row implementation was frozen => re-capture only those rows')
+      $voidPairs | ForEach-Object { Sub $_ }
+    }
+  }
+}
+
+# --- 35) evidence-economy -- template item `evidence-economy` (added slice AI) --
+#  Template wording: "contact-sheet index exists; loose png count within budget".
+#  SKILL 4 item 2 / 1.13 T0: N evidence points are compressed into ONE contact
+#  sheet -- one screenshot per row is the anti-pattern this item prices.
+#  Judgement (computable, no eyeball):
+#    (a) if the acceptance table has visual-class rows, at least one contact-sheet
+#        index must exist (tools/probes/*.manifest.tsv or .ai-tmp/screenshots/*.index.tsv);
+#    (b) the number of pngs that appear in NO index ("loose" pngs) must stay within
+#        max(12, visual rows * 2) -- the template's own budget formula, restated as
+#        this project's criterion in plan/spec (see the spec doc, section on
+#        evidence economy).
+#  The "zero-referenced png = 0" half is deliberately NOT duplicated here: item 26
+#  `shot-refs-audited` already enforces it (main-agent ruling: state the residue,
+#  do not double-implement the same assertion).
+$indexFiles = @()
+$indexFiles += @(Get-ChildItem (Join-Path $root 'tools\probes') -Filter '*.manifest.tsv' -File -ErrorAction SilentlyContinue)
+if (Test-Path $shotDir) { $indexFiles += @(Get-ChildItem $shotDir -Filter '*.index.tsv' -File -ErrorAction SilentlyContinue) }
+$visRows2 = @($afRows | Where-Object { $_.Contains($cVisual) })
+if ($visRows2.Count -eq 0) {
+  $script:human++
+  Say 'HUMAN-ONLY' 'evidence-economy' 'no visual-class acceptance row -- nothing to price (unjudged, not a pass)'
+} elseif ($indexFiles.Count -eq 0) {
+  $script:fail++
+  Say 'FAIL' 'evidence-economy' ('' + $visRows2.Count + ' visual-class row(s) but no contact-sheet index (' + $probesDir + '\*.manifest.tsv) -- visuals must live in ONE sheet, not one png per row (T0)')
+} else {
+  $idxTxt = ''
+  foreach ($f in $indexFiles) { $idxTxt += (Read-Text $f.FullName) + "`n" }
+  $allPngs = @(Get-ChildItem $shotDir -Filter '*.png' -File -ErrorAction SilentlyContinue)
+  $loose = @($allPngs | Where-Object { $idxTxt.IndexOf($_.Name, [StringComparison]::OrdinalIgnoreCase) -lt 0 })
+  $budget = [Math]::Max(12, $visRows2.Count * 2)
+  if ($loose.Count -gt $budget) {
+    $script:fail++
+    Say 'FAIL' 'evidence-economy' ('' + $loose.Count + ' loose png (not in any contact-sheet index) vs budget ' + $budget + ' for ' + $visRows2.Count + ' visual-class row(s) => per-row screenshotting (T0 forbids)')
+    $loose | Select-Object -First 10 | ForEach-Object { Sub $_.Name }
+  } else {
+    Say 'PASS' 'evidence-economy' ('' + $visRows2.Count + ' visual-class row(s); index files = ' + $indexFiles.Count + '; indexed png = ' + ($allPngs.Count - $loose.Count) + ', loose = ' + $loose.Count + ' within budget ' + $budget + ' (= max(12, visual rows x 2)); the zero-referenced-png half is enforced by item 26 shot-refs-audited')
+  }
 }
 
 Write-Output ''
