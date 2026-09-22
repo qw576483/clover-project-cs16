@@ -67,8 +67,14 @@ def dist(vals):
 # usage: python height-consistent-predict.py <dir with bo-want-verdict.tsv + bo-reach.tsv>
 # ---------------------------------------------------------------------------
 def two_sided(d):
-    wf = os.path.join(d, "bo-want-verdict.tsv")
-    rf = os.path.join(d, "bo-reach.tsv")
+    wf = os.path.join(d, "bp-want-verdict.tsv")
+    if not os.path.exists(wf):
+        wf = os.path.join(d, "bo-want-verdict.tsv")
+    # slice BP: the reach instrument is re-run by slice BP too (it adds the PROD-BEFORE mode, i.e. the rule
+    # the product actually applied before the fix) -> prefer the fresh bp-reach.tsv, fall back to slice BO's.
+    rf = os.path.join(d, "bp-reach.tsv")
+    if not os.path.exists(rf):
+        rf = os.path.join(d, "bo-reach.tsv")
     if not os.path.exists(wf):
         print("missing %s" % wf)
         return 2
@@ -95,8 +101,15 @@ def two_sided(d):
             continue
         old_dead = [r for r in g if r[12] == "1"]
         new_dead = [r for r in g if r[15] == "1"]
+        # slice BP: PROD-BEFORE = the rule the product ACTUALLY ran before the fix -- column 11 is `oldY`,
+        # the hit of the same single ray (origin foot+StepUp, CsWorld mask). Slice-BN's code counted a hit
+        # with y < 0 as "no ground" (BotNavigator.cs:838 `if (hN < 0f)`), so PROD-BEFORE is dead iff
+        # (no hit) OR (hit y < 0). This is the semantics the Play oracle caught in the live product.
+        prod_dead = [r for r in g if r[11] == "na" or (f(r[11]) is not None and f(r[11]) < 0.0)]
         inband = [r for r in g if r[14] != "na"]
         print("--- %-18s rows=%d ---" % (group, len(g)))
+        print("  PROD-BEFORE (BN code: hN < 0 counts as no-ground) : dead %d/%d = %.1f%%"
+              % (len(prod_dead), len(g), 100.0 * len(prod_dead) / len(g)))
         print("  OLD sampling (slice BN GroundYAbove) : dead %d/%d = %.1f%%"
               % (len(old_dead), len(g), 100.0 * len(old_dead) / len(g)))
         print("  NEW sampling (highest in-band face)  : dead %d/%d = %.1f%%"
@@ -105,12 +118,15 @@ def two_sided(d):
               % (len(inband), len(g), 100.0 * len(inband) / len(g)))
         if want_dead is not None:
             tag = "MUST stay dead" if want_dead else "MUST stay alive"
-            print("  -> %s: OLD %s ; NEW %s"
+            print("  -> %s: OLD %s ; NEW %s   (PROD-BEFORE %s -- only the sentinel differs)"
                   % (tag, "OK" if (len(old_dead) == len(g)) == want_dead else "VIOLATED",
-                     "OK" if (len(new_dead) == len(g)) == want_dead else "VIOLATED"))
+                     "OK" if (len(new_dead) == len(g)) == want_dead else "VIOLATED",
+                     "dead %d (this is the bug: a negative but REAL floor counts as no-ground)"
+                     % len(prod_dead)))
     print("")
     if os.path.exists(rf):
-        print("--- ① reach set from the spawn cells (cell, old, oldBlocked, new, newBlocked) ---")
+        print("--- ① reach set from the spawn cells (old / new / PROD-BEFORE) ---")
+        spawn_rows = []
         with io.open(rf, "r", encoding="utf-8", errors="replace") as fh:
             for ln in fh:
                 p = ln.rstrip("\r\n").split("\t")
@@ -118,10 +134,18 @@ def two_sided(d):
                     continue
                 if not p[4].isdigit():        # header row / skipped neighbour rows carry no BFS result
                     continue
-                if p[4] == "skipped":
-                    continue
+                prod = p[9] if len(p) > 9 else "na"
+                prodb = p[10] if len(p) > 10 else "na"
                 print("  %-10s cell (%s,%s) footY=%s : OLD reach %s (blocked %s) -> NEW reach %s (blocked %s)"
-                      % (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7]))
+                      " ; PROD-BEFORE reach %s (blocked %s)"
+                      % (p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], prod, prodb))
+                if p[0].endswith("spawn"):
+                    spawn_rows.append((p[0], int(p[4]), int(p[6]), prod))
+        for lbl, o, n, pr in spawn_rows:
+            # ① must be "the reach set is restored", i.e. OLD/NEW (the fixed semantics) >> 1 cell while the
+            # product's pre-fix rule collapsed it to the start cell.
+            print("  -> ① %s : OLD %d / NEW %d (restored, not 1) ; PROD-BEFORE %s (the collapse)"
+                  % (lbl, o, n, pr))
     return 0
 
 

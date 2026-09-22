@@ -835,7 +835,14 @@ namespace Cs16.Module.Bot
                     if (!WalkableCell(n)) continue;                 // 层①：位图（语义一字不动）
 
                     var hN = GroundYAbove(n, hCur);                  // 层②：落脚高度
-                    if (hN < 0f)
+                    // ⛔ 判"探不到"只能用 **NaN**，不许用 `hN < 0f`：GroundYAbove 返回的是**命中点的 y**，
+                    // 而"地面在 y = 0 以下"是完全合法的（de_dust2 的沙地地板 = -3.251）。切片BP 的 Play 内
+                    // oracle 实测：旧写法把 -3.251（真实命中、dy = 0.000 的平地）判成"探不到地面"
+                    // ⇒ 从格 (80,104) 起扩张的可达集 = **1 格**（L3 日志 `可达 1 格，被高度判死 8 格`），
+                    // 而 CT 半个地图的脚底都在 y < 0 ⇒ 整层形同把 CT 侧封死。
+                    // 出处：Module/Map/CsMap.cs:534-535（SampleGround 返回 point.y、找不到返回 -inf）
+                    // 与 CsMap.cs:542-557（TrySampleGround 用 bool 区分"有没有命中"）。
+                    if (float.IsNaN(hN))
                     {
                         blocked++;
                         continue;                                    // 探不到地面（台沿内部 / 空洞）⇒ 边不通
@@ -872,7 +879,12 @@ namespace Cs16.Module.Bot
 
         /// <summary>
         /// 把 <paramref name="cell"/> 的格心放到"从 <paramref name="fromY"/> 抬一个台阶"的高度上向下打射线，
-        /// 返回命中的地面高度；<b>探不到返回负数</b>（= 从这一层没有落脚面 ⇒ 这条边不通）。
+        /// 返回命中的地面高度；<b>探不到返回 <see cref="float.NaN"/></b>（= 从这一层没有落脚面 ⇒ 这条边不通）。
+        /// <para>⛔ **哨兵必须是 NaN，不许用"负数"**：<see cref="ICsMap.SampleGround"/> 返回的是**命中点的 y**，
+        /// 负高度是合法地面（de_dust2 沙地 = -3.251）。切片BP 的 Play 内 oracle 实测：旧写法
+        /// <c>hN &lt; 0f</c> 把 -3.251（真实命中、dy = 0.000 的平地）判成"探不到地面" ⇒ 可达集塌成 1 格。
+        /// 区分"有没有命中"只能靠 <see cref="ICsMap.TrySampleGround"/> 的 <c>bool</c>
+        /// （出处 Module/Map/CsMap.cs:542-557），**探测起点 / 掩码 / 深度一个都不改**。</para>
         /// <para>起点抬 <see cref="CsConst.StepUpHeight"/>：高于它的面**不构成落脚面**（那正是"抬升面"的形状：
         /// 从脚底起射会落在实体内部 ⇒ 不收"内部起步"的命中 ⇒ 探不到 ⇒ 判不通，与实证 0/754 一致）。</para>
         /// </summary>
@@ -880,7 +892,9 @@ namespace Cs16.Module.Bot
         {
             var c = CellCenter(cell);
             var origin = new Vector3(c.x, fromY + CsConst.StepUpHeight, c.z);
-            return _map.SampleGround(origin);      // 默认 maxDrop（CsMap.cs:534）= 产品自己的探测深度
+            // 默认 maxDrop（CsMap.cs:534）= 产品自己的探测深度；命中与否由 bool 给出（探不到 ⇒ NaN）。
+            Vector3 point; Vector3 normal;
+            return _map.TrySampleGround(origin, out point, out normal) ? point.y : float.NaN;
         }
 
         /// <summary>高度层"这次没生效"的原因（⛔ 不许静默退化；同一原因按 <see cref="CsBotConst.StuckWarnCooldown"/> 降频）。</summary>
