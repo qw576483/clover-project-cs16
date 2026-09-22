@@ -884,17 +884,27 @@ namespace Cs16.UI
 
         private void UpdateRadarBounds()
         {
-            // 地图边界是引擎 API（Game.Map = IMapData），不是业务 Module —— UI 可以用。
-            // 加载完成后就不再重复算（每帧算一遍没有意义）。
+            // ── 口径（片AS 改）：雷达的世界窗口 = **原版 overview 的窗口**，不再取引擎位图包围盒 ──
+            // 底图换成原版 `overviews/de_dust2.bmp`（1024×768）后，"雷达覆盖哪块世界"这件事就由
+            // **原版底图**决定，与引擎位图的包围盒无关：
+            //     X ∈ 中心 ± 2048 单位、Z ∈ 中心 ± 2730.6667 单位
+            //     （= 6144/ZOOM / 8192/ZOOM 的一半；ZOOM 1.50 出自
+            //      `原版资源/cs16src/cstrike/overviews/de_dust2.txt:5`；公式真源
+            //      `原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193`）
+            //     窗口中心 = 原版 ORIGIN 经地标配准到本工程坐标系（推导与不确定度见
+            //      `CsHudTheme.RadarWindowCenter` 的注释）。
+            // 常量在这里只做单位换算（GoldSrc 单位 → 米，和引擎地图/地形同口径）后下发给
+            // CsRadarWidget；⛔ 雷达件自己不读 Game.Map（窗口是常量，与地图加载与否无关）。
             if (_haveBounds) return;
 
-            var map = Game.Map;
-            if (map == null || !map.Loaded || map.Width <= 0 || map.Depth <= 0 || map.CellSize <= 0f) return;
+            var c = CsHudTheme.RadarWindowCenter;
+            var hx = CsHudTheme.RadarWindowHalfXUnits * CsHudTheme.GoldSrcUnitToMetre;
+            var hz = CsHudTheme.RadarWindowHalfZUnits * CsHudTheme.GoldSrcUnitToMetre;
 
-            _minX = map.Origin.x;
-            _maxX = map.Origin.x + map.Width * map.CellSize;
-            _minZ = map.Origin.z;
-            _maxZ = map.Origin.z + map.Depth * map.CellSize;
+            _minX = c.x - hx;
+            _maxX = c.x + hx;
+            _minZ = c.y - hz;
+            _maxZ = c.y + hz;
             _haveBounds = true;
         }
 

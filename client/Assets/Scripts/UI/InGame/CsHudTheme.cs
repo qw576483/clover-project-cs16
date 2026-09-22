@@ -169,6 +169,72 @@ namespace Cs16.UI
         public const float RadarSize = 128f;
 
         /// <summary>
+        /// 雷达**内区边长**（px）= <see cref="RadarSize"/> 减去每边 3px 的边框 = 122。
+        /// <see cref="CsRadarWidget.Build"/> 里的内区就是按 3px 内缩建的；写成常量是为了让底图的
+        /// 尺寸/比例能在**建节点时**（布局尚未跑）就定下来。
+        /// </summary>
+        public const float RadarInnerSize = RadarSize - 6f;
+
+        /// <summary>GoldSrc 世界单位 → 米（1 unit = 1 inch = 0.0254 m；引擎地图与地形同此口径）。</summary>
+        public const float GoldSrcUnitToMetre = 0.0254f;
+
+        /// <summary>
+        /// 原版 overview 的 <c>ZOOM</c> —— 逐字取自 <c>原版资源/cs16src/cstrike/overviews/de_dust2.txt:5</c>
+        /// 的 <c>ZOOM 1.50</c>（同文件 <c>:6</c> 是 <c>ORIGIN -223 1097 -192</c>、<c>:7</c> 是 <c>ROTATED 0</c>）。
+        /// </summary>
+        public const float RadarOverviewZoom = 1.50f;
+
+        /// <summary>
+        /// 原版 overview 覆盖的世界窗口**半宽**（GoldSrc 单位）—— X 轴 = 6144/ZOOM/2 = <b>2048</b>。
+        ///
+        /// <para>出处（不是估的）：<c>原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193</c>
+        /// （Half-Life SDK <c>CHudSpectator::DrawOverviewLayer()</c>，文件头 SHA256 见 <c>原版资源/清单.md</c>
+        /// 切片AR 节）—— <c>xStep = -(2*4096/zoom)/xTiles</c>、<c>xTiles=8</c>、X 方向走 **6** 步
+        /// ⇒ 世界 X 跨度 = 6 × 2×4096/1.5/8 = <b>6144/ZOOM = 4096</b> 单位，对应原图**竖直** 768px。</para>
+        /// </summary>
+        public const float RadarWindowHalfXUnits = 6144f / (2f * RadarOverviewZoom);
+
+        /// <summary>
+        /// 原版 overview 覆盖的世界窗口**半宽**（GoldSrc 单位）—— 世界 Y（本工程 Z 轴）=
+        /// 8192/ZOOM/2 = <b>2730.6667</b>。
+        ///
+        /// <para>出处同 <see cref="RadarWindowHalfXUnits"/>：<c>yStep = -(2*4096/(zoom*aspect))/yTiles</c>、
+        /// <c>screenaspect = 4/3</c>、Y 方向走 **8** 步 ⇒ 跨度 = 8 × 2×4096/(1.5×4/3)/6 = <b>8192/ZOOM = 5461.3333</b>
+        /// 单位，对应原图**水平** 1024px。⇒ 每像素 = 8/ZOOM = 5.3333 单位（各向同性）。</para>
+        /// </summary>
+        public const float RadarWindowHalfZUnits = 8192f / (2f * RadarOverviewZoom);
+
+        /// <summary>
+        /// 原版 overview 底图的像素比例（1024×768 = 4:3）—— 底图必须按这个比例绘制，
+        /// ⛔ 不许拉成正方形（否则点与底图在水平/竖直上尺度不同，"同尺度同原点"这条判据直接不成立）。
+        /// 出处：载体 <c>cstrike__overviews__de_dust2.bmp</c> 的 DIB 头 = 1024×768。
+        /// </summary>
+        public const float RadarMapPixelAspect = 1024f / 768f;
+
+        /// <summary>
+        /// 雷达世界窗口的**中心**（本工程世界坐标，米）= 原版 <c>ORIGIN</c> 经**地标配准**换算到本坐标系。
+        ///
+        /// <para><b>推导（每个数字都来自判据资产，不是估的）</b>：</para>
+        /// <list type="number">
+        /// <item>载体 <c>cstrike__overviews__de_dust2.bmp</c> 里两个红包点字形的质心像素
+        /// （<c>tools/probes/locate-overview-letters.py</c>）：A=(264.81, 124.66)、B=(214.53, 644.27)。</item>
+        /// <item>本工程包点世界质心（<c>de_dust2_geo.bin</c>，与 <c>de_dust2_markers.bytes</c> 交叉核对 delta=0）：
+        /// A=(+1535, +1358)、B=(−1170, +1546) 单位。</item>
+        /// <item>世界→原图像素的映射（<c>tools/probes/overview-window.py</c> 的公式）：
+        /// <c>u ← −Z</c>、<c>v ← −X</c>、每像素 8/ZOOM = 5.3333 单位。</item>
+        /// <item>把 A、B 各自锚到原图窗口中心像素 (511.5, 383.5) 再取平均 ⇒
+        /// 中心 = (X 187.5, Z 2.2) 单位 = (4.7625, 0.05588) m。</item>
+        /// </list>
+        ///
+        /// <para>⚠️ <b>已登记的不确定度</b>：两处锚点各自反推的中心互差约 80 单位（≈2.0 m），
+        /// 来源是地标向量的 <b>1.55°</b> 旋转残差（同一探针；它是"两点定标"能给出的全部信息）。
+        /// 本片按两锚点平均落值；该残差在雷达尺度上约等于 <b>15 px @ 5.3333 单位/px</b>，
+        /// 已如实登记进 <c>策划/差异登记.tsv</c>，⛔ 没有把它伪装成 0。</para>
+        /// </summary>
+        public static readonly Vector2 RadarWindowCenter =
+            new Vector2(187.5f * GoldSrcUnitToMetre, 2.2f * GoldSrcUnitToMetre);
+
+        /// <summary>
         /// 雷达框左上角距屏幕左/上边缘的偏移（px）。
         ///
         /// <para>⚠️ <b>本项目取值</b>：原版雷达在屏幕上的绝对落点写在 <c>cstrike/cl_dlls/client.dll</c>
