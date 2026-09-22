@@ -1587,25 +1587,36 @@ DIF = [
      '地图几何域另片处理（⛔ 本片不剪几何）'),
     # ---- 片AZ（2026-09-22）：用户本轮 10 条报告（#66~#75）+ 同类漏检（#77）的差异四要素 ----
     #  编号与 `策划/验收表.md`「允许的差异」段逐条一一对应（闸门第 24 条 differences-source-of-truth 每次校验）。
-    ('66', 'B 点旋转楼梯（及**全图所有楼梯/坡道/台阶**）上不去',
-     '【片BD 2026-09-22 实测 ⇒ 本条**降级**：走向**可走性已判通**，残留的是"与原版是否同形"】'
-     '① 此前缺的判据链已补齐：`tools/probes/bstairs-walkline.cs` → `tools/probes/bstairs-walkline.txt`，'
-     '沿**真实走廊路径**（A* 独立复算，契约同引擎 `AStar`）逐帧（≤0.25 m/帧）走 底→顶 —— '
+    ('66', 'B 点旋转楼梯（及全图所有楼梯/坡道/台阶）上不去 —— **已证伪（片BE 2026-09-22，本行降级，编号保留、不删行）**',
+     '【降级依据：① 原版同形已对账 ② 纯函数侧走通 ③ 实机走不上去复现不出】'
+     '① **原版形态对账 = 逐米 Δ=0**：原版 `de_dust2.bsp` 的 B 点两段与我们**逐米 Δ=0.000 m（11/11 点）**；'
+     'T 侧 `plane[3460] n.z=0.9487 ⇒ 18.43°`（我们 18.4°，角度差 0.03°、法线差 0.0003）；CT 侧 `n.z=0.9923 ⇒ 7.13°`（差 0.13°）；'
+     '**原版不是多级台阶**（T 侧 `SLOPE=6 / TREAD=1 / WALL=0`，踏面只顶部平台一层）⇒ 与工程侧"整片斜楔"同形，不存在"我们做成台阶/原版是斜面"那类缺口。'
+     '② **纯函数侧走通**：`tools/probes/bstairs-walkline.cs` 沿真实走廊路径（A* 独立复算）逐帧（≤0.25 m/帧）走底→顶 —— '
      '**T 侧 frames=162 / 被钳住帧=0 / 到顶=True；CT 侧 frames=125 / 被钳住帧=0 / 到顶=True**；'
      '逐格四道闸门（`CsMap.cs:514-531`）被拒格 T 0/32、CT 1/24（那 1 格是标记点自带 y 与实测地面 y 的初值差 0.553 m，非真实阻断）。'
-     '② **形态已定案**：本工程 B 点是**整片斜楔（连续斜面）不是多级台阶** —— T 侧 10 格 × 1.000 m 连续抬升、每格 +0.333 m、'
-     '地面法线 y 恒 0.949（≈18.4°）；CT 侧 3 格 × 1.000 m 每格 −0.125 m 下坡接平台。'
-     '⚠️ **与原版 .bsp 的 brush 形态尚未对账**（载体在盘、本片未解析 brush/平面表）。'
-     '③ **仍存的同类缺口**：全图 T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台只有 B 这两段有本探针覆盖，其余未纳入'
-     '（`策划/对照表.md:730` 只有一条常量级"坡道可站立阈值 差 0"）',
-     '用户本轮原话"B旋转楼梯上不去"；判据与数字出处 `tools/probes/bstairs-walkline.txt`（(B) 地面剖面 / (D) 逐格 / (E) 逐帧）'
+     '③ **实机（真人按键、输入驱动、非瞬移）走不上去复现不出 —— 玩家侧可走**：片BF 用'
+     '`tools/probes/real-walk-bstairs.cs`（复用 `cs16-play-driver.cs` 的输入通道：改写 state.txt 的 `input=` 行、'
+     '由驱动 order -150 写进 `match.SetLocalInput`）+ `.ai-tmp/drivers/bf-realwalk.ps1`（一次 Play、三个 case），'
+     '**T 侧走廊路径：frames=853 / 被钳住帧=7（全在第 1~7 帧 = 驱动 50 ms 读盘节流的输入延迟窗口，moved=0、dYaw=180 ⇒ 还没收到输入，非物理阻断）/ 贴墙滑行帧=40 / 到顶=True / 已走 20.323 m / 高度差 0.000 / 6.264 s**；'
+     'y 逐帧爬升 -2.824(f1) → -1.783(f140) → -0.562(f240) → 0.000(f340)（真机把整片斜面走上去了）；'
+     '**CT 侧走廊路径：frames=648 / 被钳住帧=6（同为第 1~6 帧输入延迟）/ 到顶=True / 已走 11.247 m / 4.818 s**。'
+     '⇒ 剔除输入延迟窗口后**真实阻断帧 = 0**，与纯函数基准（T 162 帧 / CT 125 帧 / 被钳住 0）同结论（帧数不可直比：纯函数按 0.25 m/步固定步长，实机按 dt 驱动、~136 fps）。'
+     '④ **用户所见已复现 = 直线顶墙**：同一探针第三个 case「只设一次 yaw 朝目标、之后不再转向、按住前进」——'
+     '**到顶=False，第 395 帧卡死**，位置 `(-10.973,-2.030,36.587)`（≈ 片BD 纯函数直线推进卡住的 `x=-10.961`），'
+     '**被钳住帧=362/395**，只挪 **5.109 m** 就再也动不了 —— 即"上不去"是**路径问题（直线顶墙）**，不是几何/阈值问题。'
+     '⑤ 同类扩样（T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台）**本片未做**（改 `bsp`/扩样表属余力，见 `tools/probes/bstairs-walkline.cs` 的 `Case(...)` 调用点）。',
+     '用户本轮原话"B旋转楼梯上不去"；'
+     '原版形态对账资产 `tools/probes/bsp-brushes.py` + `bsp-brushes.txt` + `bsp-brushes-scan.txt`（`n.z=0.9487 / SLOPE=6 TREAD=1 WALL=0` 原文）；'
+     '工程侧逐格/逐帧数字 `tools/probes/bstairs-walkline.cs` + `tools/probes/bstairs-walkline.txt`（(D) 段逐格数字 / (E) 逐帧）'
      ' + `tools/probes/bot-path-check.py`（位图层面 32/32/24/24 格 all cells walkable）；'
      '运行时口径 `client/Assets/Scripts/Module/Map/CsMap.cs:298-299,514-531`；'
      '常量出处 `client/Assets/Scripts/Core/CsConst.cs:113`（StepUpHeight=0.45）/`:135`（MaxStandableSlopeNormalZ=0.7，≈45.573°，与 GoldSrc `pm_shared.c` 的 `if (trace.plane.normal[2] < 0.7) goto usedown;` 同口径）；'
-     '几何载体 `client/Assets/ThirdParty/Dust2/de_dust2_geo.bin` + `de_dust2.bsp`（2,057,288 B，**在盘**）',
-     '① 可走性：**不消除**（实测本来就通 —— 用户报的"上不去"在本工程盘上复现不出来，已如实登记，未改任何阈值/几何）；'
-     '② 形态对账：开「B 点几何与原版同形」片时解析 `de_dust2.bsp` 的 brush/平面表，给出"几级台阶 / 每级高宽 / 斜面角度"数字，'
-     '再决定改几何还是改阈值；③ 全图其余楼梯/坡道扩样另片'),
+     '几何载体 `client/Assets/ThirdParty/Dust2/de_dust2_geo.bin` + `de_dust2.bsp`（2,057,288 B，**在盘**）；'
+     '真人链路判据资产 `tools/probes/real-walk-bstairs.cs`（探针）/ `.ai-tmp/drivers/bf-realwalk.ps1`（一轮 Play 驱动）/ '
+     '逐帧运行时日志 `.ai-tmp/test/bf-realwalk.txt`（2003 行）/ 环境基线 `.ai-tmp/test/bf-env.txt`（AMD Radeon RX 5700 XT / Direct3D12 / 3440x1440 / 3.42 ms）',
+     '无需改几何；**真人链路已于片BF 复现并关闭本行**（玩家侧可走：T 20.323 m / CT 11.247 m 到顶、剔除输入延迟后真实阻断 0 帧；'
+     '用户所见 = 直线顶墙 x=-10.973 只挪 5.109 m，属路径问题）。未做的只剩"全图其余楼梯/坡道扩样"，另片'),
     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步',
      '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：'
      '① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0）⇒ 只能沿标记点最近邻序列走直线；'
