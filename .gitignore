@@ -34,3 +34,8 @@ client/Assets/Screenshots/
 #   优先级高于 manifest.json 里的 git 依赖 ⇒ 本机改引擎源码即时生效、且不用联网克隆。
 #   删掉这个链接 = 回到「按 manifest 从 GitHub 拉取引擎」，外人 clone 后的行为不受影响。
 client/Packages/com.clover.unity-engine/
+
+# ★ Python 字节码缓存与本地 .bak 备份（不该进版本库；探针跑一次就会生成 __pycache__）
+__pycache__/
+*.pyc
+*.bak
