@@ -166,16 +166,77 @@ namespace Cs16.Core
         //  程序化特效贴图 —— 落在 Resources/UI/Art/
         // ==================================================================
         //
-        // ⚠️ 这三张是**本项目程序化生成**的（`tools/probes/make-fx-sprites.py`，登记在
-        // `client/资源欠缺清单.md`）：原版枪口火焰是 `sprites/muzzleflash*.spr`、弹痕是
-        // `decals.wad` 的 `{shot*`，两者载体都不在本仓库、archive.org 又连不上（实测超时）。
-        // 拿到原版素材后**只换文件**（同名覆盖），代码一行都不用改。
+        // ⚠️ `fx_spark` 一张是**本项目程序化生成**的（`tools/probes/make-fx-sprites.py`，登记在
+        // `client/资源欠缺清单.md`）：原版击中火星没有独立载体。另两张（枪口火焰 / 弹痕）已由
+        // **原版载体**解出同名覆盖（枪口火焰 ← `sprites/muzzleflash2.spr`，工具 `tools/probes/spr-extract.py`；
+        // 弹痕/血迹 ← `decals.wad` 的 `{shot*` / `{blood*`，工具 `tools/probes/wad3-extract.py`）。
+        // 换素材仍是**只换文件**（同名覆盖），代码一行都不用改。
 
         /// <summary>枪口火焰精灵（真实文件 <c>Resources/UI/Art/fx_muzzleflash.png</c>，64×64）。</summary>
         public const string FxMuzzleFlash = "UI/Art/fx_muzzleflash";
 
-        /// <summary>弹痕精灵（真实文件 <c>Resources/UI/Art/fx_bullethole.png</c>，32×32）。</summary>
+        /// <summary>弹痕精灵（程序化替身：真实文件 <c>Resources/UI/Art/fx_bullethole.png</c>，16×16 ——
+        /// 切片AW 已用 `decals.wad` 的 `{shot1` 同名覆盖；现在只作**变体不可用时的兜底**，见
+        /// <see cref="FxBulletHolePrefix"/>）。</summary>
         public const string FxBulletHole = "UI/Art/fx_bullethole";
+
+        /// <summary>
+        /// 弹痕**五变体 key 表**：真实文件 <c>Resources/UI/Art/fx_shot1.png</c> … <c>fx_shot5.png</c>。
+        ///
+        /// <para><b>为什么逐条写成字面量</b>（而不是"前缀 + 序号"拼串）：拼出来的 key 在**静态**扫描里
+        /// 看不见 —— 闸门 <c>coverage-diff</c> 的 D1 维度会把那几张贴图判成"**文件在盘上但无人读**"
+        /// （本片实测：拼串的 5 张里只有恰好被注释提到的 2 张过关，其余 3 张判不一致）；
+        /// 字面量 key 既能被引用扫描命中，也让"名字写错 ⇒ 静默加载不到"变成可 grep 的事。</para>
+        ///
+        /// <para><b>载体出处</b>：原版 <c>decals.wad</c> 的 `{shot1` … `{shot5`（各 16×16、载体原生尺寸），
+        /// 由 <c>tools/probes/wad3-extract.py</c> 解出（每个 lump 过"mip 连续 + `pal_ofs+2+768==size` +
+        /// 调色板计数 256" 三重自洽断言）。</para>
+        ///
+        /// <para><b>为什么是 5 张</b>：原版 <c>mp.dll</c> 的贴花注册名表实测为
+        /// `{shot1 {shot2 {shot3 {shot4 {shot5` **连续 5 项**（表基址 `0x10165ED8`、步长 8、
+        /// 索引 0..4，见 `策划/差异登记.tsv` #69 的出处段）。⛔ 不是"随便挑几张"。</para>
+        /// </summary>
+        public static readonly string[] FxBulletHoleKeys =
+        {
+            "UI/Art/fx_shot1",
+            "UI/Art/fx_shot2",
+            "UI/Art/fx_shot3",
+            "UI/Art/fx_shot4",
+            "UI/Art/fx_shot5",
+        };
+
+        /// <summary>弹痕变体张数（= <see cref="FxBulletHoleKeys"/> 的长度；⛔ 不许与那张表分开维护）。</summary>
+        public static int FxBulletHoleVariants => FxBulletHoleKeys.Length;
+
+        /// <summary>
+        /// 血迹贴花**六变体 key 表**：真实文件 <c>Resources/UI/Art/fx_blood1.png</c> … <c>fx_blood6.png</c>
+        /// （原版 `decals.wad` 的 `{blood1` … `{blood6`，mp.dll 名表索引 13..18）。
+        ///
+        /// <para><b>为什么是 6 张 / 为什么不是 `{yblood*`</b>：原版名表里血迹是**两组** ——
+        /// `{blood1..6`（红）与 `{yblood1..6`（黄，异形血）。红/黄由 cvar `violence_hblood` /
+        /// `violence_ablood` 选择（两个串都在 <c>mp.dll</c>），CS 里人类角色一律走**红血**组
+        /// ⇒ 本工程只接红的 6 张。</para>
+        ///
+        /// <para>⛔ 同样逐条字面量（理由见 <see cref="FxBulletHoleKeys"/>）。</para>
+        /// </summary>
+        public static readonly string[] FxBloodKeys =
+        {
+            "UI/Art/fx_blood1",
+            "UI/Art/fx_blood2",
+            "UI/Art/fx_blood3",
+            "UI/Art/fx_blood4",
+            "UI/Art/fx_blood5",
+            "UI/Art/fx_blood6",
+        };
+
+        /// <summary>血迹贴花变体张数（= <see cref="FxBloodKeys"/> 的长度）。</summary>
+        public static int FxBloodVariants => FxBloodKeys.Length;
+
+        // ⛔ 大口径弹痕（原版 `decals.wad` 的 `{bigshot1` … `{bigshot5`，mp.dll 名表索引 28..32）
+        //    本工程**刻意不落盘、不接**：原版"哪种武器用大口径弹痕"的选择逻辑在**引擎**里
+        //    （`hw.dll` 不在盘）⇒ 映射无出处。落盘 = 立刻变成"文件在盘上但无人读"的 T0 不一致
+        //    （本片实测：5 张 bigshot 各记一条 coverage-diff FAIL），所以只把解出结果记在
+        //    `.ai-tmp/test/fx-decal-variants.tsv` 里，等拿到出处再落。
 
         /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
         public const string FxSpark = "UI/Art/fx_spark";

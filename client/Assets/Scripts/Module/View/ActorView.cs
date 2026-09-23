@@ -67,13 +67,32 @@ namespace Cs16.Module.View
         /// <summary>死亡序列是否已经播过（每局一次）。</summary>
         private bool _deathPlayed;
 
-        /// <summary>倒地序列播完 → 下一帧隐藏（在 Apply 里做，避免在引擎 Anim tick 里改 GameObject 状态）。</summary>
+        /// <summary>
+        /// 尸体是否已经"落地留场"（倒地序列播完 → 冻住姿态、关掉碰撞体、但**不隐藏**）。
+        ///
+        /// <para><b>差异 #73（片 FX-ALL 2026-09-23）</b>：用户原话"死亡动画没有，尸体怎么不在地上？"。
+        /// 旧行为是 <c>OnClipFinished → _hideAfterDeath = true → SetShown(false)</c>，
+        /// 即**倒地序列播完立刻整具身体消失**（连"倒地"这一下都看不完）。
+        /// 原版是尸体躺到本局结束、回合重开（复活）时才消失 ⇒ 现在改为"冻在倒地序列最后一帧"。</para>
+        /// </summary>
+        private bool _corpseHeld;
+
+        /// <summary>没有 Animator（预制体太旧）时的兜底：死亡后立刻隐藏（相机与逐帧表现另说）。</summary>
         private bool _hideAfterDeath;
+
+        /// <summary>这一局播的是哪条倒地序列（尸体留场时要把姿态精确钉在它的**最后一帧**，见 <see cref="EnsureCorpseShown"/>）。</summary>
+        private string _deathState;
+
+        /// <summary>尸体姿态是否已经冻住（每具尸体只做一次的收尾动作）。</summary>
+        private bool _corpseFrozen;
 
         private bool _haveAnimSnapshot;
         private float _preNextFireTime;
-        private float _preReloadEndTime;
+        private int _preReloadSeq;
         private string _preWeapon;
+
+        /// <summary>本具身体播过几次换弹（差异 #72 的断言用：每个成功换弹序号都该对上这里 +1）。</summary>
+        private int _reloadAnimsPlayed;
 
         /// <summary>绑定的 actor id（与 4 个 <see cref="CsHitboxProxy.ActorId"/> 一致）。</summary>
         public long ActorId { get; private set; }
@@ -83,6 +102,12 @@ namespace Cs16.Module.View
 
         /// <summary>4 个命中区代理（自检用：任务书要求"每个角色 4 个"）。</summary>
         public CsHitboxProxy[] Proxies => _proxies;
+
+        /// <summary>
+        /// 这具身体**播过几次换弹**（差异 #72 的断言口）：成功换弹一次 ⇒ 这里必须 +1。
+        /// 判据 = 与 <c>CsActor.ReloadSeq</c> 对齐（"每次成功换弹 → 动画至少进入一次 reload"）。
+        /// </summary>
+        public int ReloadAnimsPlayed => _reloadAnimsPlayed;
 
         /// <summary>当前是否显示中（死亡 → false）。</summary>
         public bool IsShown { get; private set; }
@@ -208,7 +233,8 @@ namespace Cs16.Module.View
                 _overrideState = null;
                 _lastState = null;         // 强制下一次 Apply 重新选状态
             }
-            if (!_alive) _hideAfterDeath = true;
+            // 死亡：倒地序列播完 ⇒ **冻住留场**（不是隐藏）。见 _corpseHeld 的说明（差异 #73）。
+            if (!_alive) _corpseHeld = true;
         }
 
         /// <summary>按候选顺序取 Animator 里**真实存在**的状态名（名字来自 mdl 实测标签，不统一）。</summary>
@@ -246,8 +272,10 @@ namespace Cs16.Module.View
 
         /// <summary>
         /// 只读感知「刚刚发生了什么」：权威状态里 <c>NextFireTime</c> 前推 = 打出一发、
-        /// <c>ReloadEndTime</c> 前推 = 开始换弹（与 <see cref="ViewModelRig"/> 同口径 ——
+        /// <c>ReloadSeq</c> 变了 = 开始换弹（与 <see cref="ViewModelRig"/> 同口径 ——
         /// 不去抢 agent-04 的射击队列，保证表现与模拟永远一致）。
+        /// <para>差异 #72：换弹**不能**再用「<c>ReloadEndTime</c> 比上一帧大」当边沿 —— 那是截止时间，
+        /// 结算/切枪会把它归零、同帧内"开始→完成"更是连一次采样都没有 ⇒ 动画整段丢。改用单调序号。</para>
         /// </summary>
         private void UpdateAnim(CsActor actor)
         {
@@ -258,20 +286,27 @@ namespace Cs16.Module.View
                 _haveAnimSnapshot = true;
                 _preWeapon = actor.ActiveWeapon;
                 _preNextFireTime = actor.NextFireTime;
-                _preReloadEndTime = actor.ReloadEndTime;
+                _preReloadSeq = actor.ReloadSeq;
                 return;
             }
 
             if (actor.ActiveWeapon != _preWeapon) _preWeapon = actor.ActiveWeapon;
 
             // 换弹优先（原版里换弹会打断射击姿势）
-            if (actor.ReloadEndTime > _preReloadEndTime + 0.0001f)
+            if (actor.ReloadSeq != _preReloadSeq)
             {
+                _preReloadSeq = actor.ReloadSeq;
                 var cand = CsViewTuning.PlayerReloadStates(actor.ActiveWeapon, actor.IsCrouching);
                 var st = ResolveState(cand);
-                if (st != null) { _anim.Play(st, 0f); _overrideState = st; }
+                if (st != null)
+                {
+                    _anim.Play(st, 0f);
+                    _overrideState = st;
+                    _reloadAnimsPlayed++;
+                    _log.Info("anim.reload.play",
+                        $"角色视图「{name}」播换弹 seq={actor.ReloadSeq} 状态={st}");
+                }
             }
-            _preReloadEndTime = actor.ReloadEndTime;
 
             if (actor.NextFireTime > _preNextFireTime + 0.0001f)
             {
@@ -291,7 +326,7 @@ namespace Cs16.Module.View
             }
         }
 
-        /// <summary>死亡：播原版 death1/2/3（按 actorId 选，与 CS 里"每次倒地方向不同"一致），播完再隐藏。</summary>
+        /// <summary>死亡：播原版 death1/2/3（按 actorId 选，与 CS 里"每次倒地方向不同"一致），播完冻住留场（见 <see cref="_corpseHeld"/>）。</summary>
         private void PlayDeath()
         {
             if (_anim == null)
@@ -309,6 +344,7 @@ namespace Cs16.Module.View
                 SetShown(false);
                 return;
             }
+            _deathState = st;
             _anim.Play(st, 0f);
             _overrideState = st;
         }
@@ -441,14 +477,17 @@ namespace Cs16.Module.View
                 if (_alive)
                 {
                     // 复活：整具身体重新开始（死亡序列的标志位复位，否则下一局倒地不播）
+                    ReleaseCorpsePose();
                     SetShown(true);
                     _deathPlayed = false;
+                    _corpseHeld = false;
+                    _deathState = null;
                     _hideAfterDeath = false;
                     _overrideState = null;
                     _lastState = null;
                     _haveAnimSnapshot = false;
                 }
-                // 死亡**不立刻隐藏**：先播原版倒地序列，播完（OnComplete）再隐藏。
+                // 死亡**不立刻隐藏**：先播原版倒地序列，播完（OnComplete）**冻住留场**。
                 // 没有动画时（预制体是旧的静态网格）退回旧行为：立即隐藏。
                 else if (_anim == null) SetShown(false);
             }
@@ -460,6 +499,8 @@ namespace Cs16.Module.View
                     _deathPlayed = true;
                     PlayDeath();
                 }
+                // 尸体：确保可见（尸体不被"上一帧的隐藏"带走）+ 名牌/血条关掉（死人头顶不该有血条）。
+                if (_corpseHeld) EnsureCorpseShown();
                 if (_hideAfterDeath) SetShown(false);
                 return;
             }
@@ -523,6 +564,52 @@ namespace Cs16.Module.View
             if (gameObject.activeSelf != shown) gameObject.SetActive(shown);
             if (_plate != null) _plate.SetVisible(shown);
             if (shown && _isLocal) HideOwnRenderers();
+        }
+
+        // ==================================================================
+        //  尸体留场（差异 #73）
+        // ==================================================================
+        /// <summary>
+        /// 尸体留场：**确保可见 + 名牌关掉 + 姿态冻住 + 碰撞体全关**（每具尸体只做一次收尾）。
+        ///
+        /// <para><b>为什么要关碰撞体</b>：旧行为靠 <c>SetShown(false)</c> 把整个 GameObject 关掉，
+        /// 尸体因此天然不可被打中、也不挡人。改成"留场"以后必须显式关 —— 否则尸体既会被子弹打中
+        /// （射线会命中 <c>CsHitboxProxy</c> ⇒ 死人反复"中弹"），又会**挡住活人走路**。</para>
+        ///
+        /// <para><b>为什么冻 <c>Animator.speed</c> 而不是 <c>SetShown(false)</c></b>：倒地序列是一次性 clip，
+        /// 播完若状态机继续跑会被拉回 idle（尸体站起来）。冻在最后一帧 = 尸体就是倒地姿势。</para>
+        /// </summary>
+        private void EnsureCorpseShown()
+        {
+            if (!IsShown) SetShown(true);
+            if (_plate != null) _plate.SetVisible(false);
+
+            if (_corpseFrozen) return;
+            _corpseFrozen = true;
+
+            // 先把姿态**钉在倒地序列的最后一帧**，再冻速度：只冻速度会停在"OnComplete 被回调时那一帧"，
+            // 而引擎的完成回调与状态机回绕之间没有顺序保证 ⇒ 有可能冻在回绕后的第 0 帧（尸体半站着）。
+            if (_anim != null && _deathState != null) _anim.Play(_deathState, 1f);
+            if (_animator != null) _animator.speed = CsViewTuning.CorpseAnimSpeed;
+            for (var i = 0; i < _colliders.Length; i++)
+            {
+                if (_colliders[i] != null) _colliders[i].enabled = false;
+            }
+            _log.Info("corpse.hold",
+                $"角色视图「{name}」倒地序列播完 ⇒ 尸体留场（姿态冻在最后一帧，关掉 {_colliders.Length} 个碰撞体）；" +
+                "回合重开复活时才清掉");
+        }
+
+        /// <summary>复活：解冻姿态、把碰撞体还回来（<c>SetShown(true)</c> 之前调用即可）。</summary>
+        private void ReleaseCorpsePose()
+        {
+            if (!_corpseFrozen) return;
+            _corpseFrozen = false;
+            if (_animator != null) _animator.speed = 1f;
+            for (var i = 0; i < _colliders.Length; i++)
+            {
+                if (_colliders[i] != null) _colliders[i].enabled = true;
+            }
         }
 
         private void HideOwnRenderers()

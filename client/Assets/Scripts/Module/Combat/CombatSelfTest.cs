@@ -393,6 +393,21 @@ namespace Cs16.Module.Combat
                 var reloadEnd = local.ReloadEndTime;
                 Assert(reloadEnd > simTime, $"RequestReload 没有进入换弹状态（ReloadEndTime={reloadEnd:F2}）");
 
+                // ---- 差异 #72：换弹边沿 = 单调序号 ReloadSeq，不是「ReloadEndTime 前推」 ----
+                // 为什么在同一段里断言：旧口径（比截止时间戳）只能在**换弹进行中那个时间窗**里被看见，
+                // 视图一旦漏采样（掉帧 / 切局 / 视图模块暂停）就**永久丢**这一次；序号是**黏的** ——
+                // 迟到的采样照样看得到。所以"每次成功换弹 ⇒ 序号 +1"必须是硬不变式。
+                var seqAfterRequest = local.ReloadSeq;
+                Assert(seqAfterRequest >= 1,
+                    $"请求换弹成功却没有推进 ReloadSeq（={seqAfterRequest}）—— 表现层收不到换弹边沿（差异 #72）");
+
+                // 边界①「连点 R」：换弹进行中再按 R 必须被挡下（CsInventory.Reload 的 ReloadEndTime>0 分支）
+                // ⇒ 序号**不许**再动，否则一次换弹会被表现层播成多次。
+                match.RequestReload();
+                match.RequestReload();
+                Assert(local.ReloadSeq == seqAfterRequest,
+                    $"换弹进行中连点 R 不该推进序号（{local.ReloadSeq} != {seqAfterRequest}）—— 差异 #72 边界①");
+
                 var guard = 0;
                 while (simTime < reloadEnd + FrameDt && guard++ < 600)
                 {
@@ -400,10 +415,41 @@ namespace Cs16.Module.Combat
                     match.Tick(FrameDt);
                     simTime += FrameDt;
                 }
+                Assert(local.ReloadSeq == seqAfterRequest,
+                    $"换弹结算（CompleteReload）不该推进序号（{local.ReloadSeq} != {seqAfterRequest}）—— " +
+                    "序号只记「成功发起的换弹」，不记结算");
 
                 var afterReload = local.GetAmmo(CsWeapons.Ak47);
                 Notes.Add($"换弹后弹匣：{afterReload.inMag}/{afterReload.reserve}（换弹前 3）");
                 Assert(afterReload.inMag > 3, $"换弹后弹匣没补满（{afterReload.inMag}）");
+
+                // 边界②「换弹中切枪再切回再换弹」：切枪会把 ReloadEndTime 归零，而新一次换弹的截止
+                // 时间**可能比旧的更小**（AK47 3.0s ⇒ Glock18 2.2s，`CsWeapons.cs` 武器表）
+                // ⇒ 旧的"时间戳前推"口径在这条序列上判不出新换弹；序号只增不减 ⇒ 必须看得到第 2 次。
+                local.SetAmmo(CsWeapons.Ak47, 5, 90);
+                match.SwitchSlot(2);                       // 2 = 手枪（切枪取消换弹：ReloadEndTime 归零）
+                var switchToPistol = local.SwitchEndTime;
+                var guard2 = 0;
+                while (simTime < switchToPistol + FrameDt && guard2++ < 600)
+                {
+                    match.SetLocalInput(default);
+                    match.Tick(FrameDt);
+                    simTime += FrameDt;
+                }
+                match.SwitchSlot(1);                       // 1 = 主武器
+                var switchBack = local.SwitchEndTime;
+                var guard3 = 0;
+                while (simTime < switchBack + FrameDt && guard3++ < 600)
+                {
+                    match.SetLocalInput(default);
+                    match.Tick(FrameDt);
+                    simTime += FrameDt;
+                }
+                match.RequestReload();
+                Assert(local.ReloadSeq == seqAfterRequest + 1,
+                    $"换弹中切枪再切回后重新换弹，序号必须 +1（实测 {local.ReloadSeq}，期望 {seqAfterRequest + 1}）" +
+                    " —— 差异 #72 边界②（这条序列上 ReloadEndTime 前推口径判不出来）");
+                Notes.Add($"差异 #72：跨「连点 R / 切枪再换弹」两条边界后 ReloadSeq={local.ReloadSeq}（单调递增，未漏报）");
 
                 // ---- 切槽（2 = 手枪）----
                 match.SwitchSlot(2);
@@ -419,6 +465,108 @@ namespace Cs16.Module.Combat
                 Notes.Add($"切槽 2 后手持：{local.ActiveWeapon ?? "null"}（期望手枪）");
                 Assert(local.ActiveWeapon != CsWeapons.Ak47,
                     $"切槽 2 之后手里不该还是 AK（实测 {local.ActiveWeapon ?? "null"}）");
+
+                // ================= 差异 #68：attack2（右键）—— 切换型输入 =================
+                // 判据分三块：① 能力表（哪几把武器有出处的"可切状态"）；② **一次按下只切一次**（必须
+                // 判沿：电平型/黏住的输入不许每帧翻转）；③ 切枪期间照样可切、没出处的武器一律不动状态。
+                // ⛔ 数值影响（消音后的伤害/散布、连发的发数与节奏）**不在本段**：没有出处，见差异 #68 的
+                //    「仍未证」段 —— 本段只判"状态可切换 + 可观测"。
+                Assert(CsWeapons.Get(CsWeapons.Usp).CanSilence, "USP 的 attack2 能力表没打上 CanSilence（差异 #68）");
+                Assert(CsWeapons.Get(CsWeapons.M4A1).CanSilence, "M4A1 的 attack2 能力表没打上 CanSilence（差异 #68）");
+                Assert(CsWeapons.Get(CsWeapons.Glock18).CanBurst, "Glock18 的 attack2 能力表没打上 CanBurst（差异 #68）");
+                Assert(CsWeapons.Get(CsWeapons.Famas).CanBurst, "FAMAS 的 attack2 能力表没打上 CanBurst（差异 #68）");
+                Assert(!CsWeapons.Get(CsWeapons.Ak47).CanSilence && !CsWeapons.Get(CsWeapons.Ak47).CanBurst,
+                    "AK47 没有 attack2 出处，能力表不该给它打标（⛔ 无出处不许接）");
+
+                // 一个只推进假时钟、不发任何输入意图的帧步（换弹/切枪计时都要靠它走完）
+                void TickFrames(int n)
+                {
+                    for (var k = 0; k < n; k++)
+                    {
+                        match.SetLocalInput(default);
+                        match.Tick(FrameDt);
+                        simTime += FrameDt;
+                    }
+                }
+
+                // ---- ① USP：按下沿 ⇒ 翻转一次 ----
+                local.PrimaryWeapon = CsWeapons.Usp;
+                local.ActiveWeapon = CsWeapons.Usp;
+                local.Silenced = false;
+                local.BurstMode = false;
+                var switchUsp = local.SwitchEndTime;
+                while (simTime < switchUsp + FrameDt && guard++ < 600) TickFrames(1);
+
+                var press = default(CsInputState);          // 一次"按下"
+                press.Attack2 = true;
+                match.SetLocalInput(press);
+                match.Tick(FrameDt);
+                simTime += FrameDt;
+                Assert(local.Silenced, "USP 按了一次右键却没装上消音器（差异 #68）");
+                Notes.Add($"差异 #68：USP attack2 第 1 次按下 ⇒ Silenced={local.Silenced}");
+
+                // ---- ② 关键边界：**按住不重复翻转** ----
+                // `_localInput` 是黏的（门面只在 SetLocalInput 时更新）⇒ 若模拟侧不判沿，下面这 5 帧会
+                // 把消音器来回拆装 5 次。这条断言就是"判沿"这件事的**唯一可离线证伪点**。
+                for (var k = 0; k < 5; k++)
+                {
+                    match.SetLocalInput(press);             // 仍按住
+                    match.Tick(FrameDt);
+                    simTime += FrameDt;
+                }
+                Assert(local.Silenced,
+                    "按住右键 5 帧后消音器被翻回去了 —— 模拟侧没判'按下沿'（差异 #68 边界①：切换型输入）");
+
+                // 松手再按一次 ⇒ 才应该翻回去
+                TickFrames(1);
+                match.SetLocalInput(press);
+                match.Tick(FrameDt);
+                simTime += FrameDt;
+                Assert(!local.Silenced, "松手后再按一次右键，消音器没拆下来（差异 #68）");
+                TickFrames(1);
+                Notes.Add("差异 #68：USP attack2 按住 5 帧只切 1 次；松手再按才第 2 次（切换型语义成立）");
+
+                // ---- ③ Glock18：切连发模式 ----
+                local.SecondaryWeapon = CsWeapons.Glock18;
+                match.SwitchSlot(2);
+                var switchGlock = local.SwitchEndTime;
+                while (simTime < switchGlock + FrameDt && guard++ < 600) TickFrames(1);
+                local.BurstMode = false;
+                match.SetLocalInput(press);
+                match.Tick(FrameDt);
+                simTime += FrameDt;
+                Assert(local.BurstMode, "Glock18 按了一次右键却没切到连发模式（差异 #68）");
+                Assert(!local.Silenced, "Glock18 只有连发模式（CanSilence=false），不该被动到 Silenced");
+                TickFrames(1);
+                Notes.Add($"差异 #68：Glock18 attack2 ⇒ BurstMode={local.BurstMode}（Silenced 保持 false）");
+
+                // ---- ④ 切枪期间照样能切（⛔ 与 Reload 不同：原版的消音器拆装不受切枪影响）----
+                match.SwitchSlot(1);
+                Assert(local.SwitchEndTime > simTime,
+                    "本段需要'正在切枪'的状态：SwitchSlot(1) 没有产生切枪计时，断言④前提不成立");
+                local.Silenced = false;
+                match.SetLocalInput(press);
+                match.Tick(FrameDt);
+                simTime += FrameDt;
+                Assert(local.Silenced,
+                    "切枪期间按右键被挡下了 —— 原版 attack2 不受切枪影响（差异 #68 边界②）");
+                TickFrames(1);
+                Notes.Add("差异 #68：切枪期间 attack2 仍生效（与 Reload 的拦截规则不同）");
+
+                // ---- ⑤ 没出处的武器：右键无动作（状态一位都不许动）----
+                local.PrimaryWeapon = CsWeapons.Ak47;
+                local.ActiveWeapon = CsWeapons.Ak47;
+                var switchAk = local.SwitchEndTime;
+                while (simTime < switchAk + FrameDt && guard++ < 600) TickFrames(1);
+                local.Silenced = false;
+                local.BurstMode = false;
+                match.SetLocalInput(press);
+                match.Tick(FrameDt);
+                simTime += FrameDt;
+                Assert(!local.Silenced && !local.BurstMode,
+                    "AK47 没有 attack2 出处，按右键后状态却变了（⛔ 无出处不许给效果）");
+                TickFrames(1);
+                Notes.Add("差异 #68：AK47 attack2 无动作（能力表无出处 ⇒ 不接）");
 
                 match.Stop();
             }

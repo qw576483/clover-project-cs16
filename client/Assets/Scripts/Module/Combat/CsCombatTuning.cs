@@ -183,6 +183,54 @@ namespace Cs16.Module.Combat
         /// <summary>同时存在的弹痕上限（超出复用最旧的一条）—— 防止长扫射把特效池撑满。</summary>
         public const int MaxDecals = 64;
 
+        // ------------------------------------------------------------------
+        //  弹痕 / 血迹：**像素 → 世界**的换算（片 FX-ALL，2026-09-23）
+        // ------------------------------------------------------------------
+        /// <summary>
+        /// 弹痕的"米/像素"。口径：弹痕载体 `{shot1..5` 是 **16×16**（`decals.wad` 实测），
+        /// <see cref="DecalSize"/> 取的是 16 px 那张的世界尺寸 ⇒ 每像素 = DecalSize / 16。
+        ///
+        /// <para><b>这是什么、不是什么</b>：原版"贴花世界尺寸"的映射在**引擎**里（`hw.dll` 不在盘）
+        /// ⇒ 拿不到。这里用的是**同族比例推演**：同一套 decal 载体、同一个换算，
+        /// 让 48×48 的血迹 = 弹痕的 3 倍宽、64×64 的 `{blood5` = 4 倍宽。
+        /// ⛔ 这不是出处，出处缺口仍在 <c>策划/差异登记.tsv</c> #69 里；换掉 DecalSize 一处即可全改。</para>
+        /// </summary>
+        public const float DecalMetersPerPixel = DecalSize / 16f;
+
+        /// <summary>
+        /// 血迹贴花的世界尺寸（米）—— 按**该张贴花自己的像素宽**反算（见 <see cref="DecalMetersPerPixel"/>）。
+        /// 例：48 px → 0.225 m、64 px → 0.30 m。
+        /// </summary>
+        public static float BloodDecalSize(int pixels)
+        {
+            // ⛔ 本文件刻意不 `using UnityEngine`（只放常量，与 CsConst 同处置）⇒ 不用 Mathf。
+            return pixels <= 0 ? 0.001f : pixels * DecalMetersPerPixel;
+        }
+
+        /// <summary>血迹贴花存活时长（秒）。与弹痕同量级（原版贴花同为"留很久、按数量上限回收"）。</summary>
+        public const float BloodDecalDuration = 25f;
+
+        /// <summary>同时存在的血迹贴花上限（与弹痕分开计数，否则扫射会把血迹挤掉）。</summary>
+        public const int MaxBloodDecals = 24;
+
+        /// <summary>
+        /// 命中瞬间的**血雾贴片**存活时长（秒）—— 这是 `sprites/bloodspray.spr` 的降级替身
+        /// （该 `.spr` 不在盘；载体缺口登记在 `client/资源欠缺清单.md`）。
+        /// </summary>
+        public const float BloodPuffDuration = 0.14f;
+
+        /// <summary>血雾贴片的世界尺寸（米）。按"命中点上一小团、不遮住对手"取 0.18m。</summary>
+        public const float BloodPuffSize = 0.18f;
+
+        /// <summary>
+        /// 从**命中点**沿弹道方向继续找"能贴血迹的面"的最大距离（米）。
+        ///
+        /// <para>口径来源：原版是"子弹命中角色后，在**后面的墙面**上贴血迹贴花"
+        /// （`mp.dll` 的 `DecalGunshot` 链路 + `{blood1..6` 名表），而不是把血迹贴在角色身上。
+        /// 所以从命中点往前追一小段（2.5 m 覆盖"贴脸打墙"到"隔着一两步"）。</para>
+        /// </summary>
+        public const float BloodDecalTraceRange = 2.5f;
+
         /// <summary>击中火星的存活时长（秒）。</summary>
         public const float SparkDuration = 0.05f;
 

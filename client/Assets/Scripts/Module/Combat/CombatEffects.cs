@@ -7,7 +7,15 @@ using UnityEngine;
 namespace Cs16.Module.Combat
 {
     /// <summary>
-    /// 枪口火焰 / 弹道 / 弹痕 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
+    /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
+    ///
+    /// <para><b>2026-09-23 补（片 FX-ALL，差异 #69 + #74）</b>：
+    /// ① **弹痕从 1 张变 5 张**（原版 `decals.wad` 的 `{shot1..5`，5 张全解出、每次命中随机取一，
+    /// 见 <see cref="PickBulletHole"/>）；
+    /// ② **新增血迹**（<see cref="BloodImpact"/>）：子弹命中角色时"命中点出血雾 + 在后面的面上贴
+    /// `{blood1..6` 血迹贴花"，载体与名表出处写在该方法自己的注释里。
+    /// 两张新族都由 `tools/probes/wad3-extract.py` 从**已在盘**的 `decals.wad` 解出
+    /// （落盘台账：`.ai-tmp/test/fx-decal-variants.tsv`）⇒ ⛔ 不是程序化替身。</para>
     ///
     /// <para><b>2026-09-20 修正（用户报"开枪有黄色球 / 墙上没有弹痕"）</b>：
     /// 上一版枪口火焰是 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
@@ -61,8 +69,11 @@ namespace Cs16.Module.Combat
             public bool Persistent;
             /// <summary>每帧朝相机（枪口火焰 / 火星用；弹痕**不**朝相机，它贴在墙上）。</summary>
             public bool Billboard;
-            /// <summary>是不是"弹痕"（弹痕有独立上限，满了复用最旧的一条）。</summary>
+            /// <summary>是不是"弹痕/血迹"这类贴片（它们有独立上限，满了复用最旧的一条）。</summary>
             public bool Decal;
+
+            /// <summary>是不是**血迹**贴花（与墙上弹痕分开计数、分开上限，见 <see cref="AcquireDecal"/>）。</summary>
+            public bool Blood;
         }
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
@@ -73,8 +84,13 @@ namespace Cs16.Module.Combat
         private Sprite _sprFlash;
         private Sprite _sprHole;
         private Sprite _sprSpark;
+        /// <summary>弹痕**五变体**（原版 `decals.wad` 的 `{shot1..5`，key 表见 <see cref="ResPaths.FxBulletHoleKeys"/>）。</summary>
+        private readonly Sprite[] _sprShots = new Sprite[ResPaths.FxBulletHoleVariants];
+        /// <summary>血迹**六变体**（原版 `decals.wad` 的 `{blood1..6`，key 表见 <see cref="ResPaths.FxBloodKeys"/>）。</summary>
+        private readonly Sprite[] _sprBlood = new Sprite[ResPaths.FxBloodVariants];
         private bool _spritesRequested;
         private bool _spriteWarned;
+        private bool _bloodWarned;
 
         // ---- 颜色 ----
         /// <summary>枪口点光色（原版 spr 是暖白偏黄，照亮近处墙面）。</summary>
@@ -127,6 +143,58 @@ namespace Cs16.Module.Combat
             res.LoadAsset<Sprite>(ResPaths.FxMuzzleFlash, s => _sprFlash = s);
             res.LoadAsset<Sprite>(ResPaths.FxBulletHole, s => _sprHole = s);
             res.LoadAsset<Sprite>(ResPaths.FxSpark, s => _sprSpark = s);
+
+            // 弹痕五变体：按 ResPaths 的**字面量 key 表**逐个加载（⛔ 不拼串：拼出来的 key
+            // 在静态扫描里看不见 ⇒ 闸门 coverage-diff/D1 会把这些贴图判成"文件在盘上但无人读"）。
+            for (var i = 0; i < ResPaths.FxBulletHoleKeys.Length; i++)
+            {
+                var slot = i;                        // 闭包捕获：⛔ 不能直接用 i（循环变量会被共享）
+                res.LoadAsset<Sprite>(ResPaths.FxBulletHoleKeys[i], s => _sprShots[slot] = s);
+            }
+
+            // 血迹六变体：同上，走字面量表。
+            for (var i = 0; i < ResPaths.FxBloodKeys.Length; i++)
+            {
+                var slot = i;
+                res.LoadAsset<Sprite>(ResPaths.FxBloodKeys[i], s => _sprBlood[slot] = s);
+            }
+        }
+
+        /// <summary>从一组贴图里**均匀随机**取一张非空的（原版是五变体随机；⛔ 不用"最旧的一张"之类的假随机）。</summary>
+        private static Sprite PickRandom(Sprite[] pool)
+        {
+            var have = 0;
+            for (var i = 0; i < pool.Length; i++)
+            {
+                if (pool[i] != null) have++;
+            }
+            if (have == 0) return null;
+            if (have == 1)
+            {
+                for (var i = 0; i < pool.Length; i++)
+                {
+                    if (pool[i] != null) return pool[i];
+                }
+            }
+
+            // 只在"真的加载到的那几张"之间等概率取（缺资源时不会把概率压到空槽上）。
+            var pick = UnityEngine.Random.Range(0, have);
+            for (var i = 0; i < pool.Length; i++)
+            {
+                if (pool[i] == null) continue;
+                if (pick == 0) return pool[i];
+                pick--;
+            }
+            return null;
+        }
+
+        /// <summary>弹痕贴图：五变体随机；变体一张都没加载到 → 退到程序化替身 <see cref="ResPaths.FxBulletHole"/>。</summary>
+        private Sprite PickBulletHole()
+        {
+            var s = PickRandom(_sprShots);
+            if (s != null) return s;
+            if (_sprHole == null) WarnSpriteOnce($"弹痕贴图缺失：Resources/{ResPaths.FxBulletHoleKeys[0]}.png（打墙不留痕）");
+            return _sprHole;
         }
 
         private void WarnSpriteOnce(string message)
@@ -135,6 +203,51 @@ namespace Cs16.Module.Combat
             _spriteWarned = true;
             _log.Warn("fx.sprite", message);
         }
+
+        /// <summary>
+        /// 把一张贴片放大到「世界上 <paramref name="meters"/> 米宽」所需的 <c>localScale</c>。
+        ///
+        /// <para><b>为什么不能直接写 <c>Vector3.one * meters</c>（片FX-ALL 2026-09-23 实测的坑）</b>：
+        /// <c>localScale</c> 是**倍率**，不是米 —— 一张贴片"天生"多宽由它自己的导入 PPU
+        /// （<c>spritePixelsToUnits</c>）决定。本工程的 <c>Resources/UI/Art/fx_*.png</c> 是 Unity
+        /// 自动导入的默认值 <b>PPU=100</b>，所以 16x16 的弹痕天生只有 0.16 世界单位宽；那一行
+        /// <c>Vector3.one * 0.075f</c> 实际画出的是 <b>1.2 cm</b>（本应 7.5 cm，小了 6.25 倍），
+        /// 2 m 外不足 5 px ⇒ 截图与肉眼都"看不见"，表现上等于**没贴**。
+        /// 用贴片自己的 <c>bounds</c> 反算成倍率后，<c>meters</c> 才真的是米，
+        /// 且换任何 PPU / 任何像素宽的贴图都不会再错（不必依赖"meta 里的 PPU 别写错"这种共识 ——
+        /// 重导一次就静默回退）。</para>
+        ///
+        /// <para>⛔ 本片只把两处**贴花**改走这里：枪口火焰 / 火星 / 血雾三处直接写
+        /// <c>Vector3.one * &lt;米&gt;</c>，同一因子仍在（它们也被缩小了），但那三样是**已验收**的
+        /// 成片观感，本片不动，只在差异 #69 的"尺寸映射"段登记。</para>
+        /// </summary>
+        /// <param name="s">贴片；null 时退回 <paramref name="meters"/>（调用方随后会把 renderer 关掉，不会显示）</param>
+        /// <param name="meters">期望的世界宽度（米）</param>
+        private static float SpriteScaleForMeters(Sprite s, float meters)
+        {
+            if (s == null) return meters;
+            var unitWidth = s.bounds.size.x;                      // = 像素宽 / spritePixelsToUnits
+            return unitWidth > 0.0001f ? meters / unitWidth : meters;
+        }
+
+        /// <summary>
+        /// 贴一个"面朝向"的四元数时要用的**参考上向**。
+        ///
+        /// <para><b>为什么不能恒定用 <c>Vector3.up</c>（片FX-ALL 2026-09-23 实测）</b>：
+        /// <c>Quaternion.LookRotation(forward, up)</c> 要求 <c>up</c> 与 <c>forward</c> **不平行**。
+        /// 命中**地面**时法线就是 (0,1,0)，<c>-normal</c> 与 <c>Vector3.up</c> 正好反向 ⇒
+        /// 该四元数**退化**，Unity 只能保留一个非法旋转（"面向下 + 上向朝上"）⇒ 贴片**立起来**，
+        /// 正对相机看就是一条线。表现上又是"没有弹痕"。
+        /// 地板命中改用一个与法线不平行的参考上向（前向），四元数就良定义了。</para>
+        ///
+        /// <para>⛔ 三处贴片（弹痕 / 火星 / 血迹）都必须走这里 —— 只修一处等于把同一个坑
+        /// 挪到另外两处等着复发（本片就是这么又捞出来两处的）。</para>
+        /// </summary>
+        private static Vector3 SurfaceUp(Vector3 normal)
+        {
+            return Mathf.Abs(Vector3.Dot(normal, Vector3.up)) > 0.9f ? Vector3.forward : Vector3.up;
+        }
+
 
         /// <summary>
         /// 枪口火焰：**一张星形亮斑贴片**（面向相机）+ 一盏点光。
@@ -169,7 +282,7 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 命中墙：**弹痕**（按命中面法线贴上去的贴片）+ 一记小火星。
+        /// 命中墙：**弹痕**（五变体随机、按命中面法线贴上去的贴片）+ 一记小火星。
         /// <paramref name="normal"/> 必须是世界法线（<c>RaycastHit.normal</c>）。
         /// </summary>
         public void BulletImpact(Vector3 point, Vector3 normal)
@@ -178,27 +291,124 @@ namespace Cs16.Module.Combat
             normal.Normalize();
 
             // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸按原版 decal 的观感（~7cm）----
-            var decal = AcquireDecal();
+            var sprite = PickBulletHole();
+            var decal = AcquireDecal(blood: false);
             if (decal != null)
             {
                 decal.Tr.position = point + normal * 0.01f;
-                decal.Tr.rotation = Quaternion.LookRotation(-normal, Vector3.up);
-                decal.Tr.localScale = Vector3.one * CsCombatTuning.DecalSize;
-                decal.Sprite.sprite = _sprHole;
-                decal.Sprite.enabled = _sprHole != null;
+                decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
+                // 尺寸 = 7.5 cm（口径见 CsCombatTuning）—— 必须按贴片自己的宽度反算倍率，
+                // ⛔ 不能直接写 `Vector3.one * DecalSize`：那等于把 7.5 cm 画成 1.2 cm（见 SpriteScaleForMeters）。
+                var scale = SpriteScaleForMeters(sprite, CsCombatTuning.DecalSize);
+                decal.Tr.localScale = Vector3.one * scale;
+                decal.Sprite.sprite = sprite;
+                decal.Sprite.enabled = sprite != null;
                 decal.Billboard = false;
-                if (_sprHole == null) WarnSpriteOnce($"弹痕贴图缺失：Resources/{ResPaths.FxBulletHole}.png（打墙不留痕）");
+
+                // 可核对日志（字段是照着"看不见弹痕"的三个岔口设计的，见文件头）：
+                // 贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.075 ⇒ 尺寸口径坏了。
+                _log.Info("shot.decal",
+                    $"弹痕落在 {point}（法线 {normal}）→ 贴图 {(sprite != null ? sprite.name : "null")}" +
+                    $" 启用={decal.Sprite.enabled} 世界宽={CsCombatTuning.DecalSize:F3}m" +
+                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}");
+            }
+            else
+            {
+                // 取不到物件 = 特效池满（Create 返回 null）⇒ 这一发**静默不留弹痕**，必须留痕。
+                _log.Warn("shot.decal.null", $"弹痕物件取不到（特效池满？）：本发落在 {point} 不留痕");
             }
 
             // ---- 火星：一记极短的白点（原版打在墙上会有一小撮灰/火星）----
             var spark = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.SparkDuration);
             if (spark == null) return;
             spark.Tr.position = point + normal * 0.02f;
-            spark.Tr.rotation = Quaternion.LookRotation(-normal, Vector3.up);
+            spark.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
             spark.Tr.localScale = Vector3.one * CsCombatTuning.SparkSize;
             spark.Sprite.sprite = _sprSpark;
             spark.Sprite.enabled = _sprSpark != null;
             spark.Billboard = true;
+        }
+
+        /// <summary>
+        /// **子弹打中角色**：命中点上一小团血雾 + 在**后面的那个面**上贴一张血迹贴花。
+        ///
+        /// <para><b>口径（差异 #74，片 FX-ALL 2026-09-23）</b>：原版受击的载体证据两层 ——
+        /// ① 贴花载体 `<c>decals.wad</c>` 里有 `{blood1..6`（红）与 `{yblood1..6`（黄，`violence_ablood`），
+        /// 在 `mp.dll` 的贴花名表里是连续两项（索引 13..18 / 19..24）；
+        /// ② `mp.dll` 里另有 `sprites/bloodspray.spr`、`sprites/blood.spr` 两个串 —— **这两个 `.spr` 不在盘**。
+        /// 所以：**血迹贴花用真载体**（六变体随机），**血雾只能用替身**（缺载体，登记在 `client/资源欠缺清单.md`）。</para>
+        ///
+        /// <para><b>为什么从命中点再往前打一条射线</b>：原版是"在角色**后面的墙**上贴血迹"，
+        /// 不是贴在角色身上（贴角色身上会随它动，原版没有这种表现）。
+        /// 追不到面时**只出血雾、不贴贴花**（不硬塞到空气里）。</para>
+        /// </summary>
+        /// <param name="point">命中点（世界坐标，来自射线）</param>
+        /// <param name="direction">弹道方向（单位向量，从射手指向命中点）</param>
+        /// <param name="headshot">是否爆头（目前只影响日志口径；⛔ 不做"爆头喷更多血"这类无出处的放大）</param>
+        /// <returns>是否真的落了血迹贴花（供自检 / 日志用）</returns>
+        public bool BloodImpact(Vector3 point, Vector3 direction, bool headshot)
+        {
+            Init();
+
+            var dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
+
+            // ---- ① 血雾：命中点上一小团（`sprites/bloodspray.spr` 的降级替身，用真血迹贴图染色）----
+            var puff = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.BloodPuffDuration);
+            if (puff != null)
+            {
+                puff.Tr.position = point;
+                puff.Tr.localScale = Vector3.one * CsCombatTuning.BloodPuffSize;
+                puff.Sprite.sprite = PickRandom(_sprBlood);
+                puff.Sprite.enabled = puff.Sprite.sprite != null;
+                puff.Billboard = true;
+            }
+
+            // ---- ② 血迹贴花：从命中点继续向前找"后面的面" ----
+            WarnBloodOnce();
+            if (!Physics.Raycast(point + dir * 0.02f, dir, out var hit,
+                    CsCombatTuning.BloodDecalTraceRange, ~0, QueryTriggerInteraction.Ignore))
+            {
+                _log.Info("blood.nosurface",
+                    $"命中 {point}（爆头={headshot}）：沿弹道 {CsCombatTuning.BloodDecalTraceRange:F1}m 内没有可贴面 ⇒ 只出血雾");
+                return false;
+            }
+
+            var spr = PickRandom(_sprBlood);
+            var decal = AcquireDecal(blood: true);
+            if (decal == null) return false;
+
+            var n = hit.normal.sqrMagnitude > 0.0001f ? hit.normal.normalized : Vector3.up;
+            decal.Tr.position = hit.point + n * 0.012f;      // 比弹痕抬得稍多：血贴在弹痕之上
+            decal.Tr.rotation = Quaternion.LookRotation(-n, SurfaceUp(n));
+            decal.Sprite.sprite = spr;
+            decal.Sprite.enabled = spr != null;
+            decal.Billboard = false;
+
+            var px = spr != null ? (int)spr.rect.width : 48;
+            // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 0.225 m、64 px -> 0.30 m；口径见 CsCombatTuning），
+            // 再按**贴片天生宽度**换成 localScale 倍率（⛔ 同上的坑：直接写米会小 1/PPU 倍）。
+            decal.Tr.localScale = Vector3.one * SpriteScaleForMeters(spr, CsCombatTuning.BloodDecalSize(px));
+
+            _log.Info("blood.decal",
+                $"命中 {point}（爆头={headshot}）→ 血贴在 {hit.point}（面 {hit.collider?.name}，" +
+                $"贴图 {(spr != null ? spr.name : "null")} {px}px → {CsCombatTuning.BloodDecalSize(px):F3}m）");
+            return true;
+        }
+
+        private void WarnBloodOnce()
+        {
+            if (_bloodWarned) return;
+            var have = 0;
+            for (var i = 0; i < _sprBlood.Length; i++)
+            {
+                if (_sprBlood[i] != null) have++;
+            }
+            if (have > 0) return;
+            _bloodWarned = true;
+            _log.Warn("fx.blood.missing",
+                $"血迹贴图一张都没加载到：Resources/{ResPaths.FxBloodKeys[0]}.png … " +
+                $"{ResPaths.FxBloodKeys[ResPaths.FxBloodKeys.Length - 1]}.png" +
+                "（受击只出无贴图的雾点）—— 用 tools/probes/wad3-extract.py 从 decals.wad 解出后重跑");
         }
 
         /// <summary>弹道（一条细长的亮条，从枪口到终点）。</summary>
@@ -324,6 +534,7 @@ namespace Cs16.Module.Combat
             target.StartScale = target.EndScale = 0f;
             target.Billboard = false;
             target.Decal = false;
+            target.Blood = false;
             if (target.Light != null) target.Light.enabled = shape != Shape.Sprite;
             target.Go.SetActive(true);
             return target;
@@ -339,40 +550,53 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 取一枚**弹痕**：超过 <see cref="CsCombatTuning.MaxDecals"/> 就复用"剩得最少"的那一枚
-        /// （= 最老的一条），这样连续扫射不会把池撑爆、也不会让最旧的弹痕永远不消失。
+        /// 取一枚**墙上的贴片**（弹痕 / 血迹）：超过该类的数量上限就复用"剩得最少"的那一枚
+        /// （= 最老的一条），这样连续扫射不会把池撑爆、也不会让最旧的贴片永远不消失。
+        ///
+        /// <para><b>为什么血迹与弹痕**分开计数**</b>：原版是两套独立的东西（`{shot*` 与 `{blood*}` 两组
+        /// 名字、两套上限）。共用一本账的话，一梭子扫墙就能把场上的血迹全挤掉 —— 表现就是"打死了人、
+        /// 血立刻没了"。</para>
         /// </summary>
-        private EffectItem AcquireDecal()
+        /// <param name="blood">true = 血迹贴花（上限 <see cref="CsCombatTuning.MaxBloodDecals"/>），
+        /// false = 弹痕（上限 <see cref="CsCombatTuning.MaxDecals"/>）</param>
+        private EffectItem AcquireDecal(bool blood)
         {
             Init();
             RequestSprites();
+
+            var cap = blood ? CsCombatTuning.MaxBloodDecals : CsCombatTuning.MaxDecals;
+            var life = blood ? CsCombatTuning.BloodDecalDuration : CsCombatTuning.DecalDuration;
 
             EffectItem oldest = null;
             var decals = 0;
             for (var i = 0; i < _items.Count; i++)
             {
                 var item = _items[i];
-                if (item.Shape != Shape.Sprite || !item.Decal) continue;
+                if (item.Shape != Shape.Sprite || !item.Decal || item.Blood != blood) continue;
                 decals++;
                 if (item.Persistent || item.Go == null || !item.Go.activeSelf)
                 {
-                    oldest = item;      // 已经有空闲的弹痕 ⇒ 直接用
+                    oldest = item;      // 已经有空闲的 ⇒ 直接用
                     break;
                 }
                 if (oldest == null || item.Life < oldest.Life) oldest = item;
             }
 
-            if (decals >= CsCombatTuning.MaxDecals && oldest != null)
+            if (decals >= cap && oldest != null)
             {
                 oldest.Go.SetActive(true);
-                oldest.Life = CsCombatTuning.DecalDuration;
-                oldest.MaxLife = oldest.Life;
+                oldest.Life = life;
+                oldest.MaxLife = life;
                 oldest.StartScale = oldest.EndScale = 0f;
                 return oldest;
             }
 
-            var created = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.DecalDuration);
-            if (created != null) created.Decal = true;
+            var created = AcquireSprite(Shape.Sprite, Color.white, life);
+            if (created != null)
+            {
+                created.Decal = true;
+                created.Blood = blood;
+            }
             return created;
         }
 

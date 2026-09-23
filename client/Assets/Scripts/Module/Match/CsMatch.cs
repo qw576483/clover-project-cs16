@@ -274,6 +274,17 @@ namespace Cs16.Module.Match
         private bool _hasLocalInput;
         private CsInputState _localInput;
         private bool _zoomHeld;
+        /// <summary>
+        /// 差异 #68：上一帧的 <c>Attack2</c>，只用来判「按下沿」。
+        ///
+        /// <para><b>为什么模拟侧要自己再判一次沿（而不是只信采集方填的 GetKeyDown）</b>：
+        /// <c>_localInput</c> 是**黏的** —— 它只在 <see cref="SetLocalInput"/> 被调用时才更新，没人会在帧末清。
+        /// 真实路径每帧都新造一个 <c>cmd</c>（<c>PlayerModule.Update</c> 的 <c>BuildInput</c>）⇒ 没问题；
+        /// 但**离线驱动**（写 <c>state.txt</c> 的 <c>input=</c> 行）只置一次 true 就再没人清 ⇒ 若直接
+        /// <c>if (inp.Attack2)</c>，按住型驱动会在**每一帧翻转一次**（USP 消音器疯狂拆装）。
+        /// 判沿把「切换型」语义钉在**模拟边界**上：无论调用方给的是沿还是电平，一次按下只切一次。</para>
+        /// </summary>
+        private bool _preAttack2;
         private bool _localUseHeld;
         private float _localNextJumpTime;
 
@@ -471,6 +482,7 @@ namespace Cs16.Module.Match
             _localNextJumpTime = 0f;
             _hasLocalInput = false;
             _localInput = default;
+            _preAttack2 = false;   // 差异 #68：清沿的基线，否则「上一局按着右键没松」会吃掉新局第一次按下
             _botDifficulty = cfg.BotDifficulty;
             _running = true;
             _paused = false;
@@ -1265,6 +1277,8 @@ namespace Cs16.Module.Match
         public event Action<CsRoundEndInfo> OnRoundEnd;
         public event Action OnMatchEnd;
         public event Action<CsActor, int, bool, bool> OnDamaged;
+        /// <summary>（受击者, 命中点, 弹道方向, 是否爆头）—— 语义与"为什么不能拿 OnDamaged 代替"见 <see cref="ICsMatch.OnBulletHit"/>。</summary>
+        public event Action<CsActor, Vector3, Vector3, bool> OnBulletHit;
         public event Action<CsActor, string> OnMessage;
         public event Action OnBombStateChanged;
 
@@ -1290,6 +1304,12 @@ namespace Cs16.Module.Match
         {
             try { OnDamaged?.Invoke(victim, dmg, headshot, lethal); }
             catch (Exception ex) { Game.Logger.Error(Tag, $"OnDamaged 订阅者抛异常：{ex.Message}", ex); }
+        }
+
+        internal void RaiseBulletHit(CsActor victim, Vector3 point, Vector3 direction, bool headshot)
+        {
+            try { OnBulletHit?.Invoke(victim, point, direction, headshot); }
+            catch (Exception ex) { Game.Logger.Error(Tag, $"OnBulletHit 订阅者抛异常：{ex.Message}", ex); }
         }
 
         internal void RaiseBombStateChanged()
@@ -1712,6 +1732,14 @@ namespace Cs16.Module.Match
 
             var def = a.ActiveDef;
             _zoomHeld = inp.Zoom && def != null && def.Class == CsWeaponClass.Sniper;
+
+            // 差异 #68：右键 → 切换消音器（USP·M4A1）/ 连发模式（Glock18·FAMAS）。
+            // 为什么放在"冻结期/阶段早退"之前：原版在买枪时间也能按右键拆装消音器（只禁移动），
+            // 而切换本身不改位置、不推进任何计时器 ⇒ 放在早退之前是安全的。
+            // 为什么在**模拟侧**判沿：见 `_preAttack2` 的字段注释（`_localInput` 是黏的，按住型驱动
+            // 会每帧翻转一次）。`inp.Attack2 && !_preAttack2` 对「沿」和「电平」两种调用方都等价于一次。
+            if (inp.Attack2 && !_preAttack2) Inventory.ToggleWeaponMode(a, now);
+            _preAttack2 = inp.Attack2;
 
             // 冻结期禁止移动（官方行为）：只允许转视角。
             if (Round.Phase == CsRoundPhase.Freeze)

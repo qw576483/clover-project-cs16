@@ -16,7 +16,7 @@ namespace Cs16.Module.Audio
     /// <c>sfx/&lt;武器&gt;_fire</c>；本模块只补它没做的那几类，且命中标记（<c>sfx/hitmarker</c>）
     /// 也是它播 —— 所以这里绝不重复放。</para>
     ///
-    /// <para><b>只用权威状态，不抢模拟</b>：脚步按"移动距离"触发（<c>CsActor.Velocity</c> /
+    /// <para><b>只用权威状态，不抢模拟</b>：脚步按**原版冷却计时器**触发（<c>CsActor.Velocity</c> /
     /// <c>IsWalking</c> / <c>OnGround</c> 都是只读），换弹按 <c>ReloadEndTime</c> 前推，
     /// 死亡按 <c>OnKill</c>，回合按事件总线与 <c>OnRoundEnd</c>，炸弹按 <c>BombPlanted</c> /
     /// <c>BombTimeLeft</c>。一个字段都不写回。</para>
@@ -33,10 +33,11 @@ namespace Cs16.Module.Audio
         /// <summary>每个 actor 的脚步状态。</summary>
         private struct FootState
         {
-            public Vector3 LastPos;
             public bool Have;
-            public float Accum;         // 累计走过的水平距离（米）
-            public float LastStepTime;
+            /// <summary>脚步冷却（毫秒）= 原版 <c>pm_shared.c</c> 的 <c>flTimeStepSound</c>：正值表示
+            /// "还剩多少毫秒才允许下一步"，每帧按 dt 递减。递减点出处
+            /// <c>原版资源/hlsdk/pm_shared/pm_shared.c:2404</c>。</summary>
+            public float StepCooldownMs;
             public bool WasOnGround;
             public float LastFallSpeed; // 上一帧的竖直速度（用于落地判定）
             public bool Alive;
@@ -215,16 +216,12 @@ namespace Cs16.Module.Audio
 
                 if (!_feet.TryGetValue(a.Id, out var st))
                 {
-                    st = new FootState { LastPos = a.Position, Have = true, WasOnGround = a.OnGround };
+                    st = new FootState { Have = true, WasOnGround = a.OnGround };
                     _feet[a.Id] = st;
                     continue;
                 }
 
                 var pos = a.Position;
-                var dx = pos.x - st.LastPos.x;
-                var dz = pos.z - st.LastPos.z;
-                var moved = Mathf.Sqrt(dx * dx + dz * dz);
-
                 // ---- 落地：上一帧在空中且竖直速度够快，本帧着地 ----
                 if (a.IsAlive && !st.WasOnGround && a.OnGround && st.LastFallSpeed <= -CsAudioTuning.LandMinFallSpeed)
                 {
@@ -236,26 +233,37 @@ namespace Cs16.Module.Audio
                     PlayFor(a, localId, CsAudioTuning.Jump, spatialFrom: pos);
                 }
 
-                // ---- 脚步：按走过的距离触发；Shift 慢走**无声**（任务书硬要求）----
-                var speed = new Vector2(a.Velocity.x, a.Velocity.z).magnitude;
-                var canStep = a.IsAlive && a.OnGround && !a.IsWalking && speed >= CsAudioTuning.StepMinSpeed;
-                if (canStep && moved > 0.0001f)
+                // ---- 脚步：口径 = 原版 pm_shared.c 的 PM_UpdateStepSound（片FX-ALL 2026-09-23 逐行对账后重做）----
+                //   ⛔ 之前是**距离制**（累计水平位移 >= 0.62 m 且距上次 >= 0.16 s）——那**不是原版口径**。
+                //   原版是**时间制冷却**：PM_ReduceTimers 每帧先 `flTimeStepSound -= cmd.msec`，冷却归零后
+                //   PM_UpdateStepSound 才决定"再装多少毫秒"，装完即静默 ⇒ 同一冷却下跑得越快步幅越大。
+                //   照抄原版的五道顺序：
+                //     ① 每帧先递减冷却（:2404）；② 冷却未归零 ⇒ 什么都不做（原版函数第一行 return，:511）；
+                //     ③ 冻结期（FL_FROZEN，:514）⇒ 直接返回 ⇒ 冷却归零后一直停在 0，解冻第一帧就补一步；
+                //     ④ 速度 < StepMinSpeed（150 u/s，:519）⇒ 只把冷却装成 400 ms、不发声（:521）；
+                //     ⑤ 否则放音并装 300 ms（混凝土，:626），蹲行再 +100 ms（:632）。
+                //   速度取 `Length(pmove->velocity)`（三维模长，:517），**不是**水平分量。
+                //   ⛔ "慢走无声"在原版就是第 ④ 行给的：慢走 5.4 x 0.42 = 2.27 m/s、蹲行 1.84 m/s
+                //   都低于 3.81 m/s。原版并没有另写一条"Shift 静音"规则 —— 这里保留 IsWalking 只是
+                //   冗余加固（万一将来配置漂移把慢走速度提上去，仍不出声）。
+                st.StepCooldownMs -= dt * 1000f;
+                if (st.StepCooldownMs < 0f) st.StepCooldownMs = 0f;   // 原版 :2406-2408 同此夹零
+
+                if (st.StepCooldownMs <= 0f && _match.Phase != CsRoundPhase.Freeze)
                 {
-                    st.Accum += moved;
-                    if (st.Accum >= CsAudioTuning.StepDistanceRun &&
-                        Time.time - st.LastStepTime >= CsAudioTuning.StepMinInterval)
+                    var speed = a.Velocity.magnitude;
+                    if (speed < CsAudioTuning.StepMinSpeed)
                     {
-                        st.Accum = 0f;
-                        st.LastStepTime = Time.time;
+                        st.StepCooldownMs = CsAudioTuning.StepCooldownSlowMs;
+                    }
+                    else if (a.IsAlive && a.OnGround && !a.IsWalking)
+                    {
+                        st.StepCooldownMs = CsAudioTuning.StepCooldownConcreteMs
+                            + (a.IsCrouching ? CsAudioTuning.StepDuckingExtraMs : 0f);
                         PlayFor(a, localId, null, spatialFrom: pos);
                     }
                 }
-                else if (st.Accum > CsAudioTuning.StepDistanceRun)
-                {
-                    st.Accum = 0f;   // 停下/慢走时丢掉累计，避免重新跑动时立刻补一步
-                }
 
-                st.LastPos = pos;
                 st.WasOnGround = a.OnGround;
                 st.LastFallSpeed = a.Velocity.y;
                 st.Alive = a.IsAlive;

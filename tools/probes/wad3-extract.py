@@ -131,18 +131,52 @@ def parse_miptex(raw, lump):
                 mip_sizes=mip_sizes, pal_ofs=pal_ofs, palette=palette, base=off)
 
 
+def masked_bg_index(src, w, h, name):
+    """Which palette index is the transparent one for a masked (`{`) texture?
+
+    ⛔ Do NOT assume a constant.  An earlier revision hard-coded 255 "to match
+    spr-extract.py" -- a pure analogy, and WRONG for this carrier: measured on
+    `decals.wad`, `{shot1` / `{blood1` / `{bigshot1` contain **zero** pixels of
+    index 255 while their background is index 0 (palette entry (255,255,255))
+    covering the whole border.  With the old rule those decals exported as fully
+    OPAQUE WHITE squares (read back: fx_shot1 alpha min=max=255, 256/256
+    non-zero; fx_blood1 2304/2304), i.e. "a bullet mark" was a white patch.
+
+    So the index is measured from the data and self-checked:
+      1. all four corner pixels must agree;
+      2. that index must be the single most frequent one (a background dominates);
+      3. it must be 0 or 255 (anything else means this is not the family we expect).
+    """
+    corners = [src[0], src[w - 1], src[(h - 1) * w], src[w * h - 1]]
+    if len(set(corners)) != 1:
+        raise ValueError("lump %r: masked corners disagree %r" % (name, corners))
+    idx = corners[0]
+    if idx not in (0, 255):
+        raise ValueError("lump %r: masked background index %d is neither 0 nor 255" % (name, idx))
+    counts = {}
+    for v in src:
+        counts[v] = counts.get(v, 0) + 1
+    top = max(counts.items(), key=lambda kv: kv[1])[0]
+    if top != idx:
+        raise ValueError("lump %r: corner index %d is not the most frequent (%d)"
+                         % (name, idx, top))
+    return idx
+
+
 def mip0_rgba(raw, mi):
-    """mip0 -> RGBA bytes. For a masked (`{`) texture, palette index 255 is transparent."""
+    """mip0 -> RGBA bytes. For a masked (`{`) texture the background index -> alpha 0;
+    which index that is comes from <see cref="masked_bg_index"/>, never from a constant."""
     w, h = mi["width"], mi["height"]
     src = raw[mi["base"] + mi["offsets"][0]: mi["base"] + mi["offsets"][0] + w * h]
     masked = mi["name"].startswith("{")
     pal = mi["palette"]
+    bg = masked_bg_index(src, w, h, mi["name"]) if masked else -1
     out = bytearray(w * h * 4)
     for i, idx in enumerate(src):
         out[i * 4 + 0] = pal[idx * 3 + 0]
         out[i * 4 + 1] = pal[idx * 3 + 1]
         out[i * 4 + 2] = pal[idx * 3 + 2]
-        out[i * 4 + 3] = 0 if (masked and idx == 255) else 255
+        out[i * 4 + 3] = 0 if (masked and idx == bg) else 255
     return bytes(out)
 
 

@@ -433,10 +433,55 @@ namespace Cs16.Module.Match
             }
 
             a.ReloadEndTime = now + def.ReloadTime;
+            // 差异 #72：单调序号 = 表现层判"换弹开始"的唯一信号。ReloadEndTime 会被 ① 结算归零
+            // ② 切枪归零 ③ 同帧跨完 而漏掉边沿；序号不会被这三种情况吃掉。
+            a.ReloadSeq++;
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
             Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）");
+        }
+
+        /// <summary>
+        /// 差异 #68：attack2（右键按下沿）→ 切换**消音器**（USP·M4A1）或**连发模式**（Glock18·FAMAS）。
+        ///
+        /// <para>只对 <c>CsWeaponDef.CanSilence</c> / <c>CanBurst</c> 为真的武器有动作；其余一律
+        /// **不动状态**、只记一条 rate-limited 日志（⛔ 无出处就不许"顺手给点什么效果"）。</para>
+        ///
+        /// <para>⛔ 切枪期间按右键**照样切**（与 <see cref="Reload"/> 不同）：原版的消音器拆装不受
+        /// 切枪影响，硬拦反而会造出一个原版没有的规则。</para>
+        ///
+        /// <para>⚠️ 本方法只改「状态」。**数值影响未落地**（消音后的伤害/散布、连发的发数与节奏都没有
+        /// 出处）⇒ 缺口留在 <c>策划/差异登记.tsv</c> #68，判据 = 离线断言（状态切换可观测）。</para>
+        /// </summary>
+        public void ToggleWeaponMode(CsActor a, float now)
+        {
+            if (a == null || !a.IsAlive) return;
+            var def = a.ActiveDef;
+            if (def == null)
+            {
+                _m.RateInfo("attack2.noweapon", $"{a.Name} 手里没有武器，右键无动作（差异 #68）");
+                return;
+            }
+
+            if (def.CanSilence)
+            {
+                a.Silenced = !a.Silenced;
+                Game.Logger.Info(Tag,
+                    $"{a.Name} {(a.Silenced ? "装上" : "拆下")} {def.DisplayName} 的消音器（attack2 · 差异 #68）");
+                return;
+            }
+
+            if (def.CanBurst)
+            {
+                a.BurstMode = !a.BurstMode;
+                Game.Logger.Info(Tag,
+                    $"{a.Name} 把 {def.DisplayName} 切到{(a.BurstMode ? "连发" : "单发")}（attack2 · 差异 #68）");
+                return;
+            }
+
+            _m.RateInfo("attack2.noeffect." + def.Id,
+                $"{a.Name} 的 {def.DisplayName} 右键无动作：原版 attack2 的逐武器分支里没有它（差异 #68；⛔ 无出处不加效果）");
         }
 
         internal void CompleteReload(CsActor a)

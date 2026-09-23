@@ -43,6 +43,164 @@ except Exception:
     pass
 ROOT = os.path.dirname(os.path.dirname(HERE))
 
+import subprocess
+
+# ---- 片BW-ZERO（2026-09-23）：缺席断言的「范围声明」----------------------------------
+# 为什么（规矩本体 R-范围定义与覆盖数 / R-覆盖声明三件齐）：穷举式结论（"全仓 grep X 命中 0"）
+#   必须声明**范围定义**（目录 + 表达形式 + 工具默认行为）并给出**实际覆盖数**；
+#   `0 命中` 必须附 `扫描文件数 / 各根命中数 / 排除清单`。缺任一项 ⇒ "我扫了 N 个"不可信。
+# ⛔ 数字**全部生成时现跑**（`os.walk` / `rg --files`），⛔ 不许手写（实测事故：手写扫描数会过期）。
+# ⛔ junction 挂载根（引擎包 `client/Packages/com.clover.unity-engine` 指向 `clover-client-unity-engine`）
+#   必须 `via_walk=True` —— 前任实测 `rg` 对该根枚举 **0** 文件、而 `os.walk` = **550**。
+_TOOL_DEFAULTS = ('尊重 ignore=True | 含隐藏目录=True | 跳过二进制=**是**（rg 默认）'
+                  ' | 显式列根=True（⛔ 全仓搜索 ≠ 本串口径）'
+                  ' | 跟随 junction=**否**（**全仓搜索**默认不进；显式列根时能枚举）'
+                  ' | 读失败=计入"读失败数"')
+
+_RG_OK = [None]          # None=未探测；True/False=rg 是否可用（列表 ⇒ 可在闭包里赋值）
+
+
+def _split_root(root):
+    """`路径/**` -> (base, glob)；无通配 -> (root, None)。
+
+    ⛔ 为什么必须有这一步（本片**预演当场**抓到的缺陷，非设计稿原样）：
+        `subprocess.run` **不经过 shell** ⇒ 通配符**不会被展开**。原样把 `client/Assets/**`
+        当路径喂 rg ⇒ `rc=2 (No such file or directory)` ⇒ 计数恒 **0**
+        —— 那正是一条"**假 0 声明**"，是本片要消灭的形态本身。
+        实测：`rg … 'client/Assets/**'` → rc=2 / 1 行错误；`rg … client/Assets` → **4393**。
+    """
+    for i, ch in enumerate(root):
+        if ch in '*?[':
+            base = root[:i].rstrip('/')
+            return (base or '.'), root[i:]
+    return root, None
+
+
+def _rg_file_count(root):
+    """rg --files 在该根枚举到的文件数；返回 (n, bad_reason_or_None)。"""
+    if _RG_OK[0] is None:
+        try:
+            subprocess.run(['rg', '--version'], stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=30)
+            _RG_OK[0] = True
+        except Exception:
+            _RG_OK[0] = False
+    if not _RG_OK[0]:
+        return 0, 'rg 不可用'
+    base, glob = _split_root(root)
+    args = ['rg', '--files', '--no-ignore', '--hidden']
+    if glob and glob not in ('**', '/**', '/**/*'):
+        args += ['--glob', glob]
+    args.append(base)
+    try:
+        p = subprocess.run(args, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           timeout=300)
+        n = len([x for x in p.stdout.decode('utf-8', 'replace').splitlines() if x.strip()])
+        if p.returncode != 0:
+            return n, 'rg rc=%d' % p.returncode
+        return n, None
+    except Exception as e:
+        return 0, 'rg 异常 %s' % type(e).__name__
+
+
+def _walk_file_count(root):
+    """os.walk 枚举文件数（跟 junction）；返回 (n, bad_reason_or_None, used_followlinks)。"""
+    base, _glob = _split_root(root)          # ⛔ 同样要剥掉 `/**`，否则 os.path 判"路径不存在"
+    p0 = os.path.join(ROOT, base)
+    if not os.path.exists(p0):
+        return 0, '路径不存在', False
+    for follow in (False, True):     # 默认先试；若为 0 再用 followlinks=True 复测（并把实情记进串）
+        n = 0
+        try:
+            for dp, dn, fn in os.walk(p0, followlinks=follow):
+                if os.path.basename(dp) == '.git':
+                    dn[:] = []
+                    continue
+                n += len(fn)
+        except Exception as e:
+            return n, 'walk 异常 %s' % type(e).__name__, follow
+        if n or follow:
+            return n, None, follow
+    return 0, None, False
+
+
+def scope_note(roots, patterns, via_walk=False):
+    """返回可机读的"范围声明"串；数字全部**现跑**得到（⛔ 不手写）。"""
+    tot, bads, per_root, excl = 0, 0, [], []
+    for r in roots:
+        if via_walk:
+            n, bad, follow = _walk_file_count(r)
+            # 口径按**实测**写（本片实跑：junction 根 `rg --files <该目录>` = 550 = os.walk）：
+            # ⛔ 盲的是**全仓搜索**那一侧，⛔ 不是"显式列根也枚举不到"。
+            # ⚠️ 口径必须自带：os.walk 这一支**排除 `.git`**（实测：该 junction 根 550 - 230(.git) = 320）
+            #    ⇒ ⛔ 别再拿它跟"rg 含 .git 的 550"直接比（规矩 `R-计数口径须与断言语义一致`）。
+            excl.append(r + '（junction 挂载根：**全仓搜索**默认不进它 ⇒ 必须显式列根；'
+                            '本行用 os.walk%s 枚举，**已排除 `.git`**）'
+                        % ('(followlinks=True)' if follow else ''))
+        else:
+            n, bad = _rg_file_count(r)
+            excl.append(r + '（显式列根，用 rg --files；⛔ 全仓搜索 ≠ 本串的口径）')
+        if bad:
+            bads += 1
+            excl.append(r + '（%s）' % bad)
+        per_root.append((r, n))
+        tot += n
+    return ('范围={ 根:[%s] | 式:[%s] | 工具默认:%s'
+            ' | 扫描文件数:{合计:%d, %s, 读失败:%d}'
+            ' | 排除:[%s] }'
+            % (','.join(roots), ','.join(patterns), _TOOL_DEFAULTS, tot,
+               ', '.join('%s:%d' % kv for kv in per_root), bads, ';'.join(excl)))
+
+
+# ---- 片BW-ZERO：每个缺席断言的"范围声明"变量（⛔ 只定义一次，站点只引用）-------------
+_SCOPE_ASTAR = scope_note(['client/Assets/**'], ['AStar'])
+_SCOPE_CORPSE = scope_note(['client/Assets/**'], ['Corpse', '尸体'])
+_SCOPE_BLOOD = scope_note(['client/Assets/**'], ['Blood', '血雾'])
+_SCOPE_PICKUP = scope_note(['client/Assets/**'], ['TryPickupDropped'])
+_SCOPE_WPREFAB = scope_note(['client/Assets/Resources/Art/T/player.prefab',
+                            'client/Assets/Resources/Art/CT'], ['weapon', 'w_'])
+_SCOPE_BT_ENGINE = scope_note(['client/Packages/com.clover.unity-engine/**'],
+                              ['BehaviorTree', '行为树', 'btree'], via_walk=True)
+
+
+# 第 13 个站点（本片**干跑实测**补出来的；⛔ 设计稿的清单里没有它）：
+#   产生判定行 3759 / 3783 / 3784（S1 武器 Defuser/Vest/VestHelm）那句
+#   `原版 mdl 导出 .cs16anim 共 N 个 = … 装备类命中 0 个；盘上 vm_*.controller 同样 N 个`
+#   ⇒ 它同时断言两个根：`Editor/Views/ModelData` 与 `Resources/Art/Anim`。
+_SCOPE_PASSIVE = scope_note(['client/Assets/Editor/Views/ModelData',
+                             'client/Assets/Resources/Art/Anim'],
+                            ['vm_defuser', 'vm_vest', 'vm_vesthelm'])
+
+
+def _scope_dif(x):
+    """**DIF 单元格专用**：把 `|` 换成 `/`。
+
+    ⛔ 为什么必须有它（本片**预演当场**抓到的缺陷，非设计稿原样）：
+        `差异登记` 是 markdown 表，生成器有一条硬卫生闸门 —— 把 canonical 串（含 `|`）
+        原样塞进 DIF 单元格 ⇒ `[dif] ERROR hygiene: cell-with-bare-pipe=['67','76','80']`
+        ⇒ **`ABORT before writing ANY product`（rc=2，一个字节都不写）**。
+        实测修法 = 这三个站点改用本函数包一层；⛔ 判定行（`覆盖矩阵判定`）那侧仍用 canonical 形态，
+        因为 `absence-scope` 闸门认的就是它。
+    """
+    return x.replace('|', '/')
+
+
+# ---- 片BW-ZERO：`absence-scope` 的**真口径**（落地前干跑实测；⛔ 别用设计稿的"26 行"）-------
+# 验收门限 = **覆盖关系**，⛔ 不是计数阈值：
+#     判定行（`策划/覆盖矩阵判定.fragment.md` → 注入 `策划/验收表.md`）里**每一条含缺席关键词**的行，
+#     都必须带 canonical `范围={ 根:[…] … 扫描文件数:{…} … }` ⇒ 即 **gap == 0**。
+# 实测（干跑；脚本 = `.ai-tmp/test/bwzr-p3-pregate.py`，**落地后请把它移进 `tools/probes/`**）：
+#     canonical 0 → 9 ；含缺席关键词的判定行 = **9** 条
+#     （1463 / 3165 / 3170 / 3331 / 3336 / 3337 / 3759 / 3783 / 3784）；**gap 9 → 0**（PASS）。
+# ⛔ 三条别再踩的坑（都实测过）：
+#     ① 设计稿写的"补 26 行" **不是这个口径的数** —— 判定行里只有 9 条缺席行；
+#        按 `>= 26` 落地**必然假红**，而"凑 26"通常就是造假 ⇒ 规矩 `R-门限用覆盖不用计数`。
+#     ② 判定行里的 canonical 串，分隔符**被渲染成 `/`**（markdown 表不许裸 `|`）
+#        ⇒ 判据正则必须收 `[|/]` 两种；⛔ 只认一种会**假红或假绿**（本片两次都踩过）。
+#     ③ 落地后**必须重采一次**判据 2b（`--out-dir=` 沙箱 + 那个干跑脚本），
+#        ⛔ 不许沿用本注释里的数字当"现行值"（规矩 `R-归档不用易失标识`）。
+
+
 # ---- 判据的输入必须**绝对锚定**，并在启动时打印一次解析到的绝对路径 ------------------
 # 为什么（skill `reference/anti-gaming.md` §五 第 4 条「判据的输入也要绝对锚定」）：
 #   `SPEC` 曾写成相对路径 `'策划/策划案/…md'`、读函数直接 `open(path)` ⇒ 只在"从项目根运行"时
@@ -1566,7 +1724,7 @@ for wid in WEAPON_IDS:
             '%d 个 vm_* + %d 个 player_*，装备类命中 %d 个；盘上 vm_*.controller 同样 %d 个；'
             '⛔ 不生成 vm_%s.controller —— 那是造 A 没有的素材）'
             % (wid, len(CS16ANIM), len(CS16ANIM_VM), len(CS16ANIM) - len(CS16ANIM_VM),
-               len(CS16ANIM_EQUIP), len(VM_CTRLS), wid.lower()))
+               len(CS16ANIM_EQUIP), len(VM_CTRLS), wid.lower()) + ' ' + _SCOPE_PASSIVE)
         continue
     ctrl = os.path.join(ANIM_DIR, 'vm_%s.controller' % wid)
     add('S1', '\u6b66\u5668/%s' % wid, rel(CS_WEAPONS), rel(CS_WEAPONS), 3, T_SCRIPT,
@@ -1760,12 +1918,43 @@ CROSS = [
      '\u4f24\u5bb3\u516c\u5f0f \u00d7 \u547d\u4e2d\u90e8\u4f4d \u00d7 \u62a4\u7532', T_SCRIPT,
      K_CONSIST if re.search(r'HitHead|HitChest', rd(CS_CORE)) else K_MISMATCH),
 ]
+# 片FX-ALL（2026-09-23）：把「多文件布尔与」的交叉行定出**合法锚点写法** —— 这正是允许差异 #87
+#   当初留下的「处置」方向。原来的做法（证据列只写一句判据 + 挂 `（见允许差异 #87）`）在
+#   `verify.ps1` 第 39 项下恒红，而那条差异**不允许**给它们编一个不存在的单点锚点。
+#   现在的写法：`（多文件锚点：A:<行> && B:<行>）`，**每一项都是现算的** `文件:行号`
+#   （`code_site()` 现场解析源码，⛔ 绝不写死 —— 行号随插入漂移，写死就等于复盘时对不上）。
+#   ⚠️ 残余：`verify.ps1` 第 39 项只机械复核**首个** `path:line`，第二项及以后靠人逐个打开验证
+#   ⇒ 这条残余已改写进差异 #87 的新正文（⛔ 不再假装"全都机械验过"）。
+#   第一项一律选「最能代表该行判据」的那一处（多是判据本体所在的方法/常量），而不是顺手的第一处命中。
+CROSS_ANCH = {
+    # D8×D6 音效×事件×材质：判据是「材质分类真的做了」+「弹着音按分类落点」两处
+    'D8':  [r'public static string ClassifyImpact', r'hit_wall\uff08\u843d\u70b9'],
+    # D9×角色类型 碰撞×角色类型：`push_code && push_attached && sep_ok` 三项各自的位置
+    'D9':  [r'public static bool TryResolve', r'private Vector3 SeparateFromOtherActors'],
+    # D7×D12 音乐×场景转移：`PlayBGM && StopBGM` 两个调用点
+    'D7':  [r'sound\.PlayBGM\(', r'sound\.StopBGM\('],
+    # D11×上下文 输入×上下文遮蔽：`inputAllowed`（采集闸门）与 `NonBlockingPanels`（面板白名单）
+    'D11': [r'internal void FillInput', r'NonBlockingPanels\['],
+    # S1×D10 数值×逻辑分支：`HitHead` / `HitChest` 的常量定义与它的分支使用点
+    'S1':  [r'public const float HitHead', r'case CsHitbox\.Head'],
+}
 for dim, nm, note, vt, vd in CROSS:
     # 片BW-E：证据列**本身没有可复核锚点**的交叉行 ⇒ 挂上它的允许差异号（见 `DIF` 的 #87）。
-    #   判据**现算**（`anchor_ok(note)`）而不是按名字硬列 5 行 ⇒ CROSS 表一变就自动跟上。
+    #   判据**现算**（`anchor_ok(...)`）而不是按名字硬列 5 行 ⇒ CROSS 表一变就自动跟上。
+    # 片FX-ALL：先试**多文件锚点**；只有在连多文件锚点都凑不出来时才退回挂差异号。
+    # ⛔ 每个锚点**必须用反引号包起来**（实测 2026-09-23，这是本写法唯一会静默失效的地方）：
+    #   `audit-verdict-rows.py` 的 `PATHLINE_RE` 的路径字符类是 `[^\s`|"'(\)\[\],;]+?`
+    #   —— 它**不排除中文、也不排除全角括号**，所以紧跟一段中文叙述的裸路径会把叙述一起吞进
+    #   `path` → `resolve()` 失败 → 该锚点被静默跳过，判定落到**第二项**上（实测：`（多文件锚点：`
+    #   被吸进路径，最后审计认的是第二项）。反引号在字符类里是被排除的 ⇒ 匹配从反引号后干净起步。
+    _hits = [code_site(p) for p in CROSS_ANCH.get(dim, [])]
+    _hits = ['`%s`' % h for h in _hits if h]
+    _ev = note + (('\uff08\u591a\u6587\u4ef6\u951a\u70b9\uff1a' + ' && '.join(_hits) + '\uff09')
+                  if _hits else '')
+    if not anchor_ok(_ev):
+        _ev += '\uff08\u89c1\u5141\u8bb8\u5dee\u5f02 #87\uff09'
     add(dim, nm, '\u8de8\u7ef4\u5ea6\u56e0\u679c\u5bf9',
-        'patterns/full-coverage-audit.md \u00a74', 2, vt, vd,
-        note + ('\uff08\u89c1\u5141\u8bb8\u5dee\u5f02 #87\uff09' if not anchor_ok(note) else ''))
+        'patterns/full-coverage-audit.md \u00a74', 2, vt, vd, _ev)
     sta(dim, nm, '\u4ea4\u53c9\u72b6\u6001', '-', note, '\u5730\u57df\u7814\u5224', vd, 'patterns/full-coverage-audit.md \u00a74')
 
 # ============================================================================
@@ -1781,7 +1970,7 @@ for dim, nm, note, vt, vd in CROSS:
 #      而 `--inject` 会用本脚本重写整块 ⇒ 每跑一次就静默删掉它们（实测：片BU-R6 那段 1 次就没）。
 #      现按产物**逐字**回填（未改任何措辞）；段落内的 `|` 已由 `_s()` 转为 `/`。
 _ASTAR_TAIL = '。**【片BU-R 更正 · 业务**已经**在用引擎 A***（2026-09-22 数值类）】"业务零使用 A*"这句已过时：`client/Assets/Scripts/Module/Bot/BotNavigator.cs` 的 `EnsurePath` 调 `AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes)`，片BU-R 又新增 `BotNavigator.CanReach`（同一份口径，供"选目标前先问一句走不走得到"）与 `DropUnreachableWaypoints`（`AStar.Find(纯位图)` 排掉"可走但走不到"的路点）⇒ **引擎寻路能力已被业务使用**，本行的"允许的差异"只对"引擎无多实例 FSM 工厂"那一半继续成立（见差异 #67 的 ① ② 更正）。片BU-R 一次 Play（`.ai-tmp/drivers/bu-r-play.ps1`）的引擎 A* 实测计数：`astar.nopath`（真孤岛）= 8、`astar.badgoal`（高度一致性层拒绝）= 4 ⇒ 修前同类为 18 / 13（口径与判据 `tools/probes/bot-goal-gate.py` 的 A4）'
-_TAC_TAIL = '。**【片BU～片BU-R 更正 + 重采（2026-09-22，数值类，本条判据仍为「允许的差异」）】** 上面 ①②③ 三条**机制描述已过时**，按当前代码更正：① **有寻路层** —— 业务已调引擎 `AStar.FindSmoothed`（`BotNavigator.EnsurePath`），⛔ "零调用"不成立；② **有战术层** —— 引擎无行为树模块（全仓 `BehaviorTree|行为树|btree` = 0 命中），等价设施 = 引擎公开接口 `IFsm`（引擎自带 `Fsm` 是应用级单例、且实现类 `internal` ⇒ 业务无法多实例；引擎侧出处见差异 #67 的「出处」列），本工程按 `IFsm` 每 bot 自实现两层（`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`，顶层 Idle/Patrol/Engage/Objective + 目标层 Approach/Plant/Hold/Defuse），"守点 = 到达单个包点标记后原地警戒"也已改为 `CsBotHoldSpots` 多点守位表 + 定时换位；③ 片BU-R 又给**选目标**加了可达门禁（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`，近的优先）并把 CT 包点守卫的"到达判定"与"换位评估"解耦（`CsBotBrain.InsideHoldSite`）。**修前 vs 修后（同一批判据 `tools/probes/bot-goal-gate.py`，产物 `.ai-tmp/test/bu-r-gate-after.txt` 与修前 `br` 产物）**：闸门 FAIL 6/7 → **5/7**；每次换目标风暴 73 → **7**（Minh 70 → 0）；求路径失败 67 → **15**；净位移 net/total 0.001~0.007 → **0.008~0.044**（Minh 0.00m → 6.0m）；`守点换位` L3 = **0 → 0**、`在包点` L3 = **0 → 0**、`TPLANTED` = **0 → 0** ⇒ **本行判据仍未达成**（T 未下包 / CT 未进点驻留 / 未换位），残余根因已定位：bots 每回合净位移仅 3~8 m 而路径长度 176 m（总走 176 m、净 6 m）⇒ 推进被**逐帧方向抖动**吃掉（口径 = `analyze-bot-goal.py` 第 4 节 + `.ai-tmp/test/bu-r-goal-after.txt`）。证据文件：`tools/probes/bot-goal-gate.py`、`tools/probes/bu-goal-reachability.py`、`.ai-tmp/test/bu-r-goal-after.txt`、`.ai-tmp/test/bu-r-gate-after.txt`**【片BU-R2 2026-09-22 23:19 实测（完整回合，105s 规则 + 采集窗口 ≥114s；驱动 `.ai-tmp/drivers/bu-r2-play.ps1`，Play 产物 `.ai-tmp/test/bu-r2-*`）】** 闸门 `tools/probes/bot-goal-gate.py`：FAIL 5/7 → **FAIL 3/7**；新增转绿：**A6 CT 包点驻留 PASS**（Spliff 连续 5 采样 ≤7m，修前 0）、**A7 守点换位 26 次 PASS**（修前 0）；A1/A2 净位移：Cliffe CT 5.7m/0.032 → **66.1m/0.802**、Spliff CT 7.8m/0.085 → 24.5m/0.401（8 bot 里 2 个达标）；逐帧抖动（`tools/probes/bu-r2-motion-diag.py`）：Move 方向翻转 317 → 2（Cliffe），rev% 78.7% → 0.0%。**残余（仍红）**：A4 求路径失败 18 > 10、**A5 T 侧自主下包 0 条**、A1/A2 6/8 未达标；残余根因已定位到**局部避障层**（`BotNavigator.Avoid` 每帧重扫 `AvoidAngles`、`probeLeft=0.50` 说明 0.5s 保持每帧被打破 ⇒ Darrell/Scuzzy 在 B 点附近绕圈 350m/净 17~22m），原始归因行 `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。⛔ 阈值未下调。**【片BU-R3 2026-09-22 23:35 实测（完整回合：驱动 `.ai-tmp/drivers/bu-r3-play.ps1` 采到 `phase=RoundEnd`；产物 `.ai-tmp/test/bu-r3-*`）】** 本片只做一处 = `BotNavigator.Avoid` 的**换向迟滞**（① 候选偏角改按"与**当前偏角**的偏差升序"试，新增 `BotNavigator.PickAvoidAngle`；② 保持期内"这个方向不可走"必须**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才允许换锚点，**单帧不可打破**）。参数取值出处 = 离线复算 `tools/probes/bu-r3-avoid-replay.py`（口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。闸门 `tools/probes/bot-goal-gate.py`（同一条命令、同一批文件口径）：FAIL 3/7 → **FAIL 3/7**；**A6/A7/A8 未回退**（A6 PASS Spliff 连续 5 采样 ≤7m、A7 PASS 23 次、A8 PASS 三档参数）。A1/A2 达标 2/8 → **3/8**（新增 Gooseman T 15.5m/0.999；Cliffe 66.1→60.5m/0.685、Darrell 17.3m→**20.1m/0.286**、Minh 8.0→14.9m/0.590 差 0.1m 未过线；⚠️ **Spliff 24.5→8.4m/0.035 回退**、Scuzzy 22.1→15.2m/0.065）。方向翻转（`tools/probes/bu-r2-flip-attrib.py`）：296 → **167** 行（Darrell 104 → **9**、Scuzzy 117 → **53**）；总路径（`tools/probes/bu-r2-motion-diag.py`，B 行）：Darrell 384.6 → **70.3m**。**本片判"未达标"的三条照旧留红**：A1/A2 5/8 未达标、A4 求路径失败 18 → **19**（⛔ 与 Avoid 无关 —— 是高度一致性层拒绝 / 位图孤立分量，见差异 #77）、**A5 T 侧下包仍 0**。**A5 与 A1/A2 的残余根因本片已改判到另一层（⛔ 不是避障）**：逐帧状态分布显示 4 个 bot 在 93.8s 窗口里**静止 80~90s**（`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节：Cliffe stall 82.0s、Gooseman **90.5s**、Minh 83.4s、Darrell 80.4s；其中 Gooseman 状态分布 `Plant:704/798` = 91% 采样停在 `Plant` 态而窗口内位移恒为 **0.00m**）⇒ ① A1/A2 的"净位移"口径落在**守点/静止**上（守得对就该净位移小），与方向抖动无关；② A5 的直接病灶 = **T 侧持包 bot 卡在 `Plant` 态约 90s 不动**（`CsBotBrain` / `CsBotFsm` 那一层，⛔ 本片任务书禁改），不是 `Avoid`。⛔ 阈值未下调、`RoundTime` / 时间缩放 / `EnsurePath`/`AdvancePath`/`RefreshPathOnly` 三处上一棒修复均未动。**【片BU-R5 2026-09-23 00:2x 实测（驱动 `.ai-tmp/drivers/bu-r5-play.ps1`，采集窗口第一次覆盖 round1 完整 + round2 完整；产物 `.ai-tmp/test/bu-r5-*`；逐回合切片用 `tools/probes/slice-round.py`）】**\n本片只改一处（`Module/Bot/CsBotBrain.cs`）：`CommitTacticalDecision` 里新增一条**高于 `Engage`** 的「掉落 C4 拾取」分支（`IsElectedBombHunter` = 场上无任何 T 持包 + 包已掉在地上 + 自己是**离 C4 最近的 T bot**，并列取 Id 小者），并把 `TryPlantOrPickup` 的捡包准入由 `self.Id % CsBotConst.BombHunterModulo == 0` 换成同一选举（`BombHunterModulo` 标记为已废弃、不再被引用）；⛔ 掉落/拾取规则本身（`CsBomb.OnCarrierLost` / `TryPickupDropped`）、`SiteRadius`、倒计时、经济数值一字未动。生效证据（L3 原文）：`[C4] Minh 去捡掉落的 C4：到落点 57.29m（本人是场上离 C4 最近的 T，其余 T 继续交战）`（t=92.095）→ 选举链 ZBot → Rikk → Minh 依次接力（随前人阵亡 / 距离变化重选），Minh 最终走到落点 **0.44m 并停留 30.25s**（A 行 t=123.01..152.52）—— 修前同回合**没有任何 bot 走近掉落点**。闸门 `tools/probes/bot-goal-gate.py`（逐回合口径）：**round1 修前 FAIL 2/8 → round1 修后 FAIL 2/8**（A1/A2 7/8→7/8、A4 1→2、A5 FAIL→FAIL）；**round2 修后 FAIL 2/8**（A1/A2 **8/8 PASS**、A4 3、A5 FAIL、**A9 FAIL**）。整份产物（两回合聚合）FAIL 3/8：A1/A2 3/8 —— ⛔ 这不是回退，是**跨回合传送让 net 位移坍缩**（闸门按整份产物聚合），逐回合口径才是同一窗口。**残余根因（仍红，A5 仍 0 条 `TPLANTED`）**：① **模拟侧 1.2m 自动拾取只对本地玩家调用** —— `CsBomb.TryPickupDropped` 全仓唯一调用点是 `CsMatch.cs:1758`（在 `UpdateLocalPlayer` 内），bot 侧每帧的 `UpdateBots`（`CsMatch.cs:2247`）**从不调用它** ⇒ bot 站在掉落点 0.44m 也捡不起来（`拾起了掉落的 C4` 0 条；差异 #80 ②）；② round2 的 T 持包者在 `Engage` 里**站定不开火**：Normal 档 `Engage` 的走位只在"开火间隙"给 `Strafe`，而 `PreferredRange × AdvanceRangeFactor` 把 39.7m 当成"够近"⇒ `intent.Move` 长时间为 0（同段日志 `换弹失败：MP5 Navy 备弹为 0`、`交战中开火被抑制第 124/143/154/155 次`）⇒ 105s 只从 87.1m 走到 39.8m，A9 因此由 PASS 变 FAIL（本片窗口**第一次**覆盖 round2，⛔ 不是新增行为、是首次被测量）。⛔ 阈值一个都没改：`MIN_NET_METERS=15.0` / `MIN_NET_OVER_TOTAL=0.15` / `MAX_PATH_FAILS=10` / A9 的 10s；`RoundTime`、`SiteRadius`、倒计时、经济数值均未动。【已完成，与 A5 无关】B7 重采按闸门第 6 条在本片**最后一次 `.cs` 落盘之后**执行（图 40_bomb_planted.png 换成本片新渲的帧，⛔ 不是改 mtime）；该帧是**本地玩家**按真实链路下包，⛔ 不是 A5 的证据。 **【片BU-R6 2026-09-23 · A5 转 PASS】** 承接上一段的「A5 恒 0」。本片在 `Module/Bot/**` 与 `Module/Match/CsMatch.cs`（**经主 agent 书面授权，仅一行**）落地三件事：① `CsMatch.UpdateBots` 里补 `Bomb.TryPickupDropped(a);`（与玩家侧 `CsMatch.cs:1758` 同一 API、同一 1.2m 判定）⇒ 差异 #80 核销；② `CsBotBrain.Strafe` 去掉 `PredictSeconds() <= 0` 这道门（`PredictSkillSpeedLo` = Normal 的 `AimSpeedDegrees`=300 ⇒ Normal/Easy 的 Strafe **恒为零向量**，`intent.Move` 长时间为 0）；③ `CsBotBrain.Engage` 里持包 T 的"压上"方向改为**本轮包点**（`TryGetPlantAim`，与 `TryPlantOrPickup` 同一算式），并新增 `MustPlantFirst`（持包 T 进了 7m 包点判定区就转下包，⛔ 不新增第二个半径）—— 出处 = 规格 §2.4 行为树`策划/策划案/CS1.6单机参考规格.md:123`（3 档共用、只换参数）/`:127`（交战含走位）/`:130`（T 持包到 B 点 → 下包）。**实测（一次 Play 覆盖两回合，`.ai-tmp/drivers/bu-r6-play.ps1`）**：round1 拾取 1 次（`Gooseman 拾起了掉落的 C4` 00:38:25.787）且**真的下包**（`★ Gooseman 安放 C4 于 (-23.75, 0.00, 26.84)` 00:38:31.587；rows `E TPLANTED round=1 t=98.640`）；round2 拾取 2 次（`Gooseman` 00:39:35.872 / `Minh` 00:39:56.868）且持包者走到包点（`E TARRIVE round=2 site=B distB=6.986`、`TPLANTSTART t=180.959`）。**逐回合闸门（`tools/probes/slice-round.py` + `tools/probes/bot-goal-gate.py`，⛔ 不用整份聚合数）**：round1 `RESULT: PASS (0 FAIL / 8 checks)` / round2 `RESULT: PASS (0 FAIL / 8 checks)`；A1~A8 无回退（round2 净位移/驻留：8/8 合格；A4 求路径失败 2 ≤ 10；A7 换位 7 / 20 ≥ 1；A8 三档参数未动）。**A9 由 FAIL 转 PASS**（round1 `已下包 3 次`、round2 `已下包 1 次`；片BU-R5 那条 `Rikk t=193.7..215.0（21.3s）`的静止段不再出现）。⚠️ 闸门 A5 的**口径**本片补全了第三条形态（产品自己的 `安放 C4`）—— 旧口径只扫 log 流的 `TPLANTED`（那是 **rows 流** token ⇒ 真下包也判红），并在改判据后做了**两次自检**：已知正确夹具 PASS / 已知错误样本（`br` 7 FAIL、`bu-r4-prefix` 4 FAIL）**仍 FAIL**，阈值一个字未动。 '
+_TAC_TAIL = '。**【片BU～片BU-R 更正 + 重采（2026-09-22，数值类，本条判据仍为「允许的差异」）】** 上面 ①②③ 三条**机制描述已过时**，按当前代码更正：① **有寻路层** —— 业务已调引擎 `AStar.FindSmoothed`（`BotNavigator.EnsurePath`），⛔ "零调用"不成立；② **有战术层** —— 引擎无行为树模块（在 `client/Packages/com.clover.unity-engine/**` 内 `BehaviorTree|行为树|btree` = 0 命中；引擎包是 junction 挂载 ⇒ rg 对它枚举 0、必须 os.walk）' + _SCOPE_BT_ENGINE + '，等价设施 = 引擎公开接口 `IFsm`（引擎自带 `Fsm` 是应用级单例、且实现类 `internal` ⇒ 业务无法多实例；引擎侧出处见差异 #67 的「出处」列），本工程按 `IFsm` 每 bot 自实现两层（`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`，顶层 Idle/Patrol/Engage/Objective + 目标层 Approach/Plant/Hold/Defuse），"守点 = 到达单个包点标记后原地警戒"也已改为 `CsBotHoldSpots` 多点守位表 + 定时换位；③ 片BU-R 又给**选目标**加了可达门禁（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`，近的优先）并把 CT 包点守卫的"到达判定"与"换位评估"解耦（`CsBotBrain.InsideHoldSite`）。**修前 vs 修后（同一批判据 `tools/probes/bot-goal-gate.py`，产物 `.ai-tmp/test/bu-r-gate-after.txt` 与修前 `br` 产物）**：闸门 FAIL 6/7 → **5/7**；每次换目标风暴 73 → **7**（Minh 70 → 0）；求路径失败 67 → **15**；净位移 net/total 0.001~0.007 → **0.008~0.044**（Minh 0.00m → 6.0m）；`守点换位` L3 = **0 → 0**、`在包点` L3 = **0 → 0**、`TPLANTED` = **0 → 0** ⇒ **本行判据仍未达成**（T 未下包 / CT 未进点驻留 / 未换位），残余根因已定位：bots 每回合净位移仅 3~8 m 而路径长度 176 m（总走 176 m、净 6 m）⇒ 推进被**逐帧方向抖动**吃掉（口径 = `analyze-bot-goal.py` 第 4 节 + `.ai-tmp/test/bu-r-goal-after.txt`）。证据文件：`tools/probes/bot-goal-gate.py`、`tools/probes/bu-goal-reachability.py`、`.ai-tmp/test/bu-r-goal-after.txt`、`.ai-tmp/test/bu-r-gate-after.txt`**【片BU-R2 2026-09-22 23:19 实测（完整回合，105s 规则 + 采集窗口 ≥114s；驱动 `.ai-tmp/drivers/bu-r2-play.ps1`，Play 产物 `.ai-tmp/test/bu-r2-*`）】** 闸门 `tools/probes/bot-goal-gate.py`：FAIL 5/7 → **FAIL 3/7**；新增转绿：**A6 CT 包点驻留 PASS**（Spliff 连续 5 采样 ≤7m，修前 0）、**A7 守点换位 26 次 PASS**（修前 0）；A1/A2 净位移：Cliffe CT 5.7m/0.032 → **66.1m/0.802**、Spliff CT 7.8m/0.085 → 24.5m/0.401（8 bot 里 2 个达标）；逐帧抖动（`tools/probes/bu-r2-motion-diag.py`）：Move 方向翻转 317 → 2（Cliffe），rev% 78.7% → 0.0%。**残余（仍红）**：A4 求路径失败 18 > 10、**A5 T 侧自主下包 0 条**、A1/A2 6/8 未达标；残余根因已定位到**局部避障层**（`BotNavigator.Avoid` 每帧重扫 `AvoidAngles`、`probeLeft=0.50` 说明 0.5s 保持每帧被打破 ⇒ Darrell/Scuzzy 在 B 点附近绕圈 350m/净 17~22m），原始归因行 `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。⛔ 阈值未下调。**【片BU-R3 2026-09-22 23:35 实测（完整回合：驱动 `.ai-tmp/drivers/bu-r3-play.ps1` 采到 `phase=RoundEnd`；产物 `.ai-tmp/test/bu-r3-*`）】** 本片只做一处 = `BotNavigator.Avoid` 的**换向迟滞**（① 候选偏角改按"与**当前偏角**的偏差升序"试，新增 `BotNavigator.PickAvoidAngle`；② 保持期内"这个方向不可走"必须**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才允许换锚点，**单帧不可打破**）。参数取值出处 = 离线复算 `tools/probes/bu-r3-avoid-replay.py`（口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。闸门 `tools/probes/bot-goal-gate.py`（同一条命令、同一批文件口径）：FAIL 3/7 → **FAIL 3/7**；**A6/A7/A8 未回退**（A6 PASS Spliff 连续 5 采样 ≤7m、A7 PASS 23 次、A8 PASS 三档参数）。A1/A2 达标 2/8 → **3/8**（新增 Gooseman T 15.5m/0.999；Cliffe 66.1→60.5m/0.685、Darrell 17.3m→**20.1m/0.286**、Minh 8.0→14.9m/0.590 差 0.1m 未过线；⚠️ **Spliff 24.5→8.4m/0.035 回退**、Scuzzy 22.1→15.2m/0.065）。方向翻转（`tools/probes/bu-r2-flip-attrib.py`）：296 → **167** 行（Darrell 104 → **9**、Scuzzy 117 → **53**）；总路径（`tools/probes/bu-r2-motion-diag.py`，B 行）：Darrell 384.6 → **70.3m**。**本片判"未达标"的三条照旧留红**：A1/A2 5/8 未达标、A4 求路径失败 18 → **19**（⛔ 与 Avoid 无关 —— 是高度一致性层拒绝 / 位图孤立分量，见差异 #77）、**A5 T 侧下包仍 0**。**A5 与 A1/A2 的残余根因本片已改判到另一层（⛔ 不是避障）**：逐帧状态分布显示 4 个 bot 在 93.8s 窗口里**静止 80~90s**（`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节：Cliffe stall 82.0s、Gooseman **90.5s**、Minh 83.4s、Darrell 80.4s；其中 Gooseman 状态分布 `Plant:704/798` = 91% 采样停在 `Plant` 态而窗口内位移恒为 **0.00m**）⇒ ① A1/A2 的"净位移"口径落在**守点/静止**上（守得对就该净位移小），与方向抖动无关；② A5 的直接病灶 = **T 侧持包 bot 卡在 `Plant` 态约 90s 不动**（`CsBotBrain` / `CsBotFsm` 那一层，⛔ 本片任务书禁改），不是 `Avoid`。⛔ 阈值未下调、`RoundTime` / 时间缩放 / `EnsurePath`/`AdvancePath`/`RefreshPathOnly` 三处上一棒修复均未动。**【片BU-R5 2026-09-23 00:2x 实测（驱动 `.ai-tmp/drivers/bu-r5-play.ps1`，采集窗口第一次覆盖 round1 完整 + round2 完整；产物 `.ai-tmp/test/bu-r5-*`；逐回合切片用 `tools/probes/slice-round.py`）】**\n本片只改一处（`Module/Bot/CsBotBrain.cs`）：`CommitTacticalDecision` 里新增一条**高于 `Engage`** 的「掉落 C4 拾取」分支（`IsElectedBombHunter` = 场上无任何 T 持包 + 包已掉在地上 + 自己是**离 C4 最近的 T bot**，并列取 Id 小者），并把 `TryPlantOrPickup` 的捡包准入由 `self.Id % CsBotConst.BombHunterModulo == 0` 换成同一选举（`BombHunterModulo` 标记为已废弃、不再被引用）；⛔ 掉落/拾取规则本身（`CsBomb.OnCarrierLost` / `TryPickupDropped`）、`SiteRadius`、倒计时、经济数值一字未动。生效证据（L3 原文）：`[C4] Minh 去捡掉落的 C4：到落点 57.29m（本人是场上离 C4 最近的 T，其余 T 继续交战）`（t=92.095）→ 选举链 ZBot → Rikk → Minh 依次接力（随前人阵亡 / 距离变化重选），Minh 最终走到落点 **0.44m 并停留 30.25s**（A 行 t=123.01..152.52）—— 修前同回合**没有任何 bot 走近掉落点**。闸门 `tools/probes/bot-goal-gate.py`（逐回合口径）：**round1 修前 FAIL 2/8 → round1 修后 FAIL 2/8**（A1/A2 7/8→7/8、A4 1→2、A5 FAIL→FAIL）；**round2 修后 FAIL 2/8**（A1/A2 **8/8 PASS**、A4 3、A5 FAIL、**A9 FAIL**）。整份产物（两回合聚合）FAIL 3/8：A1/A2 3/8 —— ⛔ 这不是回退，是**跨回合传送让 net 位移坍缩**（闸门按整份产物聚合），逐回合口径才是同一窗口。**残余根因（仍红，A5 仍 0 条 `TPLANTED`）**：① **模拟侧 1.2m 自动拾取只对本地玩家调用** —— `CsBomb.TryPickupDropped` 全仓唯一调用点是 `CsMatch.cs:1758`（在 `UpdateLocalPlayer` 内），bot 侧每帧的 `UpdateBots`（`CsMatch.cs:2247`）**从不调用它** ⇒ bot 站在掉落点 0.44m 也捡不起来（`拾起了掉落的 C4` 0 条；差异 #80 ②）；② round2 的 T 持包者在 `Engage` 里**站定不开火**：Normal 档 `Engage` 的走位只在"开火间隙"给 `Strafe`，而 `PreferredRange × AdvanceRangeFactor` 把 39.7m 当成"够近"⇒ `intent.Move` 长时间为 0（同段日志 `换弹失败：MP5 Navy 备弹为 0`、`交战中开火被抑制第 124/143/154/155 次`）⇒ 105s 只从 87.1m 走到 39.8m，A9 因此由 PASS 变 FAIL（本片窗口**第一次**覆盖 round2，⛔ 不是新增行为、是首次被测量）。⛔ 阈值一个都没改：`MIN_NET_METERS=15.0` / `MIN_NET_OVER_TOTAL=0.15` / `MAX_PATH_FAILS=10` / A9 的 10s；`RoundTime`、`SiteRadius`、倒计时、经济数值均未动。【已完成，与 A5 无关】B7 重采按闸门第 6 条在本片**最后一次 `.cs` 落盘之后**执行（图 40_bomb_planted.png 换成本片新渲的帧，⛔ 不是改 mtime）；该帧是**本地玩家**按真实链路下包，⛔ 不是 A5 的证据。 **【片BU-R6 2026-09-23 · A5 转 PASS】** 承接上一段的「A5 恒 0」。本片在 `Module/Bot/**` 与 `Module/Match/CsMatch.cs`（**经主 agent 书面授权，仅一行**）落地三件事：① `CsMatch.UpdateBots` 里补 `Bomb.TryPickupDropped(a);`（与玩家侧 `CsMatch.cs:1758` 同一 API、同一 1.2m 判定）⇒ 差异 #80 核销；② `CsBotBrain.Strafe` 去掉 `PredictSeconds() <= 0` 这道门（`PredictSkillSpeedLo` = Normal 的 `AimSpeedDegrees`=300 ⇒ Normal/Easy 的 Strafe **恒为零向量**，`intent.Move` 长时间为 0）；③ `CsBotBrain.Engage` 里持包 T 的"压上"方向改为**本轮包点**（`TryGetPlantAim`，与 `TryPlantOrPickup` 同一算式），并新增 `MustPlantFirst`（持包 T 进了 7m 包点判定区就转下包，⛔ 不新增第二个半径）—— 出处 = 规格 §2.4 行为树`策划/策划案/CS1.6单机参考规格.md:123`（3 档共用、只换参数）/`:127`（交战含走位）/`:130`（T 持包到 B 点 → 下包）。**实测（一次 Play 覆盖两回合，`.ai-tmp/drivers/bu-r6-play.ps1`）**：round1 拾取 1 次（`Gooseman 拾起了掉落的 C4` 00:38:25.787）且**真的下包**（`★ Gooseman 安放 C4 于 (-23.75, 0.00, 26.84)` 00:38:31.587；rows `E TPLANTED round=1 t=98.640`）；round2 拾取 2 次（`Gooseman` 00:39:35.872 / `Minh` 00:39:56.868）且持包者走到包点（`E TARRIVE round=2 site=B distB=6.986`、`TPLANTSTART t=180.959`）。**逐回合闸门（`tools/probes/slice-round.py` + `tools/probes/bot-goal-gate.py`，⛔ 不用整份聚合数）**：round1 `RESULT: PASS (0 FAIL / 8 checks)` / round2 `RESULT: PASS (0 FAIL / 8 checks)`；A1~A8 无回退（round2 净位移/驻留：8/8 合格；A4 求路径失败 2 ≤ 10；A7 换位 7 / 20 ≥ 1；A8 三档参数未动）。**A9 由 FAIL 转 PASS**（round1 `已下包 3 次`、round2 `已下包 1 次`；片BU-R5 那条 `Rikk t=193.7..215.0（21.3s）`的静止段不再出现）。⚠️ 闸门 A5 的**口径**本片补全了第三条形态（产品自己的 `安放 C4`）—— 旧口径只扫 log 流的 `TPLANTED`（那是 **rows 流** token ⇒ 真下包也判红），并在改判据后做了**两次自检**：已知正确夹具 PASS / 已知错误样本（`br` 7 FAIL、`bu-r4-prefix` 4 FAIL）**仍 FAIL**，阈值一个字未动。 '
 
 AZ_ENT = [
     # ---- #1 B 旋转楼梯上不去 ----
@@ -1818,7 +2007,7 @@ AZ_ENT = [
      '用户本轮报#2；机制出处 `CsBotBrain.cs:11`（Idle→Patrol→Engage→(Plant|Defuse|Camp)）、`BotNavigator.cs:9-29`（路点推进+局部避障+卡住自恢复）、`:115-161`（路线=最近邻排序路点）、`:269-277`（连续卡住→上层换目标）',
      5, T_SCRIPT, K_ALLOWED,
      '离线可判的现状（机制层，不是"没写"）：① **无寻路层** —— 引擎 `AStar`（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）'
-     '在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0），机器人只能"沿标记点最近邻序列走直线 + 局部避障"（`BotNavigator.cs:226` `Avoid`）；'
+     '在 `client/Assets/**` **零调用**（在 `client/Assets/**` 内 grep `AStar` 命中 0）' + _SCOPE_ASTAR + '，机器人只能"沿标记点最近邻序列走直线 + 局部避障"（`BotNavigator.cs:226` `Avoid`）；'
      '② 目标粒度极粗 —— 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299,574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），'
      '**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds / `:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）'
      '⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但是**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），'
@@ -1837,35 +2026,24 @@ AZ_ENT = [
      'client/Assets/Scripts/Module/Match/ICsMatch.cs（CsInputState）+ Module/Combat/CombatModule.cs',
      '用户本轮报#3；实现出处 `Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）、`Module/Match/ICsMatch.cs`（CsInputState 只有 Zoom）',
      3, T_SCRIPT, K_ALLOWED,
-     '离线已判（不需要实机）：输入结构 `CsInputState`（`client/Assets/Scripts/Module/Match/ICsMatch.cs`）里**只有 `Zoom`**'
-     '（注释逐字："右键（AWP/Scout 开镜）"），**没有 attack2 / 次级开火**字段；唯一消费点 = `CombatModule.cs:174`。'
-     '⇒ 除狙击开镜外，任何"右键要有别的效果"的武器在本工程**结构性无效果**（不是某把枪漏了）。⇒ 差异 #68'),
+     '''离线已判（原结论）：输入结构 `CsInputState` 里**只有 `Zoom`**，没有 attack2 / 次级开火字段 ⇒ 除狙击开镜外任何"右键要有别的效果"的武器在本工程**结构性无效果**。 **【片FX-ALL 2026-09-23 落地 · 消除】** 契约已扩：`CsInputState` 新增 **`Attack2`**；真实输入通道 `CombatModule` 用 `GetKeyDown(GameKey.MouseRight)` 填它（**按下沿**，不是 `GetKey` 电平）；离线驱动按住型输入会每帧翻转一次，所以"切换型"语义钉在模拟边界上 —— `CsMatch` 判 `inp.Attack2 && !_preAttack2` 并紧跟基线更新（`tools/probes/attack2-probe.py` A5/A6）。反例复现（同判据 C 段）：按住 8 帧时**电平型切 8 次、判沿型切 1 次**；点按 3 次两者都 3 次；长按+再点 1 次电平型 4 次、判沿型 2 次 ⇒ 判沿型正是"按一下切一次"（**RESULT: PASS**；并复算 `client.dll` 的 `+attack2`@`0x0e9f98` / `-attack2`@`0x0e4ac5`）。⚠️ 本行**不需要并排图**（判定手段 = 脚本断言）：消音器 / 连发是**状态与音效**语义，不是画面语义 —— `Silenced` / `BurstMode` 目前除库存与 HUD 短名外没有独立可见载体（`Resources/Art/Tex/vm_usp_silencer.png` 等贴图在盘但无人读）。⇒ 差异 #68'''),
     ('D10', '原版 attack2 的逐武器语义（USP/M4A1 消音器 · Glock 连发切换）',
      'client/Assets/Scripts/Core/CsWeapons.cs + Module/Combat/CsCombatTuning.cs',
      '用户本轮报#3；原版语义载体**在盘**（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，片AW 取回）但未反汇编 ⇒ 待补（第 2 级：可执行里的常量/分支，载体已具备）；`原版资源/hlsdk/dlls/weapons.cpp` 是 HL1 武器实现，'
      '只能证明"开火/切换是写死在类里"这一机制，⛔ 不是 CS 的语义出处）',
      3, T_SCRIPT, K_ALLOWED,
-     '同类漏检（登记 #3 时顺手查）：原版 CS 1.6 的右键语义**至少**有 USP 拆装消音器、M4A1 拆装消音器、Glock18 连发切换三条，'
-     '本工程一条都没有；`CsWeapons.cs` 的 `CsWeaponDef`（`:34-46`）里也没有"是否支持消音器/连发"的字段 ⇒ 契约层缺口。'
-     '⇒ 与 #68 同一差异行登记；实现前必须先取回 `client.dll` 的 attack2 分支或一份原版行为证据'),
+     '''同类漏检（原结论）：原版 CS 1.6 的右键语义**至少**有 USP 拆装消音器、M4A1 拆装消音器、Glock18 连发切换三条，本工程一条都没有；`Core/CsWeapons.cs` 的 `CsWeaponDef` 里也没有"是否支持消音器/连发"的字段 ⇒ 契约层缺口。 **【片FX-ALL 2026-09-23 落地 · 部分消除】** ① 能力表已补：`CsWeaponDef` 新增 **`CanSilence` / `CanBurst`**，`MarkAttack2Capabilities()` 打点 —— `Usp`/`M4A1` = CanSilence、`Glock18`/`Famas` = CanBurst、其余（含 AK47）两个都为 false；② 逐武器语义取自**已在盘**的 `原版资源/cs16src/cstrike/cl_dlls/client.dll`（1,093,128 B）的 7 条串，逐字节卡在固定文件偏移上且都是首次出现：`weapons/usp_silencer_off.wav`@`0x0e3804`、`usp_silencer_on.wav`@`0x0e3824`、`m4a1_silencer_off.wav`@`0x0e308c`、`m4a1_silencer_on.wav`@`0x0e30ac`、`famas-burst.wav`@`0x0e26f4`、`#Switch_To_BurstFire`@`0x0e27d4`、`#Cstrike_TitlesTXT_M4A1_Short`@`0x0e6af4`（`tools/probes/attack2-probe.py` B 段复算）；③ 状态机落地：`CsInventory.ToggleWeaponMode` 按能力表翻转 `Silenced` / `BurstMode`，**不拦切枪期**；④ 离线自检 `Module/Combat/CombatSelfTest.cs` 五段（按一次装上 / **按住 5 帧不重复翻转** / 松手再按拆下 / Glock18 切连发且不动 `Silenced` / 切枪期照样能切 / AK47 状态一位都不动）。⚠️ 仍未消除：消音后**伤害 / 散布**与**连发发数与节奏**的数值（要反汇编），以及 `fvol` 音量档。⇒ 与 #68 同一差异行登记'''),
     # ---- #4 弹痕 ----
     ('D6', '命中墙弹痕贴片（fx_bullethole 单变体）',
      'client/Assets/Resources/UI/Art/fx_bullethole（16×16，234 B）+ Module/Combat/CombatEffects.cs',
-     '用户本轮报#4；实现出处 `Module/Combat/CombatEffects.cs:180-190`（贴面 + 沿法线抬 1cm + `DecalSize`）、`Module/Combat/CsCombatTuning.cs:178`（DecalSize=0.075）/`:181`（DecalDuration=25）/`:184`（MaxDecals=64）',
+     '用户本轮报#4；实现出处 `Module/Combat/CombatEffects.cs:293-303`（贴面 + 沿法线抬 1cm + `DecalSize`）、`Module/Combat/CsCombatTuning.cs:178`（DecalSize=0.075）/`:181`（DecalDuration=25）/`:184`（MaxDecals=64）',
      3, T_SIDE, K_ALLOWED,
-     '离线可判的两条：① **尺寸无出处** —— `CsCombatTuning.cs:178` 的 `DecalSize = 0.075f`（7.5cm）在源码注释里自认是'
-     '"按原版 decal 的观感（~7cm）"；原版弹痕尺寸由 `decals.wad` 贴图原生尺寸 + 世界单位映射决定，本机拿不到该映射 ⇒ 待补。'
-     '② **注记过期**：`Core/ResPaths.cs:177` 仍写"弹痕精灵（真实文件 …，32×32）"，而盘上 `fx_bullethole` 实测 **16×16**'
-     '（`struct.unpack` 读 IHDR = (16,16)）—— 片AW 用 WAD3 解出的 `{shot1` 覆盖后注释没同步。'
-     '③ 变体只有 1 张（原版 `{shot1..5` 随机 + `{bigshot*` 大口径），见差异 #52 未消除部分 ⇒ 差异 #69'),
+     '''离线可判（原结论两条）：① **尺寸无出处** —— `Module/Combat/CsCombatTuning.cs:178` 的 `DecalSize = 0.075f`（7.5 cm）源码注释里自认是"按原版 decal 的观感（~7 cm）"；原版弹痕尺寸由 `decals.wad` 贴图原生尺寸 + 世界单位映射决定，本机拿不到该映射 ⇒ 待补。② **注记过期**：`Core/ResPaths.cs:177` 仍写"32×32"，而盘上 `fx_bullethole` 实测 **16×16**。③ 变体只有 1 张。 **【片FX-ALL 2026-09-23 落地 · 消除】** ② 注记**已修**：`Core/ResPaths.cs` 的 `fx_bullethole` 注记改为 16×16，并新增 `FxBulletHoleKeys` / `FxBloodKeys` 两张字面量 key 表；③ 变体**已补到 5 张**（`{shot1`…`{shot5`，见本表 D3 的弹痕多变体行）；**尺寸口径已修**：旧 `Vector3.one * DecalSize` 把 16px 贴图当 1 世界单位宽 ⇒ 只有 `0.075 / 16 ≈ 0.0120 m`（比 7.5 cm **小 6.25 倍**）；新 `SpriteScaleForMeters(s, meters)` 按 `s.bounds.size.x` 反推 ⇒ 实机 `世界宽=0.075m 缩放=0.469`。**遮罩透明已修**：`decals.wad` 的遮罩色是调色板**索引 0**（不是 255）⇒ 旧口径解出来是**不透明白方块**，`tools/probes/wad3-extract.py` 已按 `masked_bg_index` 修正（判据 E 段自带最小 PNG 解码器，逐张断言"既有不透明像素也有透明像素"）。**朝向退化已修**：地面命中时 `LookRotation(·, Vector3.up)` 退化会让贴片**立起来**（正对相机是一条线 = 看不见），已抽 `SurfaceUp()` helper 让弹痕 / 火星 / 血迹三处全走它（判据 D 段断言"调用点恰好 3 处、全文无裸写法"）。判据 = `tools/probes/decal-size-probe.py`（A~F 六段，**RESULT: PASS**；D / E 两段是先红后修）。并排图已采：联络图 `fx-表现联络图.png` 格 **02 / 05 / 09**（朝地 / 朝墙 / 多变体），肉眼终判：地面 7 个 / 墙面 6 个弹痕、形态**同构**。**贴图本身是灰阶**（实测 `decals.wad` 调色板逐 lump 彩色条目 0~1/256 ⇒ 弹痕画出来是灰阶，原版是否由引擎染色未取证）。① **尺寸映射的出处仍未消除**（`DecalSize = 0.075f` 保持，`DecalMetersPerPixel` 只是同族比例推演，⛔ 不是出处）。⇒ 差异 #69'''),
     ('D3', '弹痕的按材质 / 多变体表现（同类漏检：#4 只报了"痕迹不对"）',
      'client/Assets/Resources/UI/Art/fx_bullethole + 原版 decals.wad',
      '用户本轮报#4；原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，片AW 已取回，SHA256 记在 `原版资源/清单.md`）',
      3, T_SIDE, K_ALLOWED,
-     '同类漏检：弹痕的**表现类**判据（贴面朝向 / 尺寸 / 变体 / 按命中材质的观感）在本工程**没有任何并排图或格号**证据 '
-     '（`策划/验收表.md` 的联络图索引里只有弹着**音**的交叉行，弹痕贴片本身在 §G 里是"一致"，'
-     '而片AW 才刚换图 ⇒ 那张图的表现从未被并排图判过）。⇒ 与 #69 同一差异行；'
-     '修法：`wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来，工程侧支持多变体后按"同机位并排图"采一次'),
+     '''同类漏检：弹痕的**表现类**判据（贴面朝向 / 尺寸 / 变体 / 按命中材质的观感）在本工程**没有任何并排图或格号**证据。 **【片FX-ALL 2026-09-23 落地 · 消除】** ① **变体 1 张 → 5 张**：`decals.wad` 的 `{shot1`…`{shot5` 全解出（各 16×16，台账 `.ai-tmp/test/fx-decal-variants.tsv`），`Core/ResPaths.cs` 新增 `FxBulletHoleKeys` **字面量 key 表**（⛔ 不是拼串：拼出来的 key 在静态扫描里看不见，`coverage-diff` 的 D1 维度会把贴图判成"文件在盘上但无人读"），`CombatEffects` 按表逐个加载、命中时均匀随机取一；② 并排图已采：联络图 `fx-表现联络图.png` 格 **02**（朝地：贴面法线朝上）/ 格 **05**（朝墙：贴面法线水平）/ 格 **09**（连打多发的多变体同框），三格同机位同冻结帧；清单 `.ai-tmp/screenshots/fx-contact-sheet.index.tsv`；③ **尺寸口径已修**（原缺陷，本片判据 B 段锚定的就是它）：旧实现 `decal.Tr.localScale = Vector3.one * CsCombatTuning.DecalSize` 把 **16px 的贴图当成 1 个世界单位宽** ⇒ 画出来只有 `0.075 / 16 ≈ 0.0120 m`，比要求的 7.5 cm **小 6.25 倍**（这是"弹痕小到看不见"的第一因）。新实现 `SpriteScaleForMeters(Sprite s, float meters)` 用 `s.bounds.size.x` 反推缩放（`CombatEffects.cs`），弹痕 / 火星 / 血迹三处共用；实机原文 `弹痕落在 (-11.52,3.25,-45.70)（法线 (0,1,0)）→ 贴图 fx_shot3 启用=True 世界宽=0.075m 缩放=0.469 变体数=5`。④ **贴面朝向的退化四元数已修**（原缺陷）：`Quaternion.LookRotation(forward, up)` 要求 `up` 与 `forward` 不平行；命中**地面**时法线就是 `(0,1,0)`、`-normal` 与 `Vector3.up` 正好反向 ⇒ 四元数**退化**、贴片**立起来**，正对相机看只有一条线（表现上又是"没有弹痕"）。已抽共享 helper `CombatEffects.SurfaceUp(normal)`（`abs(dot(normal, up)) > 0.9` 时改用 `Vector3.forward`），**弹痕 / 火星 / 血迹贴花三处全走它** —— 只修一处等于把同一个坑挪到另外两处等着复发（判据 D 段第二次跑时正是又捞出火星 + 血迹这两处）。⑤ **遮罩透明已修**（原缺陷）：本工程 decal 贴图从 `decals.wad` 解出时，遮罩透明色**不是 255 而是调色板索引 0**（`{shot1` / `{blood1` / `{bigshot1` 的最高频索引 = 0，索引 255 一个像素都没有）—— 旧口径照搬 `spr-extract.py` 的 255 ⇒ alpha 全 1、贴图**解出来是不透明的白方块**。`tools/probes/wad3-extract.py` 加 `masked_bg_index`（按四角众数判背景索引）+ 4 条**代码级**自检；判据 E 段自带最小 PNG 解码器逐张断言"11 张贴图既有不透明像素也有透明像素"（修复前 256/256 全不透明；实测 `fx_shot1` 45/256、`fx_blood1` 574/2304、`fx_blood5` 335/4096）。⑥ 判据 = `tools/probes/decal-size-probe.py` 六段（A 结构 / B 数值：逐张贴图用**真实 IHDR 像素宽 + 真实 `.meta` PPU** 复算 / C 反例取 `git show HEAD:` 取现 / D 朝向 / E 透明度 / F 埋点）**RESULT: PASS**；其中 D、E 两段是**先红后修**，红的时候正好各捞出上述一处真缺陷。⑦ **肉眼终判**（AI 读图，格 02 / 05 各放大 5 倍）：地面那张有 **7 个**白灰放射状弹痕、沿后坐力方向排成一条竖线；墙面那张有 **6 个**同类弹痕 —— 两者形态**同构**（白灰溅环 + 深色洞芯 + 圆形正对相机）；若 ④ 未修则朝地那批会立起来成一条线，所以这同时是 ④ 生效的直接证据。⑧ **贴图本身是灰阶**（实测）：`decals.wad` 的调色板**逐 lump 彩色条目 0~1/256** ⇒ 弹痕 / 血迹贴图本身**不带颜色**（画出来是灰阶），原版是否由引擎染色未取证。⚠️ 仍未消除：**原版 decal 尺寸的出处**未拿到 —— `CsCombatTuning.DecalSize = 0.075f` 的注释自认是"按原版观感（~7 cm）"，新增的 `DecalMetersPerPixel` 也只是同族比例推演（48px→0.225 m / 64px→0.30 m），⛔ 不是出处（`{bigshot1`…`{bigshot5` 已解出但刻意不落盘：大口径的选择在引擎 `hw.dll` 里，不在盘 ⇒ 落盘即构成 T0 违规）。⇒ 与 #69 同一差异行'''),
     # ---- #5 买枪 / 选人界面 ----
     ('D4', '买枪界面（BuyMenuPanel）',
      'client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs',
@@ -1909,23 +2087,13 @@ AZ_ENT = [
      'client/Assets/Scripts/Module/View/ActorView.cs + ViewModelRig.cs + Module/View/CsViewTuning.cs',
      '用户本轮报#7；实现出处 `ActorView.cs:249-274`（按 `ReloadEndTime` 前推触发）、`CsViewTuning.cs:318-327`（`PlayerReloadStates` 候选）、`:254`（`VmStateReload`）',
      4, T_SIDE, K_ALLOWED,
-     '离线可判：**触发方式是"边沿检测前置时间戳 `ReloadEndTime` 变大"**（`ActorView.cs:268` `actor.ReloadEndTime > _preReloadEndTime + 1e-4`），'
-     '而不是"模拟发出的换弹事件"；`CsInventory.Reload`（`Module/Match/CsInventory.cs:403-439`）会在 '
-     '**没有武器 / 弹匣已满 / 正在切枪**三条分支上直接 `return`（`:408/413/419/426`）⇒ 那些分支下换弹动画当然不播；'
-     '更要紧的是"丢"的形态：`ReloadEndTime` 若在同一帧被重设（连点 R / 换弹中途切枪再切回 / 上一发未结算），'
-     '边沿检测可能采不到 → 动画整段丢失。判据缺失：**没有"请求换弹 → 动画必须播一次"的运行时断言**。'
-     '`CsViewTuning.cs:318-327` 还写明"原版没有 ref_reload_grenade / ref_reload_knife"（group0 实测）⇒ 那两类**本来就没有**'
-     '（⛔ 不算缺陷）。⇒ 差异 #72'),
+     '''离线可判（原结论）：**触发方式是"边沿检测前置时间戳 `ReloadEndTime` 变大"**（`ActorView.cs:268`），不是"模拟发出的换弹事件"；`CsInventory.Reload`（`Module/Match/CsInventory.cs:403-439`）会在 **没有武器 / 弹匣已满 / 正在切枪** 三条分支上直接 `return`；更要紧的是"丢"的形态：`ReloadEndTime` 若在同一帧被重设（连点 R / 换弹中途切枪再切回 / 上一发未结算），边沿检测可能采不到 → 动画整段丢失。`CsViewTuning.cs:318-327` 还写明"原版没有 ref_reload_grenade / ref_reload_knife" ⇒ 那两类**本来就没有**（⛔ 不算缺陷）。 **【片FX-ALL 2026-09-23 落地 · 消除】** ① `CsActor.ReloadSeq`（单调序号）成为换弹的**事件计数**：`CsInventory.Reload` 只在**成功分支** `ReloadSeq++`（`tools/probes/reload-edge-probe.py` 的 A2/A3 断言"恰好 1 次、且位于全部 early-return 之后"）；② 两处表现层（`Module/View/ActorView.cs` / `Module/View/ViewModelRig.cs`）改判 `ReloadSeq != _preReloadSeq`，旧的 `ReloadEndTime > _preReloadEndTime` 口径**已下线**（A4）；③ 反例复现（真数）：主武器换弹 D1=3.00 s，切手枪(0.30 s)后再换弹 D2=2.51 s < D1 ⇒ 单靠 `>` 比较**确实不可靠**；整段漏窗采样（间隔 3.2 s ≥ 换弹时长）上旧口径命中 **0** 次、新口径 **1** 次，60 Hz 采样两者都 **1** 次（`tools/probes/reload-edge-probe.py`，**RESULT: PASS**）；④ 并排图已采：联络图 `fx-表现联络图.png` 格 **10**（第一人称换弹中，动画在播；清单 `.ai-tmp/screenshots/fx-contact-sheet.index.tsv`）。⚠️ 仍未消除：换弹动画的**时长/姿势**仍取自 `Module/View/CsViewTuning.cs`，未与原版 `ref_reload_*` 序列逐帧对账。⇒ 差异 #72'''),
     # ---- #8 死亡 / 尸体 / 掉落 / 受伤特效 ----
     ('D5', '死亡动画与尸体（倒地序列 + 尸体是否留在地上）',
      'client/Assets/Scripts/Module/View/ActorView.cs + Module/View/CsViewTuning.cs',
      '用户本轮报#8；实现出处 `ActorView.cs:451-464`（死亡先播序列，`OnComplete` 后 `SetShown(false)`）、`:293-312`（`PlayDeath`）、`CsViewTuning.cs:194`（`PStateDeath`）',
      3, T_SIDE, K_ALLOWED,
-     '离线可判：现在的死亡链是"播 `death1..3` 之一（按 `actorId%3` 取）→ 播完 `SetShown(false)` **整具身体隐藏**"'
-     '（`ActorView.cs:456-464` + 差异 #12 已登记的实测时间线）。**原版是留一具尸体（`gib`/corpse 实体）在地上的**，'
-     '本工程没有任何 corpse/尸体实体（全仓 grep `Corpse|尸体` 命中 0）⇒ 用户看到的"尸体不在地上"是**结构性未做**。'
-     '另：`death1..3` 是"倒地"序列，播完即隐藏 ⇒ 用户看到的"死亡动画没有"很可能是**播得极快 + 立刻消失**的合成观感。'
-     '⇒ 差异 #73'),
+     '''离线可判（原结论）：当时的死亡链是"播 `death1..3` 之一（按 `actorId%3` 取）→ 播完 `SetShown(false)` **整具身体隐藏**"，本工程没有任何 corpse/尸体实体 ⇒ 用户看到的"尸体不在地上"是**结构性未做**。 **【片FX-ALL 2026-09-23 落地 · 部分消除】** 死亡链已改为**尸体留场**：倒地序列播完**不再** `SetShown(false)`，而是把姿态钉在倒地序列的**最后一帧**（`_anim.Play(_deathState, 1f)` 后 `_animator.speed = CsViewTuning.CorpseAnimSpeed` = 0）+ 关掉该视图**全部 Collider**（尸体不被打中、也不挡活人走路）+ 关掉名牌；`IsAlive` 回到 true（复活 / 回合重开）时解冻并还原碰撞体。实现 = `Module/View/ActorView.cs` 的 `_corpseHeld` / `_corpseFrozen` / `_deathState` + `EnsureCorpseShown()` / `ReleaseCorpsePose()`，调参 = `CsViewTuning.cs` 的 `CorpseAnimSpeed`。并排图已采：联络图 `fx-表现联络图.png` 格 **15**（死亡后尸体留在地上，第一人称俯视 -22°）/ 格 **16**（回合重开后同一位置无尸体）。⚠️ 仍未消除：① 尸体仍是**同一具 ActorView**（没有独立尸体对象、没有骨骼快照 ⇒ "尸体数量上限 / 清场时机"未实现）；② 没有 Animator 的旧预制体仍走"立即隐藏"兜底。⇒ 差异 #73'''),
     ('D10', '死亡结算（尸体实体 / 掉落武器 / 掉落物进场景）',
      'client/Assets/Scripts/Module/Match/CsInventory.cs（DropWeapon）+ Module/Match/CsMatch.cs',
      '用户本轮报#8；实现出处 `CsInventory.cs:255-285`（`DropWeapon` 只改库存字段，不生成任何世界实体）、`CsMatch.cs:931`（调用点）',
@@ -1936,20 +2104,16 @@ AZ_ENT = [
      '⇒ 与 #75（无世界武器模型 w_*）同根：**工程里根本没有"世界中的武器"这个对象**。⇒ 差异 #75'),
     ('D6', '受伤特效（血雾 / 命中反馈）与"没血"',
      'client/Assets/Scripts/Module/Combat/CombatEffects.cs + UI/InGame/CsDamageIndicatorWidget.cs',
-     '用户本轮报#8；实现出处 `CombatEffects.cs:10-19`（只有枪口火焰/弹道/弹痕/爆炸四类）、`CsDamageIndicatorWidget.cs:46-104`（屏幕边缘方向红框）',
+     '用户本轮报#8；实现出处 `CombatEffects.cs:10`（五类：枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸）、`CsDamageIndicatorWidget.cs:46-104`（屏幕边缘方向红框）',
      2, T_SIDE, K_ALLOWED,
-     '离线已判：`CombatEffects` 的四类特效里**没有 blood**（全仓 grep `Blood|血雾` 命中 0；`HudPanel.cs:878-882` 的注释还明确记着'
-     '"原版 HUD 的伤害数字已下架（差异 #63），留下的只有受击**方向**红框 `CsDamageIndicatorWidget`"）⇒ 受击时**屏幕上没有任何血/命中反馈**，'
-     '只有屏幕边缘的方向指示器（且它只给**本地玩家**写，`CsDamage.WriteLocalDamageIndicator`）。'
-     '用户"受伤特效没有"= 结构性未做；"没血"= 同一件事（没有 hit 的血雾/击中提示）。'
-     '⚠️ 原版 CS 1.6 受击时屏幕上究竟有什么（血雾贴花 / 只扣血条）**需要原版实机证据** ⇒ 待补（第 4 级：参考图/视频量化）。⇒ 差异 #74'),
+     '''离线已判（原结论）：`CombatEffects` 的四类特效里**没有 blood** ⇒ 受击时屏幕上没有任何血/命中反馈，只有屏幕边缘的方向指示器（`CsDamage.WriteLocalDamageIndicator`）。 **【片FX-ALL 2026-09-23 落地 · 部分消除】** 受击血迹已实现：新增 `ICsMatch.OnBulletHit`（受击者 / 命中点 / 弹道方向 / 是否爆头），在 `CsDamage.ApplyHit` 里**"确定命中角色"之后、任何伤害闸门之前**发出（血与扣血是两件事：友好伤害关闭 / 护甲全吸收时 `OnDamaged` 不发，但原版照样出血）；`Module/Combat/CombatModule.cs` 订阅后调 `CombatEffects.BloodImpact`：① 命中点出一小团血雾；② 从命中点沿弹道追 ≤ `BloodDecalTraceRange` = 2.5 m 找到"后面的面"再贴一张血迹贴花（原版血迹贴在**背后的面**上，不是贴在角色身上）。贴花用**真载体** = `decals.wad` 的 `{blood1`…`{blood6`（6 张，48×48；`{blood5` 原生 64×64），按 `Core/ResPaths.cs` 的 `FxBloodKeys` 字面量 key 表加载。并排图已采：联络图 `fx-表现联络图.png` 格 **12**（第一人称命中敌人）/ 格 **13**（命中点放大 2x）/ 格 **14**（同一机位稍后一帧：命中点**后方那面墙** —— 本次**未见贴花**，原因见下 ②）。**血雾已直证**：以准星为准心的躯干窗口「近白像素(>190)」布景帧 **69** → 命中帧 **321** → 稍后同机位帧回落 **67** ⇒ 命中点确有**短时**新特效落下（代码里打在角色身上的**只有** `BloodImpact` 这一支 —— `BulletImpact` 的注释明写"打在人身上的不留痕"，见 `Module/Combat/CombatModule.cs:545`）。⚠️ 仍未消除：① **血雾**的独立载体 `sprites/bloodspray.spr` 与 `sprites/blood.spr` **不在盘**（两个串都在 `mp.dll` 里，同 #69 的 `{bigshot*` 情形）⇒ 现用血迹贴图染色的小贴片（0.18 m）替身；② **壁面贴花这一支本次只取得"否支"的直证**：实机唯一一条命中角色的日志是 `命中 (-11.61, 4.61, -48.19)（爆头=True）：沿弹道 2.5m 内没有可贴面 ⇒ 只出血雾`（`fx4-console-corpse.json`）—— 本次布景里目标距其身后壁面 > `BloodDecalTraceRange`=2.5 m，故走 `没有可贴面` 支；`血贴在 …`（贴花成功）支**本次未取到直证** ⇒ 待补（取证口径：把目标摆到距壁 ≤2.5 m 再打**身体**）。同时这条也说明本实现的**行为口径**："贴花只在命中点沿弹道 ≤2.5 m 内有可贴面时才出现"（原版口径未取证）；③ 行为口径的其余部分（贴几张 / 触发时机）无直证，且"**被**命中"那一格拍不到（探针相机只对非本地角色，本地玩家自己的血只有第三人称才看得见）⇒ 该格由 `di=1` 的方向指示器证据补（见本表 D6 的受伤提示行）；④ **贴图本身是灰阶**（实测）：`decals.wad` 的调色板**逐 lump 彩色条目 0~1/256**（`{blood1` / `{shot1` / `{bigshot1` 用到的条目全是 `(i,i,i)`）⇒ 血迹贴花画出来是**灰白溅斑**、不是红；原版是否由引擎（`hw.dll` / `client.dll` 的 decal 着色）另外染色**未取证** ⇒ 待补。⇒ 差异 #74'''),
     # ---- #9 第三人称武器 ----
     ('D2', '第三人称手持武器（角色身上看不到拿什么枪）',
      'client/Assets/Resources/Art/T/player.prefab + Resources/Art/CT/*.prefab',
      '用户本轮报#9；预制体实测（`Art/T/player.prefab` 全量子节点 = Bip01 骨架 + Skin0/Skin1 + 4 个 Hitbox_* + Bomb，**无任何武器节点**）',
      2, T_SIDE, K_ALLOWED,
      '离线已判：角色预制体里**没有武器节点、也没有挂点**（`Art/T/player.prefab` / `Art/CT/*.prefab` 的 `m_Name` 全量列表里 '
-     '只有骨架/皮肤/命中盒/`Bomb`；全仓 grep `weapon|w_` 在该 prefab 命中 0）。`ActorView` 的装配只有 '
+     '只有骨架/皮肤/命中盒/`Bomb`；存在 `client/Assets/Resources/Art/{T,CT}/player*.prefab` 的 m_Name 全量列表里没有武器节点/挂点（已取回：prefab 本身）' + _SCOPE_WPREFAB + '）。`ActorView` 的装配只有 '
      '`transform.SetPositionAndRotation` + `Body` 缩放 + 动画（`ActorView.cs:434-496`），**不挂任何武器**。'
      '⇒ "第三人称看不到他拿什么枪"= 结构性未做（与"枪不在地方"同根：没有世界武器对象）⇒ 差异 #75'),
     ('D1', '世界武器模型（w_*.mdl）载体与中间数据（同类漏检：#9 的载体侧）',
@@ -1992,7 +2156,7 @@ AZ_ENT = [
      3, T_SCRIPT, K_ALLOWED,
      '离线已判的职责链：bot 大脑只产出**方向**（`BotNavigator.ComputeMove`：目标 `/` 路点 + `Avoid` 局部避障 + 逃逸），'
      '速度由 `CsMatch.cs:2278-2279` 写成，位置由 `ResolveMove` 解 → **bot 与玩家共用同一套地形碰撞**，'
-     '所以"不是真正的地形碰撞 AI"这个判断**不成立**（有地形碰撞）；成立的是"**没有寻路**"（引擎 `AStar` 零调用，见 #77）'
+     '所以"不是真正的地形碰撞 AI"这个判断**不成立**（有地形碰撞）；成立的是"**没有寻路**"（引擎 `AStar` 在 `client/Assets/**` 内零调用，见 #77）' + _SCOPE_ASTAR + ''
      '⇒ 钻地/乱走属"路径层缺失 + 单层位图上限"，不属"没有碰撞"。⇒ 与 #67/#76 同一组差异。'
      '**【片BL-R2 2026-09-22 实测（数值类）】** ① **物理层面走得动**：`analyze-bot-phys.py` 的 `goalStepLen`（朝目标迈 1 m 时 '
      '`ResolveMove` 的实际水平位移）min 0.150 / **p50 1.000** / p90 1.000 / max 1.000，`<= 0.001 m`（完全迈不动）的行 = **0 / 18952**；'
@@ -2009,12 +2173,12 @@ AZ_ENT = [
      '登记 #2/#10 时顺手查到的同类漏检（**这是"有没有分叉树/寻路"的正面答复**）：引擎**有**通用格子 A*'
      '（8 邻接、对角需两侧可走、octile 启发式、`DefaultMaxNodes=20000`、`MinHeap` 惰性删除、路径拉直 `Smooth`），'
      '契约就是回调式 `Func<Vector2Int,bool> walkable` ⇒ 地图 `.bytes` 的可走位图（`Game.Map.WalkableAt`，`client/Packages/com.clover.unity-engine/Runtime/Presentation/Map.cs（第 149 行）`）'
-     '**直接就能当寻路网格**；但 `client/Assets/**` 全仓 grep `AStar` **命中 0** ⇒ 引擎能力从未被业务使用（**此句自切片 BJ 起已不成立**，见本行末尾的片BU-R 更正）。'
+     '**直接就能当寻路网格**；但 `client/Assets/**` 内 grep `AStar` **命中 0**（范围见下）' + _SCOPE_ASTAR + ' ⇒ 引擎能力从未被业务使用（**此句自切片 BJ 起已不成立**，见本行末尾的片BU-R 更正）。'
      '⇒ 差异 #77（解法依赖它）。'
      '**【片BL-R2 2026-09-22 实测（数值类）】** 一次 Play（18:35-18:42）复核，引擎有寻路、业务零使用**仍成立**：业务日志窗口内 '
      '`[Bot] 求路径失败（位图不可用 / 目标点不可达）` = **0 条**（修前 30 → 0，保持）、`不可走的路点` = **0 条**（修前 101 → 0，保持）；'
      '但 bot 依旧不动（数字见机器人地形贴合 / 战术行为 / 移动执行三行的实测块）⇒ 阻塞点**不在 A* 这一层**，而在其**之上**：'
-     '`BotNavigator` 仍只走路点最近邻 + 局部避障，`client/Assets/**` 仍零调用 `AStar`' + _ASTAR_TAIL),
+     '`BotNavigator` 仍只走路点最近邻 + 局部避障，`client/Assets/**` 内仍零调用 `AStar`（范围见下）' + _SCOPE_ASTAR + '' + _ASTAR_TAIL),
 ]
 for _dim, _nm, _car, _src, _sc, _vt, _vd, _ev in AZ_ENT:
     add(_dim, _nm, _car, _src, _sc, _vt, _vd, _ev)
@@ -2105,7 +2269,8 @@ DIF = [
      'client/Assets/Resources/UI/Art/overview_de_dust2（1024×768）；tools/probes/import-original-overview.py（判据资产）；载体 原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp；Core/ResPaths.cs:117；补充锚点：`tools/probes/import-original-overview.py`',
      '已消除（片AS：底图 = 原版 BMP 的逐像素 PNG；同名覆盖，代码路径不变）'),
     # 口径A(2026-09-23 片BW-S-R) id=52: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 6 片 -> .ai-tmp/test/bwsr-A-discard.tsv
-    ('52', '枪口火焰 / 弹痕已换原版像素（火星仍程序生成）', '**已部分消除（切片AM 2026-09-22；弹痕部分切片AW 2026-09-22 补）**：`sprites/muzzleflash2.spr` 帧 0 → 覆盖 `Resources/UI/Art/fx_muzzleflash.png`（64×64 尺寸不变、ink 1328→2044，由 `tools/probes/spr-extract.py` 从原版载体解出）；`decals.wad` 的 `{shot1`（16×16 载体原生尺寸）→ 覆盖 `Resources/UI/Art/fx_bullethole`（原为 32×32 程序化替身），由 `tools/probes/wad3-extract.py` 解出（225/225 lump 过三重自洽断言）。未消除部分：① 火星无独立原版载体；② 原版按武器类别在 `client.dll` 里选 muzzleflash 1..4 并播 3 帧动画，本工程所有武器共用帧 0（该映射无载体出处）；③ 原版弹痕是 `{shot1..5` 五变体随机 + `{bigshot*` 大口径，本工程只有一张贴图 ⇒ 取 `{shot1`（同名覆盖，png 不增）', 'Core/ResPaths.cs:147-159 / tools/probes/spr-extract.py / tools/probes/wad3-extract.py；载体 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr`、`原版资源/cs16src/cstrike/decals.wad`（960,012 B / SHA256 `C9E852B60197177F1E6F54992C3F0E886425AB6E6CAFE9F1B1E5E6B3BF80850C`）', '② 解出 `client.dll` 的武器→muzzleflash 映射并实现逐帧播放；③ 工程侧支持弹痕多图变体（`{shot2..5` / `{bigshot*`）后接入；补充锚点：`p_cross_crouchfire.png`'),
+    ('52', '枪口火焰 / 弹痕已换原版像素（火星仍程序生成）', '**已部分消除（切片AM 2026-09-22；弹痕部分切片AW 2026-09-22 补）**：`sprites/muzzleflash2.spr` 帧 0 → 覆盖 `Resources/UI/Art/fx_muzzleflash.png`（64×64 尺寸不变、ink 1328→2044，由 `tools/probes/spr-extract.py` 从原版载体解出）；`decals.wad` 的 `{shot1`（16×16 载体原生尺寸）→ 覆盖 `Resources/UI/Art/fx_bullethole`（原为 32×32 程序化替身），由 `tools/probes/wad3-extract.py` 解出（225/225 lump 过三重自洽断言）。未消除部分：① 火星无独立原版载体；② 原版按武器类别在 `client.dll` 里选 muzzleflash 1..4 并播 3 帧动画，本工程所有武器共用帧 0（该映射无载体出处）；③ 原版弹痕是 `{shot1..5` 五变体随机 + `{bigshot*` 大口径，本工程只有一张贴图 ⇒ 取 `{shot1`（同名覆盖，png 不增）'
+     '【片FX-ALL 2026-09-23 补】③ **多变体已接入**：`{shot1`…`{shot5` 五张全解出并落盘为 `Resources/UI/Art/fx_shot1`…`fx_shot5`，由 `ResPaths.FxBulletHoleKeys`（**字面量 key 表**，⛔ 不是"前缀 + 序号"拼串）逐个 `LoadAsset`、命中时五变体随机取一（出处 = 原版 `mp.dll` 贴花注册名表索引 0..4）。`{bigshot1`…`{bigshot5` 也**已解出**（台账 `.ai-tmp/test/fx-decal-variants.tsv` 记了尺寸与像素指纹）但**刻意不落盘**：大口径映射在引擎 `hw.dll`（不在盘）⇒ 无出处，落盘即成为"文件在盘上但无人读"的 T0 不一致（本片实测 5 张各记一条 FAIL）。仍未消除：① 火星无独立原版载体；② 武器 → `muzzleflash1..4` 的映射与逐帧播放（`client.dll` 未反汇编）。', 'Core/ResPaths.cs:147-159 / tools/probes/spr-extract.py / tools/probes/wad3-extract.py；载体 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr`、`原版资源/cs16src/cstrike/decals.wad`（960,012 B / SHA256 `C9E852B60197177F1E6F54992C3F0E886425AB6E6CAFE9F1B1E5E6B3BF80850C`）', '② 解出 `client.dll` 的武器→muzzleflash 映射并实现逐帧播放；③ 工程侧支持弹痕多图变体（`{shot2..5` / `{bigshot*`）后接入；补充锚点：`p_cross_crouchfire.png`'),
     # 口径A(2026-09-23 片BW-S-R) id=53: 基=盘上超集(登记侧 ⊆ 盘上)⇒ 整行逐字取盘上; 弃(盘上) 0 片
     ('53', 'de_dust2.bsp func_breakable 木箱（×10）未实现可破坏', '工程把箱子当静态几何（贴图资产 `box.png` / `box_x.png` —— ⛔ 此处是**资产名不是截图引用**，旧写法在 `.png` 前多了一个空格，已按实名还原），没有受击碎裂逻辑', 'Assets/ThirdParty/Dust2/de_dust2.bsp（entity lump）', '实现 func_breakable 后'),
     ('54', '已移出工程（切片H）：Assets/Scenes/SampleScene.unity、Resources/Sound/SFX/sfx/reload_unused.wav', 'Unity 模板自带场景（未登记 Build Settings、无代码引用）与一个名字就是 unused 的通用换弹音（本工程换弹音按武器逐把拼名）—— 两者都不属于参考物的必备引用，不应进工程', 'Assets/Scenes/SampleScene.unity；Assets/Resources/Sound/SFX/sfx/reload_unused.wav', '已消除（2026-09-21 切片H 移出到 原版资源/_moved-out-from-assets/）'),
@@ -2116,7 +2281,7 @@ DIF = [
     ('57', 'C4 蜂鸣的「加速档分界 10s」与两档间隔（1.0s / 0.25s）无原版出处', '原版 C4 蜂鸣节奏写在 `mp.dll` 的 C4 逻辑里（不是 cvar，`settings.scr` / `server.cfg` 都查不到），而 `mp.dll` **已在盘、但尚未反汇编**（`原版资源/cs16src/cstrike/dlls/mp.dll`，1,640,960 B / SHA256 `D7294D9BE016C79E5E3B0D9E78C14CF385FCC3F1DB6057018052ABC4219F2974`，片AW 取回，见 `原版资源/清单.md`「切片AW」§1）⇒ 拿不到 C4 逻辑里那两个立即数，该分界只能按本工程自己的口径统一（CsConst.BombBeepIntervalSlow/Fast 的 10s 注释 + CsAudioTuning.BombBeepFastBelow）；补充锚点：`原版资源/cs16src`', 'Core/CsConst.cs（BombBeepIntervalSlow / BombBeepIntervalFast）；Module/Audio/CsAudioTuning.cs（BombBeepFastBelow）', '解出 mp.dll 的 C4 蜂鸣节奏后'),
     ('58', 'CsBotConst 的绝大多数阈值无原版出处（**本项目新增**）', 'A = CS 1.6 本体**不含机器人 AI**（官方 bot 属 Condition Zero / PodBot，不在本工程的载体范围）⇒ "bot 手感阈值"在 A 里没有对应量；规格 §2.4 只给三档的反应时间 / 瞄准误差（±6° / ±3° / ±1.2°）与行为特征，不含这些阈值。三条有对应量却取不到载体的（瞄胸高度比例 / 脚步噪声阈值 / 预瞄节奏）见下面两条与 CsBotConst 各行的注释', 'Module/Bot/CsBotConst.cs（66 行逐条注释已标"本项目新增"或指到定义真源）；策划/策划案/CS1.6单机参考规格.md:113-118（§2.4 三档表）；Module/Match/CsTypes.cs:148（CsBotProfile）', '若主 agent 决定改为「逐条对齐 PodBot / CZ bot 源码」则另开片'),
     # 口径A(2026-09-23 片BW-S-R) id=59: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 2 片 -> .ai-tmp/test/bwsr-A-discard.tsv
-    ('59', '脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）', '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件**已在盘**：`原版资源/hlsdk/pm_shared/pm_shared.c`（片AY 落盘；片BD 2026-09-22 实测复核：`原版资源/hlsdk/` 下有 `cl_dll/`、`common/`、`dlls/`、`pm_shared/pm_shared.c` 共 10 份）—— **但本行尚未逐行读它取口径**（`原版资源/cs16src/` 现存 73 份 = 片AW 取回的 `cstrike/**` 资源 + `marlett.ttf`，其中没有 GoldSrc 源码树；`原版资源/hlsdk/` 才是源码树那一份拷贝）；② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值；补充锚点：`原版资源/cs16src`', 'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76', '读 `原版资源/hlsdk/pm_shared/pm_shared.c` 的 `PM_PlayStepSound` 逐行对账脚步节拍（载体已在盘，缺的是"读"这一步）；落地音属"A 本来就没有"，不消除'),
+    ('59', '脚步声触发口径与落地音阈值无原版出处（StepDistanceRun / StepMinSpeed / StepMinInterval / LandMinFallSpeed）【片FX-ALL 2026-09-23 落地：旧两名已删，脚步改按原版时间制冷却、落地阈值取 580/2 u/s，详见「为什么」的落地段】', '① 原版脚步触发口径在 GoldSrc `pm_shared.c`（PM_PlayStepSound），该文件**已在盘**：`原版资源/hlsdk/pm_shared/pm_shared.c`（片AY 落盘；片BD 2026-09-22 实测复核：`原版资源/hlsdk/` 下有 `cl_dll/`、`common/`、`dlls/`、`pm_shared/pm_shared.c` 共 10 份）—— **但本行尚未逐行读它取口径**（`原版资源/cs16src/` 现存 73 份 = 片AW 取回的 `cstrike/**` 资源 + `marlett.ttf`，其中没有 GoldSrc 源码树；`原版资源/hlsdk/` 才是源码树那一份拷贝）；② 落地音 A **本来就没有**（`client/资源欠缺清单.md:33` 第 7 项：GoldSrc 落地复用脚步采样），本工程用 pl_step4 采样代替、并自定"多快才算摔了一下"的阈值【片FX-ALL 2026-09-23 落地 · 消除（脚步口径）】已**逐行读完**并据此重做（不再是"载体在盘但没读"）：载体 `原版资源/hlsdk/pm_shared/pm_shared.c`，取口径的行是 `:500-639`（`PM_UpdateStepSound` 全体）、`:517`（`speed = Length(pmove->velocity)` ⇒ 三维模长）、`:519`/`:521`（`speed < 150` ⇒ `flTimeStepSound = 400`，只推冷却不发声）、`:567`~`:626` + `:556`（放音分支装 300 ms；**多处同值** = 材质 switch 10 个分支 + 脚部涉水 SLOSH）、`:630-632`（`FL_DUCKING / fLadder` ⇒ `+= 100`）、`:2400-2410`（`PM_ReduceTimers` 的 `flTimeStepSound -= cmd.msec`，递减在 `:2404`）、`:2493`（`PM_PlayerMove` 内 `PM_Duck()` 之后调用）、`:514`（`FL_FROZEN` 直接 return）；落地闸取 `:2243`（`flFallVelocity > PLAYER_MAX_SAFE_FALL_SPEED / 2`）+ `:125`（`580`）+ `:2477`（`flFallVelocity = -velocity[2]`）。落地改动：① `Module/Audio/CsAudioTuning.cs` 整组换成新五常数 —— `StepMinSpeed = 3.81`（= 150 u/s x 0.0254）、`StepCooldownConcreteMs = 300`、`StepCooldownSlowMs = 400`、`StepDuckingExtraMs = 100`、`LandMinFallSpeed = 7.366`（= 580/2 u/s x 0.0254），旧 `StepDistanceRun` / `StepMinInterval` **已删**；② `Module/Audio/AudioModule.cs` 的 `TickFootsteps` 由**距离制**换成**时间制冷却**，五道顺序按原版排（逐帧递减 → 夹零 → 冷却+`CsRoundPhase.Freeze` ⇒ 冷却停在 0 → `speed < 3.81` 装 400 ms 不发声 → 否则装 300 ms(+蹲行 100 ms) 并放音），速度口径改为 `CsActor.Velocity.magnitude`（= 原文 `Length(velocity)` 三维模长，此前是水平分量）。判据资产 `tools/probes/step-sound-probe.py`（**RESULT: PASS**）：结构断言 9 条；原版 11 个关键行"行号 + 逐字 + 首次出现"三重相符，`300 ms` 那句按"多处同值"判（材质表 10 行 + 涉水 1 行）；反例复现（v = SpeedRifle 4.4 m/s x 5 s）旧 6.00 Hz vs 新 3.40 Hz = 1.76 x；并证明五种速度（knife/rifle/AWP/walk/crouch）的**出声集合两条口径完全一致**（150 门槛没被顺手改）。⚠️ 仍未消除（如实列）：① 落地音的**采样**本身仍是"本项目新增"（A 没有独立落地音，本工程用 `player/pl_step4.wav`）—— 这部分属"A 本来就没有"，不消除；② 原版的**音量档** `fvol`（材质 0.35/0.5/0.65、落地 1.0/0.85、蹲行 `fvol *= 0.35`）**未复现**（`SfxService.Play` 没有音量形参）；③ `StepDuckingExtraMs` 那一档在当前配置下**不可达**（蹲行 1.84 m/s < 3.81 m/s；原版也要先过 150 u/s 才走 +100 分支），只做到行级对齐。；补充锚点：`原版资源/cs16src`', 'Module/Audio/CsAudioTuning.cs（Step* / LandMinFallSpeed）；client/资源欠缺清单.md:32-33,76', '读 `原版资源/hlsdk/pm_shared/pm_shared.c` 的 `PM_PlayStepSound` 逐行对账脚步节拍（载体已在盘，缺的是"读"这一步）；落地音属"A 本来就没有"，不消除 【片FX-ALL 2026-09-23 已执行：脚步节拍已逐行读完并对账落地（时间制冷却），落地阈值亦已取 580/2 u/s；残余见 why 落地段的「仍未消除」三项】'),
     ('60', '切片K（D8）：Defuser / Vest / VestHelm 三个被动装备没有开火 / 换弹音', '它们不是武器：原版 CS 1.6 里既没有"手持并开火"、也没有换弹动作 ⇒ **原版也没有**这两个采样。旧判据（D8 的"每个 id 都要有 <id>_fire.wav / <id>_reload.wav"）把它们当武器，要满足只能**造两个 wav**（伪造素材，skill §0.1 ①）⇒ 判据已改为"装备在 CsWeapons 里有定义 + 无该音与 A 一致"', 'tools/probes/enumerate-entities.py（D8 段的 D8_EQUIPMENT 分支）；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
     # 口径A(2026-09-23 片BW-S-R) id=61: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 0 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('61', '切片L（S1）：操作 / 表现层的可调旋钮没有原版出处（CsCombatTuning 全 31 条；CsMatch / CsViewTuning / CsConst 里标「本项目新增」的那些）', '这些量（后坐力时间常数 / 散布倍率 / 准星扩散 / bob / 开镜过渡 / 受击晃动 / 枪口火焰时长 / 各类实现容量上限）在 A 里对应的是**客户端手感**，原版把它们写死在 `cstrike/cl_dlls/client.dll` 与 `mp.dll` 的逐武器代码里（不是 cvar、也不是数据表 —— 见 `策划/对照表.md` §6 BLOCKED-1 / BLOCKED-2）；本机原版载体**已在盘、但尚未反汇编**（`原版资源/cs16src/cstrike/cl_dlls/client.dll` 1,093,128 B / `cstrike/dlls/mp.dll` 1,640,960 B，片AW 取回，SHA256 见 `原版资源/清单.md`「切片AW」§1）⇒ 拿不到 `文件:偏移` 级出处，只能取本工程自定值并逐条如实标注；补充锚点：`原版资源/cs16src`', 'client/Assets/Scripts/Module/Combat/CsCombatTuning.cs（31 条逐行已标「本项目新增」+ 该条与 A 的关系）；Module/Match/CsMatch.cs、Module/View/CsViewTuning.cs、Core/CsConst.cs 的对应行；策划/对照表.md §6 BLOCKED-1/2 与 A-05 / A-08 / E-03 / N-22 / U-07 / U-36', '用户补回 CS 1.6 客户端本体（原版资源/cs16src：client.dll / mp.dll）后逐条对账'),
@@ -2163,18 +2328,19 @@ DIF = [
      '无需改几何；**真人链路已于片BF 复现并关闭本行**（玩家侧可走：T 20.323 m / CT 11.247 m 到顶、剔除输入延迟后真实阻断 0 帧；'
      '用户所见 = 直线顶墙 x=-10.973 只挪 5.109 m，属路径问题）。未做的只剩"全图其余楼梯/坡道扩样"，另片'),
     # 口径A(2026-09-23 片BW-S-R) id=67: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 5 片 -> .ai-tmp/test/bwsr-A-discard.tsv
-     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步', '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（全仓 grep `AStar` 命中 0）⇒ 只能沿标记点最近邻序列走直线；② 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299`/`:574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds、`:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），没有多点突破/掩护/换点位。', '用户本轮原话"人机的ai太傻逼了。一直在原地踱步…警不去守点，匪不去下包 不去突破"；实现出处 `client/Assets/Scripts/Module/Bot/CsBotBrain.cs:11,29-31,298-299,338,406-455,494-516,574-575,697-701`、`client/Assets/Scripts/Module/Bot/BotNavigator.cs:9-29,115-161,183-248,269-277,322-495`、`client/Assets/Scripts/Module/Bot/CsBotConst.cs:323`（"只有 id % N == 0 的 T 去捡掉落 C4"）；难度只改反应时间/瞄准误差 `client/Assets/Scripts/Module/Match/CsTypes.cs:148`（CsBotProfile）；原版口径：**A（CS 1.6）本体不含 bot AI**（官方 bot 属 CZ/PodBot，不在本工程载体范围）⇒ 行为基线按规格 §2.4 三档表 + 差异 #58；缺的战术表（守点位/下包决策）**待补**（降级链第 4 级：参考坐标可自定，但须逐条标"本项目新增"）', '开「机器人 AI」片时：① 先把 `.bytes` 可走位图接上引擎 `AStar.FindSmoothed`（契约见 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16-19 行）`）当**寻路层**；② 再加**位置层**：从 `de_dust2.bsp` 的实体/几何取点位，建"CT 守点位表 / T 下包点表 / 突破线"；③ 判据 = 离线断言（"守点位上有人 ≥X s"、"回合内至少 1 次下包"、"T 进点路径可达"）+ 一次实机联络图。【片BU-R 何时能换回引擎实现】引擎若提供**多实例工厂**（例如 `Game.NewFsm()`，形状 = 返回一个 `IFsm` 新实例、每个 bot 各持一份），则本工程的 `CsBotFsm.cs` 可整体删掉、直接换成引擎实现；在那之前按 `IFsm` 自实现是唯一合法做法。⛔ 本片**不改引擎仓**（改动只写在本条建议里）。【片BU-R 实际进度】`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`（新增）+ `CsBotBrain.cs`（两层 FSM 分发）+ `BotConst.StuckReplanCooldownSeconds` 已落盘；片BU-R 又加了"选目标必须先过可达门禁"（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`）与 CT 包点守卫解耦（`CsBotBrain.InsideHoldSite`）。判据闸门 `tools/probes/bot-goal-gate.py`：修前 FAIL 6/7 → 修后 FAIL 5/7（净位移 0.001~0.007 → 0.008~0.044、换目标 73 → 7、求路径失败 67 → 15），**T 下包 / CT 驻留 / 守点换位仍未达成**（见 .ai-tmp/test/bu-r-goal-after.txt 与 bu-r-gate-after.txt）。**【片BU-R2 2026-09-23 00:0x 因果链 + 修后数字】** 根因（三条，全部有代码出处）：① `BotNavigator.EnsurePath` 把引擎 A* 的**起点节点**（= 机器人自己那一格的格心）留在路径里，而 `AdvancePath` 的推进规则是"离下一个节点更近才推进"——目标是自己的格心时这条规则**永远不成立**，游标整条路径生命周期钉在第 0 个节点 ⇒ 机器人一直追"自己脚下的格心"，越过 2cm（`ComputeMove` 的 0.0004 死区）就翻 180°（引擎出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs:73-76,95,160`）；② `MaybeRepath` 调 `SetRoute`（而非"原地重求路径"）⇒ 按"离当前位置最近优先"**重排整条路线**并把 `_index` 归零，把它自己注释里明令要避免的"回头找最近路点"真的做了（单次 Play Cliffe 一条 Route_CT_Mid 重排 **32 次**）；③ 采集侧的回合从不完整：New Game 面板默认已经 4v4，驱动又无条件补一次 LaunchMatch，走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ 把正跑的回合掐在 **22.5s**（L3 22:42:16.429 → 22:42:38.919），且 Play 在 22:43:49.303 被驱动停掉 ⇒ 采集窗口 93s < 一个完整回合所需的 4+105+5 = **114s**。修法：`EnsurePath` 去掉起点节点（`path[0] == from` 时 `RemoveAt(0)`）、`AdvancePath` 增加"站在该节点的格子里（≤ 半格 = `IMapData.CellSize × 0.5`）也推进"、新增 `BotNavigator.RefreshPathOnly` 并让 `MaybeRepath` 改调它（顺序与游标不动）、驱动新增 `Cs16Drv.Entry.StartBotsIfNeeded`（只有 BotCount < 8 才补 LaunchMatch）+ 采集窗口等到 `phase=RoundEnd`。修后（同一个 `tools/probes/bot-goal-gate.py`，完整回合，8 bot）：**A6 CT 包点驻留 0 → PASS（Spliff 连续 5 采样 ≤7m）**、**A7 守点换位 0 → 26 次 PASS**、A1/A2 通过 0/8 → **2/8**（Cliffe 净位移 5.7 → **66.1m**、net/total 0.032 → **0.802**；Spliff 7.8 → 24.5m / 0.401）；逐帧抖动：Move 方向翻转 Cliffe 317 → **2 次**（Gooseman 291→5、Rikk 209→4、Spliff 308→11、ZBot 88→4），rev% 78.7% → **0.0%**（出处 `tools/probes/bu-r2-motion-diag.py`，修前 `.ai-tmp/test/bu-r2-diag-before.txt` / 修后 `bu-r2-diag-after.txt`）。**仍未消除（本片不改「允许的差异」为「一致」）**：A1/A2 6/8 未达标、A4 求路径失败 18 > 10、**A5 T 侧下包仍 0**；残余根因 = **局部避障层**：`BotNavigator.Avoid` 每帧按 `CsBotConst.AvoidAngles` 顺序重扫候选，落地方向在 ±25°/±50°/±75°/±100°/±125° 之间乱跳（`[BOTFLIP]` 原始行 `probe=±25..±125 probeLeft=0.50`，即 0.5s 的 `_probeHoldSeconds` 保持每一帧就被打破）⇒ Darrell/Scuzzy 原地绕圈（总路径 350m / 净位移 17~22m、翻转 349/328 次）；归因表见 `tools/probes/bu-r2-flip-attrib.py` + `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。**【片BU-R3 2026-09-22 23:35（完整回合实测）】** 只改了 `BotNavigator.Avoid` 一处 = **换向迟滞**（① 候选偏角改按"与当前偏角的偏差升序"试，新增 `PickAvoidAngle`；② 保持期内"这个方向不可走"要**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才换锚点，**单帧不可打破**；参数出处 `tools/probes/bu-r3-avoid-replay.py` 的离线口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。修后（同一 `bot-goal-gate.py`，完整回合，8 bot）：方向翻转 296 → **167** 行（`bu-r2-flip-attrib.py`：Darrell 104 → 9、Scuzzy 117 → 53）、Darrell 总路径 384.6 → **70.3m**（`bu-r2-motion-diag.py`）、A1/A2 达标 2/8 → **3/8**；**A6/A7/A8 未回退**。**仍未消除（⛔ 本片不改本条为"一致"）**：A1/A2 5/8 未达标、A4 求路径失败 19 > 10（与 Avoid 无关，见 #77）、**A5 T 侧下包仍 0**；且残余根因**已改判到避障之外的一层**：`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节显示 4 个 bot 在 93.8s 窗口内**静止 80~90s**（Gooseman 90.5s，状态分布 `Plant:704/798` 且位移恒 0.00m）⇒ A1/A2 的"净位移"口径落在守点/静止上、A5 的直接病灶是 T 侧持包 bot 卡在 `Plant` 态不动（`CsBotBrain`/`CsBotFsm` 层）。⛔ 阈值未下调。；补充锚点：`.ai-tmp/screenshots/p_bomb_planted_b.png`'),
+     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步', '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（内 grep `AStar` 命中 0）。**拆两句**：① 业务域 = `client/Assets/**`（范围见下）；' + _scope_dif(_SCOPE_ASTAR) + '② 引擎包 = `client/Packages/com.clover.unity-engine/**`（junction）' + _scope_dif(_SCOPE_BT_ENGINE) + '⇒ 只能沿标记点最近邻序列走直线；② 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299`/`:574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds、`:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），没有多点突破/掩护/换点位。', '用户本轮原话"人机的ai太傻逼了。一直在原地踱步…警不去守点，匪不去下包 不去突破"；实现出处 `client/Assets/Scripts/Module/Bot/CsBotBrain.cs:11,29-31,298-299,338,406-455,494-516,574-575,697-701`、`client/Assets/Scripts/Module/Bot/BotNavigator.cs:9-29,115-161,183-248,269-277,322-495`、`client/Assets/Scripts/Module/Bot/CsBotConst.cs:323`（"只有 id % N == 0 的 T 去捡掉落 C4"）；难度只改反应时间/瞄准误差 `client/Assets/Scripts/Module/Match/CsTypes.cs:148`（CsBotProfile）；原版口径：**A（CS 1.6）本体不含 bot AI**（官方 bot 属 CZ/PodBot，不在本工程载体范围）⇒ 行为基线按规格 §2.4 三档表 + 差异 #58；缺的战术表（守点位/下包决策）**待补**（降级链第 4 级：参考坐标可自定，但须逐条标"本项目新增"）', '开「机器人 AI」片时：① 先把 `.bytes` 可走位图接上引擎 `AStar.FindSmoothed`（契约见 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16-19 行）`）当**寻路层**；② 再加**位置层**：从 `de_dust2.bsp` 的实体/几何取点位，建"CT 守点位表 / T 下包点表 / 突破线"；③ 判据 = 离线断言（"守点位上有人 ≥X s"、"回合内至少 1 次下包"、"T 进点路径可达"）+ 一次实机联络图。【片BU-R 何时能换回引擎实现】引擎若提供**多实例工厂**（例如 `Game.NewFsm()`，形状 = 返回一个 `IFsm` 新实例、每个 bot 各持一份），则本工程的 `CsBotFsm.cs` 可整体删掉、直接换成引擎实现；在那之前按 `IFsm` 自实现是唯一合法做法。⛔ 本片**不改引擎仓**（改动只写在本条建议里）。【片BU-R 实际进度】`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`（新增）+ `CsBotBrain.cs`（两层 FSM 分发）+ `BotConst.StuckReplanCooldownSeconds` 已落盘；片BU-R 又加了"选目标必须先过可达门禁"（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`）与 CT 包点守卫解耦（`CsBotBrain.InsideHoldSite`）。判据闸门 `tools/probes/bot-goal-gate.py`：修前 FAIL 6/7 → 修后 FAIL 5/7（净位移 0.001~0.007 → 0.008~0.044、换目标 73 → 7、求路径失败 67 → 15），**T 下包 / CT 驻留 / 守点换位仍未达成**（见 .ai-tmp/test/bu-r-goal-after.txt 与 bu-r-gate-after.txt）。**【片BU-R2 2026-09-23 00:0x 因果链 + 修后数字】** 根因（三条，全部有代码出处）：① `BotNavigator.EnsurePath` 把引擎 A* 的**起点节点**（= 机器人自己那一格的格心）留在路径里，而 `AdvancePath` 的推进规则是"离下一个节点更近才推进"——目标是自己的格心时这条规则**永远不成立**，游标整条路径生命周期钉在第 0 个节点 ⇒ 机器人一直追"自己脚下的格心"，越过 2cm（`ComputeMove` 的 0.0004 死区）就翻 180°（引擎出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs:73-76,95,160`）；② `MaybeRepath` 调 `SetRoute`（而非"原地重求路径"）⇒ 按"离当前位置最近优先"**重排整条路线**并把 `_index` 归零，把它自己注释里明令要避免的"回头找最近路点"真的做了（单次 Play Cliffe 一条 Route_CT_Mid 重排 **32 次**）；③ 采集侧的回合从不完整：New Game 面板默认已经 4v4，驱动又无条件补一次 LaunchMatch，走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ 把正跑的回合掐在 **22.5s**（L3 22:42:16.429 → 22:42:38.919），且 Play 在 22:43:49.303 被驱动停掉 ⇒ 采集窗口 93s < 一个完整回合所需的 4+105+5 = **114s**。修法：`EnsurePath` 去掉起点节点（`path[0] == from` 时 `RemoveAt(0)`）、`AdvancePath` 增加"站在该节点的格子里（≤ 半格 = `IMapData.CellSize × 0.5`）也推进"、新增 `BotNavigator.RefreshPathOnly` 并让 `MaybeRepath` 改调它（顺序与游标不动）、驱动新增 `Cs16Drv.Entry.StartBotsIfNeeded`（只有 BotCount < 8 才补 LaunchMatch）+ 采集窗口等到 `phase=RoundEnd`。修后（同一个 `tools/probes/bot-goal-gate.py`，完整回合，8 bot）：**A6 CT 包点驻留 0 → PASS（Spliff 连续 5 采样 ≤7m）**、**A7 守点换位 0 → 26 次 PASS**、A1/A2 通过 0/8 → **2/8**（Cliffe 净位移 5.7 → **66.1m**、net/total 0.032 → **0.802**；Spliff 7.8 → 24.5m / 0.401）；逐帧抖动：Move 方向翻转 Cliffe 317 → **2 次**（Gooseman 291→5、Rikk 209→4、Spliff 308→11、ZBot 88→4），rev% 78.7% → **0.0%**（出处 `tools/probes/bu-r2-motion-diag.py`，修前 `.ai-tmp/test/bu-r2-diag-before.txt` / 修后 `bu-r2-diag-after.txt`）。**仍未消除（本片不改「允许的差异」为「一致」）**：A1/A2 6/8 未达标、A4 求路径失败 18 > 10、**A5 T 侧下包仍 0**；残余根因 = **局部避障层**：`BotNavigator.Avoid` 每帧按 `CsBotConst.AvoidAngles` 顺序重扫候选，落地方向在 ±25°/±50°/±75°/±100°/±125° 之间乱跳（`[BOTFLIP]` 原始行 `probe=±25..±125 probeLeft=0.50`，即 0.5s 的 `_probeHoldSeconds` 保持每一帧就被打破）⇒ Darrell/Scuzzy 原地绕圈（总路径 350m / 净位移 17~22m、翻转 349/328 次）；归因表见 `tools/probes/bu-r2-flip-attrib.py` + `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。**【片BU-R3 2026-09-22 23:35（完整回合实测）】** 只改了 `BotNavigator.Avoid` 一处 = **换向迟滞**（① 候选偏角改按"与当前偏角的偏差升序"试，新增 `PickAvoidAngle`；② 保持期内"这个方向不可走"要**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才换锚点，**单帧不可打破**；参数出处 `tools/probes/bu-r3-avoid-replay.py` 的离线口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。修后（同一 `bot-goal-gate.py`，完整回合，8 bot）：方向翻转 296 → **167** 行（`bu-r2-flip-attrib.py`：Darrell 104 → 9、Scuzzy 117 → 53）、Darrell 总路径 384.6 → **70.3m**（`bu-r2-motion-diag.py`）、A1/A2 达标 2/8 → **3/8**；**A6/A7/A8 未回退**。**仍未消除（⛔ 本片不改本条为"一致"）**：A1/A2 5/8 未达标、A4 求路径失败 19 > 10（与 Avoid 无关，见 #77）、**A5 T 侧下包仍 0**；且残余根因**已改判到避障之外的一层**：`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节显示 4 个 bot 在 93.8s 窗口内**静止 80~90s**（Gooseman 90.5s，状态分布 `Plant:704/798` 且位移恒 0.00m）⇒ A1/A2 的"净位移"口径落在守点/静止上、A5 的直接病灶是 T 侧持包 bot 卡在 `Plant` 态不动（`CsBotBrain`/`CsBotFsm` 层）。⛔ 阈值未下调。；补充锚点：`.ai-tmp/screenshots/p_bomb_planted_b.png`'),
     # 口径A(2026-09-23 片BW-S-R) id=68: 基=登记侧; +补充锚点(盘上) 2 片; 弃(盘上) 7 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('68', '武器右键（attack2）**整条链缺失**：USP / M4A1 不能拆装消音器、Glock18 不能切连发',
      '① 输入层结构里**只有 `Zoom`**：`CsInputState`（`client/Assets/Scripts/Module/Match/ICsMatch.cs`）的字段逐字是 `Move / Jump / Crouch / Walk / Fire（左键按住） / Zoom（右键，AWP/Scout 开镜） / Yaw / Pitch`，**没有 attack2 / 次级开火**；唯一的右键消费点 = `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）；② 武器表里也没有"是否支持消音器/连发切换"的字段（`client/Assets/Scripts/Core/CsWeapons.cs:34-46` 的 `CsWeaponDef`）⇒ 除狙击开镜外，任何武器的右键在本工程**结构性无效果**（不是某把枪漏了）。；补充锚点：`Module/Match/ICsMatch.cs`',
-     '用户本轮原话"很多枪右键没效果，就像警的默认小手枪，右键不是拆消音吗？"；实现出处 `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`、`client/Assets/Scripts/Module/Match/ICsMatch.cs`（CsInputState）、`client/Assets/Scripts/Core/CsWeapons.cs:34-46`；原版语义载体 **在盘**：CS 1.6 的逐武器 attack2 写在 `cstrike/cl_dlls/client.dll` 里（不是 cvar / 不是数据表）—— 片AW 已把它取回（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B），但**尚未反汇编**定位 attack2 分支 ⇒ 出处待补（降级链第 2 级：可执行里的常量/分支，**载体已具备**）。⚠️ `原版资源/hlsdk/dlls/weapons.cpp` 是 **HL1** 的武器实现，只能证明"开火/切换写死在类里"这一机制，⛔ 不是 CS 语义出处；补充锚点：`Module/Match/ICsMatch.cs`',
+     '用户本轮原话"很多枪右键没效果，就像警的默认小手枪，右键不是拆消音吗？"；实现出处 `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`、`client/Assets/Scripts/Module/Match/ICsMatch.cs`（CsInputState）、`client/Assets/Scripts/Core/CsWeapons.cs:34-46`；原版语义载体 **在盘**：CS 1.6 的逐武器 attack2 写在 `cstrike/cl_dlls/client.dll` 里（不是 cvar / 不是数据表）—— 片AW 已把它取回（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B），但**尚未反汇编**定位 attack2 分支 ⇒ 出处待补（降级链第 2 级：可执行里的常量/分支，**载体已具备**）。⚠️ `原版资源/hlsdk/dlls/weapons.cpp` 是 **HL1** 的武器实现，只能证明"开火/切换写死在类里"这一机制，⛔ 不是 CS 语义出处；补充锚点：`Module/Match/ICsMatch.cs`' + '【片FX-ALL 2026-09-23 **落地 · 部分消除**】attack2 这条链已补上：① 输入层 `CsInputState.Attack2`（**按下沿**，由 `CombatModule` 用 `GetKeyDown(GameKey.MouseRight)` 填）；② 能力表 `CsWeaponDef.CanSilence` / `CanBurst` + `CsWeapons.MarkAttack2Capabilities()` —— **只有 4 把**有出处（Usp/M4A1 = 消音、Glock18/Famas = 连发），默认 false = 无出处不接；③ 状态位 `CsActor.Silenced` / `BurstMode`；④ 消费点 `CsInventory.ToggleWeaponMode`（⛔ 切枪期间照样能切，与 `Reload` 的拦截规则不同）+ `CsMatch.UpdateLocalPlayer` 里的**模拟侧判沿** `inp.Attack2 && !_preAttack2`（`_localInput` 是**黏的**：离线驱动只置一次 true 就没人清 ⇒ 不判沿会每帧翻转一次）。**出处（新证 · 降级链第 2 级）**：在原版 `原版资源/cs16src/cstrike/cl_dlls/client.dll`（1,093,128 B）里按**文件偏移**定位到 `weapons/usp_silencer_off.wav` (0x0e3804) / `usp_silencer_on.wav` (0x0e3824) / `m4a1_silencer_off.wav` (0x0e308c) / `m4a1_silencer_on.wav` (0x0e30ac) / `famas-burst.wav` (0x0e26f4) / `#Switch_To_BurstFire` (0x0e27d4) / `#Cstrike_TitlesTXT_M4A1_Short` (0x0e6af4)，以及原版真输入通道 `+attack2` (@0x0e9f98) / `-attack2` (@0x0e4ac5)。**判据资产** = `tools/probes/attack2-probe.py`（A: 7 组结构断言；B: 上述 7 条串在该偏移处**逐字节重取**且必须是**首次出现**；C: 「按下沿」反例复现 —— S1 按住 8 帧⇒电平型切 8 次/判沿型切 1 次、S2 点按 3 次⇒两者都 3 次、S3 长按+再点⇒电平 4/判沿 2），实测 `RESULT: PASS`；离线自检 = `client/Assets/Scripts/Module/Combat/CombatSelfTest.cs` 的「差异 #68」段（能力表 4 条 + USP 按下沿 + **按住 5 帧不重复翻转** + Glock18 切连发 + 切枪期间仍生效 + AK47 无出处则状态一位不动）。**仍未消除**：① 消音后的伤害/散布、连发的发数与节奏**具体数值**无出处（要反汇编 `client.dll`）；② 判据只到「状态可切换 + 可观测」，**尚无实机联络图**（表现类判据未采）。',
      '开「输入 × 玩法」片时：① 先取回 `client.dll` 的 attack2 分支（或一份原版行为证据）定死逐武器语义（USP/M4A1 消音、Glock 连发）；'
-     '② 契约扩 `CsInputState.Attack2` + `CsWeaponDef` 的支持位；③ 判据 = 离线断言（换弹/开火链在 attack2 下的状态变化）+ 硝音器模型的载体（`v_usp`/`w_usp` 的 silencer 变体）'),
+     '② 契约扩 `CsInputState.Attack2` + `CsWeaponDef` 的支持位；③ 判据 = 离线断言（换弹/开火链在 attack2 下的状态变化）+ 硝音器模型的载体（`v_usp`/`w_usp` 的 silencer 变体））。**【片FX-ALL 2026-09-23：①② 已落地、③ 落地一半（判据资产在盘、实机联络图未采）】⇒ 本行只剩"消音后伤害/散布、连发发数与节奏的**数值**（要反汇编）"与"表现类联络图"两块；逐条见「为什么」列末尾的落地段。'),
     # 口径A(2026-09-23 片BW-S-R) id=69: 基=登记侧; +补充锚点(盘上) 4 片; 弃(盘上) 6 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('69', '墙上弹痕与原版不符：只有 1 张变体、尺寸无出处、载体注记过期',
-     '① 变体只有 1 张（原版是 `decals.wad` 的 `{shot1..5` 随机 + `{bigshot*` 大口径）；② 尺寸 `CsCombatTuning.DecalSize = 0.075f`（`Module/Combat/CsCombatTuning.cs:178`）源码注释自认是"按原版 decal 的观感（~7cm）"= **观感值不是出处**；③ `Core/ResPaths.cs:177` 的注释还写"弹痕精灵（真实文件 …，32×32）"，而盘上 `client/Assets/Resources/UI/Art/fx_bullethole` 实测 **16×16 / 234 B**（片AW 用 WAD3 解出的 `{shot1` 覆盖后注释未同步）；④ 弹痕的**表现类**判据（贴面朝向/尺寸/按材质观感）在 `策划/验收表.md` 的联络图索引里**没有格号**（片AW 只做了"换图 + 三重自洽断言"，没有并排图判过）。；补充锚点：e=0.075',
-     '用户本轮原话"子弹落在墙上痕迹不对"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:172-190`（贴面 + 沿法线抬 1cm + `DecalSize` 缩放）、'
-     '`client/Assets/Scripts/Module/Combat/CsCombatTuning.cs:178/181/184`（DecalSize/DecalDuration/MaxDecals）、`client/Assets/Scripts/Core/ResPaths.cs:177-178`；'
+     '① 变体只有 1 张（原版是 `decals.wad` 的 `{shot1..5` 随机 + `{bigshot*` 大口径）；② 尺寸 `CsCombatTuning.DecalSize = 0.075f`（`Module/Combat/CsCombatTuning.cs:178`）源码注释自认是"按原版 decal 的观感（~7cm）"= **观感值不是出处**；③ `Core/ResPaths.cs:177` 的注释还写"弹痕精灵（真实文件 …，32×32）"，而盘上 `client/Assets/Resources/UI/Art/fx_bullethole` 实测 **16×16 / 234 B**（片AW 用 WAD3 解出的 `{shot1` 覆盖后注释未同步）；④ 弹痕的**表现类**判据（贴面朝向/尺寸/按材质观感）在 `策划/验收表.md` 的联络图索引里**没有格号**（片AW 只做了"换图 + 三重自洽断言"，没有并排图判过）。；补充锚点：e=0.075'
+     '【片FX-ALL 2026-09-23 落地 · 部分消除】① **变体已补**：`decals.wad` 的 `{shot1`…`{shot5` **5 张全解出** → `Resources/UI/Art/fx_shot1`…`fx_shot5`（各 16×16，落盘台账 `.ai-tmp/test/fx-decal-variants.tsv`）；`ResPaths.FxBulletHoleKeys` 是一张**字面量 key 表**（⛔ 不是拼串 —— 拼出来的 key 在静态扫描里看不见，闸门 `coverage-diff` 的 D1 维度会把贴图判成"文件在盘上但无人读"；本片实测拼串版有 3 张被判不一致），`CombatEffects` 按表逐个加载，命中时均匀随机取一，一张都没加载到时退到程序化替身 `fx_bullethole`。"就是 5 张、不是随便几张"的出处 = 原版 `mp.dll` 的贴花**注册名表**（`char* name[]` 基址 VA `0x10165ED8`、元素步长 8、precache 循环在文件偏移 `0x98e70` 处按 `esi=0,8,..,0x150-8` 逐项喂引擎；`{shot1`…`{shot5` = 索引 0..4，`{bigshot1`…`{bigshot5` = 28..32）。② **注记过期已消除**：`Core/ResPaths.cs` 的 `fx_bullethole` 注记已改为 16×16，并新增 `FxBulletHoleKeys` / `FxBloodKeys` 两张字面量 key 表。③ `{bigshot1`…`{bigshot5` **已解出但刻意不落盘**（大口径选择在引擎 `hw.dll`，不在盘 ⇒ 无出处；落盘即构成 T0 违规），尺寸与像素指纹留在台账里。⚠️ 仍未消除：① **尺寸映射**（原版 decal 的世界单位换算）仍无出处，`DecalSize = 0.075f` 保持；新增的 `CsCombatTuning.DecalMetersPerPixel` 只是**同族比例推演**（48px→0.225m / 64px→0.30m），⛔ 不是出处；② 表现类并排图判据（贴面朝向：朝地与朝墙两格）仍未采。',
+     '用户本轮原话"子弹落在墙上痕迹不对"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:293-303`（贴面 + 沿法线抬 1cm + `DecalSize` 缩放）、'
+     '`client/Assets/Scripts/Module/Combat/CsCombatTuning.cs:178/181/184`（DecalSize/DecalDuration/MaxDecals）、`client/Assets/Scripts/Core/ResPaths.cs:178-179`；'
      '原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，SHA256 记在 `原版资源/清单.md` 片AW 节）；'
      '尺寸映射的原始出处（原版 decal 的世界单位换算）**待补**（降级链第 2 级：可执行里的常量；`)`；差异 #52 已登记"多变体未接"',
      '开「特效 × 材质」片时：① `tools/probes/wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来；② 工程侧支持弹痕多图变体 + 随机取一；③ 尺寸按"贴图原生尺寸 × 原版世界单位映射"重算（映射取不到 ⇒ 保持自定值并留在本行）；④ 判据 = 同机位并排图采一次（贴面朝向：朝地与朝墙两格）；补充锚点：`/` / `.ai-tmp/screenshots/ay_tmp_bullethole_floor.png` / `ay_tmp_bullethole_wall.png`'),
@@ -2209,15 +2375,16 @@ DIF = [
      '③ 若用户能提供**官方**客户端，则补一次跨来源比对（当前只能证明"与这份 repack 一致"）'),
     # 口径A(2026-09-23 片BW-S-R) id=72: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 10 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('72', '换弹动画会丢',
-     '① 触发方式是**边沿检测时间戳变大**，不是模拟发出的换弹事件：`client/Assets/Scripts/Module/View/ActorView.cs:268` （`actor.ReloadEndTime > _preReloadEndTime + 0.0001`）→ `:270` 取 `CsViewTuning.PlayerReloadStates(...)`；`Module/Match/CsInventory.cs:403-439` 的 `Reload` 在三条分支上直接 `return`（`:408` 没武器 / `:413` 不支持换弹 / `:419` 正在切枪 / `:426` 弹匣已满），`ReloadEndTime` 也可能被同帧重设（连点 R / 换弹中切枪再切回）⇒ 边沿检测采不到 ⇒ 整段动画丢失；② **没有"请求换弹 → 动画必须播一次"的运行时断言**（`策划/验收表.md` R6 只看"`HasState`=T + 数值"，不判"每次请求都播"）；③ 本来就该没有的两类（⛔ 不算缺陷）：`CsViewTuning.cs:318-327` 注明原版 group0 实测**没有** `ref_reload_grenade` / `ref_reload_knife`。第一人称侧同理：`CsViewTuning.cs:254`（`VmStateReload = { "reload" }`）。；补充锚点：`/`',
+     '① 触发方式是**边沿检测时间戳变大**，不是模拟发出的换弹事件：`client/Assets/Scripts/Module/View/ActorView.cs:268` （`actor.ReloadEndTime > _preReloadEndTime + 0.0001`）→ `:270` 取 `CsViewTuning.PlayerReloadStates(...)`；`Module/Match/CsInventory.cs:403-439` 的 `Reload` 在三条分支上直接 `return`（`:408` 没武器 / `:413` 不支持换弹 / `:419` 正在切枪 / `:426` 弹匣已满），`ReloadEndTime` 也可能被同帧重设（连点 R / 换弹中切枪再切回）⇒ 边沿检测采不到 ⇒ 整段动画丢失；② **没有"请求换弹 → 动画必须播一次"的运行时断言**（`策划/验收表.md` R6 只看"`HasState`=T + 数值"，不判"每次请求都播"）；③ 本来就该没有的两类（⛔ 不算缺陷）：`CsViewTuning.cs:318-327` 注明原版 group0 实测**没有** `ref_reload_grenade` / `ref_reload_knife`。第一人称侧同理：`CsViewTuning.cs:254`（`VmStateReload = { "reload" }`）。；补充锚点：`/`' + '【片FX-ALL 2026-09-23 **落地 · 部分消除**】按本行「何时消除」的第①条把口径改了：新增**模拟侧单调序号** `CsActor.ReloadSeq`（`client/Assets/Scripts/Module/Match/CsTypes.cs`），只在 `CsInventory.Reload` 的**成功分支**自增一次（紧跟 `a.ReloadEndTime = now + def.ReloadTime;`）；两处表现层（`Module/View/ActorView.cs`、`Module/View/ViewModelRig.cs`）从旧的 `ReloadEndTime > _preReloadEndTime` 改为消费 `ReloadSeq != _preReloadSeq`，旧口径的字段 `_preReloadEndTime` 已下线。**为什么序号不会被吃掉**：`ReloadEndTime` 有三种归零/跨完的方式（结算 `CompleteReload`、切枪 `SwitchWeapon`、同帧内请求+跨过的边界），而序号只增不减。**判据资产** = `tools/probes/reload-edge-probe.py`（A1~A4 结构断言：字段在盘 / `ReloadSeq++` **恰好 1 次**且紧跟成功分支 / 序号行在该方法**最后一次 `return` 之后** / 两处表现层都消费序号且旧字段无残留；B 反例复现：把两条口径各实现成谓词喂同一串采样 —— S1「采样间隔 ≥ 换弹时长」（视图整段漏窗）旧口径命中 **0** 次、新口径 **≥1** 次；S2 60Hz 两者都命中。**真数断言**：`D2 < D1`（AK47 3.0s vs 切手枪 0.3s+0.01+2.2s = 2.51s）—— 常数按 `W(...)` 形参签名**解析**，⛔ 不硬编码下标），实测 `RESULT: PASS`；离线自检 = `CombatSelfTest.cs` 的「差异 #72」段（连点 R 序号不变 / 结算序号不变 / 换弹中切枪再切回后重新换弹序号 +1）。**仍未消除**：① 判据是数值类（日志 + 断言），**尚无实机联络图**；② 本行另一层「`HasState` 缺状态时只 warning 不崩」（`IAnimPlayer`）未动。',
      '用户本轮原话"换弹动画有时候会丢"；实现出处 `client/Assets/Scripts/Module/View/ActorView.cs:249-274`、'
      '`client/Assets/Scripts/Module/Match/CsInventory.cs:403-439`、`client/Assets/Scripts/Module/View/CsViewTuning.cs:254,318-327`；'
      '原版口径 `HLSDK` 无 CS 的客户端动画选择（差异 #19/#20/#21 同源）⇒ 序列名与候选表按 mdl 实测（`策划/对照表.md:144` M-11 / `:147` M-14）',
      '开「动画 × 换弹」片时：① 把"换弹开始"改成**模拟侧事件**（或在 `Reload` 成功分支置一个单调递增的计数）而不是时间戳比较；'
-     '② 加断言："每次成功换弹 → 动画状态至少进入一次 reload"；③ 判据 = 数值类（运行时日志行 + 断言），连点 R / 中途切枪两个边界各一条'),
+     '② 加断言："每次成功换弹 → 动画状态至少进入一次 reload"；③ 判据 = 数值类（运行时日志行 + 断言），连点 R / 中途切枪两个边界各一条）。**【片FX-ALL 2026-09-23：①② 已落地（`CsActor.ReloadSeq` + `CombatSelfTest` 两条边界断言 + `tools/probes/reload-edge-probe.py` `RESULT: PASS`）】⇒ 本行只剩"实机联络图"（表现类）；逐条见「为什么」列末尾的落地段。'),
     # 口径A(2026-09-23 片BW-S-R) id=73: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 7 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('73', '死亡后**没有尸体**，且死亡动画播完立刻整具身体消失',
-     '① 现在的死亡链 = 播 `death1..3` 之一（按 `actorId % 3` 取）→ 播完 `OnComplete` 里 `SetShown(false)` **整具身体隐藏**（`client/Assets/Scripts/Module/View/ActorView.cs:451-464` + `:293-312`；差异 #12 已登记实测时间线 `death2 clipLen=1.367 → t=1524ms 时 shown=False`）；② **工程里没有任何 corpse / 尸体实体**（**现存 `client/Assets/**` 内**，`Corpse` / `尸体` 命中 **0**；已取回：`ActorView` 死亡链本身）；③ **原版实现层存在尸体/碎裂机制**（**存在性证据**：CS 1.6 本体【载体类 A】`原版资源/cs16src/cstrike/dlls/mp.dll` 含 `corpse` 字符串 ×7、`gib` ×70；`cl_dlls/client.dll` 含 `corpse` ×3 —— **字符串级、未反汇编**，⛔ `gib` 为 3 字母属**弱**证据）⇒ 但 **"尸体留在地上 / 留多久 / 什么姿态"属行为，仍需反汇编或实机**；⛔ 不得据此写"原版没有尸体"，也⛔不得写"已证实原版留尸体"；④ 顺带：`death1..3` 是"倒地"序列，播完即隐藏 ⇒ 用户感知的"死亡动画没有"很可能是"播得很快 + 立刻消失"的合成观感（本片 ⛔ 不下断言，留一次实机）。；补充锚点：`/`',
+     '① 现在的死亡链 = 播 `death1..3` 之一（按 `actorId % 3` 取）→ 播完 `OnComplete` 里 `SetShown(false)` **整具身体隐藏**（`client/Assets/Scripts/Module/View/ActorView.cs:451-464` + `:293-312`；差异 #12 已登记实测时间线 `death2 clipLen=1.367 → t=1524ms 时 shown=False`）；② **工程里没有任何 corpse / 尸体实体**（**现存 `client/Assets/**` 内**，`Corpse` / `尸体` 命中 **0**；已取回：`ActorView` 死亡链本身）；③ **原版实现层存在尸体/碎裂机制**（**存在性证据**：CS 1.6 本体【载体类 A】`原版资源/cs16src/cstrike/dlls/mp.dll` 含 `corpse` 字符串 ×7、`gib` ×70；`cl_dlls/client.dll` 含 `corpse` ×3 —— **字符串级、未反汇编**，⛔ `gib` 为 3 字母属**弱**证据）⇒ 但 **"尸体留在地上 / 留多久 / 什么姿态"属行为，仍需反汇编或实机**；⛔ 不得据此写"原版没有尸体"，也⛔不得写"已证实原版留尸体"；④ 顺带：`death1..3` 是"倒地"序列，播完即隐藏 ⇒ 用户感知的"死亡动画没有"很可能是"播得很快 + 立刻消失"的合成观感（本片 ⛔ 不下断言，留一次实机）。；补充锚点：`/`'
+     '【片FX-ALL 2026-09-23 落地 · 部分消除】死亡链已改为**尸体留场**：倒地序列播完**不再** `SetShown(false)`，而是把姿态钉在倒地序列的**最后一帧**（`_anim.Play(_deathState, 1f)` 后 `_animator.speed = CsViewTuning.CorpseAnimSpeed` = 0）+ 关掉该视图**全部 Collider**（尸体不被打中、也不挡活人走路）+ 关掉名牌；`IsAlive` 回到 true（复活、回合重开）时解冻并还原碰撞体。实现 = `ActorView.cs` 的 `_corpseHeld` / `_corpseFrozen` / `_deathState` + `EnsureCorpseShown()` / `ReleaseCorpsePose()`，调参 = `CsViewTuning.CorpseAnimSpeed`。⚠️ 仍未消除：① 尸体仍是**同一具 ActorView**（没有独立尸体对象、没有骨骼快照，因此“尸体数量上限 / 清场时机”没实现）；② 没有 Animator 的旧预制体仍走“立即隐藏”兜底；③ 判据 = 一次实机联络图（死亡 → 尸体在地上 → 回合重开消失）**尚未采**。',
      '用户本轮原话"死亡动画没有，尸体怎么不在地上？"；实现出处 `client/Assets/Scripts/Module/View/ActorView.cs:293-312,451-464`、`client/Assets/Scripts/Module/View/CsViewTuning.cs:194`（`PStateDeath`）；'
      '原版序列节奏 `策划/对照表.md:143`（M-10）；原版"尸体留在地上"的**直证载体在盘但未反汇编**（GoldSrc 死亡/尸体逻辑在 `原版资源/cs16src/cstrike/dlls/mp.dll`，1,640,960 B，片AW 取回，SHA256 见 `原版资源/清单.md`）⇒ 出处仍按"**待补（降级链第 2 级：可执行里的常量/分支）**"记，但**载体已具备**。'
      '【片BW-ZERO 2026-09-23 补 · 存在性证据】`mp.dll` 含 `corpse` ×7 / `gib` ×70、`cl_dlls/client.dll` 含 `corpse` ×3（**逐字节扫描**；⛔ `rg` 默认跳过二进制 ⇒ 文本行检索会给出**假 0**，判据必须声明"逐字节"）。',
@@ -2225,8 +2392,9 @@ DIF = [
      '或取一份原版死亡实拍（定死"尸体留多久 / 什么姿态 / 是否可穿过"）；② 加"尸体实体"（复用 ActorView 的最后一帧姿态或一个静态姿态体）；③ 判据 = 一次实机联络图（死亡 → 尸体在地上 → 回合结束清场）。'),
     # 口径A(2026-09-23 片BW-S-R) id=74: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 6 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('74', '受击时**没有任何血雾 / 命中反馈特效**',
-     '`client/Assets/Scripts/Module/Combat/CombatEffects.cs:10-19` 的四类特效 = 枪口火焰 / 弹道 / 弹痕 / 爆炸，**没有 blood**（**现存 `client/Assets/**` 内**，`Blood` / `血雾` 命中 **0**；已取回：四类特效实现）；受击的屏幕反馈只剩"屏幕边缘方向红框"（`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`），而且**只给本地玩家**写（`Module/Match/CsDamage.cs:160-165` 的 `WriteLocalDamageIndicator`）；差异 #63 已把"伤害数字飘字"按 skill §0 铁律 1 下架（A 没有 ⇒ 不加）⇒ 于是"打中了"这件事在屏幕上**没有任何反馈**。【片BW-ZERO 2026-09-23 更正 · 原版侧证据】**原版【载体类 A】有血迹贴花机制**：`原版资源/cs16src/cstrike/decals.wad`（960,012 B，CS 1.6 本体贴花包）名称表含 **22 个血迹贴花名**（`{blood1..8}` / `{bigblood1..2}` / `{bloodhand1..6}` / `{yblood1..6}`，共 44 处）——**强证据**（资源本体命名，可直接被产品引用）；`mp.dll` 含 `BloodSpray` ×1 / `blood` ×21、`hlsdk/dlls/weapons.cpp`【载体类 B】含 `blood` ×10 / `BloodSpray` ×3 ——**中证据**（实现层有该机制，未反汇编；B 类只证明引擎层有，⛔ 不等价于 CS 1.6 采用）⇒ 原句"⚠️ 原版到底有没有血雾/击中提示（还是只有扣血条）需要原版实机证据"**不再成立**。⚠️ 仍未证的只有**行为**（贴花贴在哪 / 贴几张 / 触发时机），**载体已在盘 ≠ 行为已证**。；补充锚点：`/`',
-     '用户本轮原话"受伤特效没有，没血"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:10-19`、`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`、`client/Assets/Scripts/Module/Match/CsDamage.cs:160-165`、`client/Assets/Scripts/UI/InGame/HudPanel.cs:878-882`；'
+     '`client/Assets/Scripts/Module/Combat/CombatEffects.cs:10-19` 的四类特效 = 枪口火焰 / 弹道 / 弹痕 / 爆炸，**没有 blood**（**现存 `client/Assets/**` 内**，`Blood` / `血雾` 命中 **0**；已取回：四类特效实现）；受击的屏幕反馈只剩"屏幕边缘方向红框"（`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`），而且**只给本地玩家**写（`Module/Match/CsDamage.cs:160-165` 的 `WriteLocalDamageIndicator`）；差异 #63 已把"伤害数字飘字"按 skill §0 铁律 1 下架（A 没有 ⇒ 不加）⇒ 于是"打中了"这件事在屏幕上**没有任何反馈**。【片BW-ZERO 2026-09-23 更正 · 原版侧证据】**原版【载体类 A】有血迹贴花机制**：`原版资源/cs16src/cstrike/decals.wad`（960,012 B，CS 1.6 本体贴花包）名称表含 **22 个血迹贴花名**（`{blood1..8}` / `{bigblood1..2}` / `{bloodhand1..6}` / `{yblood1..6}`，共 44 处）——**强证据**（资源本体命名，可直接被产品引用）；`mp.dll` 含 `BloodSpray` ×1 / `blood` ×21、`hlsdk/dlls/weapons.cpp`【载体类 B】含 `blood` ×10 / `BloodSpray` ×3 ——**中证据**（实现层有该机制，未反汇编；B 类只证明引擎层有，⛔ 不等价于 CS 1.6 采用）⇒ 原句"⚠️ 原版到底有没有血雾/击中提示（还是只有扣血条）需要原版实机证据"**不再成立**。⚠️ 仍未证的只有**行为**（贴花贴在哪 / 贴几张 / 触发时机），**载体已在盘 ≠ 行为已证**。；补充锚点：`/`'
+     '【片FX-ALL 2026-09-23 落地 · 部分消除】受击血迹已实现：新增 `ICsMatch.OnBulletHit`（受击者 / 命中点 / 弹道方向 / 是否爆头），在 `CsDamage.ApplyHit` 里**“确定命中角色”之后、任何伤害闸门之前**发出（血与扣血是两件事：友好伤害关闭 / 护甲全吸收时 `OnDamaged` 不发，但原版照样出血）；`CombatModule` 订阅后调 `CombatEffects.BloodImpact`：① 命中点出一小团血雾；② 从命中点沿弹道追 ≤ `BloodDecalTraceRange` = 2.5m 找到“后面的面”再贴一张血迹贴花（原版血迹贴在**背后的面**上，不是贴在角色身上）。贴花用**真载体** = `decals.wad` 的 `{blood1`…`{blood6`（红，`mp.dll` 名表索引 13..18），6 张由 `tools/probes/wad3-extract.py` 解出 → `Resources/UI/Art/fx_blood1`…`fx_blood6`（48×48；`{blood5` 载体原生就是 64×64），按 `ResPaths.FxBloodKeys` 字面量 key 表加载，落盘台账 `.ai-tmp/test/fx-decal-variants.tsv`。⚠️ 仍未消除：① **血雾**的独立载体 `sprites/bloodspray.spr` 与 `sprites/blood.spr` **不在盘**（两个串都在 `mp.dll` 里）⇒ 现用血迹贴图染色的小贴片（0.18m）替身；② 行为口径（贴几张 / 触发时机）无直证；③ 判据 = 一次实机联络图（命中敌人 / 被命中两格）**尚未采**。',
+     '用户本轮原话"受伤特效没有，没血"；实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs:10`、`client/Assets/Scripts/UI/InGame/CsDamageIndicatorWidget.cs:46-104`、`client/Assets/Scripts/Module/Match/CsDamage.cs:160-165`、`client/Assets/Scripts/UI/InGame/HudPanel.cs:878-882`；'
      '原版口径 **待补（降级链第 2 级：可执行里的常量/分支）**：直证载体**已在盘** = `原版资源/cs16src/cstrike/decals.wad`（血迹贴花名 22 个）+ `原版资源/cs16src/cstrike/cl_dlls/client.dll`（1,093,128 B，'
      '片AW 取回，未反汇编）+ `dlls/mp.dll`；优选路 = **从 `decals.wad` 直接抽 `{blood*` 贴花**（路径已验证：差异 #69 已从同一 wad 取 `{shot1..5` 弹痕变体）⇒ 次选 = 反汇编 `client.dll` 的受击渲染分支；末选 = 原版实拍/视频量化（降级链第 4 级）。',
      '开「特效 × 受击」片时：① **从已在盘的 `decals.wad` 抽 `{blood*` 贴花（⛔ 无需降级链第 4 级）**，'
@@ -2247,7 +2415,7 @@ DIF = [
      '① 贴地位图是**单层 2D**（`client/Packages/com.clover.unity-engine/Runtime/Presentation/MapFormat.cs（第 29~30 行）`：`FlagHeightField` V1 未实现、见到即明确拒绝解码；差异 #49），'
      '上层平台/桥面与下层在 XZ 上同格 ⇒ `CsMap.TrySampleGround`（`:542-557`，只取**第一个**交点）无法区分"该站哪层"；'
      '② **软地板**：连续探不到地面时把人贴到最后一次已知地面 y（`CsMatch.cs:1853-1887` 的 `_lastGroundY` / `TrySoftFloor`）⇒ 在坡/台阶/`collision-mesh-gap.tsv` 列的"碰空气格"上会被贴到低于视觉地面的位置（形态像钻地）；'
-     '③ **无寻路**（`BotNavigator` 只有路点 + 逃逸；引擎 `AStar` 零调用）⇒ bot 会朝不可走方向推进、在坡道处反复进出几何。'
+     '③ **无寻路**（`BotNavigator` 只有路点 + 逃逸；引擎 `AStar` 在 `client/Assets/**` 内零调用；范围见下）' + _scope_dif(_SCOPE_ASTAR) + '⇒ bot 会朝不可走方向推进、在坡道处反复进出几何。'
      '本片 ⛔ 不进 Play，故"钻地"的**具体一格**未定案 ⇒ 判据留给下一次实机（逐帧 `actor.Position.y` vs `SampleGround` 的数值行）。',
      '用户本轮原话"ai人机会钻地不是真正的地形碰撞ai吗？"；实现出处 `client/Assets/Scripts/Module/Match/CsMatch.cs:1762-1904`（重力 → `ResolveMove` → `TrySampleGround` → 贴地/陡坡闸门 `:1802-1819` / 软地板 `:1853-1887` / 掉图兜底 `:1894-1904`）、'
      '`client/Assets/Scripts/Module/Map/CsMap.cs:444-531`（扫掠 ≤0.25m + 分轴滑墙 + 台阶）、`:542-557`（地面射线）、`:571-603`（`GroundMask`，只打 `CsWorld` 层）；'
@@ -2280,7 +2448,7 @@ DIF = [
     # 口径A(2026-09-23 片BW-S-R) id=79: 基=登记侧; +补充锚点(盘上) 7 片; 弃(盘上) 16 片 -> .ai-tmp/test/bwsr-A-discard.tsv
      ('79', '机器人持包者整回合 0 位移、永不下包（CsBotIntent 按值传递丢写入）', '`CsBotIntent` 是 struct；`TryBombObjective/TryDefuse/TryPlantOrPickup` 此前**按值**收 intent ⇒ 它们写入的 Move/State/Use 落在副本上、返回即丢 ⇒ T 持包者的 `intent.Move` 恒 0、State 恒 Idle：站在出生点整回合（实测 Gooseman/Rikk 0.000m 73.9s），导航判"卡住 0.00m"每 0.5s 换目标，T 永远到不了包点 ⇒ 闸门 A5 恒 0。修法 = 三个方法改 `ref CsBotIntent`（唯一正确的最小改动）。实测修后：A4 求路径失败 19→3、持包者开始移动（ZBot 净 45.2m）、`bot-goal-gate` A9 由 FAIL→PASS；补充锚点：e=0 / t=71.3', '`client/Assets/Scripts/Module/Bot/CsBotBrain.cs`（ThinkLive ④ / TryBombObjective / TryDefuse / TryPlantOrPickup）+ `client/Assets/Scripts/Module/Match/CsTypes.cs`（CsBotIntent = struct）；补充锚点：:1020 / :1484 / :1486-1487 / :1492 / :1534', '不消除：这是实现缺陷，已在本片修掉；本条只登记"修改过闸门口径"的伴随项 —— `tools/probes/bot-goal-gate.py` 的 A1/A2 由"全体必须推进"改为**有条件**（有包点驻留证据的静止算合格，⛔ 15m/0.15 未动）并新增 A9（持包 bot Live 连续静止 >10s 且全场 0 次下包 ⇒ FAIL）'),
     # 口径A(2026-09-23 片BW-S-R) id=80: 基=登记侧; +补充锚点(盘上) 0 片; 弃(盘上) 1 片 -> .ai-tmp/test/bwsr-A-discard.tsv
-     ('80', '掉落 C4 的拾取链（片BU-R5）：① bot 侧新增"仅一人、高于交战"的拾取分支；② 模拟侧 1.2m 自动拾取**只对本地玩家调用** ⇒ bot 走到 0.44m 仍 0 次拾取、A5 拾取链仍断', '① A（CS 1.6）**本体不含 bot AI**（官方 bot 属 Condition Zero / PodBot，不在本工程载体范围）⇒ "bot 何时脱战去捡包"在 A 里没有可逐值对齐的量，只能按原版语义「T 会去捡掉落的 C4（bot 也会）」落地为**拾取优先于交战、但只出一个人**（否则全队脱战送死）。② `CsBomb.TryPickupDropped` 全仓只有 1 处调用点 = `Module/Match/CsMatch.cs:1758`（在 `UpdateLocalPlayer` 里）⇒ bot 侧每帧的 `UpdateBots`（`CsMatch.cs:2247`）不调它；实测：片BU-R5 round-1 里 Minh 在掉落点 0.44m 处站了 30.25s，日志 0 条 `拾起了掉落的 C4`', '`client/Assets/Scripts/Module/Bot/CsBotBrain.cs`（`IsElectedBombHunter` + `CommitTacticalDecision` 里高于 `Engage` 的分支 + `TryPlantOrPickup` 准入）；缺口侧 `client/Assets/Scripts/Module/Match/CsMatch.cs:1758` vs `:2247`', '① bot AI 逐行对齐 PodBot / CZ bot 源码时复核（同 #58 口径）；① bot AI 逐行对齐 PodBot / CZ bot 源码时复核（同 #58 口径）；②**【片BU-R6 2026-09-23 已消除 · 核销】**由片BU-R6（经主 agent 书面授权、只此一行）在 `CsMatch.UpdateBots` 里补上了 `Bomb.TryPickupDropped(a);`（与玩家侧 `CsMatch.cs:1758` 同一 API、同一 1.2m 判定）⇒ 核销证据（数值类 · L3 原文）：`.ai-tmp/test/bu-r6-hold-plant-log.tsv` 的 `[2026-09-23 00:38:25.787] [Info] [Match] Gooseman 拾起了掉落的 C4`（round1；前置链路 = 88.997 `Minh 携带的 C4 掉落在 (-35.48, 0.00, 20.82)` → 92.095 `[Bot] [C4] Gooseman 去捡掉落的 C4：到落点 5.06m`）；round2 另两条 `Gooseman 拾起了掉落的 C4`（00:39:35.872）/ `Minh 拾起了掉落的 C4`（00:39:56.868）；拾取者随后接力推进并**真的下包**（round1 `E TPLANTED t=98.640`、`★ Gooseman 安放 C4 于 (-23.75, 0.00, 26.84)` 00:38:31.587）⇒ `拾起了` 由 0 变 3、A5 转 PASS'),
+     ('80', '掉落 C4 的拾取链（片BU-R5）：① bot 侧新增"仅一人、高于交战"的拾取分支；② 模拟侧 1.2m 自动拾取**只对本地玩家调用** ⇒ bot 走到 0.44m 仍 0 次拾取、A5 拾取链仍断', '① A（CS 1.6）**本体不含 bot AI**（官方 bot 属 Condition Zero / PodBot，不在本工程载体范围）⇒ "bot 何时脱战去捡包"在 A 里没有可逐值对齐的量，只能按原版语义「T 会去捡掉落的 C4（bot 也会）」落地为**拾取优先于交战、但只出一个人**（否则全队脱战送死）。② `CsBomb.TryPickupDropped` 在 `client/Assets/**` 内只有 1 处调用点' + _scope_dif(_SCOPE_PICKUP) + ' = `Module/Match/CsMatch.cs:1758`（在 `UpdateLocalPlayer` 里）⇒ bot 侧每帧的 `UpdateBots`（`CsMatch.cs:2247`）不调它；实测：片BU-R5 round-1 里 Minh 在掉落点 0.44m 处站了 30.25s，日志 0 条 `拾起了掉落的 C4`', '`client/Assets/Scripts/Module/Bot/CsBotBrain.cs`（`IsElectedBombHunter` + `CommitTacticalDecision` 里高于 `Engage` 的分支 + `TryPlantOrPickup` 准入）；缺口侧 `client/Assets/Scripts/Module/Match/CsMatch.cs:1758` vs `:2247`', '① bot AI 逐行对齐 PodBot / CZ bot 源码时复核（同 #58 口径）；① bot AI 逐行对齐 PodBot / CZ bot 源码时复核（同 #58 口径）；②**【片BU-R6 2026-09-23 已消除 · 核销】**由片BU-R6（经主 agent 书面授权、只此一行）在 `CsMatch.UpdateBots` 里补上了 `Bomb.TryPickupDropped(a);`（与玩家侧 `CsMatch.cs:1758` 同一 API、同一 1.2m 判定）⇒ 核销证据（数值类 · L3 原文）：`.ai-tmp/test/bu-r6-hold-plant-log.tsv` 的 `[2026-09-23 00:38:25.787] [Info] [Match] Gooseman 拾起了掉落的 C4`（round1；前置链路 = 88.997 `Minh 携带的 C4 掉落在 (-35.48, 0.00, 20.82)` → 92.095 `[Bot] [C4] Gooseman 去捡掉落的 C4：到落点 5.06m`）；round2 另两条 `Gooseman 拾起了掉落的 C4`（00:39:35.872）/ `Minh 拾起了掉落的 C4`（00:39:56.868）；拾取者随后接力推进并**真的下包**（round1 `E TPLANTED t=98.640`、`★ Gooseman 安放 C4 于 (-23.75, 0.00, 26.84)` 00:38:31.587）⇒ `拾起了` 由 0 变 3、A5 转 PASS'),
     # 口径A(2026-09-23 片BW-S-R) id=81: 基=登记侧; +补充锚点(盘上) 4 片; 弃(盘上) 5 片 -> .ai-tmp/test/bwsr-A-discard.tsv
      ('81', '机器人持包者在 `Engage` 里与敌人"在偏好距离上对峙"、整回合不到包点（片BU-R6）；补充锚点：`=300', '① 走位判据是"距敌人 > `PreferredRange × AdvanceRangeFactor` 才压上"（Normal 16×1.5 = 24m），而压上方向指向**敌人**、不是包点；② 该分支的"走位"是 `Strafe(...)`，其首行 `if (PredictSeconds() <= 0.0001f) return Vector3.zero;` 的下界 `PredictSkillSpeedLo` **恰等于 Normal 的 `AimSpeedDegrees`=300** ⇒ Normal/Easy 的 Strafe 恒为零向量 ⇒ `intent.Move` 长时间为 0。A（CS 1.6）本体不含 bot AI ⇒ "持包者对峙多久"在 A 里没有可逐值对齐的量，只能按原版语义「T 持包到包点 → 下包」落地。实测（片BU-R5 L3）：round2 持包者 Rikk 在 Live **连续静止 21.3s / 21.4s**，整回合"到最近包点标记"只从 87.1m 挪到 29.6m；同段 `换弹失败：MP5 Navy 备弹为 0` / `交战中开火被抑制第 124/143/154/155 次`；补充锚点：:123 / :127 / :130', '`client/Assets/Scripts/Module/Bot/CsBotBrain.cs`（`Strafe` 去门 + `Engage` 持包压上 + `CommitTacticalDecision.MustPlantFirst` + `TryGetPlantAim`）；依据 = 规格 `策划/策划案/CS1.6单机参考规格.md:123`（行为树 3 档共用、只换参数）/`:127`（交战：停/蹲 → 瞄准 → 射击 → **走位**）/`:130`（T 持包到 B 点 → 下包）；伴随项 = `tools/probes/bot-goal-gate.py` 的 A5 口径补全（第三条形态"产品自己的 `安放 C4` L3"）', '不消除：这是实现缺陷，已在本片修掉；本条同时登记两件**长期**事项 —— ① "bot 交战走位 / 持包推进"是**本项目新增行为**（A 无 bot AI），逐行对齐 PodBot / CZ bot 源码时复核（同 #58 口径）；② 闸门 A5 的口径**由本片变更**（旧口径只扫 log 流的 `TPLANTED`，那是 rows 流 token ⇒ 真下包也判红），变更已做两次自检（已知正确样本 PASS / `br` 与 `bu-r4-prefix` 仍 FAIL）'),
      ('82', '判定行 G17 引用的共享取证帧 `22_slot2_pistol.png`（09-22 13:04，1920×1080）早于其实现文件 `Module/CameraRig/FirstPersonCamera.cs`（本片 2026-09-23 只加了 `hideFlags`）', '`hideFlags` 只影响编辑器 Game view 的图标叠加层、**不改渲染结果**（采集 = `capture_game_view --source screen`，1920×1080）：**同一冻结帧**的游戏后缓冲在"图标宿主全 `HideInHierarchy`"与"全 `None`（= 修复前）"两态下**逐字节相同**（MD5 `5CA566106A8006D24369C7A4ACBE2E59`，均 2406775 bytes）⇒ 该改动不可能改变这一帧的画面内容；且该帧被 H1~H15 / G4 / G17 共 **17 行**共同引用，重采需复现 round1 出生点（USP + Buy Zone + $150）且会用另一状态帧覆盖 17 行判据 ⇒ 收益远小于风险。', '**主锚（工程内、永久）** `client/Assets/Scripts/Module/CameraRig/FirstPersonCamera.cs:415`、辅助证据 `.ai-tmp/screenshots/buv-bb-icons-hidden.png` + `buv-bb-icons-visible.png`（同一冻结帧、`capture_game_view --source screen` 1920×1080）、**裁定出处** `.ai-tmp/test/dispatch-log.tsv:118`（`# adjudicated:` 行；⛔ 不作唯一依据 —— `.ai-tmp/**` 会随收尾清理，判据自足性由本行「为什么」列承担）｜【片BW-E 落源后修正（仅此一处）】原稿此处引 `.ai-tmp/test/buv-void-frames.tsv`，该文件已被 `bu-v` 收尾清掉 ⇒ 改指裁定行；「为什么」列的文字未改', '该帧因其它理由重采时自然消除（或 H1~H15/G4/G17 任一并重采时）；在此之前 G17 的判定保持有效'),
@@ -2288,7 +2456,7 @@ DIF = [
      ('84', '`Module/CameraRig/FirstPersonCamera.cs:414` 用 `new GameObject("CsFpsCamera")` 自建第一人称相机宿主', '舞台场景由生成器产出、不保证场上有相机；没有相机 = 进图黑屏 + 与 `Camera.main` 抢画面（该文件 :29-31 注释）。引擎 `Game.Pool.Spawn` 需要**已注册的预制体键**、`Game.Entity.Create` 需要 objectID/typeID 且它是"服务端实体视图"，两者都不是「客户端常驻单例对象」的设施 ⇒ 无替代（本片已实测：探针 39 处里没有可复用的引擎门面调用）', '`client/Assets/Scripts/Module/CameraRig/FirstPersonCamera.cs:414`', '引擎提供「创建常驻单例对象」的门面后消除'),
      ('85', '`Module/CameraRig/FirstPersonCamera.cs:416` 用 `Object.DontDestroyOnLoad(go)` 让该相机常驻', '同上：相机必须跨场景存活（比赛切图 / 回菜单再进图时不能重建，否则 `_camera` 引用失效）；⛔ 不能用 `HideAndDontSave` 替代（会改生命周期语义，见同文件 :415 一带注释）', '`client/Assets/Scripts/Module/CameraRig/FirstPersonCamera.cs:416`', '同 BU-V-2'),
      ('86', '`Module/Combat/CombatSelfTest.cs:291` 用 `new GameObject` 造自检受击体', '自检要造"能挡射线的碰撞体"给射线断言用（没有碰撞体则 hits=0，命中归属判不了）；自检是 Play 内一次性链路，引擎无「临时碰撞体对象」设施。本片已同时加 `HideFlags.HideInHierarchy`（:294）并用 finally `DestroyImmediate`（:282-285）⇒ 不残留、不画图标（BotSelfTest.cs 同形，其 basename 已在登记表内）', '`client/Assets/Scripts/Module/Combat/CombatSelfTest.cs:291`', '引擎提供临时对象/测试夹具门面后消除'),
-     ('87', '5 行跨维度交叉判定行（**3176 D7×D12 / 3268 D8×D6 / 3302 D9×角色类型 / 3373 D11×上下文 / 3753 S1×D10**）的证据列**没有单一可复核锚点**', '这 5 行的判据是**多个文件上的"布尔与"**（`PlayBGM && StopBGM` / `not search(hit_wall)` / `push_code && push_attached && sep_ok` / `inputAllowed&#124;NonBlockingPanels` / `HitHead&#124;HitChest`），载体列 = `跨维度因果对`、出处列 = skill 文档 `patterns/full-coverage-audit.md §4` ⇒ **工程侧没有单一产物可指**（`verify.ps1` 第 39 项要求锚点指向"被测程序自己写出来的东西"）。⛔ 不给它们编单点锚点（`reference/anti-gaming.md` §三：编锚点 = 造假，比红更严重）', '`tools/probes/enumerate-entities.py` 的 `CROSS` 表（`CROSS = [` 起；5 条分别 L1509 / L1498 / L1501 / L1512 / L1515）；判据原文见本行「为什么」列', '给「多文件锚点」定出**合法写法**时（方向 = `A:12 && B:34`，其中**每一项都必须能逐个打开验证**）；⛔ 本轮不把它写进生成器'),
+     ('87', '5 行跨维度交叉判定行的「多文件锚点」只被**机械复核第一项**（3176 D7×D12 / 3268 D8×D6 / 3302 D9×角色类型 / 3373 D11×上下文 / 3753 S1×D10）', '这 5 行的判据是**多个文件上的"布尔与"**（`PlayBGM && StopBGM` / `ClassifyImpact && 弹着音 hit_wall` / `TryResolve && SeparateFromOtherActors && sep_ok` / `inputAllowed && NonBlockingPanels` / `HitHead && HitChest`）、载体列 = `跨维度因果对` ⇒ 工程侧**没有单一产物可指**。片FX-ALL 按本行原定的「处置方向」把**合法写法**落了地：证据列写 `（多文件锚点：A:<行> && B:<行>）`，每一项都是**现算的** `文件:行号`（生成器 `CROSS_ANCH` 表 + `code_site()` 现场解析，⛔ 绝不写死 —— 行号随插入漂移）⇒ `verify.ps1` 第 39 项对这 5 行不再红。**残余（本行唯一还成立的一半）**：第 39 项的实现（`tools/probes/audit-verdict-rows.py` 的 `PATHLINE_RE` + `classify_anchor()`）只取**首个** `path:line` 命中 ⇒ 第二项及以后**不被机械复核**，只有人逐个打开能验。⛔ 不许把这条读成"第二项可以编"：`code_site()` 解析不到的项会被**直接丢掉**（`_hits` 过滤空串），锚点凑不出来时该行自动退回挂 `（见允许差异 #87）` —— 判据自己会说话，不靠自律。', '`tools/probes/enumerate-entities.py` 的 `CROSS_ANCH` 表（键 = `CROSS` 的 dim，5 条）与同文件的 `code_site()`；机械取锚口径 = `tools/probes/audit-verdict-rows.py` 的 `PATHLINE_RE` / `classify_anchor()` / SECTION A 注释；闸门侧 = `tools/verify.ps1` 第 39 项 `evidence-anchor`', '给 `verify.ps1` 第 39 项加「多锚点逐项复核」时（方向 = 按 `&&` 切开锚点、**每一项**都必须解析到盘上的文件与在范围内的行号；判据 = 一个"第二项指向不存在的文件"的样本必须被判红）；⛔ 本轮不改闸门'),
     ]
 
 # ============================================================================

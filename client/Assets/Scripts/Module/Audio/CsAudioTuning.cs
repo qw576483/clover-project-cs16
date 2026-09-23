@@ -52,31 +52,61 @@ namespace Cs16.Module.Audio
         /// （映射见 <c>client/资源欠缺清单.md:32</c> 第 6 项）。</summary>
         public const string Jump = "sfx/jump";
 
-        /// <summary>跑一步的距离（米）——脚步声按"走过的距离"触发，而不是按固定时间。
-        /// 出处：**本项目新增**（原版的脚步触发口径在 GoldSrc <c>pm_shared.c</c> 的
-        /// <c>PM_PlayStepSound</c>，该载体不在盘 —— <c>原版资源/cs16src</c> 已空，见
-        /// <c>client/资源欠缺清单.md:76</c> 第 17 项；已登记 <c>策划/差异登记.tsv</c>）；
-        /// 现值 = 与 <c>CsConst.SpeedKnife 5.4 m/s</c> 下的步频配平得出。</summary>
-        public const float StepDistanceRun = 0.62f;
+        // ------------------------------------------------------------------
+        //  脚步节拍（片FX-ALL 2026-09-23：按原版 pm_shared.c 逐行对账后重做）
+        //
+        //  原版是**时间制**：`PM_ReduceTimers` 每帧 `flTimeStepSound -= cmd.msec`，
+        //  `PM_UpdateStepSound` 在冷却归零后重新装填冷却并放音 ⇒ 跑得越快步幅越大。
+        //  本工程 2026-09-23 之前是**距离制**（累计位移 >= 0.62 m 触发，0.16 s 兜底），
+        //  同一速度下两者步频差约 1.8 倍 ⇒ 已按原版整组换成时间制（下面三条即新口径）。
+        //  实测（`tools/probes/step-sound-probe.py` 的 S1，v=SpeedRifle 4.4 m/s）：旧 6.00 Hz、
+        //  新 3.40 Hz，比 1.76 x —— 旧口径的步幅被钉在 0.62 m、又被 0.16 s 地面限流。
+        //  出处：`原版资源/hlsdk/pm_shared/pm_shared.c:500-639`（PM_UpdateStepSound）、
+        //  `:2400-2410`（PM_ReduceTimers，递减在 `:2404`）、调用点 `:2493`（PM_PlayerMove 内、PM_Duck 之后）。
+        //  单位换算：1 unit = 0.0254 m，见 `client/Assets/Scripts/Core/CsConst.cs:11-12`。
+        // ------------------------------------------------------------------
 
-        /// <summary>低于该水平速度就不算"在跑"（米/秒）。出处：**本项目新增**（音频层实现参数；
-        /// 原版对应量在 <c>pm_shared.c</c>，载体不在盘 ⇒ 同上，已登记 <c>策划/差异登记.tsv</c>）。</summary>
-        public const float StepMinSpeed = 1.2f;
+        /// <summary>低于该速度就不算"在跑"（米/秒）= 原版 `PM_UpdateStepSound` 的
+        /// `if (speed &lt; 150)`（GoldSrc units/s）x 0.0254 = <b>3.81 m/s</b>。
+        /// 出处：`原版资源/hlsdk/pm_shared/pm_shared.c:519`。
+        /// <para>原版量的是 `Length(pmove-&gt;velocity)`（三维模长），本工程同此口径（见 AudioModule）。
+        /// CS 里 Shift 慢走约 0.42 x 5.4 = 2.27 m/s、蹲行约 0.34 x 5.4 = 1.84 m/s 都低于 3.81
+        /// ⇒ **"慢走/蹲行无声"在原版就是这一行给的**（不是另有一条"Shift 静音"规则）。</para></summary>
+        public const float StepMinSpeed = 3.81f;
 
-        /// <summary>两步之间的最短间隔（秒）——防止贴墙抖动/高频刷音。出处：**本项目新增**
-        /// （高频防护参数，原版无对应量；与 <see cref="MaxConcurrentPerClip"/> 同属引擎
-        /// <c>ISoundManager</c> 闸门的使用侧参数）。</summary>
-        public const float StepMinInterval = 0.16f;
+        /// <summary>一步之后的冷却（毫秒）= 原版 `flTimeStepSound = 300`。
+        /// 出处：`原版资源/hlsdk/pm_shared/pm_shared.c:567`~`:626`（材质 switch 的 10 个分支，`:626` 是 default）；
+        /// 另一处同值在 `:556`（脚部涉水 SLOSH 分支）。⚠️ 这一句在原文里是**多处同值**，不是单一出处。
+        /// <para><b>这一条就是节拍本身</b>：冷却制 ⇒ 同一冷却下跑得越快步幅越大，
+        /// 而不是"每 0.62 m 一步"。</para></summary>
+        public const float StepCooldownConcreteMs = 300f;
+
+        /// <summary>速度不达标时的冷却（毫秒）= 原版 `flTimeStepSound = 400`
+        /// （`speed &lt; 150` 分支：只推冷却、不发声）。出处：`原版资源/hlsdk/pm_shared/pm_shared.c:521`。</summary>
+        public const float StepCooldownSlowMs = 400f;
+
+        /// <summary>蹲行时的冷却附加（毫秒）= 原版 `flTimeStepSound += 100`。原版那一行的条件是
+        /// `if (flags &amp; FL_DUCKING || fLadder)`，本工程只有蹲、没有梯子。
+        /// 出处：`原版资源/hlsdk/pm_shared/pm_shared.c:630-632`。</summary>
+        public const float StepDuckingExtraMs = 100f;
 
         /// <summary>别人的脚步声的 3D 播放距离（米）——超过就不播（省音源、也符合听觉直觉）。
         /// 出处：**本项目新增**（音频层实现参数，原版无对应量）。</summary>
         public const float StepHearDistance = 26f;
 
-        /// <summary>落地判定：落地前竖直速度低于它才算"摔了一下"（米/秒）。出处：**本项目新增**
-        /// —— 原版 GoldSrc 有 <c>PLAYER_FALL_PUNCH_THRESHHOLD 350</c> units/s（= 8.89 m/s，用于"落地屏抖"），
-        /// 但那是**屏抖**阈值、不是"落地音"阈值，且该载体（<c>pm_shared.c</c>）不在盘 ⇒
-        /// 本值按"落地音该在哪一档响"自定，并登记 <c>策划/差异登记.tsv</c>。</summary>
-        public const float LandMinFallSpeed = 5.5f;
+        /// <summary>落地判定：落地前的下落速率超过它才出声（米/秒）= 原版 `PM_CrashLand` 的
+        /// `else if (flFallVelocity &gt; PLAYER_MAX_SAFE_FALL_SPEED / 2)` = 580 / 2 = <b>290 units/s</b>
+        /// x 0.0254 = <b>7.366 m/s</b>。
+        /// 出处：阈值行 `原版资源/hlsdk/pm_shared/pm_shared.c:2243`、宏 `:125`
+        /// （`PLAYER_MAX_SAFE_FALL_SPEED 580`）、`flFallVelocity = -velocity[2]` 见 `:2477`
+        /// （= 下落速率的**大小**，与本工程取 `-Velocity.y` 同口径）。
+        /// <para>⚠️ 紧邻的下一分支 `else if (flFallVelocity &lt; PLAYER_MIN_BOUNCE_SPEED)`（宏值 350，`:128`）
+        /// 在原版里**永远走不到** —— 前一条 `&gt; 290` 已经把 290~350 全拦下 ⇒ 真正的阈是 <b>290</b>，不是 350。
+        /// 音量两档（`&gt; 580` 记 1.0 / `&gt; 290` 记 0.85，`:2239-2246`）本工程**未复现**：
+        /// `SfxService.Play` 没有音量形参 —— 本条只对齐"有没有这一档"。</para>
+        /// <para>⚠️ 落地音这个**采样**本身仍是"本项目新增"：A（CS 1.6）没有独立落地音，GoldSrc 落地复用
+        /// 脚步采样（见 `client/资源欠缺清单.md:33` 第 7 项）⇒ 本工程用 `player/pl_step4.wav` 代替。</para></summary>
+        public const float LandMinFallSpeed = 7.366f;
 
         // ==================================================================
         //  命中 / 死亡

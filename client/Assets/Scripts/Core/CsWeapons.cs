@@ -45,6 +45,19 @@ namespace Cs16.Core
         public string SoundFire = "fire";
         public string SoundReload = "reload";
 
+        /// <summary>
+        /// 差异 #68：<b>attack2（右键 / 次级开火）能切换"消音器 on/off"</b>。
+        /// 出处 = 原版 <c>client.dll</c> 的 `weapons/usp_silencer_on|off.wav`、`weapons/m4a1_silencer_on|off.wav`
+        /// （详见 <see cref="CsWeapons"/> 里 <c>MarkAttack2Capabilities</c> 的出处表）。⛔ 默认 false = 无出处不接。
+        /// </summary>
+        public bool CanSilence;
+
+        /// <summary>
+        /// 差异 #68：<b>attack2（右键）能切换"连发模式"</b>。
+        /// 出处 = 原版 <c>client.dll</c> 的 `weapons/famas-burst.wav` + `#Switch_To_BurstFire`。
+        /// </summary>
+        public bool CanBurst;
+
         public bool HasSlot => (int)Slot > 0;
         public float SecondsPerShot => Rpm > 0 ? 60f / Rpm : 0f;
     }
@@ -141,6 +154,45 @@ namespace Cs16.Core
         static CsWeapons()
         {
             foreach (var w in _all) _byId[w.Id] = w;
+            MarkAttack2Capabilities();
+        }
+
+        /// <summary>
+        /// 差异 #68：attack2（右键 / 次级开火）的**逐武器语义**由这里唯一持有。
+        ///
+        /// <para><b>为什么用"打标记"而不是给 <c>W(...)</c> 加形参</b>：那要给 30 个调用点各补两个恒为 false
+        /// 的实参（噪声 + 一次改错就整表错位）；而**有出处的只有 4 把**，一条方法反而看得清、也好核。</para>
+        ///
+        /// <para><b>出处</b>（降级链第 2 级「可执行里的常量/串」；载体 = 原版 <c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>，
+        /// 1,093,128 B，**已在盘**）。下列为字符串级证据，括号内是**文件偏移**（可复算：
+        /// <c>tools/probes/attack2-probe.py</c> 会在该偏移处逐字重取一遍）：</para>
+        /// <list type="bullet">
+        /// <item><c>weapons/usp_silencer_off.wav</c> (0x0e3804) · <c>weapons/usp_silencer_on.wav</c> (0x0e3824)</item>
+        /// <item><c>weapons/m4a1_silencer_off.wav</c> (0x0e308c) · <c>weapons/m4a1_silencer_on.wav</c> (0x0e30ac)</item>
+        /// <item><c>weapons/famas-burst.wav</c> (0x0e26f4) · <c>#Switch_To_BurstFire</c> (0x0e27d4)</item>
+        /// <item><c>+attack2</c> / <c>-attack2</c>（attack2 是**原版真输入通道**，不是本工程发明的）</item>
+        /// <item><c>#Cstrike_TitlesTXT_M4A1_Short</c>（客户端对"消音版 M4A1"有独立标题 ⇒ 状态确实存在）</item>
+        /// </list>
+        /// <para>⇒ 可证的语义只有两句：「**USP / M4A1 有一个消音器 on/off 状态**」「**Glock18 / FAMAS 有可切换的
+        /// 连发模式**」，而 attack2 就是切换它们的那条输入。</para>
+        ///
+        /// <para>⚠️ <b>仍未证</b>（⛔ 不许凭观感补）：消音后伤害/散布的**具体数值**、连发的**发数与节奏**、
+        /// 以及逐武器的判定分支本身（要反汇编 <c>client.dll</c> 才定得下来）⇒ 本工程只落地
+        /// 「状态可切换 + 切换可观测」，数值影响留缺口在 <c>策划/差异登记.tsv</c> #68。</para>
+        /// </summary>
+        private static void MarkAttack2Capabilities()
+        {
+            void Set(string id, bool silence, bool burst)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.CanSilence = silence;
+                def.CanBurst = burst;
+            }
+
+            Set(Usp, silence: true, burst: false);
+            Set(M4A1, silence: true, burst: false);
+            Set(Glock18, silence: false, burst: true);
+            Set(Famas, silence: false, burst: true);
         }
 
         public static IReadOnlyList<CsWeaponDef> All => _all;

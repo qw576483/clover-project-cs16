@@ -15,6 +15,12 @@ namespace Cs16.Module.Match
         public bool Walk;      // Shift
         public bool Fire;      // 左键按住
         public bool Zoom;      // 右键（AWP/Scout 开镜）
+        /// <summary>
+        /// 右键的**按下沿**（差异 #68）：USP·M4A1 切换消音器、Glock18·FAMAS 切换连发模式。
+        /// <para>⛔ 必须是"本帧刚按下"（采集方填 <c>GetKeyDown</c>）而**不是**按住 —— 原版的 attack2 是
+        /// **切换型**（按一下切一次），按住会在每一帧翻转一次。出处见 <c>CsWeapons.MarkAttack2Capabilities</c>。</para>
+        /// </summary>
+        public bool Attack2;
         public float Yaw;      // 视角水平角（度，由相机模块算好）
         public float Pitch;    // 视角俯仰角（度）
     }
@@ -137,6 +143,15 @@ namespace Cs16.Module.Match
         event Action OnMatchEnd;
         /// <summary>（受击者, 伤害, 是否爆头, 是否致死）</summary>
         event Action<CsActor, int, bool, bool> OnDamaged;
+        /// <summary>
+        /// （受击者, 命中点, 弹道方向, 是否爆头）—— **子弹确实打中了角色**时触发，供表现层出受击血迹。
+        ///
+        /// <para><b>为什么不能拿 <see cref="OnDamaged"/> 代替</b>：① 它带的是**伤害值**不是命中点，
+        /// 而原版血迹贴在"命中点后面的那个面"上（没有命中点就贴不准）；② 友好伤害关闭 / 护甲全吸收时
+        /// <c>OnDamaged</c> 根本不触发，但"打中了"这件事在原版照样出血（血与扣血是两件事）；
+        /// ③ 它按"结算后"发，本事件按"命中时"发。</para>
+        /// </summary>
+        event Action<CsActor, Vector3, Vector3, bool> OnBulletHit;
         /// <summary>（行为者, 文本）—— 无线电/系统提示，用于 HUD 消息栏。</summary>
         event Action<CsActor, string> OnMessage;
         /// <summary>炸弹状态变化（下包/拆包/爆炸）时触发，供音效与 HUD。</summary>

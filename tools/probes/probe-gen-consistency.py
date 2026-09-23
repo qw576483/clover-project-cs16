@@ -114,6 +114,25 @@ KNOWN = [
     ('片TOOLS-CHAIN  batch7 的 #71 历史路径标注补落（2026-09-23）',
      (1940, 1968),
      ['cs16_anim.py', 'models/player']),
+    #    本条归属 = **片FX-ALL**（2026-09-23 收尾：把 §G 里 **7 条**「结论正文已过期」的判定行
+    #      改成"已落地"版，逐条补上并排图格号；⛔ 只重写**结论文本**，前 7 个元素逐字保留）。
+    #      依据① **内容自述标记**（复核命令，数字是实测的）：
+    #             `grep -c "fx-表现联络图.png" tools/probes/enumerate-entities.py` ⇒ 5
+    #             `grep -c "sliceFX-contact-sheet.manifest.tsv" tools/probes/enumerate-entities.py` ⇒ 2
+    #             ⇒ 四个标记 = `fx-表现联络图.png` / `sliceFX-contact-sheet.manifest.tsv` /
+    #               `片FX-ALL 2026-09-23 落地` / `格 **10**`（换弹那一格）。
+    #      依据② **窗口账本**（`.ai-tmp/test/gate-selftest-window.tsv`）里本片这次写窗：
+    #             `片FX-ALL ... 改生成器 7 条判定行的结论文本 ...`
+    #             （start/end **同一命令内**配对）⇒ 生成器 mtime 落在该窗口内。
+    #      ⛔ 只凭依据①**不算**成立（判据不做语义判断，人也不许单凭自述）。
+    #      ⚠️ 窗口 = base[1590..1705]：本片 7 个 hunk 实测落在
+    #         base[1596..1598] / [1604..1606] / [1612..1616] / [1621..1624] /
+    #         [1668..1674] / [1680..1684] / [1697..1701]，窗口把它们全包住；
+    #         且与已有 9 个窗口互不重叠 ⇒ 放进列表的位置不影响归属。
+    ('片FX-ALL  §G 七条判定行的“已落地”结论（含并排图格号，2026-09-23）',
+     (1590, 1705),
+     ['片FX-ALL 2026-09-23 落地', 'fx-表现联络图.png',
+      'sliceFX-contact-sheet.manifest.tsv', '格 **10**']),
 ]
 
 

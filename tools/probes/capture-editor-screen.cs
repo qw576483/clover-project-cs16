@@ -46,6 +46,12 @@ internal static class BvWin32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
+    // 2026-09-23 实测：`HWND_TOPMOST + SWP_SHOWWINDOW` **拉不回最小化的窗口**——编辑器一旦被
+    // 最小化，窗口矩形恒为 `-32000,-32000 160x28`，`GameViewRect()` 跟着跑到屏外，`BitBlt`
+    // 于是采到**纯黑**（三张 `_abr-*.png` 各 10798 B、meanRGB=0.00、sha256 三同）。补这两个
+    // API 才能做到"先还原、再置顶"。
+    [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int nCmdShow);
+    [DllImport("user32.dll")] public static extern bool IsIconic(IntPtr h);
     public delegate bool EnumProc(IntPtr h, IntPtr lp);
     [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left, Top, Right, Bottom; }
 }
@@ -53,6 +59,7 @@ internal static class BvWin32
 public static class Entry
 {
     private const uint SWP_NOSIZE = 0x1, SWP_NOMOVE = 0x2, SWP_SHOWWINDOW = 0x40;
+    private const int SW_RESTORE = 9;   // ShowWindow 的"还原"命令码：最小化/最大化 -> 正常
     private static readonly IntPtr HWND_TOPMOST = new IntPtr(-1);
     private static readonly IntPtr HWND_NOTOPMOST = new IntPtr(-2);
 
@@ -220,9 +227,14 @@ public static class Entry
     public static string Raise()
     {
         var h = MainWindow();
+        // ⛔ 顺序不能反：只 SetWindowPos(TOPMOST) 时最小化窗口纹丝不动，后面 Shot 采到的就是
+        //    屏外那片黑。先 SW_RESTORE 把窗口拉回屏内，再置顶；wasIconic/restore 一并回读，
+        //    调用方据此判断"这次 raise 到底有没有把窗口弄回来"（不再靠猜）。
+        var iconic = BvWin32.IsIconic(h);
+        var restore = BvWin32.ShowWindow(h, SW_RESTORE);
         var ok1 = BvWin32.SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
         var ok2 = BvWin32.SetForegroundWindow(h);
-        return "raise hwnd=" + h + " topmost=" + ok1 + " foreground=" + ok2;
+        return "raise hwnd=" + h + " wasIconic=" + iconic + " restore=" + restore + " topmost=" + ok1 + " foreground=" + ok2;
     }
 
     public static string Drop()
@@ -260,6 +272,15 @@ public static class Entry
         var s = ReadSpec();
         string path, mode;
         if (!s.TryGetValue("path", out path) || path.Length == 0) return "spec missing path=";
+        // ⛔ 判据资产**不许静默产出名字不是 .png 的产物**（2026-09-23 实测的真实缺陷）：
+        //    spec 文件里若把 `path=… mode=screen raise=0` 写成**同一行**（拼行缺陷），`d["path"]`
+        //    拿到的就是带空格的长值，截出来的文件名会变成 `xxx.png mode=screen raise=0`。
+        //    该名字不以 `.png` 结尾 ⇒ 正常 glob / `Get-ChildItem -Filter *.png` 看不见它，
+        //    **但 Windows 的 8.3 短名（`_PROBE~1.PNG`）会让 `-Filter *.png` 仍然匹配到它**
+        //    ⇒ 它会以「畸形名字」混进 `.ai-tmp/screenshots` 的引用审计（实测：审计确实列出了它，
+        //    而名字里的空格无法在表里写清）。拒绝 >> 静默产出：返回错误串，调用它的驱动立刻看得到。
+        if (!path.EndsWith(".png", StringComparison.OrdinalIgnoreCase) || path.IndexOf(' ') >= 0)
+            return "spec path= must be one .png path with no spaces (got: " + path + ")";
         if (!s.TryGetValue("mode", out mode) || mode.Length == 0) mode = "gameview";
         mode = mode.ToLowerInvariant();
 
@@ -267,6 +288,7 @@ public static class Entry
         var h = MainWindow();
         if (s.ContainsKey("raise") && s["raise"] == "1")
         {
+            BvWin32.ShowWindow(h, SW_RESTORE);   // 同 Raise()：最小化窗口不还原就还是采到屏外
             BvWin32.SetWindowPos(h, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
             System.Threading.Thread.Sleep(1200);   // 让 DWM 完成合成；主线程短暂阻塞是可接受的代价
             raised = true;

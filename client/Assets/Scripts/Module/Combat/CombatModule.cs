@@ -79,7 +79,23 @@ namespace Cs16.Module.Combat
             _view = view;
             _fx.Init();
             _nades.Init(_fx);
+
+            // 受击血迹（差异 #74）：订阅在**比赛模拟**上而不是只订阅"本地玩家的射线"——
+            // 机器人的子弹也要出血（原版里谁打中谁都会出血），而且只有模拟知道"确实命中了角色"。
+            if (_match != null) _match.OnBulletHit += OnBulletHit;
+
             _log.Always("战斗模块就绪（射线由本模块负责，伤害结算归比赛模拟）");
+        }
+
+        /// <summary>
+        /// <see cref="ICsMatch.OnBulletHit"/> 的处理：一枪打在角色身上 → 命中点血雾 + 后面的面上贴血迹。
+        /// </summary>
+        private void OnBulletHit(CsActor victim, Vector3 point, Vector3 direction, bool headshot)
+        {
+            var placed = _fx.BloodImpact(point, direction, headshot);
+            var who = victim != null ? victim.Name : "?";
+            _log.Info("hit.blood",
+                $"命中 {who}（爆头={headshot}）于 {point} → 血迹贴花 {(placed ? "已贴" : "未贴（后面没有面）")}");
         }
 
         /// <summary>玩家设置：空仓自动换弹。</summary>
@@ -126,6 +142,7 @@ namespace Cs16.Module.Combat
 
         private void OnDestroy()
         {
+            if (_match != null) _match.OnBulletHit -= OnBulletHit;
             _nades.Dispose();
             _fx.Dispose();
         }
@@ -172,6 +189,10 @@ namespace Cs16.Module.Combat
             {
                 // ---- 右键开镜（模拟内部再按武器大类过滤：只有狙击枪才算开镜）----
                 cmd.Zoom = input.GetKey(GameKey.MouseRight);
+
+                // ---- 右键**按下沿** = attack2（差异 #68）：USP·M4A1 拆装消音器、Glock18·FAMAS 切连发。
+                // ⛔ 必须 GetKeyDown（切换型输入）：用 GetKey(按住) 会在每一帧翻转一次。
+                cmd.Attack2 = input.GetKeyDown(GameKey.MouseRight);
 
                 // ---- 左键开火（门槛在模拟里也有一份，这里只是为了不产生必然失败的开火意图）----
                 if (input.GetMouseButton(0) && CanFire(local, def, match))

@@ -59,6 +59,29 @@ namespace Cs16.Module.Match
         // ---- 运行时（表现/输入）----
         public float NextFireTime;
         public float ReloadEndTime;
+
+        /// <summary>
+        /// 换弹**请求序号**：单调递增，只在 <see cref="CsInventory.Reload"/> 的**成功分支**自增一次。
+        /// <para><b>为什么要有它</b>（差异 #72「换弹动画会丢」）：<c>ReloadEndTime</c> 是**截止时间**，
+        /// 不是"开始事件"——它会在 ① 换弹完成（<c>CsMatch.TickActorTimers</c> 结算时归零）、
+        /// ② 切枪（<c>CsInventory.SwitchWeapon</c>）时被**归零**，③ 同一帧内"开始 → 完成"（掉帧、
+        /// 时间跳变时的 <c>+= delta</c>）而**根本没有中间采样**。表现层若拿「<c>ReloadEndTime</c> 比上一帧大」
+        /// 当边沿，就会在这三种序列上整段丢掉换弹动画（用户报的"有时候会丢"，"有时候"正是这些序列）。</para>
+        /// <para>序号只增不减 ⇒ 表现层判「变了没」必然感知得到；且它**与成功换弹次数一一对应**，
+        /// 所以「每次成功换弹都必须播到一次 reload」这件事可以被断言（见 <c>CombatSelfTest</c>）。</para>
+        /// </summary>
+        public int ReloadSeq;
+
+        /// <summary>
+        /// 差异 #68：当前武器的**消音器**是否装上（只对 <c>CsWeaponDef.CanSilence</c> 的武器有意义）。
+        /// <para>刻意**不**在切枪时清零：原版里消音器是装在**那把枪**上的（换走再换回来仍是装着的），
+        /// 而本工程只有一把主武器槽 + 一把手枪槽 ⇒ 挂在角色上、按当前手持武器是否 CanSilence 决定是否读它。</para>
+        /// </summary>
+        public bool Silenced;
+
+        /// <summary>差异 #68：当前武器是否处于**连发模式**（只对 <c>CsWeaponDef.CanBurst</c> 的武器有意义）。</summary>
+        public bool BurstMode;
+
         public float SwitchEndTime;
         public int ConsecutiveShots;    // 连发计数（后坐力累积）
         public float RecoilPitch;       // 当前后坐力抬升（度）

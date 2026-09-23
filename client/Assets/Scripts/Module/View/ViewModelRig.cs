@@ -44,9 +44,15 @@ namespace Cs16.Module.View
 
         // ---- 只读快照（用于检测"发生了什么"）----
         private float _preNextFireTime;
-        private float _preReloadEndTime;
+        private int _preReloadSeq;
         private string _preWeapon;
         private bool _haveSnapshot;
+
+        /// <summary>第一人称播过几次换弹（差异 #72 的断言用）。</summary>
+        private int _reloadAnimsPlayed;
+
+        /// <summary>第一人称播过几次换弹（差异 #72 的断言口：成功换弹一次 ⇒ +1）。</summary>
+        public int ReloadAnimsPlayed => _reloadAnimsPlayed;
 
         // ---- 动画状态 ----
         private Animator _animator;
@@ -148,7 +154,7 @@ namespace Cs16.Module.View
             _haveSnapshot = false;
             _preWeapon = local.ActiveWeapon;
             _preNextFireTime = local.NextFireTime;
-            _preReloadEndTime = local.ReloadEndTime;
+            _preReloadSeq = local.ReloadSeq;
         }
 
         // ==================================================================
@@ -379,7 +385,7 @@ namespace Cs16.Module.View
                 _haveSnapshot = true;
                 _preWeapon = local.ActiveWeapon;
                 _preNextFireTime = local.NextFireTime;
-                _preReloadEndTime = local.ReloadEndTime;
+                _preReloadSeq = local.ReloadSeq;
                 return;
             }
 
@@ -389,13 +395,21 @@ namespace Cs16.Module.View
                 _shotIndex = 0;
             }
 
-            // 换弹：ReloadEndTime 前推 = 开始换弹
-            if (local.ReloadEndTime > _preReloadEndTime + 0.0001f)
+            // 换弹：ReloadSeq 变了 = 开始换弹（差异 #72：原口径比 ReloadEndTime 时间戳，
+            // 会在"结算归零 / 切枪归零 / 同帧跨完"三种序列上漏掉整段动画）
+            if (local.ReloadSeq != _preReloadSeq)
             {
+                _preReloadSeq = local.ReloadSeq;
                 var st = ResolveState(CsViewTuning.VmStateReload);
-                if (st != null) { _anim.Play(st, 0f); _overrideState = st; }
+                if (st != null)
+                {
+                    _anim.Play(st, 0f);
+                    _overrideState = st;
+                    _reloadAnimsPlayed++;
+                    _log.Info("viewmodel.reload.play",
+                        $"第一人称播换弹 seq={local.ReloadSeq} 状态={st}（{_modelKey}）");
+                }
             }
-            _preReloadEndTime = local.ReloadEndTime;
 
             // 开火：NextFireTime 前推 = 确实打出了一发
             if (local.NextFireTime > _preNextFireTime + 0.0001f)

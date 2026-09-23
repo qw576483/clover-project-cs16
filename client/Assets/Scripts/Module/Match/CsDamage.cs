@@ -69,6 +69,14 @@ namespace Cs16.Module.Match
                     $"刀命中音 knife_hit @ {point}（命中 {victim.Name} 的 {box}）");
             }
 
+            // ---- 受击表现事件（差异 #74，片 FX-ALL 2026-09-23）----
+            // 位置在"确实命中了角色"之后、**任何伤害闸门之前**：原版"出血"与"扣血"是两件事 ——
+            // 友好伤害关闭 / 护甲全吸收时 OnDamaged 不会发，但子弹打在身上的血迹照样在。
+            // ⛔ 这里只**发事件**，本层不碰特效（表现归 Module/Combat）。
+            var hitDir = shooter != null ? point - shooter.EyePosition : Vector3.zero;
+            if (hitDir.sqrMagnitude < 0.000001f) hitDir = Vector3.down;   // 退化：没有射手（如环境）时按"血往下淌"
+            _m.RaiseBulletHit(victim, point, hitDir.normalized, box == CsHitbox.Head);
+
             var dmg = def.Damage * HitboxMultiplier(box);
 
             var falloff = 1f - def.FalloffPerMeter * Mathf.Max(0f, dist);
