@@ -43,7 +43,11 @@ foreach ($f in $all) {
   try { $t = [IO.File]::ReadAllText($f.FullName, [Text.Encoding]::UTF8) } catch { continue }
   $rel = $f.FullName.Substring($root.Length).TrimStart('\')
   $zone = 'OTHER'
-  if ($rel -match '^(策划|tools|client|docs)\\') { $zone = 'AUTH' }
+  # slice BW-G-R: the alternatives were written as a Chinese literal.  PS 5.1 reads a BOM-less
+  # .ps1 as ANSI, so that literal was mojibake AND the regex silently never matched the plan
+  # dir -- a zone silently misclassified, which is exactly the failure this build avoids.
+  $cPlanDirName = ([char[]]@(0x7B56, 0x5212) -join '')
+  if ($rel -match ('^(' + $cPlanDirName + '|tools|client|docs)\\')) { $zone = 'AUTH' }
   elseif ($rel -match '^\.ai-tmp\\') { $zone = 'TMP' }
   else { $zone = 'AUTH' }   # project-root files (README / verify logs) count as authoritative
   $texts += [pscustomobject]@{ Path = $f.FullName; Rel = $rel; Text = $t; Zone = $zone }

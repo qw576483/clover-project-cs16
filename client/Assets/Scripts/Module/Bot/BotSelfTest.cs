@@ -538,6 +538,9 @@ namespace Cs16.Module.Bot
         private static GameObject NewHitbox(long actorId, CsHitbox box, string suffix)
         {
             var go = new GameObject($"BotSelfTest_{actorId}_{suffix}");
+            // 自检受击体是**临时物**：两层保护 —— ① 编辑器 Gizmos 叠层不画它（HideInHierarchy 只改叠加层，
+            // ⛔ 不动物理：射线/命中判定照旧）② 用完整例逐个 DestroyImmediate（RunTier 的 finally）。
+            go.hideFlags = HideFlags.HideInHierarchy;
             var col = go.AddComponent<SphereCollider>();
             col.radius = box == CsHitbox.Head ? CsConst.PlayerRadius : CsConst.PlayerRadius * 2f;
             col.isTrigger = false;

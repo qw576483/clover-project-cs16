@@ -43,6 +43,7 @@ if (-not (Test-Path $Template)) {
     $fail++; Say 'FAIL' 'gate-sync' ('template not found: ' + $Template + ' -- pass -Template <path to verify-template.md>')
     exit 1
 }
+Say 'INFO' 'gate-template' ('comparing against ' + $Template)
 if ($Project -eq '') {
     $fail++; Say 'FAIL' 'gate-sync' 'pass -Project <project-root>'
     exit 1
@@ -88,6 +89,17 @@ foreach ($mm in [regex]::Matches($gTxt, "Say\s+'[A-Za-z\-]+'\s+'([a-z0-9\-]+)'")
 }
 $impl = @($impl | Sort-Object -Unique)
 Say 'INFO' 'gate-impl' ('project implements ' + $impl.Count + ' named check(s)')
+
+# -- 2b) a `planned` item that the project ALREADY implements is no longer "declared but not
+#        enforced yet". The classification above is read from the TEMPLATE alone, so without
+#        this line the report keeps calling an item "planned" after the project wired it up --
+#        exactly the "the rule was written, the gate was never wired, and nobody noticed"
+#        failure this script exists to prevent, just in the opposite direction. INFO only:
+#        whether the template flips the item to `required` is the template owner's call.
+$plannedDone = @($planned | Where-Object { $impl -contains $_ })
+if ($plannedDone.Count -gt 0) {
+    Say 'INFO' 'gate-planned-done' ('template still marks as planned, but the PROJECT now enforces: ' + ($plannedDone -join ', '))
+}
 
 # -- 3) compare: a declared item counts as done under its name OR its alias ------------
 $missing = @()

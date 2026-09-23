@@ -155,6 +155,23 @@ namespace Cs16.Module.Bot
         /// 出处：**本项目新增**（避障实现参数，A 无 bot AI）。</summary>
         public const float ProbeHoldSeconds = 0.5f;
 
+        /// <summary>
+        /// **换向迟滞（片BU-R3）**：保持中的偏角被判"不可走"时，必须**连续**持续这么久才允许丢开它（秒）。
+        /// 单帧（或少数几帧）的"不可走"**不算数** —— <see cref="WalkableAhead"/> 的判定落在
+        /// <c>position + dir × ProbeClearance/ProbeDistance</c> 两个采样点上，机器人来回蹭 0.1m 就会让这两个
+        /// 采样点跨过格子边界、结论翻转；按单帧判定换向 = 方向在 ~10 次/秒 的速率上翻。
+        ///
+        /// <para><b>取值理由（离线复算，不是手感）</b>：噪声周期量自产品自己的 <c>_diagFlips</c> 计数 ——
+        /// <c>[BOTFLIP]</c> 的闸是 0.5s/条，而每条之间累计翻转数 +3~+5（实测 Darrell/Scuzzy）
+        /// ⇒ 单次翻转间隔 ≈ 0.5/5 ≈ <b>0.1s</b>。取它 ⇒ 恰好覆盖**一个完整噪声周期**，
+        /// 单帧抖动推不翻；而 0.1s × 实测行走速度 4.7m/s ≈ 0.47m &lt; 一格(1m)，真墙照样在半个格内被认出来。
+        /// 参数扫描（<c>tools/probes/bu-r3-avoid-replay.py</c> 第 4 节）显示 0~0.4s 全落在同一平台
+        /// （换向率 0.1 次/秒 不变）⇒ 0.1s 在平台**内部**，不是拐点上的刀锋值。</para>
+        ///
+        /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI；同族参数 = <see cref="ProbeHoldSeconds"/>）。</para>
+        /// </summary>
+        public const float AvoidBadDirSeconds = 0.1f;
+
         /// <summary>卡住检测间隔（秒）。出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const float StuckCheckInterval = 0.5f;
 
@@ -207,6 +224,22 @@ namespace Cs16.Module.Bot
         /// <summary>连续判定"卡住"达到这次数就**重新选目标**（而不是继续跳过路点/原地换向）。
         /// 出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</summary>
         public const int StuckReplanStreak = 2;
+
+        /// <summary>
+        /// 两次"因卡住而重新选目标"之间的最小间隔（秒）—— 防**目标反复横跳**。
+        ///
+        /// <para>为什么必须有（片BU 实测根因）：<c>StuckCheckInterval</c>=0.5s × <c>StuckReplanStreak</c>=2
+        /// ⇒ 最早 1.0s 就能攒够一次升级；而每次升级都换一个**全新的远目标**，于是
+        /// <c>.ai-tmp/test/br-hold-plant-log.tsv</c> 里出现 <c>stuck-escalate=70</c>/回合、目标在
+        /// <c>Route_Patrol</c> ↔ <c>Route_T_To_{A,B}</c> ↔ <c>Route_T_Mid</c> 之间每 ~2.5s 换一次
+        /// （换目标间隔 = 守点时长 2.5~4.8s），全回合净位移 net/total = 0.001~0.007 ⇒ 原地打转。</para>
+        ///
+        /// <para>取值理由：必须**大于**"走到一个候选目标所需的时间量级"，否则新目标还没走出结果就被换掉。
+        /// 取 6s ≈ 2× 三档里最长的守点时长（Easy 4.8s，见 <c>ObjectiveHoldSeconds</c>）。</para>
+        ///
+        /// <para>出处：**本项目新增**（防抖参数，A 无 bot AI；同族参数 = <see cref="StuckWarnMinInterval"/>）。</para>
+        /// </summary>
+        public const float StuckReplanCooldownSeconds = 6f;
 
         /// <summary>
         /// "这个方向走不动"的记忆时长（秒）：卡住时把当时提交的方向记下来，这段时间内不再往它推。
@@ -429,8 +462,15 @@ namespace Cs16.Module.Bot
         public const float PlantStopRadius = 1.5f;
 
         /// <summary>
-        /// 只有 <c>id % 它 == 0</c> 的 T 会去捡掉落的 C4（4 人一队时通常只有 1 个人去，避免全队扑向同一个点）。
+        /// 【片BU-R5 起**已废弃、不再被引用**，仅保留常量与出处以便回溯】
+        /// 旧口径：只有 <c>id % 它 == 0</c> 的 T 会去捡掉落的 C4（想让 4 人一队只出一个人，避免全队扑向同一个点）。
+        ///
+        /// <para>为什么废弃：实测（片BU-R5 L3）它挑的人**不是离 C4 最近的那个**，而且"最近的 T 编号不整除"
+        /// 时整条捡包分支一次都不进 ⇒ C4 躺到回合结束（`拾起了` = 0 条、A5 恒 0）。
+        /// 现行口径 = **离 C4 最近的那一个 T 去捡**（<c>CsBotBrain.IsElectedBombHunter</c>，唯一且确定），
+        /// 仍然只有一个人去，⛔ 不改掉落/拾取规则本身。</para>
         /// 出处：**本项目新增**（分工实现参数，A 无 bot AI）。
+        /// 替代口径的落点：<c>CsBotBrain.IsElectedBombHunter</c>。
         /// </summary>
         public const long BombHunterModulo = 4L;
 

@@ -140,7 +140,16 @@ def num(s):
 
 
 def main():
-    spec = os.path.join(ROOT, PLAN_DIR, SPEC_NAME)
+    # --plan-dir is the seam that makes this asset SAMPLABLE (added 2026-09-23).  WHY IT EXISTS:
+    # verify.ps1 called this script with no arguments, so it ALWAYS read the REAL plan dir -- measured:
+    # with a -PlanDir sandbox whose acceptance table had been replaced by ONE broken line, this item
+    # still printed "PASS -- all 21 aggregate claims equal the table body" (had it read the sandbox it
+    # would have said "no A..F acceptance sections found").  Any sample built on that seam would have
+    # been a FALSE TEST PASS: the test believed it measured A while it measured B.
+    spec_dir = os.path.join(ROOT, PLAN_DIR)
+    if '--plan-dir' in sys.argv:
+        spec_dir = os.path.abspath(sys.argv[sys.argv.index('--plan-dir') + 1])
+    spec = os.path.join(spec_dir, SPEC_NAME)
     if not os.path.exists(spec):
         print('FAIL: missing ' + spec)
         return 1

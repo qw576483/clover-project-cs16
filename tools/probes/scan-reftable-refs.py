@@ -156,13 +156,21 @@ LABEL = {
 
 
 class Scanner(object):
-    def __init__(self, root):
+    def __init__(self, root, plan_dir=''):
         self.root = os.path.abspath(root)
-        self.tbl = os.path.join(self.root, PLAN, REFTBL + '.md')
-        self.tbl2 = os.path.join(self.root, PLAN, DIFFREG + '.tsv')
+        # --plan-dir is the seam that makes this asset SAMPLABLE.  WHY IT EXISTS (measured
+        # 2026-09-23): verify.ps1 used to invoke this script with no arguments, so it always read
+        # the REAL plan dir -- while the gate self-test's samples inject their ghost carrier into a
+        # -PlanDir SANDBOX copy.  The samples therefore could not trip the item, and the item was
+        # blind to the override (the sandbox injection vanished into a file nothing read).
+        # NOTE: only the three PLAN files follow the override; carrier paths are still resolved
+        # against self.root, because a sandbox copy cites real project-relative carriers.
+        self.plan = os.path.abspath(plan_dir) if plan_dir else os.path.join(self.root, PLAN)
+        self.tbl = os.path.join(self.plan, REFTBL + '.md')
+        self.tbl2 = os.path.join(self.plan, DIFFREG + '.tsv')
         # Order matters for the report only; both are scanned identically.
         self.tables = [self.tbl, self.tbl2]
-        self.reg = os.path.join(self.root, PLAN, REGDOC + '.tsv')
+        self.reg = os.path.join(self.plan, REGDOC + '.tsv')
         self.by_name = {}
         self.n_files = 0
         self.refs = []          # (table, kind, carrier, nums_or_None, lineno)
@@ -443,10 +451,11 @@ class Scanner(object):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('--project', default='')
+    ap.add_argument('--plan-dir', default='', dest='plan_dir')
     ap.add_argument('--emit-registry', action='store_true')
     a = ap.parse_args()
     root = a.project or os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    return Scanner(root).run(a.emit_registry)
+    return Scanner(root, a.plan_dir).run(a.emit_registry)
 
 
 if __name__ == '__main__':

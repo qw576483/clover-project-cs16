@@ -406,7 +406,13 @@ namespace Cs16.Module.CameraRig
         {
             if (_camera != null) return;
 
+            // 编辑器 Game 视图的「Gizmos」叠层会给 **Camera / AudioListener** 各画一个图标
+            //（用户报的"喇叭"就在这台上：本对象同时挂 Camera 与 AudioListener）。
+            // HideInHierarchy 只改"编辑器叠加层画不画"：⛔ 不改渲染、⛔ 不动物理、⛔ 不影响 Camera.main
+            //（按 tag 查，与层级可见性无关）；本对象本就常驻，隐藏层级显示无副作用。
+            // ⛔ 不用 HideAndDontSave —— 那会改生命周期语义（它已经是 DontDestroyOnLoad 的）。
             var go = new GameObject(CameraObjectName);
+            go.hideFlags = HideFlags.HideInHierarchy;
             Object.DontDestroyOnLoad(go);
             _camera = go.AddComponent<Camera>();
             _camera.tag = "MainCamera";          // 让 Game.UI.FloatText / 其它模块的 Camera.main 拿到它
@@ -523,6 +529,17 @@ namespace Cs16.Module.CameraRig
         /// <summary>
         /// 比赛运行时关掉场景里别的"主相机"（agent-02 生成舞台时可能带一台预览相机）。
         /// 引擎的 UI Canvas 是 <c>ScreenSpaceOverlay</c>，不依赖相机，因此关掉它们不会影响 HUD。
+        ///
+        /// <para><b>顺带把它的层级图标也压掉</b>：编辑器 Game view 的「Gizmos」叠层会给每台 Camera
+        /// 与它身上的 <c>AudioListener</c> 各画一个图标（用户报的"喇叭"那一族的一支就挂在这台外来相机上：
+        /// 全场唯一的 <c>AudioListener</c> 在舞台的 <c>Main Camera</c>，而 <c>EnsureAudioListener</c>
+        /// 因"场上已有监听器"提前返回、我们自己的相机上不会挂它 —— 见 :429-437）。
+        /// 一台已经不参与画面的相机没有理由再画图标，因此这里连 <c>hideFlags</c> 一起设。
+        /// ⛔ 只设 <c>HideInHierarchy</c>：不改渲染、不动物理、不影响 <c>Camera.main</c>（按 tag 查）。</para>
+        ///
+        /// <para><b>与 VisualLeakGuard 的分工</b>（口径）：主防线是编辑器侧的
+        /// <c>client/Assets/Editor/VisualLeakGuard.cs</c>（进 Play 自动把 Game view 的叠加层关掉）；
+        /// 这里只是**第二防线**，专防"用户手动把 Gizmos 又点开"时业务自己创建/接管的相机还画图标。</para>
         /// </summary>
         private void DisableForeignMainCameras()
         {
@@ -534,9 +551,11 @@ namespace Cs16.Module.CameraRig
                 if (!c.CompareTag("MainCamera")) continue;
 
                 c.enabled = false;
+                c.gameObject.hideFlags |= HideFlags.HideInHierarchy;
                 if (_handledForeignCameras.Add(c))
                 {
-                    _log.Always($"舞台里另有一台主相机「{c.name}」已关闭（第一人称相机接管画面）");
+                    _log.Always($"舞台里另有一台主相机「{c.name}」已关闭（第一人称相机接管画面），" +
+                                $"并已隐藏其层级图标（Camera/AudioListener 两个 gizmo）");
                 }
             }
         }

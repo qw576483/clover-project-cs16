@@ -1,0 +1,18 @@
+# 片BV-R 原始取证帧索引（**不是联络图**；联络图见 sliceBVR-contact-sheet.manifest.tsv 的 19 格）
+# 为什么单独登记：这些是差集图的**原始帧**（A/B 各一张）。差集图里只能留住 A 边与掩膜，
+# B 边（Gizmos 关 / 隐藏后的那一张）只在原图里 ⇒ 它们是真证据，不是"没人看的画图产物"，
+# 所以逐张登记角色；每个数字的出处仍是 .ai-tmp/test/bvr-diff.txt 的对应 tag 段。
+# 路径口径与既有清单一致：flat `.ai-tmp/screenshots/<name>.png`
+R01	.ai-tmp/screenshots/bvr-fire2_A_gizmosON.png	开火冻结帧#2 的 A 边（Gizmos 开）；差集 24689px → 见 bvr-diff-fire2.png
+R02	.ai-tmp/screenshots/bvr-fire2_B_gizmosOFF.png	开火冻结帧#2 的 B 边（Gizmos 关，同一冻结帧）
+R03	.ai-tmp/screenshots/bvr-fire3_A_gizmosON.png	开火冻结帧#3 的 A 边（Gizmos 开）；差集 28983px → 见 bvr-diff-fire3.png
+R04	.ai-tmp/screenshots/bvr-fire3_B_gizmosOFF.png	开火冻结帧#3 的 B 边（Gizmos 关，同一冻结帧）
+R05	.ai-tmp/screenshots/bvr-hf_0_baseline.png	HideFlags 实测基线（全可见，Gizmos 开）
+R06	.ai-tmp/screenshots/bvr-hf_1_hide_biz.png	只隐藏业务组后的同一帧（→ 与基线差 26101px）
+R07	.ai-tmp/screenshots/bvr-hf_2_hide_bizcamui.png	再隐藏 Camera+[UI]（→ 与上一张差 0px）
+R08	.ai-tmp/screenshots/bvr-hf_3_hide_all.png	再隐藏引擎 [Sound] 池（→ 与上一张差 10426px）
+R09	.ai-tmp/screenshots/bvr-hf_4_restored.png	运行时复原后（→ 与基线差 0px，MD5 相同 = 对照）
+R10	.ai-tmp/screenshots/bvr-kind_0_allvisible.png	按类型归属：全可见基线
+R11	.ai-tmp/screenshots/bvr-kind_1_hide_Light.png	隐藏全部 Light(18) 后（→ 差 5235px）
+R12	.ai-tmp/screenshots/bvr-kind_2_hide_Canvas.png	再隐藏全部 Canvas(10)（→ 差 575px）
+R13	.ai-tmp/screenshots/bvr-kind_3_hide_AudioSource.png	再隐藏全部 AudioSource(34)（→ 差 6518px）

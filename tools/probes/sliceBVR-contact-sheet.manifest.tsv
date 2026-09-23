@@ -1,0 +1,29 @@
+# 片BV-R 联络图清单（格号 / 文件 / 看什么）—— 用 tools/probes/compose-contact-sheet.py 拼图
+# 路径口径：与既有清单一致，**flat** `.ai-tmp/screenshots/<name>.png`
+#（两个闸门只扫 flat 目录：freeze-before-capture 的 batch 与 evidence-economy 的 loose 计数）
+# 全部数字的原始出处：.ai-tmp/test/bvr-diff.txt 与 .ai-tmp/test/bvr-ui-flow-matrix.tsv
+01	.ai-tmp/screenshots/bvr-diff-fire1.png	开火冻结帧#1：A/B 差集 22922px(3.054%)，主簇 21696px = 编辑器叠加层
+02	.ai-tmp/screenshots/bvr-diff-fire2.png	开火冻结帧#2：A/B 差集 24689px(3.290%)，主簇 23463px（喇叭图标只在起播帧可见）
+03	.ai-tmp/screenshots/bvr-diff-fire3.png	开火冻结帧#3：A/B 差集 28983px(3.862%)，主簇 27757px
+04	.ai-tmp/screenshots/bvr-fire1_A_gizmosON.png	A 原图（屏幕像素）：Game view Gizmos 开，图标在场
+05	.ai-tmp/screenshots/bvr-fire1_B_gizmosOFF.png	B 原图：同一冻结帧、Gizmos 关，图标整块消失
+06	.ai-tmp/screenshots/bvr-diff-hf-biz.png	HideFlags 实测：只隐藏业务组(25 宿主)→差集 26101px(3.478%) 单簇 ⇒ 有效
+07	.ai-tmp/screenshots/bvr-diff-hf-camui.png	再隐藏 Camera+[UI](3 宿主)→差集 0px ⇒ 这两个组件图标本帧不画
+08	.ai-tmp/screenshots/bvr-diff-hf-sound.png	再隐藏引擎 [Sound] 池(34 宿主)→差集 10426px(1.389%)
+09	.ai-tmp/screenshots/bvr-diff-hf-all.png	全部分组隐藏：差集 27757px(3.699%)
+10	.ai-tmp/screenshots/bvr-diff-hf-control.png	对照：运行时复原 vs 基线 → 差集 0px 且 MD5 相同 ⇒ 因果链干净
+11	.ai-tmp/screenshots/bvr-ui-flow-matrix.png	16 流程态 x 16 面板 期望/实际矩阵（绿=OK 灰=未采到 红=不该显示却显示）
+12	.ai-tmp/screenshots/bvr-land_bizhid_gizmosON.png	落地后实测：业务侧 HideFlags 生效（gizmos 强制 ON，同一冻结帧）
+13	.ai-tmp/screenshots/bvr-land_restored_gizmosON.png	同帧运行时复原 hideFlags → 图标回来（因果对照 B 边）
+14	.ai-tmp/screenshots/bvr-diff-land.png	落地因果：差集 3408px(0.454%)，主簇 3383px = 业务侧隐藏的那 15 个 Light 图标
+15	.ai-tmp/screenshots/bvr-diff-kind-light.png	组件类型归属：Light(18 宿主)=5235px(0.698%) ← 业务侧落地对象
+16	.ai-tmp/screenshots/bvr-diff-kind-audio.png	AudioSource(34 宿主)=6518px(0.869%)（引擎 [Sound] 池，引擎侧才可改）
+17	.ai-tmp/screenshots/bvr-diff-kind-canvas.png	Canvas(10 宿主)=575px(0.077%) = 名牌画布图标（未落地，见登记行）
+18	.ai-tmp/screenshots/bvr-diff-kind-union.png	三类合计=11143px(1.485%)，8 簇
+19	.ai-tmp/screenshots/bvr-contact-sheet.png	联络图的上一版（19 格）本图
+20	.ai-tmp/screenshots/bvr-home-mainmenu-gameview.png	首页实机截图（编辑器屏幕像素）：品牌署名在画面底部
+21	.ai-tmp/screenshots/bvr-credit-crop4x.png	署名 4 倍放大：肉眼可读 `by clover-engine`（**小写**，不是全大写 BY CLOVER-ENGINE）
+22	.ai-tmp/screenshots/bvr-screen-fire-gizmosON.png	同一冻结开火帧的**屏幕像素**（用户眼里那一张）：图标在场
+23	.ai-tmp/screenshots/bvr-backbuffer-fire-screen.png	同一冻结帧的**游戏后缓冲**（capture_game_view --source screen）：图标不在里面 ⇒ BV5 对照判据（重采件）
+24	.ai-tmp/screenshots/bvr-after-hide-audiolistener.png	隐藏 AudioListener 宿主后的同帧（对照 B 边）
+25	.ai-tmp/screenshots/bvr-diff-audiolistener.png	差集 71px（bbox 20x192，准星附近）= 相机 AudioListener(+同 GO 的 Camera) 图标

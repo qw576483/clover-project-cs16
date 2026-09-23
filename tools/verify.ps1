@@ -24,7 +24,67 @@
 #   * check 15 -- "implementation" means hand-written text sources (.cs) only;
 #     the Resources tree's ~2k generator outputs are excluded, see the note there.
 # ============================================================================
+param([string]$PlanDir = '', [string]$NodeDump = '', [string]$CodeRoots = '', [string]$Ledger = '',
+      [string]$EnvCheck = '', [string]$ShotDir = '', [string]$Ps1Root = '', [string]$ProbeRoot = '',
+      [string]$GateTemplate = '')
 $ErrorActionPreference = 'Stop'
+# PowerShell variable names are CASE-INSENSITIVE, so the parameter $PlanDir and the
+# computed $planDir below are the SAME variable: assigning the plan dir would silently
+# overwrite the override (measured: the first version of this seam always judged the real
+# plan dir while printing the override note). Capture the argument BEFORE that assignment.
+$planOverride = $PlanDir
+# -NodeDump is the second TEST SEAM (gate self-test only): item 25 reads the home-screen
+# node-tree dump, and the self-test must inject a defect WITHOUT writing the real dump --
+# injecting in place made any concurrent verify (other slices run it too) read the injected
+# state and report a FALSE FAIL (`bv-r` measured exactly that on 2026-09-22:
+# bu-r-verify6.txt reported "no lowercase glyph" while the real Play capture showed
+# lowercase `by clover-engine`).  An overridden run SAYS SO in its output.
+$nodeDumpOverride = $NodeDump
+# -CodeRoots is the third TEST SEAM (gate self-test only): it re-points ONLY the by-name
+# fallback roots of item 5, so the "ambiguous basename" branch can be exercised with real
+# gate code (no duplicate basename exists in the project's own Scripts/Editor today). The
+# default is unchanged, and an overridden run announces itself.
+$codeRootsOverride = $CodeRoots
+# -Ledger is the fourth TEST SEAM (gate self-test only): the ledger-backed items
+# (no-sync-subagents, evidence-freshness's row-scoped adjudication) must be provable in
+# BOTH directions, and their samples need the ledger REWRITTEN (append a 4-column row /
+# write-then-remove a registration). Doing that to the REAL .ai-tmp/test/dispatch-log.tsv
+# is a shared-mutable-state bug of the same family as the -NodeDump one: the self-test's
+# "restore from backup" step REPLACES the whole file, so any row another slice appends
+# inside that window is silently truncated -- and the self-test's hash check cannot see it
+# (it compares against the backup it just restored, i.e. against itself). A gate must
+# never destroy another slice's evidence, so those samples now run on a COPY.
+# The default is unchanged, and an overridden run announces itself.
+$ledgerOverride = $Ledger
+# -EnvCheck is the fifth TEST SEAM (gate self-test only): item 7 requires tools/env-check.ps1 to
+# be present on the entry surface.  The self-test used to MOVE the real script away and restore
+# it from a whole-file backup -- i.e. it wrote a shared deliverable, and a crash in between
+# leaves the project without its companion script.  Pointing that one path at a sandbox path
+# exercises the SAME branch with zero writes.
+$envCheckOverride = $EnvCheck
+# -ShotDir is the sixth TEST SEAM (gate self-test only): evidence-freshness (item 24) judges
+# (row implementation mtime) vs (shot mtime), and its samples used to rewrite the mtime of REAL
+# evidence pngs under .ai-tmp/screenshots.  Restored afterwards, but a crash mid-sample leaves
+# real evidence timestamped wrong, and a reader inside the window sees a perturbed reading.
+# With this seam the void pair is produced ENTIRELY in a sandbox (shot copies + mtime control).
+$shotDirOverride = $ShotDir
+# -Ps1Root is the seventh TEST SEAM (gate self-test only): ps1-ascii (item 36) walks tools/**,
+# and its negative sample is "a script with a Chinese literal".  Writing that defect into the
+# REAL tools/** would make every concurrent verify report a false FAIL, so the sample points the
+# walk at a sandbox instead.
+$ps1RootOverride = $Ps1Root
+# -ProbeRoot is the eighth TEST SEAM (gate self-test only): item 40 `coverage-hit` looks for
+# probe-hit ledgers under tools/probes/** and .ai-tmp/test/**.  Its good/bad samples differ
+# ONLY by which ledger exists, so the samples must point the scan at a sandbox -- writing a
+# ledger into the real probe roots would both leak a sample into the real verdict and risk
+# being picked up by a concurrent run.  The default is unchanged and an overridden run
+# announces itself (same shape as the seven seams above).
+$probeRootOverride = $ProbeRoot
+# -GateTemplate is the ninth TEST SEAM (gate self-test only): item 42 `gate-sync` compares this
+# project against the skill's verify-template.md.  Its bad sample must inject a fake declared item
+# WITHOUT touching the real template (that file belongs to the skill owner and is shared by every
+# project on the machine), so the sample points item 42 at a sandbox COPY instead.
+$gateTemplateOverride = $GateTemplate
 $root = Split-Path $PSScriptRoot -Parent
 $script:fail = 0
 $script:human = 0
@@ -51,6 +111,25 @@ function Get-SectionLines([string]$text, [string]$title) {
 
 # ---- non-ASCII tokens, built from code points (keeps this file ASCII-only) --
 $planDir   = Join-Path $root ([char[]]@(0x7B56,0x5212) -join '')                             # ce hua
+if ($planOverride -ne '') {
+  # TEST SEAM -- gate self-test only (tools/probes/gate-selftest.ps1 section 7). The
+  # coverage-rows item must be provable in BOTH directions (SKILL 8.3 / anti-gaming 5:
+  # a known-good sample PASSES, a known-bad sample FAILS), and the project's real plan
+  # dir only ever yields the known-bad side. An overridden run therefore ANNOUNCES
+  # itself in this first output line, so it can never be passed off as a real verdict.
+  if (-not (Test-Path -LiteralPath $planOverride)) {
+    Write-Output ('FAIL        plan-dir-override  ' + $planOverride + ' does not exist')
+    exit 1
+  }
+  $planDir = (Get-Item -LiteralPath $planOverride).FullName
+  Write-Output ('NOTE        plan-dir-override  plan dir = ' + $planDir + ' (gate self-test only, NOT a real verdict)')
+  Write-Output ''
+}
+# --- gate self-test window guard (slice BW-G-R) ---------------------------------------------
+# WHY: on 2026-09-23 two teammates read a FALSE reading while a full gate self-test was running
+# (one saw FAIL=6, one a false reference-table-refs FAIL).  The ledger already existed -- but a
+# reader does not open a ledger before believing a number, so the gate now says it itself.
+# A start row (field 2 contains "start") opens a window; an end row closes the oldest one.
 $specTable = Join-Path $planDir ((([char[]]@(0x9A8C,0x6536,0x8868)) -join '') + '.md')       # yan shou biao
 $refTable  = Join-Path $planDir ((([char[]]@(0x5BF9,0x7167,0x8868)) -join '') + '.md')       # dui zhao biao
 $cNumeric  = ([char[]]@(0x6570,0x503C,0x7C7B) -join '')                                      # numeric class
@@ -68,8 +147,77 @@ $editorDir = Join-Path $root 'client\Assets\Editor'
 # Evidence shots are ONE-OFF artifacts (SKILL 1.8 item 6): they live under
 # .ai-tmp/screenshots/ (gitignored, never in client/Assets/**).
 $shotDir = Join-Path $root '.ai-tmp\screenshots'
+if ($shotDirOverride -ne '') {
+  # TEST SEAM -- gate self-test only (tools/probes/gate-selftest.ps1 section 9). Announced on
+  # stdout so an overridden run can never be read as a real verdict.
+  if (-not (Test-Path -LiteralPath $shotDirOverride)) { New-Item -ItemType Directory -Force -Path $shotDirOverride | Out-Null }
+  $shotDir = (Get-Item -LiteralPath $shotDirOverride).FullName
+  Write-Output ('NOTE        shot-dir-override  evidence shots = ' + $shotDir + ' (gate self-test only, NOT a real verdict)')
+  Write-Output ''
+}
 $tmpRoot = Join-Path $root '.ai-tmp'
 $logPath = Join-Path $root '.ai-tmp\test\dispatch-log.tsv'
+if ($ledgerOverride -ne '') {
+  # TEST SEAM -- gate self-test only (tools/probes/gate-selftest.ps1 sections 5/8/9).
+  # See the comment next to $ledgerOverride above for WHY this seam exists (the samples
+  # must rewrite a ledger, and rewriting the SHARED one silently truncates a row another
+  # slice appends meanwhile). The override ANNOUNCES itself so it can never pass as a
+  # real verdict, and only the ledger-backed items read $logPath (nothing else in this
+  # file re-derives the real path).
+  if (-not (Test-Path -LiteralPath $ledgerOverride)) {
+    Write-Output ('FAIL        ledger-override  ' + $ledgerOverride + ' does not exist')
+    exit 1
+  }
+  $logPath = (Get-Item -LiteralPath $ledgerOverride).FullName
+  Write-Output ('NOTE        ledger-override  dispatch ledger = ' + $logPath + ' (gate self-test only, NOT a real verdict)')
+  Write-Output ''
+}
+# --- gate self-test window warning (slice BW-G, main-agent ruling 2026-09-23) ----------
+# A full self-test (and a plan re-injection) REWRITES a few real artifacts while it runs, so a
+# `verify.ps1` taken inside such a window can read a verdict that is intentionally perturbed.
+# Measured cost of not saying so: a teammate read FAIL=6, all six self-healing and none of
+# them its own, because it had no reason to go and read the window ledger. Announce it HERE,
+# where every reader actually looks.
+#
+# FIXED HERE (main-agent ruling 2026-09-23, after `bw-evid` was forced to write an `abort` row):
+#   * `abort` now CLOSES a window exactly like `end` does. Before this, a run that ended with an
+#     `abort` row left the window counted as OPEN forever => EVERY later `verify.ps1` on the
+#     machine carried the "may be perturbed" NOTE, i.e. the whole team's readings were degraded
+#     by one row that no longer described anything.
+#   * pairing is BY RUN (PID when present, else the slice name), NOT by counting. Counting made
+#     one surplus `end` cancel a later real `start` -- so the guard silently lost its warning.
+#   * a start row older than 60 minutes whose PID is GONE gets a `STALE?` hint.  We do NOT
+#     auto-close it: measured on 2026-09-23, "low CPU + no log growth for 15 s" was read as
+#     "dead" for a self-test that was simply waiting on an external CLI (the main agent then
+#     retracted that ruling), so only PID-disappearance may be hinted at, never acted on.
+#   * two ledger row shapes exist (`ISO<TAB>stage<TAB>PID=..` from the self-test, and
+#     `stage<TAB>ISO<TAB>slice ...` written by hand); the stage token is therefore looked for in
+#     EITHER of the first two fields, otherwise half the ledger is invisible.
+# The pairing rules live in ONE place (tools/probes/window-ledger-check.ps1) so that both
+# directions can be proven on SANDBOX ledgers -- proving them here would mean mutating the shared
+# ledger, i.e. manufacturing a false warning for every other slice on the machine.
+$winLedger  = Join-Path $root '.ai-tmp\test\gate-selftest-window.tsv'
+$winChecker = Join-Path $root 'tools\probes\window-ledger-check.ps1'
+if (Test-Path $winLedger) {
+  if (Test-Path $winChecker) {
+    # The ledger is SHARED and another process may hold it open while appending, so this read can
+    # throw -- and an unhandled throw here kills the WHOLE gate (measured 2026-09-23 while proving
+    # the hit contract: verify.ps1 exited after 10 lines, judging NOTHING). A guard that can take
+    # the gate down when it is merely unlucky is worse than no guard: catch, say so, keep judging.
+    $winMsg = @()
+    try {
+      $winMsg = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $winChecker -Ledger $winLedger 2>&1 | ForEach-Object { [string]$_ })
+    } catch {
+      $winMsg = @('NOTE the gate self-test window ledger could not be read (locked by another process) -- treat this reading with caution and check .ai-tmp/test/gate-selftest-window.tsv by hand')
+    }
+    $winMsg = @($winMsg | Where-Object { $_ -match '^\s*(NOTE|WARN)' })
+    foreach ($m in $winMsg) { if ($m.Trim().Length -gt 0) { Write-Output $m } }
+    if ($winMsg.Count -gt 0) { Write-Output '' }
+  } else {
+    Write-Output 'NOTE the window guard is unverifiable (tools\probes\window-ledger-check.ps1 is missing)'
+    Write-Output ''
+  }
+}
 $wsRoot  = Split-Path $root -Parent
 $cut24   = (Get-Date).AddHours(-24)
 
@@ -180,41 +328,168 @@ function Invoke-Checks {
   # --- 5) every path / file:line cited by the acceptance table exists -------
   if ($specTxt.Length -gt 0) {
     $missing = @()
-    $pngs = @([regex]::Matches($specTxt, '[0-9A-Za-z_\-]+\.png') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+    # --- WHAT this item is responsible for (slice BW-G, 2026-09-22) ---------------
+    # "every EVIDENCE SCREENSHOT cited by the acceptance table exists under
+    # .ai-tmp/screenshots/".  It is NOT responsible for MAP-TEXTURE / ASSET names.
+    # WHY an exemption is needed at all, and why it is registry-based:
+    #   the entity list (plan/entity-list.tsv) registers asset names as entities (D1 rows such as
+    #   `MltryCrteSd.png`); those files live under client/Assets/**, so a citation of one
+    #   can never resolve under .ai-tmp/screenshots/.  When the coverage block is written
+    #   with canonical names (which is what the generator MUST do), ~307 asset names enter
+    #   this scan and every one of them is an unfixable red (measured 2026-09-22: restoring
+    #   the mangled names turns 79 refs into 387, of which 307 are registered assets).
+    #   A shape-based rule cannot separate them: an evidence contact sheet is cited as a
+    #   BARE file name too (`contact-sheet-4-menu.png`), so "has a directory prefix" would
+    #   kill real citations.  And skipping the whole COVERAGE block would exempt the ~365
+    #   real evidence citations inside it.  => the only sound criterion is REGISTRY
+    #   MEMBERSHIP: a `.png` name that the entity list registers as an entity/asset is not
+    #   an evidence citation, wherever it is cited; every other cited name must resolve.
+    # The exemption is PRINTED (count + first few names), never silent, and it is provable
+    # in BOTH directions -- see tools/probes/gate-selftest.ps1 section 10: a registered
+    # asset name PASSES, an unregistered missing shot FAILS, and a file citing both FAILS
+    # (so the exemption can never blanket-exempt a file).
+    # NOTE: the entity list path is built HERE (item 5 runs long before item 20 defines
+    # $cList; a forward reference would silently read a $null path and exempt nothing).
+    $entListPath = Join-Path $planDir ((([char[]]@(0x5B9E, 0x4F53, 0x6E05, 0x5355)) -join '') + '.tsv')
+    $assetNames = @{}
+    $regNote = 'exemption registry missing: ' + $entListPath
+    if (Test-Path $entListPath) {
+      foreach ($ln in @([System.IO.File]::ReadAllLines($entListPath, [Text.Encoding]::UTF8))) {
+        foreach ($m in [regex]::Matches([string]$ln, '[0-9A-Za-z_\-]+\.png')) { $assetNames[$m.Value] = $true }
+      }
+      $regNote = 'registry = ' + (Split-Path $entListPath -Leaf)
+    }
+    $pngsAll = @([regex]::Matches($specTxt, '[0-9A-Za-z_\-]+\.png') | ForEach-Object { $_.Value } | Sort-Object -Unique)
+    $pngs = @($pngsAll | Where-Object { -not $assetNames.ContainsKey([string]$_) })
+    $exempt = @($pngsAll | Where-Object { $assetNames.ContainsKey([string]$_) })
     foreach ($p in $pngs) { if (-not (Test-Path (Join-Path $shotDir $p))) { $missing += ('shot: ' + $p) } }
-    $refs = @([regex]::Matches($specTxt, '[0-9A-Za-z_/\\.]+\.cs:[0-9]+(?:/[0-9]+)*') |
+    # WHICH citations are scanned (slice BW-G, 2026-09-22 -- this closes the "same shape,
+    # one passes and one fails" mystery): the character class used to be [0-9A-Za-z_/\\.]
+    # with NO HYPHEN.  MEASURED on this project's acceptance table: the citation
+    # `client/Packages/com.clover.unity-engine/Runtime/Presentation/Sound.cs:112` was
+    # matched as just `engine/Runtime/Presentation/Sound.cs:112` (the match STARTS after the
+    # hyphen inside `com.clover.unity-engine`), so no candidate prefix could resolve it and
+    # the item FAILed -- while the SAME-shaped AStar.cs citation "passed" only because it
+    # carries no `:line` at all and was therefore never scanned (see the blind-spot numbers
+    # in the BW-G report: 105 of 292 `.cs` occurrences carry `:line`, 187 do not).
+    # Adding '-' repairs the truncation.  A package-relative citation
+    # (`com.clover.unity-engine/Runtime/...`) still resolves through the EMPTY prefix, which is
+    # why the prefix table below is left exactly as it was (main-agent correction).
+    $refs = @([regex]::Matches($specTxt, '[0-9A-Za-z_/\\.\-]+\.cs:[0-9]+(?:/[0-9]+)*') |
               ForEach-Object { $_.Value } | Sort-Object -Unique)
-    $byName = @{}
+    # CHINESE EXPLICIT LINE-NUMBER FORM (slice BW-G, main-agent ruling 2026-09-22): a citation
+    # written in the Chinese "di N hang" wording (a .cs name followed by a bracketed line
+    # number, optionally a range) states the SAME intent as `X.cs:N`, so it must be scanned too
+    # -- leaving it out let a citation pass by never being read at all (measured: 4 occurrences;
+    # D10's engine AStar citation "passed" exactly that way).  It is NOT a blanket inclusion of
+    # the 187 `.cs` tokens that carry no line number at all: those are prose mentions and
+    # including them would be a noise source.
+    # RANGE RULE (documented on purpose): the line check uses the UPPER bound as well as the
+    # lower one, so a "29-30" range requires the file to have at least 30 lines.
+    # NOTE: the CJK tokens are built from CODE POINTS on purpose -- this file must stay
+    # ASCII-only, else PS 5.1 parses it as ANSI and the pattern silently never matches
+    # (the project's documented trap: a non-matching regex looks exactly like "nothing found").
+    $cCnOpen   = ([char[]]@(0x7B2C) -join '')         # "di"  (of "di N hang")
+    $cCnLineW  = ([char[]]@(0x884C) -join '')         # "hang"
+    $cCnParenL = ([char[]]@(0xFF08) -join '')         # full-width left bracket
+    $cCnParenR = ([char[]]@(0xFF09) -join '')         # full-width right bracket
+    $cnRx = [regex]('([0-9A-Za-z_/\\.\-]+\.cs)`?\s*' + $cCnParenL + $cCnOpen +
+                    '\s*([0-9]+)(?:\s*[~\-]\s*([0-9]+))?\s*' + $cCnLineW + $cCnParenR)
+    $citeList = @()
     foreach ($r in $refs) {
       $i = $r.IndexOf('.cs:') + 3
-      $rel = $r.Substring(0, $i).Replace('\', '/').TrimStart('.', '/')
-      $nums = @($r.Substring($i + 1).Split('/'))
+      $citeList += [pscustomobject]@{ Shown = $r
+                                      Rel = $r.Substring(0, $i).Replace('\', '/').TrimStart('.', '/')
+                                      Nums = @($r.Substring($i + 1).Split('/')) }
+    }
+    $cnCount = 0
+    foreach ($cm in $cnRx.Matches($specTxt)) {
+      $cnNums = @($cm.Groups[2].Value)
+      if (($cm.Groups[3].Success) -and ($cm.Groups[3].Value -ne '')) { $cnNums += $cm.Groups[3].Value }
+      $citeList += [pscustomobject]@{ Shown = $cm.Value
+                                      Rel = $cm.Groups[1].Value.Replace('\', '/').TrimStart('.', '/')
+                                      Nums = $cnNums }
+      $cnCount++
+    }
+    $byName = @{}
+    # By-name fallback roots (main-agent ruling 2026-09-22): KEPT, because a large part of the
+    # project's citations name the file only (`CsMatch.cs`).  But it must not be a quiet way to
+    # pass: (1) how many citations were resolved by PATH vs by BASENAME is PRINTED, and (2) if a
+    # basename matches MORE THAN ONE file the citation FAILs -- picking the first one would be a
+    # guess, and a verdict that cannot be re-verified is not a verdict.
+    $byNameRoots = @($codeDir, $editorDir)
+    if ($codeRootsOverride -ne '') {
+      $byNameRoots = @($codeRootsOverride -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
+      Write-Output ('NOTE        code-roots-override  screenshot-refs by-name fallback searches ONLY ' + ($byNameRoots -join ' ; ') + ' (gate self-test only, NOT a real verdict)')
+    }
+    $byPathN = 0
+    $byNameN = 0
+    $ambigN = 0
+    foreach ($r in @($citeList | Sort-Object -Property Shown -Unique)) {
+      $rel = [string]$r.Rel
+      $nums = @($r.Nums)
       $cand = @()
+      # Prefix table / by-name fallback are DELIBERATELY unchanged (slice BW-G, after the
+      # main-agent's correction): the `client/Packages/**` entry I had added here was
+      # unnecessary -- a package citation written project-root-relative already resolves
+      # through the EMPTY prefix below, so adding a prefix is not the fix (and adding it
+      # would have been an unapproved loosening).  The real fix is the HYPHEN in the
+      # citation regex above; keep this table as it was.
       foreach ($prefix in @('', 'client/Assets/', 'client/Assets/Scripts/')) {
         $cand += (Join-Path $root (($prefix + $rel) -replace '/', '\'))
       }
       $found = @($cand | Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1)
+      if ($found.Count -gt 0) { $byPathN++ }
       if ($found.Count -eq 0) {
         $bn = Split-Path $rel -Leaf
         if (-not $byName.ContainsKey($bn)) {
           # keep plain strings here: a FileInfo would stringify to the bare file
           # name and then be resolved against the process CWD, not the project.
-          $byName[$bn] = @(Get-ChildItem $codeDir -Recurse -Filter $bn -File -ErrorAction SilentlyContinue |
-                           ForEach-Object { $_.FullName })
+          $byName[$bn] = @()
+          foreach ($sr in $byNameRoots) {
+            if (Test-Path -LiteralPath $sr) {
+              $byName[$bn] += @(Get-ChildItem $sr -Recurse -Filter $bn -File -ErrorAction SilentlyContinue |
+                                ForEach-Object { $_.FullName })
+            }
+          }
+          $byName[$bn] = @($byName[$bn] | Sort-Object -Unique)
         }
-        $found = @($byName[$bn] | Select-Object -First 1)
+        $bnCands = @($byName[$bn])
+        if ($bnCands.Count -gt 1) {
+          # AMBIGUOUS: two files share the basename, so "the" file the citation means cannot be
+          # established -- taking the first one would be a guess.  FAIL and list the candidates.
+          $ambigN++
+          $missing += ('code: ' + $rel + ' (AMBIGUOUS by-name fallback: ' + $bnCands.Count +
+                       ' files share this name, so the cited file cannot be re-verified; candidates: ' +
+                       (($bnCands | Select-Object -First 3) -join ' | ') + ')')
+          continue
+        }
+        if ($bnCands.Count -eq 1) { $byNameN++ }
+        $found = @($bnCands | Select-Object -First 1)
       }
       if ($found.Count -eq 0) { $missing += ('code: ' + $rel); continue }
       $total = @([System.IO.File]::ReadAllLines($found[0])).Count
       foreach ($ln in $nums) {
-        if ([int]$ln -gt $total) { $missing += ('code: ' + $r + ' (but that file has only ' + $total + ' lines)') }
+        if ([int]$ln -gt $total) { $missing += ('code: ' + [string]$r.Shown + ' (but that file has only ' + $total + ' lines)') }
       }
     }
+    $cnNote = ''
+    if ($cnCount -gt 0) { $cnNote = '; ' + $cnCount + ' of them use the ' + $cCnParenL + $cCnOpen + ' N ' + $cCnLineW + $cCnParenR + ' form (scanned since slice BW-G, range checked against the UPPER bound)' }
+    $resNote = '; file:line resolution = path ' + $byPathN + ' / BASENAME fallback ' + $byNameN +
+               ' (the fallback proves only that a file with that name exists, never that the citation points at it)' +
+               ' / ambiguous ' + $ambigN
+    $exNote = ''
+    if ($exempt.Count -gt 0) {
+      $exSample = @($exempt | Select-Object -First 5) -join ', '
+      $exNote = '; ' + $exempt.Count + ' cited name(s) exempt as asset names registered in the entity list (' + $exSample
+      if ($exempt.Count -gt 5) { $exNote += ', ...' }
+      $exNote += ') -- not evidence screenshots, see the note above'
+    }
     if ($missing.Count -eq 0) {
-      Say 'PASS' 'screenshot-refs' "$($pngs.Count) screenshot refs + $($refs.Count) file:line refs all resolve"
+      Say 'PASS' 'screenshot-refs' "$($pngs.Count) screenshot refs + $($refs.Count) file:line refs all resolve ($regNote)$cnNote$resNote$exNote"
     } else {
       $script:fail++
-      Say 'FAIL' 'screenshot-refs' "$($missing.Count) citation(s) do not resolve"
+      Say 'FAIL' 'screenshot-refs' "$($missing.Count) citation(s) do not resolve ($regNote)$cnNote$resNote$exNote"
       $missing | ForEach-Object { Sub $_ }
     }
   }
@@ -273,7 +548,7 @@ function Invoke-Checks {
 
       $names = @()
       foreach ($t in $tokens) {
-        foreach ($m in [regex]::Matches($t, '([A-Za-z_][A-Za-z0-9_]*\.cs)')) {
+        foreach ($m in [regex]::Matches($t, '([A-Za-z_][A-Za-z0-9_\-]*\.cs)')) {
           $b = $m.Groups[1].Value.ToLower()
           if ($names -notcontains $b) { $names += $b }
         }
@@ -295,22 +570,60 @@ function Invoke-Checks {
         $sf = $shotFiles[$p.ToLower()]
         $cmpPairs++
         if ($sf.LastWriteTime -lt $tImpl) {
-          $void += ('row ' + $rid + ': shot ' + $sf.Name + ' (' + $sf.LastWriteTime.ToString('MM-dd HH:mm') +
+          $void += [pscustomobject]@{ Row = $rid; Text = ('row ' + $rid + ': shot ' + $sf.Name + ' (' + $sf.LastWriteTime.ToString('MM-dd HH:mm') +
                    ') is older than that row implementation file ' + (Split-Path $newest -Leaf) +
-                   ' (' + $tImpl.ToString('MM-dd HH:mm') + ')')
+                   ' (' + $tImpl.ToString('MM-dd HH:mm') + ')') }
         }
       }
     }
+    # --- row-scoped NAMED ADJUDICATION (template item 6c), added by slice BW-G --------
+    # A void (row,shot) pair may be REGISTERED as a known, owned void in the ledger:
+    #   # adjudicated: evidence-freshness -- row <id> -- <reason >= 12 chars>
+    # Semantics = item 6c's ("the item drops to HUMAN-ONLY and the reason is printed"),
+    # applied to the ROW instead of to the whole item, because the void really is per row
+    # (SKILL 4 item 8: void only the affected rows). This is not a silencer:
+    #   * every void pair registered  -> HUMAN-ONLY, reasons printed; the owning slice
+    #     re-captures THAT row only (nothing is re-captured wholesale) and the stale shot
+    #     is never counted as valid evidence;
+    #   * any void pair NOT registered -> FAIL (a new stale pair must never be silent);
+    #   * an adjudicated row that is no longer stale -> FAIL (the registration outlived the
+    #     void; a silencer left behind is worse than no gate at all);
+    #   * a reason shorter than 12 chars or naming no row -> ignored (the pair still FAILs).
+    $adj = @{}
+    if (Test-Path $logPath) {
+      foreach ($line in @([System.IO.File]::ReadAllLines($logPath, [Text.Encoding]::UTF8))) {
+        $l = [string]$line
+        if (-not $l.TrimStart().StartsWith('#')) { continue }
+        $mAdj = [regex]::Match($l, '(?i)#\s*adjudicated:\s*evidence-freshness\s*--\s*(.*)$')
+        if (-not $mAdj.Success) { continue }
+        $reason = $mAdj.Groups[1].Value.Trim()
+        $mRow = [regex]::Match($reason, '(?i)\brow\s+([A-Za-z]?\d+)\b')
+        if ((-not $mRow.Success) -or ($reason.Length -lt 12)) { continue }
+        $adj[$mRow.Groups[1].Value] = $reason
+      }
+    }
+    $voidIds = @($void | ForEach-Object { [string]$_.Row })
+    $freeVoid = @($void | Where-Object { -not $adj.ContainsKey([string]$_.Row) })
+    $adjVoid = @($void | Where-Object { $adj.ContainsKey([string]$_.Row) })
+    $staleAdj = @($adj.Keys | Where-Object { $voidIds -notcontains [string]$_ })
     if (($cmpRows -eq 0) -or ($cmpPairs -eq 0)) {
       # Never PASS on an empty comparison: an unmatched row is unjudged, not fresh.
       $script:human++
       Say 'HUMAN-ONLY' 'evidence-freshness' "no (row,shot) pair could be compared (rows without a shot: $noShotRows; rows without a resolvable implementation file: $noImplRows; cited shot names that do not resolve to a file: $goneShots) - needs a manual check"
+    } elseif ($freeVoid.Count -gt 0) {
+      $script:fail++
+      Say 'FAIL' 'evidence-freshness' "$($freeVoid.Count) of $cmpPairs (row,shot) pair(s) are stale and NOT adjudicated => only those rows are void, the rest stay valid (to register a known/owned void: '# adjudicated: evidence-freshness -- row <id> -- <reason >= 12 chars>' in .ai-tmp/test/dispatch-log.tsv)"
+      $freeVoid | ForEach-Object { Sub $_.Text }
+      if ($adjVoid.Count -gt 0) { Sub ('also stale but adjudicated (not counted here): ' + (($adjVoid | ForEach-Object { [string]$_.Row }) -join ',')) }
+    } elseif ($staleAdj.Count -gt 0) {
+      $script:fail++
+      Say 'FAIL' 'evidence-freshness' "$($staleAdj.Count) adjudicated row(s) are NOT stale any more ('$($staleAdj -join ',')') => the registration outlived the void, remove it from .ai-tmp/test/dispatch-log.tsv"
     } elseif ($void.Count -eq 0) {
       Say 'PASS' 'evidence-freshness' "$cmpRows acceptance row(s) / $cmpPairs (row,shot) pair(s) compared per row: every cited shot is at least as new as its own row implementation file; $noShotRows row(s) without a shot and $noImplRows row(s) without a resolvable implementation file are HUMAN-ONLY (SKILL 1.11 item 11); $goneShots unroutable shot name(s) are left to screenshot-refs"
     } else {
-      $script:fail++
-      Say 'FAIL' 'evidence-freshness' "$($void.Count) of $cmpPairs (row,shot) pair(s) are stale => only those rows are void, the rest stay valid"
-      $void | ForEach-Object { Sub $_ }
+      $script:human++
+      Say 'HUMAN-ONLY' 'evidence-freshness' "$($adjVoid.Count) of $cmpPairs (row,shot) pair(s) are stale and ADJUDICATED (template item 6c): the other $($cmpPairs - $adjVoid.Count) pair(s) are fresh. The void shot(s) are NOT valid evidence -- a human must have the owning slice re-capture those rows; remove the registration once re-captured"
+      $adjVoid | ForEach-Object { Sub ($_.Text + '  || adjudication: ' + $adj[[string]$_.Row]) }
     }
   } else { $script:human++; Say 'HUMAN-ONLY' 'evidence-freshness' 'screenshot dir, screenshots, acceptance rows or sources missing - needs a manual check' }
 
@@ -324,8 +637,16 @@ function Invoke-Checks {
   # tools/probes/gate-selftest.ps1 (hide tools/env-check.ps1 => FAIL).
   $selfPath = Join-Path $root 'tools\verify.ps1'
   $companions = @()
+  $envChkPath = Join-Path $root 'tools\env-check.ps1'
+  if ($envCheckOverride -ne '') {
+    # TEST SEAM (gate self-test section 4(e)): judge a path that does not exist instead of
+    # moving the real companion script away (see the -EnvCheck comment at the top of this file).
+    $envChkPath = $envCheckOverride
+    Write-Output ('NOTE        env-check-override  entry surface looks for ' + $envChkPath + ' (gate self-test only, NOT a real verdict)')
+  }
+  $compPath = @{ 'tools\gate-sync.ps1' = (Join-Path $root 'tools\gate-sync.ps1'); 'tools\env-check.ps1' = $envChkPath }
   foreach ($cp in @('tools\gate-sync.ps1', 'tools\env-check.ps1')) {
-    $pp = Join-Path $root $cp
+    $pp = [string]$compPath[$cp]
     if (-not (Test-Path $pp)) { $companions += $cp }
     elseif ((Get-Item $pp).Length -le 0) { $companions += ($cp + ' (empty)') }
   }
@@ -377,7 +698,11 @@ function Invoke-Checks {
     Say 'FAIL' 'reference-table-refs' 'python is not on PATH -- cannot run scan-reftable-refs.py'
   } else {
     $refTmp = Join-Path $tmpRoot 'verify-reftable-refs.txt'
-    & python $refScan | Set-Content -Encoding UTF8 $refTmp
+    # --plan-dir: the -PlanDir seam must REACH the judgement asset, otherwise this item always
+    # reads the REAL plan dir while its samples inject into a sandbox copy (measured 2026-09-23:
+    # the slice BB sample's ghost carrier was invisible to the item, so the sample could not trip it
+    # and `reference-table-refs` was in fact ignoring the override entirely).
+    & python $refScan --plan-dir $planDir | Set-Content -Encoding UTF8 $refTmp
     $refRc = $LASTEXITCODE
     $refOut = @(Get-Content $refTmp -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 })
     $refLast = if ($refOut.Count -gt 0) { $refOut[$refOut.Count - 1] } else { '(no output)' }
@@ -613,29 +938,69 @@ $cAllowed  = ([char[]]@(0x5141,0x8BB8,0x7684,0x5DEE,0x5F02) -join '')         # 
 $dims = @()
 1..12 | ForEach-Object { $dims += ('D' + $_) }
 1..3  | ForEach-Object { $dims += ('S' + $_) }
+$gRows = @()
+if (Test-Path $specTable) {
+  $inG = $false
+  foreach ($ln in @((Read-Text $specTable) -split "`r?`n")) {
+    if ($ln.StartsWith('## ')) { $inG = ($ln -match '^##\s+G\.'); continue }
+    if ($inG -and $ln -match '^\s*\|\s*\d+\s*\|') { $gRows += $ln }
+  }
+}
+# coverage-rows = the COVERAGE RELATION (pattern full-coverage-audit section 7 item 1):
+#   1) every entity in the entity list has >= 1 verdict row;
+#   2) every verdict row points at an entity that IS in the list (no phantoms).
+# WHY NOT "row counts equal" (slice BW-G, 2026-09-22): the entity list is ONE ROW PER
+# ENTITY (it carries a state-count column) while the verdict rows are ONE ROW PER
+# (ENTITY x STATE) => the two counts are STRUCTURALLY unequal, so writing the item as an
+# equality either stays red forever or gets gamed by padding both sides until they match.
+# MEASURED here on 2026-09-22: "entity rows == verdict rows (3798)" reported PASS while
+# 350 entity names had drifted ("MltryCrteSd.png" in the list vs "MltryCrteSd .png" in the
+# verdict row, one extra space before the extension) => 350 rows had never been judged at
+# all and this item was a FALSE GREEN, contradicting the audit slice's own
+# audit-coverage-reconcile.py (unjudged=350 phantom=350) on the very same data.
+# The parse is deliberately NOT re-implemented here: the judgement asset
+# tools/probes/audit-coverage-reconcile.py (written by the audit slice) is reused, so the
+# gate and the audit can no longer disagree. Its drift list is printed so the red is
+# actionable; fixing the DATA is a different slice's job.
 if (-not (Test-Path $cList)) {
   $script:fail++
   Say 'FAIL' 'coverage-rows' ('missing ' + $cListName + ' -- enumerate it with tools/probes/enumerate-entities.py, never by hand (T0)')
+} elseif (-not (Test-Path (Join-Path $root 'tools\probes\audit-coverage-reconcile.py'))) {
+  $script:fail++
+  Say 'FAIL' 'coverage-rows' 'missing tools\probes\audit-coverage-reconcile.py -- the coverage relation is unverifiable'
+} elseif ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+  $script:fail++
+  Say 'FAIL' 'coverage-rows' 'python is not on PATH -- cannot run audit-coverage-reconcile.py'
 } else {
-  $listRows = @([System.IO.File]::ReadAllLines($cList, [Text.Encoding]::UTF8) |
-                Where-Object { $_.Trim().Length -gt 0 -and $_ -notmatch '^\s*#' }).Count
-  $gRows = @()
-  if (Test-Path $specTable) {
-    $inG = $false
-    foreach ($ln in @((Read-Text $specTable) -split "`r?`n")) {
-      if ($ln.StartsWith('## ')) { $inG = ($ln -match '^##\s+G\.'); continue }
-      if ($inG -and $ln -match '^\s*\|\s*\d+\s*\|') { $gRows += $ln }
+  $covScan = Join-Path $root 'tools\probes\audit-coverage-reconcile.py'
+  $covTmp = Join-Path $tmpRoot 'verify-coverage-reconcile.txt'
+  & python $covScan --plan $planDir | Set-Content -Encoding UTF8 $covTmp
+  $covOut = @(Get-Content $covTmp -Encoding UTF8)
+  $covNames = @($covOut | Where-Object { $_ -match '^entity names: ' } | Select-Object -Last 1)
+  $covBad = @($covOut | Where-Object { $_ -match '^\s+FAIL\s+coverage-rows\s' })
+  if ($covNames.Count -eq 0) {
+    $script:fail++
+    Say 'FAIL' 'coverage-rows' 'audit-coverage-reconcile.py printed no "entity names:" line -- inspect it'
+    $covOut | Select-Object -Last 6 | ForEach-Object { Sub ([string]$_) }
+  } else {
+    $nm = [regex]::Match($covNames[0], 'list=(\d+) judge=(\d+) unjudged=(\d+) phantom=(\d+)')
+    $nList = [int]$nm.Groups[1].Value
+    $nJudge = [int]$nm.Groups[2].Value
+    $nUnjudged = [int]$nm.Groups[3].Value
+    $nPhantom = [int]$nm.Groups[4].Value
+    $drift = @($covOut | Where-Object { $_ -match '^\s+(unjudged|phantom)\s*:' })
+    if (($nList -eq 0) -or ($nJudge -eq 0)) {
+      $script:fail++
+      Say 'FAIL' 'coverage-rows' ('entity list = ' + $nList + ' name(s), verdict rows = ' + $nJudge + ' -> one side is empty, so the coverage relation cannot hold (an empty set is unjudged, never a pass)')
+    } elseif (($nUnjudged -eq 0) -and ($nPhantom -eq 0) -and ($covBad.Count -eq 0)) {
+      Say 'PASS' 'coverage-rows' ('coverage relation holds: all ' + $nList + ' listed entity(ies) have >= 1 verdict row and all ' + $nJudge + ' verdict row(s) point at a listed entity (unjudged=0 phantom=0) -- judged by tools/probes/audit-coverage-reconcile.py, NOT by row-count equality')
+    } else {
+      $script:fail++
+      Say 'FAIL' 'coverage-rows' ('coverage relation BROKEN: ' + $nUnjudged + ' listed entity(ies) have no verdict row, ' + $nPhantom + ' verdict row(s) point at unlisted entity(ies) (list=' + $nList + ' judge=' + $nJudge + ') => those rows were never judged, and row-count equality hid it (pattern full-coverage-audit section 7 item 1); first drifts:')
+      $drift | Select-Object -First 12 | ForEach-Object { Sub ([string]$_) }
     }
   }
-  if ($gRows.Count -eq 0) {
-    $script:fail++
-    Say 'FAIL' 'coverage-rows' 'no verdict rows in acceptance section G -- run: python tools/probes/enumerate-entities.py --inject'
-  } elseif ($listRows -ne $gRows.Count) {
-    $script:fail++
-    Say 'FAIL' 'coverage-rows' ('entity rows = ' + $listRows + ' vs verdict rows = ' + $gRows.Count + ' -> rows were skipped (T0)')
-  } else {
-    Say 'PASS' 'coverage-rows' ('entity rows == verdict rows (' + $listRows + ')')
-  }
+}
   $blank = @($gRows | Where-Object { -not ($_.Contains($cAgree)) -and -not ($_.Contains($cDis)) -and -not ($_.Contains($cPend)) -and -not ($_.Contains($cAllowed)) })
   if ($gRows.Count -gt 0) {
     if ($blank.Count -gt 0) {
@@ -672,7 +1037,6 @@ if (-not (Test-Path $cList)) {
   } else {
     Say 'PASS' 'coverage-dimensions' 'all 12+3 dimensions present in the entity list'
   }
-}
 
 # --- 21) scale-tier -- SKILL T0: sampling density declared ONCE, never downgraded
 $cTier   = ([char[]]@(0x6863,0x4F4D) -join '')                                # tier
@@ -693,11 +1057,24 @@ $irPath = Join-Path $root '.ai-tmp/test/impact-radius.tsv'
 if (-not (Test-Path $irPath)) {
   Say 'HUMAN-ONLY' 'impact-radius' 'no .ai-tmp/test/impact-radius.tsv -- for a bug fix, list the blast radius (dim / cause chain / affected rows)'
 } else {
-  $irBad = @([System.IO.File]::ReadAllLines($irPath, [Text.Encoding]::UTF8) |
-             Where-Object { $_.Trim().Length -gt 0 -and $_ -notmatch '^\s*#' } |
-             Where-Object { ($_ -split "`t").Count -lt 3 })
-  if ($irBad.Count -eq 0) { Say 'PASS' 'impact-radius' 'every row lists dim / cause chain / affected rows' }
-  else { $script:fail++; Say 'FAIL' 'impact-radius' ('' + $irBad.Count + ' row(s) missing columns (dim / cause chain / affected rows)') }
+  # A read that THROWS must not kill the run (slice BW-G): an unreadable data file used to
+  # abort this whole script at top level, so the gate printed no SUMMARY at all and every
+  # later item silently disappeared from the verdict list. A gate must never look broken,
+  # and an unreadable registry must never look green -- so the failure is reported here.
+  $irLines = $null
+  $irErr = ''
+  try { $irLines = @([System.IO.File]::ReadAllLines($irPath, [Text.Encoding]::UTF8)) }
+  catch { $irErr = $_.Exception.Message }
+  if ($null -eq $irLines) {
+    $script:fail++
+    Say 'FAIL' 'impact-radius' ('cannot read .ai-tmp/test/impact-radius.tsv: ' + $irErr + ' => the blast-radius registry is unverifiable (fix the file permission/lock, then re-run)')
+  } else {
+    $irBad = @($irLines |
+               Where-Object { $_.Trim().Length -gt 0 -and $_ -notmatch '^\s*#' } |
+               Where-Object { ($_ -split "`t").Count -lt 3 })
+    if ($irBad.Count -eq 0) { Say 'PASS' 'impact-radius' 'every row lists dim / cause chain / affected rows' }
+    else { $script:fail++; Say 'FAIL' 'impact-radius' ('' + $irBad.Count + ' row(s) missing columns (dim / cause chain / affected rows)') }
+  }
 }
 
 # --- 23) acceptance-table aggregates must equal the table body ---------------
@@ -719,7 +1096,11 @@ if (-not (Test-Path $sumsScript)) {
   Say 'FAIL' 'acceptance-sums' 'python is not on PATH -- cannot run check-acceptance-sums.py'
 } else {
   $sumTmp = Join-Path $tmpRoot 'verify-acceptance-sums.txt'
-  & python $sumsScript | Set-Content -Encoding UTF8 $sumTmp
+  # --plan-dir: the -PlanDir seam must REACH the judgement asset. Measured 2026-09-23: with a
+  # sandbox whose acceptance table was ONE broken line this item still printed PASS, i.e. it read
+  # the REAL plan dir -- so any sample of it would have been a false test pass (the test believed
+  # it measured A while it measured B).
+  & python $sumsScript --plan-dir $planDir | Set-Content -Encoding UTF8 $sumTmp
   $sumRc = $LASTEXITCODE
   $sumOut = @(Get-Content $sumTmp -Encoding UTF8 | Where-Object { $_.Trim().Length -gt 0 })
   $sumFirst = if ($sumOut.Count -gt 0) { $sumOut[0] } else { '(no output)' }
@@ -805,6 +1186,12 @@ if (-not (Test-Path $regPath)) {
 #  and the message says who can give it.
 $cCredit    = 'by clover-engine'
 $probeDump  = Join-Path $root 'tools\probes\home-screen-nodetree.txt'
+if ($nodeDumpOverride -ne '') {
+  # test seam: read a COPY so the self-test never writes the real dump (see the note at the
+  # top of this file).  A missing override falls through to the existing HUMAN-ONLY branch.
+  $probeDump = $nodeDumpOverride
+  Write-Output ('NOTE        node-dump-override  home-credit-rendered reads ' + $probeDump + ' (gate self-test only, NOT a real verdict)')
+}
 $brandPanel = Join-Path $codeDir 'UI\Flow\MainMenuPanel.cs'
 if (-not (Test-Path $probeDump)) {
   $script:human++
@@ -930,7 +1317,9 @@ if (-not (Test-Path $auditScript)) {
   $script:fail++
   Say 'FAIL' 'shot-refs-audited' ('missing ' + $auditScript + ' -- the "every screenshot is cited" rule cannot be tested')
 } else {
-  $auditOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $auditScript 2>&1 | ForEach-Object { [string]$_ })
+  # -ShotDir: same reasoning as the sums seam above -- measured 2026-09-23: a sandbox holding ONE
+  # loose png still produced "186 screenshot(s), every one cited" because this call passed no seam.
+  $auditOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $auditScript -ShotDir $shotDir 2>&1 | ForEach-Object { [string]$_ })
   $sumLine = @($auditOut | Where-Object { $_ -match 'unreferenced \(count = (\d+)\): (\d+) of (\d+)' } | Select-Object -Last 1)
   if ($sumLine.Count -eq 0) {
     $script:fail++
@@ -1092,25 +1481,75 @@ foreach ($rel in $teamRels) {
   if ($inWin.Count -gt 0) { $teamLive += ($rel + ' (' + $inWin.Count + ' in-window item(s))') }
   else { $teamStale += $rel }
 }
-$dispatchRows = @()
-if (Test-Path $logPath) {
-  foreach ($line in @([System.IO.File]::ReadAllLines($logPath))) {
-    $l = [string]$line
-    if ($l.Trim().Length -eq 0 -or $l.TrimStart().StartsWith('#')) { continue }
-    $dispatchRows += $l
+#  INCREMENTAL SCOPE (slice BW-G, 2026-09-22) -- WHY, and what is deliberately NOT done:
+#  The 86 rows written before 2026-09-22 23:41 are HISTORICAL: they record dispatches that
+#  really happened at a time when the ledger had FOUR columns (time / who / slice / scope).
+#  SKILL 1.5 item 8 says a ledger must NOT be written after the fact, so those rows are not
+#  back-filled -- and a check that reports historical residue as a violation is worse than
+#  no check (template item 11). Judging them turned a good rule into a noise source: the
+#  item was red for a reason nobody could fix without falsifying the record.
+#  So the item is INCREMENTAL: only rows dispatched at/after the instant the two columns
+#  became mandatory are judged, and that instant is DECLARED IN THE LEDGER ITSELF
+#  (auditable, not a constant hidden in this file):
+#      # team-member-required-since: <datetime>
+#  A row in scope must carry >= 6 tab-separated fields with non-empty team (col 5) AND
+#  member (col 6); anything less means the dispatch went out over the SYNC channel, which
+#  stalls (code=10003) and leaves the caller with no report. With no directive present every
+#  row is in scope (the directive can only ever exempt rows, never the other way round).
+#  Two ways to declare the increment, both written INSIDE the ledger (never a constant
+#  hidden in this script). The POSITIONAL marker wins when both are present, because the
+#  ledger's own time column is not a reliable clock (its rows are written by hand as well):
+#      # team-member-required-below-this-line     <- rows below this line are in scope
+#      # team-member-required-since: <datetime>   <- rows with time >= it are in scope
+$cSince = 'team-member-required-since:'
+$cBelow = 'team-member-required-below-this-line'
+$allLog = @()
+if (Test-Path $logPath) { $allLog = @([System.IO.File]::ReadAllLines($logPath, [Text.Encoding]::UTF8)) }
+# PASS 1 -- locate the declaration (position of the marker line / the since datetime)
+$markerIdx = -1
+$sinceAt = $null
+for ($i = 0; $i -lt $allLog.Count; $i++) {
+  $l0 = [string]$allLog[$i]
+  if (-not $l0.TrimStart().StartsWith('#')) { continue }
+  if (($markerIdx -lt 0) -and ($l0.IndexOf($cBelow) -ge 0)) { $markerIdx = $i }
+  $ix = $l0.IndexOf($cSince)
+  if (($ix -ge 0) -and ($null -eq $sinceAt)) {
+    $txt = $l0.Substring($ix + $cSince.Length).Trim()
+    $dt = [datetime]::MinValue
+    if ([datetime]::TryParse($txt, [ref]$dt)) { $sinceAt = $dt }
   }
 }
-$noTeamTrace = @($dispatchRows | Where-Object { $_ -notmatch '(?i)\b(teams?|members?)\b' })
-$note = ''
-if ($teamStale.Count -gt 0) { $note = '; pre-window residue, NOT a violation (template item 11): ' + ($teamStale -join ', ') }
+$scopeTxt = 'every row (no directive declared)'
+if ($markerIdx -ge 0) { $scopeTxt = 'rows BELOW the marker on line ' + ($markerIdx + 1) }
+elseif ($null -ne $sinceAt) { $scopeTxt = 'rows whose time is >= ' + $sinceAt.ToString('yyyy-MM-dd HH:mm') }
+# PASS 2 -- classify (the marker is POSITIONAL and binds: rows above it are history)
+$dispatchRows = @()
+$residueRows = 0
+for ($i = 0; $i -lt $allLog.Count; $i++) {
+  $l = [string]$allLog[$i]
+  if ($l.Trim().Length -eq 0) { continue }
+  if ($l.TrimStart().StartsWith('#')) { continue }
+  $c = $l -split "`t"
+  $at = [datetime]::MinValue
+  [void][datetime]::TryParse($c[0], [ref]$at)
+  $inScope = $false
+  if ($markerIdx -ge 0) { $inScope = ($i -gt $markerIdx) }
+  elseif ($null -ne $sinceAt) { $inScope = (($at -eq [datetime]::MinValue) -or ($at -ge $sinceAt)) }
+  else { $inScope = $true }
+  if (-not $inScope) { $residueRows++; continue }
+  $dispatchRows += [pscustomobject]@{ At = $at; Line = $l; Cols = $c }
+}
+$noTeamTrace = @($dispatchRows | Where-Object { ($_.Cols.Count -lt 6) -or ($_.Cols[4].Trim().Length -eq 0) -or ($_.Cols[5].Trim().Length -eq 0) })
+$note = '; ledger rule: in scope = ' + $scopeTxt + '; ' + $residueRows + ' row(s) above/older are historical residue, NOT a violation (template item 11: the ledger itself must not be written after the fact)'
+if ($teamStale.Count -gt 0) { $note += '; pre-window team dir(s), NOT a violation: ' + ($teamStale -join ', ') }
 if ($dispatchRows.Count -eq 0) {
-  Say 'PASS' 'no-sync-subagents' ('no dispatch in this window -- nothing to classify' + $note)
+  Say 'PASS' 'no-sync-subagents' ('no dispatch row in scope -- nothing to classify' + $note)
 } elseif ($noTeamTrace.Count -gt 0) {
   $script:fail++
-  $first = $noTeamTrace[0]
-  Say 'FAIL' 'no-sync-subagents' ('' + $noTeamTrace.Count + ' dispatch row(s) name no team/member => those went out over the SYNC channel, which stalls (code=10003) and leaves no report; first: ' + $first.Substring(0, [Math]::Min(100, $first.Length)) + $note)
+  $first = [string]$noTeamTrace[0].Line
+  Say 'FAIL' 'no-sync-subagents' ('' + $noTeamTrace.Count + ' in-scope dispatch row(s) name no team/member (need >= 6 columns with non-empty team + member) => those went out over the SYNC channel, which stalls (code=10003) and leaves no report; first: ' + $first.Substring(0, [Math]::Min(100, $first.Length)) + $note)
 } else {
-  Say 'PASS' 'no-sync-subagents' ('all ' + $dispatchRows.Count + ' dispatch row(s) name a team member; in-window team trace: ' + $(if ($teamLive.Count -gt 0) { $teamLive -join ', ' } else { 'none (ledger-only)' }) + $note)
+  Say 'PASS' 'no-sync-subagents' ('all ' + $dispatchRows.Count + ' in-scope dispatch row(s) name a team member; in-window team trace: ' + $(if ($teamLive.Count -gt 0) { $teamLive -join ', ' } else { 'none (ledger-only)' }) + $note)
 }
 
 # --- 34) freeze-before-capture -- template item `freeze-before-capture` --------
@@ -1177,7 +1616,7 @@ if (($newestManifest.Count -eq 0) -or ($shotMap2.Count -eq 0)) {
       $batchRows++
       $names2 = @()
       foreach ($t in $toks) {
-        foreach ($m in [regex]::Matches($t, '([A-Za-z_][A-Za-z0-9_]*\.cs)')) {
+        foreach ($m in [regex]::Matches($t, '([A-Za-z_][A-Za-z0-9_\-]*\.cs)')) {
           $b2 = $m.Groups[1].Value.ToLower()
           if ($names2 -notcontains $b2) { $names2 += $b2 }
         }
@@ -1248,6 +1687,328 @@ if ($visRows2.Count -eq 0) {
     $loose | Select-Object -First 10 | ForEach-Object { Sub $_.Name }
   } else {
     Say 'PASS' 'evidence-economy' ('' + $visRows2.Count + ' visual-class row(s); index files = ' + $indexFiles.Count + '; indexed png = ' + ($allPngs.Count - $loose.Count) + ', loose = ' + $loose.Count + ' within budget ' + $budget + ' (= max(12, visual rows x 2)); the zero-referenced-png half is enforced by item 26 shot-refs-audited')
+  }
+}
+
+
+# --- 36) ps1-ascii -- every tools/**/*.ps1 must be ASCII OUTSIDE its comments ---------------
+#  WHY (slice BW-G-R): PS 5.1 reads a BOM-less .ps1 as ANSI, so a mojibake COMMENT is cosmetic
+#  while Chinese inside a string literal or a pattern silently changes behaviour -- and a
+#  pattern that never matches looks exactly like "nothing found" (the trap this project already
+#  documents in verify.ps1).  Rule: comment lines may hold any byte; CODE lines must be < 128.
+$ps1Root = Join-Path $root 'tools'
+if ($ps1RootOverride -ne '') {
+  $ps1Root = $ps1RootOverride
+  Write-Output ('NOTE        ps1-root-override  ps1-ascii walks ' + $ps1Root + ' (gate self-test only, NOT a real verdict)')
+}
+$ps1Files = @(Get-ChildItem $ps1Root -Recurse -Filter '*.ps1' -File -ErrorAction SilentlyContinue)
+$nonAscii = @()
+$inBlock = $false
+foreach ($pf in $ps1Files) {
+  $pn = 0
+  foreach ($pln in @([System.IO.File]::ReadAllLines($pf.FullName))) {
+    $pn++
+    $pt = $pln.Trim()
+    if ($inBlock) { if ($pt.Contains('#>')) { $inBlock = $false }; continue }
+    if ($pt.StartsWith('<#')) { if (-not $pt.Contains('#>')) { $inBlock = $true }; continue }
+    if ($pt.StartsWith('#')) { continue }
+    foreach ($pch in $pln.ToCharArray()) {
+      if ([int]$pch -gt 127) {
+        $nonAscii += ($pf.FullName.Substring($root.Length).TrimStart('\') + ':' + $pn)
+        break
+      }
+    }
+  }
+}
+if ($nonAscii.Count -eq 0) {
+  Say 'PASS' 'ps1-ascii' ('' + $ps1Files.Count + ' script(s) under tools/**; no non-ASCII byte outside comments (comments may be ANSI-mangled, string literals / patterns may not)')
+} else {
+  $script:fail++
+  Say 'FAIL' 'ps1-ascii' ('' + $nonAscii.Count + ' script line(s) carry non-ASCII bytes OUTSIDE comments (PS 5.1 reads them as ANSI: a literal or pattern silently misbehaves)')
+  $nonAscii | Select-Object -First 10 | ForEach-Object { Sub $_ }
+}
+
+# --- 37) editor-assembly-compiles -- Assets/Editor/** must compile as the EDITOR assembly ----
+#  WHY (slice BW-G-R): the compiler is the only offline judge of "the Editor code is not
+#  broken", and a broken Editor script is a SILENT killer: Unity stays on "Scripts still have
+#  compile errors" and Play never starts (measured 2026-09-23: a bare `InternalEditorUtility` in
+#  Assets/Editor/VisualLeakGuard.cs => CS0103 => every capture of that session was a dark frame).
+#  RELATION TO tools/probes/compile-check.ps1 (stated because it is a trap): its DEFAULT mode
+#  compiles the Runtime assembly and does NOT cover `Assets/Editor/**` as Unity's Editor
+#  assembly (separate assembly + UNITY_EDITOR defined).  This item runs
+#  `compile-check.ps1 -Editor`, which sets UNITY_EDITOR and compiles ONLY Assets/Editor/**.
+#  Cross-validation: unity's own `recompile_status.failed` field (needs a live editor, slow) must
+#  agree; this item exists so the verdict does not depend on it.
+$ccScript = Join-Path $root 'tools\probes\compile-check.ps1'
+if (-not (Test-Path $ccScript)) {
+  $script:fail++
+  Say 'FAIL' 'editor-assembly-compiles' ('missing ' + $ccScript + ' -- the Editor assembly is unverifiable offline')
+} else {
+  $ccTmp = Join-Path $tmpRoot 'verify-editor-compile.txt'
+  $ccOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ccScript -Editor 1 -Quiet 1 2>&1 | ForEach-Object { [string]$_ })
+  $ccRc = $LASTEXITCODE
+  $ccOut | Set-Content -Encoding UTF8 $ccTmp
+  $ccErrs = @($ccOut | Where-Object { $_ -match ': error CS\d+' })
+  if (($ccRc -eq 0) -and ($ccErrs.Count -eq 0)) {
+    Say 'PASS' 'editor-assembly-compiles' ('Assets/Editor/** compiles as the Editor assembly (UnityEditor.dll + UnityEditor.CoreModule, UNITY_EDITOR defined), 0 error -- raw output: ' + $ccTmp)
+  } else {
+    $script:fail++
+    Say 'FAIL' 'editor-assembly-compiles' ('' + $ccErrs.Count + ' compile error(s) in Assets/Editor/** (csc exit=' + $ccRc + ') -- raw output: ' + $ccTmp)
+    $ccErrs | Select-Object -First 10 | ForEach-Object { Sub $_ }
+  }
+}
+# --- 38) section-ownership -- 段属权：双向覆盖 + 块内无手写行 + 差异段 == 新鲜 DIF 渲染 ----
+#  WHY (slice BW-S-R): the coverage block is REBUILT by the generator, so anything typed inside
+#  `<!-- COVERAGE-BEGIN --> ... <!-- COVERAGE-END -->` is silently erased by the next `--inject`
+#  (measured: a whole paragraph of 片BU-R6 evidence vanished that way).  The first version of this
+#  check compared the block against `策划/覆盖矩阵判定.fragment.md` -- i.e. it BELIEVED the
+#  generator had just run: with a stale fragment the block and the fragment are wrong TOGETHER, so
+#  a hand-edited block stayed GREEN.  `--rebuild` re-runs the generator into a TEMP dir and
+#  compares against THAT, so "generator has not run" can no longer turn into a false PASS.
+#  The same rebuild also judges the `允许的差异` section: item 24 checks only its ID SET, while its
+#  CONTENT had drifted on 41 of 81 rows with nobody able to see it (measured 2026-09-23).
+$cAccName = ([char[]]@(0x9A8C,0x6536,0x8868) -join '') + '.md'   # yan shou biao
+$soScript = Join-Path $root 'tools\probes\section-ownership.py'
+if (-not (Test-Path $soScript)) {
+  $script:fail++
+  Say 'FAIL' 'section-ownership' ('missing ' + $soScript + ' -- the section ownership rules are unenforceable')
+} elseif ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+  $script:fail++
+  Say 'FAIL' 'section-ownership' 'python is not on PATH -- cannot run section-ownership.py'
+} else {
+  $soArgs = @($soScript, '--check', '--rebuild')
+  if ($planOverride -ne '') {
+    $soProduct = Join-Path $planOverride $cAccName
+    $soArgs += @('--product', $soProduct)
+    Write-Output ('NOTE        section-ownership  plan dir overridden -> product = ' + $soProduct + ' (gate self-test only; the rebuild always runs the REAL generator)')
+  }
+  $soTmp = Join-Path $tmpRoot 'verify-section-ownership.txt'
+  $soOut = @(& python @soArgs 2>&1 | ForEach-Object { [string]$_ })
+  $soRc = $LASTEXITCODE
+  $soOut | Set-Content -Encoding UTF8 $soTmp
+  $soHits = @($soOut | Where-Object { $_ -match '^(RESULT|REBUILD)' })
+  $soLast = if ($soHits.Count -gt 0) { [string]$soHits[$soHits.Count - 1] } else { '(no RESULT line)' }
+  if ($soRc -eq 0) {
+    Say 'PASS' 'section-ownership' ($soLast + ' -- raw output: ' + $soTmp)
+  } else {
+    $script:fail++
+    Say 'FAIL' 'section-ownership' ($soLast + ' -- raw output: ' + $soTmp)
+    $soOut | Where-Object { $_ -match '^\s+(FAIL|SKIP)' } | Select-Object -First 6 | ForEach-Object { Sub $_ }
+  }
+}
+
+# --- 39) evidence-anchor -- template item 23 / anti-gaming section 3 ------------------------
+#  Judge the PROCESS, not the result: every verdict row's EVIDENCE cell must carry at least
+#  one CHECKABLE anchor -- a pointer a third party can re-open.  Accepted forms (documented in
+#  tools/probes/audit-verdict-rows.py, the judgement asset):
+#    F1 <path>:<line>  (file on disk, line in range for a text file)
+#    F2 guid=<32 hex>  (the guid of a .meta inside the project)
+#    F3 a path token with an artifact extension that exists on disk (backticked OR bare; a bare
+#       file name also resolves against .ai-tmp/screenshots / .ai-tmp/test / tools/probes, the
+#       same way item 5 resolves a cited png name)
+#    F4 a numeric measurement AND a path token that exists on disk
+#  WHY NOT a bare "row-count equality": this project measured `3798 == 3798` PASS while 350
+#  entity names had drifted and 3355 evidence cells were prose ("referenced (guid/short-name
+#  hit)").  A row whose evidence names no artifact can never turn red, so it was never judged.
+#  The parse is deliberately NOT re-implemented here: the judgement asset is reused, so the
+#  gate and the audit slice cannot disagree about the same data.
+#  DATA-side wording is NOT this item's job: it reports, with numbers and per dimension, and
+#  the anchors have to be added by a data slice.  Weakening this item to make it green would be
+#  exactly the "gate satisfied by a threshold change" failure (anti-gaming section 3).
+$probeRoots = @((Join-Path $root 'tools\probes'), (Join-Path $root '.ai-tmp\test'))
+if ($probeRootOverride -ne '') {
+  $probeRoots = @($probeRootOverride)
+  Write-Output ('NOTE        probe-root-override  coverage-hit scans ' + $probeRootOverride + ' (gate self-test only, NOT a real verdict)')
+}
+$vrScript = Join-Path $root 'tools\probes\audit-verdict-rows.py'
+$vrOut = @()
+if (-not (Test-Path $vrScript)) {
+  $script:fail++
+  Say 'FAIL' 'evidence-anchor' ('missing ' + $vrScript + ' -- the anchor judgement is unverifiable')
+} elseif ($null -eq (Get-Command python -ErrorAction SilentlyContinue)) {
+  $script:fail++
+  Say 'FAIL' 'evidence-anchor' 'python is not on PATH -- cannot run audit-verdict-rows.py'
+} else {
+  $vrTmp = Join-Path $tmpRoot 'verify-verdict-rows.txt'
+  $vrArgs = @($vrScript, '--plan', $planDir, '--shot-dir', $shotDir, '--probe-roots', ($probeRoots -join ';'))
+  $vrOut = @(& python @vrArgs 2>&1 | ForEach-Object { [string]$_ })
+  $vrOut | Set-Content -Encoding UTF8 $vrTmp
+  $nA = @($vrOut | Where-Object { $_ -match 'rows with an anchor = \d+' } | Select-Object -Last 1)
+  if ($nA.Count -eq 0) {
+    $script:fail++
+    Say 'FAIL' 'evidence-anchor' ('audit-verdict-rows.py printed no anchor count -- inspect ' + $vrTmp)
+    $vrOut | Select-Object -Last 6 | ForEach-Object { Sub ([string]$_) }
+  } else {
+    $am = [regex]::Match($nA[0], 'rows with an anchor = (\d+)\s+rows with NO anchor = (\d+)')
+    $nAnch = [int]$am.Groups[1].Value
+    $nUn = [int]$am.Groups[2].Value
+    $nTot = $nAnch + $nUn
+    if ($nTot -eq 0) {
+      $script:fail++
+      Say 'FAIL' 'evidence-anchor' 'no verdict row was found at all -- an empty table is unjudged, never a pass'
+    } elseif ($nUn -eq 0) {
+      Say 'PASS' 'evidence-anchor' ('every one of the ' + $nTot + ' verdict row(s) carries a checkable anchor (<path>:<line> / guid= / on-disk path / number+path); judged by tools/probes/audit-verdict-rows.py, NOT by row-count equality; raw output: ' + $vrTmp)
+    } else {
+      $script:fail++
+      Say 'FAIL' 'evidence-anchor' ('' + $nUn + ' of ' + $nTot + ' verdict row(s) quote NO checkable anchor in the evidence cell (prose is not evidence, SKILL 4 item 7) -- the anchors have to be added by the owning data slice; per dimension (anchored/no-anchor):')
+      $vrOut | Where-Object { $_ -match '^\s+(D\d+|S\d+)\s+anchored=\d+\s+no-anchor=\d+' } |
+        Select-Object -First 15 | ForEach-Object { Sub (($_ -split 'kind:')[0].Trim()) }
+      $vrOut | Where-Object { $_ -match '^\s+(sample unanchored row|row \d+ \[)' } | Select-Object -First 7 | ForEach-Object { Sub ([string]$_) }
+      Sub ('raw output: ' + $vrTmp)
+    }
+  }
+}
+
+# --- 40) coverage-hit -- template item 25 / anti-gaming section 3 ("judgement防凑数") -------
+#  Every verdict row must be HIT BY ROW ID inside a probe output.  Row-count equality is not
+#  the criterion: padding both sides is far cheaper than judging the rows.
+#  Carrier contract (see tools/probes/audit-verdict-rows.py): a file under the probe roots
+#  (<root>/tools/probes/**, <root>/.ai-tmp/test/**) whose FIRST line is
+#      # probe-hits plan=<the plan dir it belongs to>
+#  followed by one data line per hit, "<rowId>\t<...>".  Both halves are load-bearing:
+#   * the declaration keeps a CARRIER set explicit, so a file that merely happens to contain
+#     a number (the acceptance table itself, a saved tool output, this gate's own report)
+#     cannot satisfy the item -- the same reasoning as item 26's declarative-carrier fix;
+#   * binding the carrier to ONE plan dir keeps a self-test fixture ledger (which lives under
+#     tools/probes/** too) from reporting hits for the REAL table's rows 1..N.
+if (Test-Path $vrScript) {
+  $hC = @($vrOut | Where-Object { $_ -match '^hit carriers\s+=' } | Select-Object -Last 1)
+  $hR = @($vrOut | Where-Object { $_ -match '^rows hit by id\s+=' } | Select-Object -Last 1)
+  if (($hC.Count -eq 0) -or ($hR.Count -eq 0)) {
+    $script:fail++
+    Say 'FAIL' 'coverage-hit' 'audit-verdict-rows.py printed no hit count -- inspect .ai-tmp/verify-verdict-rows.txt'
+  } else {
+    $nCar = [int]([regex]::Match($hC[0], 'hit carriers\s+=\s+(\d+)').Groups[1].Value)
+    $hm = [regex]::Match($hR[0], 'rows hit by id\s+=\s+(\d+)\s+rows NOT hit = (\d+)')
+    $nHit = [int]$hm.Groups[1].Value
+    $nMiss = [int]$hm.Groups[2].Value
+    # TABLE-ECHO guard (anti-gaming section 8): a ledger that merely RE-RENDERS the verdict
+    # rows satisfies "the id appears in an output" without any probe having run.  A hit line
+    # whose FIELDS are >= 60% verbatim copies of that row's own cells (with a >= 2 匹配 floor)
+    # is such an echo and must NOT count.  CURRENT THRESHOLD lives in tools/probes/
+    # audit-verdict-rows.py (docstring + table_echo) -- that block is the ONLY definition; an
+    # earlier ">= 3 cells, substring, entity column missing" version was abandoned the same hour
+    # because it detected 0 of the 3800 real echoes (a threshold that never fires is a bug).
+    # Measured 2026-09-23: a re-render of the coverage block landed in tools/probes/ and this
+    # guard rejected it; the genuine enumerator ledger (2 fields/line, echo ratio 0.00) passes.
+    $hE = @($vrOut | Where-Object { $_ -match '^table-echo hits\s+=' } | Select-Object -Last 1)
+    $nEchoOnly = 0
+    # (?i): the judgement asset writes "rows whose ONLY hits are echoes" in caps -- a
+    # case-sensitive pattern silently reads 0 and under-reports the diagnosis (measured).
+    if ($hE.Count -gt 0) { $nEchoOnly = [int]([regex]::Match($hE[0], '(?i)only hits are echoes = (\d+)').Groups[1].Value) }
+    # LAYERED reporting (main-agent ruling 2026-09-23): the enumeration class (D1, D5) is hit
+    # legitimately by the enumerator's OWN output, while the behaviour class (D6/D7/D9/D10/D11/
+    # D12/S2/S3) is where "geometry right + collision wrong" and "data present + never played"
+    # live and therefore needs REAL probes.  Reported separately so a green total can never hide
+    # an empty behaviour class.  NO threshold is set -- a tunable threshold is exactly how a gate
+    # turns green without the rows being judged.
+    $lay = @($vrOut | Where-Object { $_ -match '^layered contract:' } | Select-Object -Last 1)
+    $layTxt = $(if ($lay.Count -gt 0) { ([string]$lay[0]) } else { '(layered breakdown unavailable)' })
+    # HIT CONTRACT (main-agent ruling 2026-09-23, option (b)): behaviour-class rows need a REAL
+    # probe (`probe=<name>` + `measured=/run=`), and `unresolved=1` is legal ONLY on a `--` line.
+    # Both counters are read from the judgement asset so the rule has ONE definition; this item only
+    # reports them.  The behaviour red is the CORRECT state (those rows are unprobed, not "in debt").
+    $bhL = @($vrOut | Where-Object { $_ -match '^behaviour-no-probe\s+=' } | Select-Object -Last 1)
+    $lyL = @($vrOut | Where-Object { $_ -match '^unresolved-lying\s+=' } | Select-Object -Last 1)
+    $bhN = 0
+    $lyN = 0
+    if ($bhL.Count -gt 0) { $bhN = [int]([regex]::Match([string]$bhL[0], '=\s*(\d+)').Groups[1].Value) }
+    if ($lyL.Count -gt 0) { $lyN = [int]([regex]::Match([string]$lyL[0], '=\s*(\d+)').Groups[1].Value) }
+    # Undeclared measurement shape = the silent-degradation guard (relay slice's first P4 attempt:
+    # 1180 rows fell into a degradation shape while every field still had a value). The shape
+    # histogram itself is read-only observability; only an UNDECLARED shape turns the item red.
+    $shL = @($vrOut | Where-Object { $_ -match '^unknown-shape\s+=' } | Select-Object -Last 1)
+    $unN = 0
+    if ($shL.Count -gt 0) { $unN = [int]([regex]::Match([string]$shL[0], '=\s*(\d+)').Groups[1].Value) }
+    if (($nCar -eq 0) -or ($nMiss -gt 0) -or ($nEchoOnly -gt 0) -or ($bhN -gt 0) -or ($lyN -gt 0) -or ($unN -gt 0)) {
+      $script:fail++
+      Say 'FAIL' 'coverage-hit' ('' + $nMiss + ' of ' + ($nHit + $nMiss) + ' verdict row(s) are NOT hit by any probe output (' + $nCar + ' hit ledger(s) found; ' + $nEchoOnly + ' row(s) are "hit" ONLY by a TABLE ECHO) -- a row nobody probed is a row nobody judged; the probes must emit the ledger contract below; sample un-hit ids:')
+      $vrOut | Where-Object { $_ -match 'un-hit row id' } | Select-Object -First 2 | ForEach-Object { Sub ([string]$_) }
+      $vrOut | Where-Object { $_ -match '^hit carriers\s+=' } | ForEach-Object { Sub ([string]$_) }
+      # A file that declares THIS plan dir but is not NAMED as a ledger is deliberately not collected
+      # (the scope rule that stops a self-test sample from polluting the real criterion).  Surface it
+      # here, otherwise an oddly named real ledger would look like "no probe ever ran" with no
+      # explanation -- a silent exclusion is its own kind of false red.
+      $vrOut | Where-Object { $_ -match 'not-a-carrier' } | Select-Object -First 3 | ForEach-Object { Sub ([string]$_) }
+      if ($nEchoOnly -gt 0) { $vrOut | Where-Object { $_ -match 'table-echo sample' } | Select-Object -First 3 | ForEach-Object { Sub ([string]$_) } }
+      Sub $layTxt
+      Sub ('' + $bhN + ' behaviour-class row(s) without a REAL probe hit (need probe=<name> + measured=/run=) and ' + $lyN + ' row(s) whose unresolved=1 LIES about having no anchor -- the behaviour red is the CORRECT state until real probes exist (main-agent ruling (b)), the liar flag is the producer''s own defect (legal only on a "--" line); NEITHER is a debt to be greened by loosening the rule')
+      if ($unN -gt 0) {
+        Sub ('' + $unN + ' hit line(s) carry an UNDECLARED measurement shape -- a degraded shape LOOKS exactly like a normal one (the relay slice P4 v1: 1180 rows fell into one while every field had a value), so it must be visible and red; the declared set + the histogram are in tools/probes/audit-verdict-rows.py')
+      }
+      Sub 'carrier contract: first line "# probe-hits plan=<plan dir>"; then "<rowId><TAB><...>" per probed row (root: tools/probes/** + .ai-tmp/test/**); a line whose FIELDS are >= 60% verbatim copies of the row''s own cells (and >= 2 matched) is a table echo, not a hit; behaviour-class rows additionally need probe=<name> + measured=/run= -- the ONLY definitions live in tools/probes/audit-verdict-rows.py (CURRENT THRESHOLD block + hit_quality)'
+    } else {
+      Say 'PASS' 'coverage-hit' ('all ' + $nHit + ' verdict row(s) are hit by row id in a probe output (' + $nCar + ' hit ledger(s)); judged by row id, NOT by row count (anti-gaming section 2); table-echo lines rejected; ' + $layTxt)
+    }
+  }
+}
+
+# --- 41) state-matrix -- the state matrix must carry a row for every one of the 12+3 dims ----
+#  WHY (patterns/full-coverage-audit.md section 2 / scaffold/coverage-matrix.md): the entity
+#  list is one row per ENTITY while the verdict rows are one row per (entity x STATE x boundary)
+#  -- "entity x state x boundary" is the product the user actually sees, so a dimension with no
+#  state row is a dimension nobody judged (SKILL: 缺维度 = 未判).  Judged by the same judgement
+#  asset item 20 already runs (tools/probes/audit-coverage-reconcile.py), whose output is
+#  captured once in .ai-tmp/verify-coverage-reconcile.txt -- no second run, and the gate and the
+#  audit cannot disagree.
+if (($null -eq $covOut) -or (@($covOut).Count -eq 0)) {
+  $script:fail++
+  Say 'FAIL' 'state-matrix' 'the reconcile asset produced no output (see coverage-rows) -- the state matrix is unjudged, never a pass'
+} else {
+  $smLine = @($covOut | Where-Object { $_ -match '^state-matrix dims' } | Select-Object -Last 1)
+  $smFail = @($covOut | Where-Object { $_ -match '^\s+FAIL\s+state-matrix\s' })
+  $smTxt = if ($smLine.Count -gt 0) { [string]$smLine[0] } else { '' }
+  if ($smFail.Count -eq 0 -and $smTxt -match 'state-matrix dims\s+=\s+15 of 15') {
+    Say 'PASS' 'state-matrix' ($smTxt.Trim() + ' -- every one of the 12+3 dimensions has at least one state row')
+  } else {
+    $script:fail++
+    $why = if ($smFail.Count -gt 0) { (([string]$smFail[0]) -replace '^\s+FAIL\s+', '').Trim() } else { 'the state matrix does not report 15 of 15 dimensions' }
+    Say 'FAIL' 'state-matrix' ($why + ' -- a missing dimension is unjudged, never a pass (pattern full-coverage-audit section 2; ' + $smTxt.Trim() + '); boundary values (threshold-1 / 0 / cap / cap+1) must be taken for the dimensions that are present')
+  }
+}
+
+# --- 42) gate-sync -- the gate must be a SUPER-SET of the template's declared item list -------
+#  WHY (deterministic-gates.md never answers "who maintains the gate"): the template declares its
+#  items mechanically, but projects landed DIFFERENT subsets and even the same item under a
+#  different name (play-ledger vs play-budget, handoff-doc-found vs no-handoff-docs), so an ad-hoc
+#  comparison silently misses the drift -- "the rule was written and the gate was never wired".
+#  This item makes the correspondence mechanical by running the SAME script the template ships
+#  (tools/gate-sync.ps1, not a copy) and requiring its own summary to be FAIL=0.
+#  TEMPLATE CORRESPONDENCE: template item 24 is `gate-sync`, still declared `planned` there.
+#  ⛔ That file belongs to the skill owner and is NOT edited from here; tools/gate-sync.ps1 prints
+#  `INFO gate-planned-done` listing the planned items the project now enforces, so the
+#  correspondence is visible to any reader instead of being an unstated claim.
+$gsScript = Join-Path $root 'tools\gate-sync.ps1'
+if (-not (Test-Path $gsScript)) {
+  $script:fail++
+  Say 'FAIL' 'gate-sync' ('missing ' + $gsScript + ' -- the template/project correspondence is unverifiable')
+} else {
+  $gsArgs = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $gsScript, '-Project', $root)
+  if ($gateTemplateOverride -ne '') {
+    if (-not (Test-Path -LiteralPath $gateTemplateOverride)) {
+      $script:fail++
+      Say 'FAIL' 'gate-sync' ('gate-template-override does not exist: ' + $gateTemplateOverride)
+    } else {
+      $gsArgs += @('-Template', (Get-Item -LiteralPath $gateTemplateOverride).FullName)
+      Write-Output ('NOTE        gate-template-override  comparing against ' + (Get-Item -LiteralPath $gateTemplateOverride).FullName + ' (gate self-test only, NOT a real verdict)')
+    }
+  }
+  $gsTmp = Join-Path $tmpRoot 'verify-gate-sync.txt'
+  $gsOut = @(& powershell @gsArgs 2>&1 | ForEach-Object { [string]$_ })
+  $gsOut | Set-Content -Encoding UTF8 $gsTmp
+  $gsSum = @($gsOut | Where-Object { $_ -match '^===== summary: FAIL=\d+' } | Select-Object -Last 1)
+  $gsRes = @($gsOut | Where-Object { $_ -match '^(PASS|FAIL)\s+gate-sync\s' } | Select-Object -Last 1)
+  if ($gsSum.Count -eq 0) {
+    $script:fail++
+    Say 'FAIL' 'gate-sync' ('tools\gate-sync.ps1 printed no summary line -- the correspondence is unjudged, never a pass; raw output: ' + $gsTmp)
+    $gsOut | Select-Object -Last 5 | ForEach-Object { Sub ([string]$_) }
+  } elseif (($gsSum[0] -notmatch 'FAIL=0') -or ($gsRes.Count -eq 0) -or ($gsRes[0] -notmatch '^PASS')) {
+    $script:fail++
+    Say 'FAIL' 'gate-sync' ((($gsRes | Select-Object -First 1) -join '') + ' -- a template item the project does not implement, or a gate item the template does not declare, means the two have drifted; raw output: ' + $gsTmp)
+    $gsOut | Where-Object { $_ -match '^(FAIL|INFO)\s+(gate-items|gate-planned|gate-impl|gate-planned-done|gate-template)' } | Select-Object -First 6 | ForEach-Object { Sub ([string]$_) }
+  } else {
+    $gsTpl = @($gsOut | Where-Object { $_ -match '^INFO\s+gate-template\s' } | Select-Object -Last 1)
+    Say 'PASS' 'gate-sync' ('the gate covers every item the template declares (' + (($gsRes[0] -replace '\s+', ' ')) + '); ' + (($gsTpl | Select-Object -First 1) -join '') + '; judged by tools/gate-sync.ps1 -- the template itself is not modified here')
   }
 }
 

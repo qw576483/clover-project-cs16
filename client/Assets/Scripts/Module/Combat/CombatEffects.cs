@@ -425,6 +425,15 @@ namespace Cs16.Module.Combat
             go.transform.SetParent(_root, false);
             go.SetActive(false);
 
+            // 片BV-R 实测（同一冻结帧、屏幕级 A/B，数字见 .ai-tmp/test/bvr-diff.txt）：
+            // Unity 编辑器会在 Game view 之上给每个 **Light** 画一个「太阳」图标，而枪口点光就在
+            // 相机正前方几厘米处 ⇒ 图标被投影成一大块（实测：只把这组宿主设成 HideInHierarchy 后，
+            // 差集 26 101 像素整块消失 / 占比 3.48% / maxAbsDiff 219；把这组复原后画面与基线
+            // **MD5 完全相同** ⇒ 因果干净）。
+            // HideInHierarchy 只改"编辑器叠加层画不画"：⛔ 不改渲染、⛔ 不动物理射线、⛔ 不影响池复用
+            // （**不用** HideAndDontSave —— 那会让对象在切场景时不被销毁，池的语义就变了）。
+            go.hideFlags = HideFlags.HideInHierarchy;
+
             var light = go.AddComponent<Light>();
             light.type = LightType.Point;
             light.shadows = LightShadows.None;

@@ -41,7 +41,7 @@ function Run([string]$file, [string]$entry) {
 function Clk([string]$name) { St ("click=$name`n"); Start-Sleep -Milliseconds 800 }
 
 $reason = 'CanStand / ResolveMove / TrySampleGround all go through real PhysX against the loaded scene and the bot goal lives in the live CsBotBrain, so per-frame "which cell is the bot stuck on, what is its foot gap, what is the ground normal, how far does ResolveMove actually move it" cannot be produced offline (an offline host has no scene and no Physics)'
-[IO.File]::AppendAllText($playLog, ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm') + "]`tclover-impl`tcs16-切片BK-bot-phys`t" + $reason + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
+[IO.File]::AppendAllText($playLog, ('[' + (Get-Date -Format 'yyyy-MM-dd HH:mm') + "]`tclover-impl`tcs16-' + ([char[]]@(0x5207, 0x7247) -join '') + 'BK-bot-phys`t" + $reason + "`r`n"), (New-Object System.Text.UTF8Encoding($false)))
 
 if (Test-Path $outF) { Remove-Item $outF -Force }
 

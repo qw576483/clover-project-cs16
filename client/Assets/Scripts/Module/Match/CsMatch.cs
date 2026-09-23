@@ -2295,6 +2295,13 @@ namespace Cs16.Module.Match
                 // ---- 下包 / 拆包 ----
                 Bomb.SetUseState(a, intent.Use && Round.Phase == CsRoundPhase.Live, now);
 
+                // ★ 片BU-R6（差异 #80 的消除动作）：拾取掉落的 C4 —— **口径与玩家侧完全同一处**。
+                //   原版口径 = "走到 1.2m 内自动拾取"（`CsMatch.PickupRadius`），玩家侧早就有这一行
+                //   （`CsMatch.cs:1758` 的 `UpdateLocalPlayer`），bot 侧每帧的 `UpdateBots` 此前漏了它
+                //   ⇒ 片BU-R5 实测：round-1 里 Minh 站到掉落点 0.44m 处 30.25s，日志 0 条 `拾起了掉落的 C4`。
+                //   ⛔ 不是新增拾取规则：同一 API、同一判定半径，只补"bot 也要走这个判定"。
+                Bomb.TryPickupDropped(a);
+
                 // ---- 开火 ----
                 if (intent.Fire && Round.Phase == CsRoundPhase.Live && a.IsAlive)
                 {

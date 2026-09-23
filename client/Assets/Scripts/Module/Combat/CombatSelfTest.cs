@@ -290,6 +290,9 @@ namespace Cs16.Module.Combat
         {
             var go = new GameObject($"CombatSelfTest_{actorId}_{suffix}");
             go.transform.position = position;
+            // 同 BotSelfTest：自检临时受击体 ⇒ ① Gizmos 叠层不画它（HideInHierarchy 只改叠加层，不动物理）
+            // ② 用完整例 DestroyImmediate（本方法调用方的 finally）。
+            go.hideFlags = HideFlags.HideInHierarchy;
             var col = go.AddComponent<BoxCollider>();
             col.size = Vector3.one * (CsConst.PlayerRadius * 2f);
             var proxy = go.AddComponent<CsHitboxProxy>();

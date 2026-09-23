@@ -57,6 +57,25 @@
 | `Clover/CS16/校验流程产出（只读）` / `校验游戏内面板（只读）` / `校验视图与音效资源（只读）` | 同上 | — | 只读自检 |
 | `Clover/自检/比赛核心模拟（快进 90s）` | `MatchSelfTest.cs` | — | 比赛逻辑离线自检 |
 
+## Editor 横切设施（`client/Assets/Editor/**`，非生成器；切片BV 2026-09-22 新增）
+
+| 设施 | 文件 | 触发 | 职责 |
+| --- | --- | --- | --- |
+| Game view 图标叠加层守卫 | `VisualLeakGuard.cs`（`[InitializeOnLoad]` + `playModeStateChanged`，131 行） | 进 Play 自动；另有菜单 `Clover/CS16/关闭 Game view 图标叠加层` | 把 Game view 的 **`m_Gizmos` + `showGizmos` + `drawGizmos` 三个成员一起**写 `false` ⇒ 消除 Unity **编辑器叠加**在画面上的组件图标（喇叭 = `AudioSource`、太阳 = `Light`）与 `OnDrawGizmos` 线框。⛔ **只写 `showGizmos` 不生效**（实测 A/B 两张 PNG 的 MD5 完全相同 ⇒ 画面 0 像素变化），必须三个一起写。⛔ 它是**编辑器层兜底**：打包版没有这层叠加；用户手动再点开 Gizmos 仍会看到图标（要彻底消除需给图标宿主设 `hideFlags`，见 `策划/差异登记.tsv` #78）。 |
+
+> **取证注意（切片BV 实测）**：`unity command capture_game_view --source camera|screen` 采的是**游戏自己的后缓冲**，**编辑器叠加层不在里面** —— 所以"用户看得见、截图里从来没有"。
+> 要看编辑器叠加必须走屏幕级采集：`tools/probes/capture-editor-screen.cs`（**必须在 Unity 进程内**跑：本机编辑器以管理员启动，非提权进程 `SetWindowPos` 返回 False/UIPI）+ `tools/probes/diff-ab.py`（A/B 差集数字 + 可视化）。
+
+## Play 驱动约定（`.ai-tmp/drivers/`；切片BU-R2 2026-09-22 实测教训）
+
+| 约束 | 为什么 | 出处 |
+| --- | --- | --- |
+| ⛔ 驱动**不得无条件**调 `Cs16Drv.Entry.StartBots()` / `EmitLaunch` | New Game 面板**默认已 4v4**（L3 `bots/队=4`）⇒ 二次 `LaunchMatch` 走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ **掐掉正在跑的回合**（实测该回合只活 **22.5 s**，而配置 ≥114 s = `FreezeTime 4` + `RoundTime 105` + `RoundEndTime 5`）⇒ 所有"回合内位移 / 下包 / 驻留"数字**全部失真** | `.ai-tmp/test/bu-r2-round-truth.tsv`；`client/Assets/Scripts/Module/Match/CsMatch.cs` 的 `Start` 契约 |
+| 用 `Cs16Drv.Entry.StartBotsIfNeeded`（`BotCount ≥ 8` 就不补 Launch） | 同上 | `.ai-tmp/drivers/bu-r2-play.ps1` |
+| 采集窗口以"探针检到 `phase=RoundEnd`"为准（硬上限 165 s），⛔ 不用固定秒数 | 固定 93 s 窗口会把"回合被掐"误读成"回合时长 ≈31 s"（93/3 的算术平均），进而误导出"要下调验收阈值"的错误结论 | 同上 |
+| 进 Play 后断言 `Application.isPlaying == true`；采到空数据（`no local/no match`）**立刻作废该帧** | 同机并发改 `.cs` ⇒ Unity 域重载 ⇒ 掐掉别人正在跑的 Play | `patterns/multi-agent.md`（"同机并发撞车"） |
+| ⛔ 不许为了过判据去改 `RoundTime` / 时间缩放 / 验收阈值 | 那是迎合判据（`reference/anti-gaming.md` 点名的作弊形态） | 主 agent 裁决 2026-09-22 |
+
 ## 数值表（本项目的"配表"形态）
 
 | 表 | 文件 | 内容 | 出处标注 |
