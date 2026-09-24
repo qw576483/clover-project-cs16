@@ -74,7 +74,7 @@
 | 用 `Cs16Drv.Entry.StartBotsIfNeeded`（`BotCount ≥ 8` 就不补 Launch） | 同上 | `.ai-tmp/drivers/bu-r2-play.ps1` |
 | 采集窗口以"探针检到 `phase=RoundEnd`"为准（硬上限 165 s），⛔ 不用固定秒数 | 固定 93 s 窗口会把"回合被掐"误读成"回合时长 ≈31 s"（93/3 的算术平均），进而误导出"要下调验收阈值"的错误结论 | 同上 |
 | 进 Play 后断言 `Application.isPlaying == true`；采到空数据（`no local/no match`）**立刻作废该帧** | 同机并发改 `.cs` ⇒ Unity 域重载 ⇒ 掐掉别人正在跑的 Play | `patterns/multi-agent.md`（"同机并发撞车"） |
-| ⛔ 不许为了过判据去改 `RoundTime` / 时间缩放 / 验收阈值 | 那是迎合判据（`reference/anti-gaming.md` 点名的作弊形态） | 主 agent 裁决 2026-09-22 |
+| ⛔ 不许为了过判据去改 `RoundTime` / 时间缩放 / 验收阈值 | 那是"迎合判据"的作弊形态（改一个数字让检查变绿，而不是把东西做对） | 主 agent 裁决 2026-09-22 |
 
 ## 数值表（本项目的"配表"形态）
 
