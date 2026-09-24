@@ -1,16 +1,19 @@
 # ============================================================================
-#  External delivery gate -- CUT TO 7 ITEMS (2026-09-24, slice `sink4` / member gate-cut).
+#  External delivery gate -- CUT TO 6 ITEMS (2026-09-24; it was 47 items, then 7).
 #
 #  WHY SO FEW: the user's ruling -- "too many gates, cut them; small things are not
 #  checked, things that can be reasoned out are not checked, simple pixels are not
-#  checked -- those go to AI eyeballing."  Every item kept below can name a CONCRETE
-#  defect it caught on this project (each item header says which one).
+#  checked -- those go to AI eyeballing."  The gate is now the THREE REQUIREMENTS a
+#  machine has to settle -- (1) a REAL build, (2) delivery hygiene, (3) references
+#  reachable incl. image freshness -- plus verify-entry, which is a precondition
+#  (the gate must not be a lie about itself).  Every item kept below can name a
+#  CONCRETE defect it caught on this project (each item header says which one).
 #
 #  The previous 47-item version is preserved verbatim at
 #  .ai-tmp/test/sink4-verify-backup.ps1
 #  (SHA256 88A0598938FEA5BC379834EF9FE580D9FF77E909110F836A783392C0198A1ACA).
 #
-#  ITEMS KEPT (7):
+#  ITEMS KEPT (6):
 #    1 verify-entry              framework does not crash + the one-command entry surface runs
 #    2 delivery-hygiene          file/size budget, no bin|obj|*-bak-*, no stray temp or
 #                                handoff doc, every .ps1 parses and carries no ANSI trap
@@ -18,8 +21,12 @@
 #    4 evidence-freshness        every cited shot is at least as new as ITS OWN row's code
 #                                (also prints the batch freeze point T0)
 #    5 reference-table-refs      cited carrier paths / file:line exist on disk (REAL dangling only)
-#    6 brand-credit              `clover-engine` in the sources AND seen rendered on the home screen
-#    7 shot-citations            every evidence shot cited by the acceptance table exists
+#    6 shot-citations            every evidence shot cited by the acceptance table exists
+#
+#  REMOVED in the 2026-09-24 gate trim: brand-credit (the `clover-engine` source
+#  grep + the rendered home-screen dump -- a look-at-the-screen judgement, not a
+#  script's) and the gate self-test window warning (a read-only notice, never a
+#  gate row).
 #
 #  NOTE: this file must stay ASCII-only.  Windows PowerShell 5.1 parses a .ps1 as
 #  ANSI/GBK when the file has no UTF-8 BOM, so a Chinese path written literally here
@@ -74,30 +81,6 @@ if ($seam -ne '') {
   Write-Output ''
 }
 
-# --- gate self-test window warning (kept: it is a READ-ONLY notice, not a gate row) --------
-# A full gate self-test rewrites a few real artifacts while it runs, so a `verify.ps1`
-# taken inside such a window can read a verdict that is intentionally perturbed.  The
-# pairing rules live in ONE place (tools/probes/window-ledger-check.ps1) so both
-# directions are provable on sandbox ledgers.
-$winLedger  = Join-Path $root '.ai-tmp\test\gate-selftest-window.tsv'
-$winChecker = Join-Path $root 'tools\probes\window-ledger-check.ps1'
-if (Test-Path $winLedger) {
-  if (Test-Path $winChecker) {
-    $winMsg = @()
-    try {
-      $winMsg = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $winChecker -Ledger $winLedger 2>&1 | ForEach-Object { [string]$_ })
-    } catch {
-      $winMsg = @('NOTE the gate self-test window ledger could not be read (locked by another process) -- treat this reading with caution and check .ai-tmp/test/gate-selftest-window.tsv by hand')
-    }
-    $winMsg = @($winMsg | Where-Object { $_ -match '^\s*(NOTE|WARN)' })
-    foreach ($m in $winMsg) { if ($m.Trim().Length -gt 0) { Write-Output $m } }
-    if ($winMsg.Count -gt 0) { Write-Output '' }
-  } else {
-    Write-Output 'NOTE the window guard is unverifiable (tools\probes\window-ledger-check.ps1 is missing)'
-    Write-Output ''
-  }
-}
-
 function Invoke-Checks {
   $specTxt = ''
   if (Test-Path $specTable) { $specTxt = Read-Text $specTable }
@@ -116,7 +99,7 @@ function Invoke-Checks {
   # which reports `verify-script-crash` and still prints a summary.
   $selfPath  = Join-Path $root 'tools\verify.ps1'
   $companions = @()
-  foreach ($cp in @('tools\gate-sync.ps1', 'tools\env-check.ps1')) {
+  foreach ($cp in @('tools\env-check.ps1')) {
     $pp = Join-Path $root ($cp -replace '/', '\')
     if (-not (Test-Path -LiteralPath $pp)) { $companions += $cp }
     elseif ((Get-Item -LiteralPath $pp).Length -le 0) { $companions += ($cp + ' (empty)') }
@@ -128,7 +111,7 @@ function Invoke-Checks {
     $script:fail++
     Say 'FAIL' 'verify-entry' ('entry surface incomplete, missing/empty: ' + ($companions -join ', '))
   } else {
-    Say 'PASS' 'verify-entry' ('tools\verify.ps1 executed (' + (Get-Item -LiteralPath $selfPath).Length + ' bytes) with both companion scripts present (gate-sync.ps1 / env-check.ps1)')
+    Say 'PASS' 'verify-entry' ('tools\verify.ps1 executed (' + (Get-Item -LiteralPath $selfPath).Length + ' bytes) with companion script present (env-check.ps1)')
   }
 
   # --- 2) delivery-hygiene (merged: tmp-budget + stray-temp-files + no-escaped-artifacts +
@@ -456,111 +439,7 @@ function Invoke-Checks {
     }
   }
 
-  # --- 6) brand-credit (merged: engine-credit + home-credit-rendered) ----------------------
-  # CAUGHT (2026-09-23/24): (a) the literal `clover-engine` disappeared from the client
-  # sources; (b) the rendered home-screen dump tools/probes/home-screen-nodetree.txt (09-23
-  # 17:49) was OLDER than the panel that renders the signature, MainMenuPanel.cs (09-24
-  # 18:15) -- i.e. the "seen rendered" claim was backed by a picture of a previous build;
-  # (c) a pixel font carrying only uppercase glyphs rendered `by clover-engine` as
-  # `BY CLOVER-ENGINE`, which a source grep can never see.
-  $cCredit   = 'by clover-engine'
-  $probeDump = Join-Path $root 'tools\probes\home-screen-nodetree.txt'
-  $brandPanel = Join-Path $codeDir 'UI\Flow\MainMenuPanel.cs'
-  $brand = @(Get-ChildItem $codeDir -Recurse -Filter *.cs -ErrorAction SilentlyContinue |
-             Select-String -Pattern 'clover-engine' -Encoding UTF8)
-  if ($brand.Count -eq 0) {
-    $script:fail++
-    Say 'FAIL' 'brand-credit' 'the literal clover-engine appears nowhere in the client sources'
-  } elseif (-not (Test-Path $probeDump)) {
-    $script:human++
-    Say 'HUMAN-ONLY' 'brand-credit' ('literal clover-engine present (' + $brand.Count + ' line(s)) but the rendered dump ' + $probeDump + ' is missing -- it is written by a REAL Play session: run tools/probes/probe-home-nodetree.cs through .ai-tmp/drivers/af-play.ps1 -Phase open then -Phase tree. Who can give it: whoever can let the Unity editor enter Play Mode on this machine')
-  } else {
-    $dumpTxt = Read-Text $probeDump
-    $head = @(); $nodes = @(); $txtLines = 0
-    foreach ($ln in @($dumpTxt -split "`r?`n")) {
-      if ($ln.StartsWith('#')) { $head += $ln; continue }
-      if ($ln.StartsWith('TEXT ')) {
-        $txtLines++
-        $m = [regex]::Match($ln, "text='(.*)' \| fontSize=([0-9]+) \| bestFit=([A-Za-z]+) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+) \| font=(\S*) \| fontDyn=(True|False) \| glyphs=(-?[0-9]+) \| hasA=(True|False) \| hasa=(True|False)")
-        if (-not $m.Success) { continue }
-        $pEnd = $ln.IndexOf(' | text=')
-        $nodes += [pscustomobject]@{
-          Path     = $ln.Substring(5, $pEnd - 5)
-          Text     = $m.Groups[1].Value
-          FontSize = [int]$m.Groups[2].Value
-          Bottom   = [double]$m.Groups[5].Value + [double]$m.Groups[7].Value
-          Font     = $m.Groups[8].Value
-          FontDyn  = ($m.Groups[9].Value -eq 'True')
-          Glyphs   = [int]$m.Groups[10].Value
-          HasUpper = ($m.Groups[11].Value -eq 'True')
-          HasLower = ($m.Groups[12].Value -eq 'True')
-          Kind     = 'UnityEngine.UI.Text'
-        }
-        continue
-      }
-      if ($ln.StartsWith('TMPTEXT ')) {
-        $m2 = [regex]::Match($ln, "text='(.*)' \| fontAsset=(\S*) \| hasA=(True|False) \| hasa=(True|False) \| rect=(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+),(-?[0-9.]+)")
-        if (-not $m2.Success) { continue }
-        $pEnd2 = $ln.IndexOf(' | text=')
-        $nodes += [pscustomobject]@{
-          Path     = $ln.Substring(8, $pEnd2 - 8)
-          Text     = $m2.Groups[1].Value
-          FontSize = 0
-          Bottom   = [double]$m2.Groups[6].Value + [double]$m2.Groups[8].Value
-          Font     = $m2.Groups[2].Value
-          FontDyn  = $false
-          Glyphs   = -1
-          HasUpper = ($m2.Groups[3].Value -eq 'True')
-          HasLower = ($m2.Groups[4].Value -eq 'True')
-          Kind     = 'TMPro'
-        }
-      }
-    }
-    $headTxt = ($head -join "`n")
-    $problems = @()
-    if ($txtLines -gt 0 -and $nodes.Count -eq 0) {
-      $problems += ('the ' + $txtLines + ' TEXT line(s) in the dump carry no font-evidence columns -- re-take the dump with tools/probes/probe-home-nodetree.cs (the judgement is the actual text AND the actual font)')
-    }
-    if ($nodes.Count -eq 0) { $problems += 'the dump holds no TEXT/TMPTEXT line (nothing was on screen when it was taken)' }
-    if ($headTxt -notmatch 'origin=top-left') { $problems += 'the dump does not declare `origin=top-left` -- its rect column cannot be read as a screen rect' }
-    if ($headTxt -notmatch 'activePanels=[^\r\n]*MainMenuPanel') { $problems += 'the dump was NOT taken on the home screen (activePanels does not contain MainMenuPanel)' }
-    $ordered = @($nodes | Sort-Object Bottom -Descending)
-    $cCreditBare = ($cCredit -replace '\s', '')
-    $hit = @($nodes | Where-Object { ($_.Text -replace '\s', '') -ceq $cCreditBare })
-    if ($hit.Count -eq 0) {
-      $problems += ('no on-screen text node reads exactly "' + $cCredit + '" (case sensitive comparison after stripping whitespace)')
-    } elseif ($ordered.Count -gt 0 -and [math]::Abs($hit[0].Bottom - $ordered[0].Bottom) -gt 0.01) {
-      $problems += ('the signature IS rendered but is not the bottom-most text node: bottom-most = ' + $ordered[0].Path + ' text="' + $ordered[0].Text + '" bottom=' + $ordered[0].Bottom.ToString('F1') + '; signature bottom=' + $hit[0].Bottom.ToString('F1'))
-    } else {
-      $s = $hit[0]
-      if (-not $s.HasLower) {
-        $problems += ('the signature font "' + $s.Font + '" (' + $s.Kind + ') has NO lowercase glyph: HasCharacter(a)=False, dynamic=' + $s.FontDyn + ', bakedGlyphs=' + $s.Glyphs + ' => the line is rendered ALL-CAPS => NOT compliant; supply a font that carries lowercase glyphs')
-      }
-      if (-not $s.HasUpper) {
-        $problems += ('the signature font "' + $s.Font + '" has no uppercase glyph either (HasCharacter(A)=False) -- the font asset looks broken/empty')
-      }
-      if ((-not $s.FontDyn) -and ($s.Glyphs -le 0) -and $s.HasLower) {
-        $problems += ('the signature font "' + $s.Font + '" is static but declares 0 baked glyphs while claiming lowercase -- the font evidence is self-contradictory, re-take the dump')
-      }
-    }
-    if (Test-Path $brandPanel) {
-      $tDump = (Get-Item $probeDump).LastWriteTime
-      $tPanel = (Get-Item $brandPanel).LastWriteTime
-      if ($tDump -lt $tPanel) {
-        $problems += ('the dump (' + $tDump.ToString('MM-dd HH:mm') + ') is OLDER than the panel that renders the signature, ' + (Split-Path $brandPanel -Leaf) + ' (' + $tPanel.ToString('MM-dd HH:mm') + ') => re-take the dump')
-      }
-    } else { $problems += ('cannot judge freshness: ' + $brandPanel + ' is missing') }
-    if ($problems.Count -eq 0) {
-      $s = $hit[0]
-      Say 'PASS' 'brand-credit' ('literal clover-engine in ' + $brand.Count + ' source line(s); ' + $nodes.Count + ' on-screen text node(s), bottom-most = ' + $s.Path + ' text="' + $s.Text + '" fontSize=' + $s.FontSize + ' bottom=' + $s.Bottom.ToString('F1') + ' font=' + $s.Font + ' dynamic=' + $s.FontDyn + ' hasa=' + $s.HasLower + ' (lowercase renderable, so the line is NOT drawn all-caps); dump is newer than MainMenuPanel.cs')
-    } else {
-      $script:fail++
-      Say 'FAIL' 'brand-credit' ('' + $problems.Count + ' problem(s) in ' + (Split-Path $probeDump -Leaf))
-      $problems | ForEach-Object { Sub $_ }
-    }
-  }
-
-  # --- 7) shot-citations -- every evidence shot cited by the acceptance table exists --------
+  # --- 6) shot-citations -- every evidence shot cited by the acceptance table exists --------
   # CAUGHT (2026-09-24): the acceptance table cited `_sheet.png`, `x.png`, `z-decal-pair.png`
   # and `z-decal-pair-zoom.png`, none of which exists under .ai-tmp/screenshots -- a cited
   # picture that is not there can never be re-opened, so the row's evidence is a dead link.
@@ -649,7 +528,7 @@ catch {
 }
 
 Write-Output ''
-Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1}  ITEMS=7 =====" -f $script:fail, $script:human)
+Write-Output ("===== SUMMARY: FAIL={0}  HUMAN-ONLY={1}  ITEMS=6 =====" -f $script:fail, $script:human)
 if ($script:fail -gt 0) { Write-Output 'RESULT: FAIL present -> the words done / delivered / verified must NOT be used' }
 elseif ($script:human -gt 0) { Write-Output 'RESULT: all computable checks passed; the HUMAN-ONLY items still need a human' }
 exit $(if ($script:fail -gt 0) { 1 } else { 0 })

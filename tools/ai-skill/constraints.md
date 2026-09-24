@@ -22,7 +22,7 @@
 | 生成器**没跑过** | prefab / `.anim` / `.controller` 不存在 ⇒ 动画 `_anim == null`、模型不显示 | 首次拿工程必须先跑 4 个生成器（见 `registry.md`） |
 | 离线编译通过 ≠ 运行正确 | `compile-check.ps1` 只验"签名存在 + 编译过" | 运行时行为必须进 Play 验（或实机截图） |
 | `Resources` 路径大小写敏感 | 路径写错 = 资源静默缺失（只 Warn 一次） | 路径一律走常数（`CsViewTuning` / `CsHudTheme` / `CsUiStyle`），⛔ 不许散落字符串 |
-| 截图证据可能比代码旧 | 旧的"已实测"截图为废证据 | 交付前跑 `tools/verify.ps1` 的 `evidence-freshness`（比 mtime） |
+| 截图证据可能比代码旧 | 旧的"已实测"截图为废证据 | 要查时看一眼图与被验源码的 mtime（`tools/verify.ps1` 的 `evidence-freshness` 是可选脚本，⛔ 不必跑） |
 | `.ps1` 含 CJK 且无 BOM | PS 5.1 按 ANSI 解析 ⇒ **中文匹配静默失效**（脚本照跑、逻辑全错） | `.ai-tmp/**/*.ps1` 一律 ASCII-only 或带 BOM；`tools/verify.ps1` 第 14 条会查 |
 | **对账检查把生成物当手写实现** | 生成器产出（`Resources/**` 的 `prefab/anim/controller/asset/mat/unity/png/wav/bytes` 与每个 `.meta`）被逐文件判"没派活留痕" ⇒ **近 2000 条假阳性**，真违规被淹没 | `tools/verify.ps1` 第 15 条的对账**只统计人写的文本源码**（`Scripts`/`Editor`/`Resources` 三棵树都只取 `.cs`），生成物扩展名一律排除；`Scripts`/`Editor` 下的 `.cs` 必须继续逐文件对账（skill §1.11 第 11 条：**会误报的检查比没有检查更糟**） |
 

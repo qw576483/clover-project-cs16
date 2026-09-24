@@ -1,3 +1,0 @@
-# contact sheet 6 - radar, 2 cells.  Params (identical to slice G): --cols 2 --cell-size 471x460 -> 942x516
-R-01	client/Assets/Resources/UI/Art/overview_de_dust2.png	H6 / 差异#51 base underlay 1024x768 ORIGINAL overview pixels (cstrike__overviews__de_dust2.bmp -> PNG, pixel-exact: tools/probes/import-original-overview.py, rgb/alpha mismatch=0). Slice cs16-AS replaced the geometry-rasterised underlay with this; the radar draws it at 122x91.5 inside the 122x122 field, same isotropic scale as the dots
-R-02	.ai-tmp/screenshots/g70-hud-1920.png	H6 live 1080p HUD frame: the radar panel draws that very underlay with self(green)/mates(orange) dots landing inside the corridors (re-captured 2026-09-22 13:04 after the cs16-AS window/underlay change froze)
