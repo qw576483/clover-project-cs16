@@ -6,21 +6,20 @@ namespace Cs16.Module.Bot
     /// 机器人的**战术分工（角色）** —— 本项目新增。
     ///
     /// <para><b>为什么要它</b>：用户 2026-09-24 复查原话 ——「机器人 ai 没有分工吗？感觉行为方式都是一样的。
-    /// 机器人有点太笨了」。旧实现里每个 bot 只按 <see cref="Cs16.Module.Match.CsBotProfile"/>（难度三档）
     /// 取参数，**同一队里的每个人共用同一套参数**，差别只剩"路线槽位 idx"（<c>CsBotBrain</c> 的
     /// <c>self.Id % 4</c>）—— 观感就是"同一个人被复制了 4 份"。本类补的是**同一队内部的分工**：
     /// 同一个难度档下，不同角色在"在一个目标点待多久""多远开火""守点还是游走"上**互不相同**。</para>
     ///
-    /// <para><b>出处口径（⛔ 必须如实标注）</b>：<b>原版 CS 1.6 本体不含机器人 AI</b>（官方 bot 属
+    /// <para><b>出处口径（必须如实标注）</b>：<b>原版 CS 1.6 本体不含机器人 AI</b>（官方 bot 属
     /// Condition Zero / PodBot，不在本工程载体范围内，同 <see cref="CsBotConst"/> 的说明）⇒ 角色划分与
     /// 四个倍率在 A 里**没有对应量**，属**本项目新增**数值，按 skill 的降级链第 4 级（参考坐标可自定）
-    /// 登记在 <c>策划/差异登记.tsv</c> #67。⛔ 不许把它写成"原版就这样"。</para>
+    /// 登记在 <c>策划/差异登记.tsv</c> #67。不许把它写成"原版就这样"。</para>
     ///
     /// <para><b>为什么用"槽位"而不是随机</b>：角色由 <c>(阵营, 队内序号 % 4)</c> 唯一决定 —— 同一局、同一台机器、
     /// 重开一局都得到同一张分工表（可复现、可断言）；随机分配会让"这局谁突破"变成不可复现的噪声，
     /// 判据也就写不出来。</para>
     ///
-    /// <para><b>⛔ 2026-09-24 修正（用户第三次投诉「路线都是相同的」）</b>：本表原先按"全局 <c>self.Id % 4</c>"分工，
+    /// <para><b>修正</b>：本表原先按"全局 <c>self.Id % 4</c>"分工，
     /// 而全局 Id 取决于"真人玩家在哪一队"，且旧 <c>ChoosePlan</c> 把同一个模数映到**只有 3 条的路线池**上 ⇒
     /// 每队必然有一对 bot 同路同点。现在：</para>
     /// <list type="bullet">
@@ -53,9 +52,9 @@ namespace Cs16.Module.Bot
         public const int Slots = CsBotPlans.Slots;
 
         /// <summary>本方阵营的**第 <paramref name="ordinal"/> 号**机器人担任什么角色（确定性）。
-        /// <para>⛔ 形参语义 = **队内序号 / 计划槽位**（0..3，周期 4），<b>不是</b>全局 actor Id ——
+        /// <para>形参语义 = **队内序号 / 计划槽位**（0..3，周期 4），<b>不是</b>全局 actor Id ——
         /// 全局 Id 会被"真人玩家在哪一队"整体位移（旧实现对 T 队恰好安全、对 CT 队会撞车）。</para>
-        /// <para>形参用 <c>long</c>：调用方可能直接传 Id（如探针按序号枚举），⛔ 这里不许先 <c>(int)</c> 截断。</para>
+        /// <para>形参用 <c>long</c>：调用方可能直接传 Id（如探针按序号枚举），这里不许先 <c>(int)</c> 截断。</para>
         /// </summary>
         public static CsBotRole For(CsTeam team, long ordinal)
         {
@@ -87,7 +86,7 @@ namespace Cs16.Module.Bot
                     }
 
                 default:
-                    // 观战 / 未定（不该有 bot）—— 收敛到最保守的"支援"，⛔ 不抛异常、不影响回合推进。
+                    // 观战 / 未定（不该有 bot）—— 收敛到最保守的"支援"，不抛异常、不影响回合推进。
                     return CsBotRole.Support;
             }
         }
@@ -125,8 +124,6 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 是否"守到了就**不换目标**"（到包点后一直守）。
         /// 只有守点位如此 —— 这正是用户报的「警不去守点 / 一直在原地踱步」的反面：
-        /// 旧实现里所有 bot 守够 <c>ObjectiveHoldSeconds</c> 就 `ReplanObjective`（换路线 / 去巡逻），
-        /// 于是 CT 的守卫也每 3 秒改一次目的地，观感就是"全队都在乱走、没人真的守"。
         /// </summary>
         public static bool StaysOnObjective(CsBotRole role)
         {

@@ -7,7 +7,6 @@ using UnityEngine;
 namespace Cs16.Module.Bot
 {
     /// <summary>
-    /// 机器人买枪（任务书 §4.2 买枪表 / 验收表 B5）。
     ///
     /// <para><b>唯一入口</b>：<c>ICsMatch.TryBuyFor(actorId, weaponId, out reason)</c> —— 机器人自己没有
     /// "替某个 actor 买枪"之外的捷径（<c>ICsMatch.TryBuy</c> / <c>SwitchWeapon</c> 只作用于**本地玩家**，别用）。
@@ -61,7 +60,6 @@ namespace Cs16.Module.Bot
 
             if (!self.InBuyZone)
             {
-                // 冻结期全员在出生点，买枪区覆盖出生点（agent-02 的 BuyZone 标记或出生点兜底）。
                 // 站不进去 = 地图标记问题，必须留痕（降频：每轮最多一次，且 1.5s 后才报）。
                 if (_freezeSince <= 0f) _freezeSince = now;
                 if (!_warnedBuyZone && now - _freezeSince >= CsBotConst.BuyZoneWarnDelay)
@@ -98,7 +96,7 @@ namespace Cs16.Module.Bot
             switchTo = null;
             _ownerName = self.Name;
 
-            // ★ 验收表 B5 的证据：每回合一次，说明"这一档想买什么"（金额/现有装备都记下来，
+            // 验收表 B5 的证据：每回合一次，说明"这一档想买什么"（金额/现有装备都记下来，
             //   便于事后核对"为什么他没买"）。所以即使后面全部买失败，这条决策日志也在。
             Game.Logger.Info(Tag,
                 $"{self.Name}({self.Team}) 冻结期买枪决策：tier={tier}（{TierName(tier)}）" +
@@ -209,7 +207,6 @@ namespace Cs16.Module.Bot
             }
         }
 
-        /// <summary>档位的话术（对应任务书 §4.2 的买枪表，只用于日志）。</summary>
         private static string TierName(int tier)
         {
             switch (tier)

@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """判据资产：**按"人体高度带"重建阻挡盒 + 同源重写两份 `de_dust2.bytes`（位图 + 碰撞体段）**。
 
-## 为什么需要它（根因，2026-09-20 / 09-20 切片刻 F 复核）
 
 ### ① 阻挡判据：引擎 `MapBaker` 的格柱判据太粗
 引擎 `MapBaker` 用「格柱 ∩ 障碍 AABB ⇒ 阻挡」，格柱是 `[GroundTopY+ProbeBottomY, GroundTopY+ProbeTopY]`
@@ -30,7 +29,6 @@ func_illusionary / func_breakable / func_bomb_target / func_buyzone / info_targe
 只改 `de_dust2_geo.bin` 的 **blocker 段**（mesh / marker 段一个字节都不动）+ 两份 `.bytes` 的
 **位图段与碰撞体段**（出生点段逐字节透传）。
 
-### ④ 位图规则：`∃f` → **基层 ∀**（2026-09-21 切片 S 改；这是"箱子/模型能穿"的根因）
 位图是**单层 2D**（一格一位），而真实 dust2 是多层地图。旧规则
 `该格可走 ⟺ ∃ f，使 [f+0.10, f+1.75] 这段人体带里没有近垂直面`
 里的 `∃`（**存在**）在多层的图上会整列漏判：**箱顶 / 楼板 / 岩顶自己就是"地面候选"**，
@@ -70,15 +68,13 @@ BYTES_DIRS = [
     os.path.join(ROOT, 'client', 'Assets', 'MapData'),
     os.path.join(ROOT, 'client', 'Assets', 'Resources', 'MapData'),
 ]
-# 备份一律落在 原版资源/备份/（skill §1.9：⛔ Assets/ 里不许留备份文件）
 BACKUP_DIR = os.path.join(ROOT, '\u539f\u7248\u8d44\u6e90', '\u5907\u4efd')   # 原版资源/备份
 
 DRY = '--write' not in sys.argv
 
 # 网格**基线**：上一版把「door 贴图的薄板」从渲染网格里摘掉过（134 个三角面 / 4 个组），
 # 摘掉是**破坏性**的（原文件里那些索引已经没了，从当前文件读不回来）⇒ mesh 段必须从
-# 「摘除之前」的副本恢复。那份副本由上一棒按 skill §1.9 搬到了 `原版资源/备份/`（不在 Assets 里）。
-# ⛔ 只读它的 **mesh 段**；blocker 段仍按本脚本的判据重算（基线里那份是旧的 218）。
+# 只读它的 **mesh 段**；blocker 段仍按本脚本的判据重算（基线里那份是旧的 218）。
 MESH_BASELINE = os.path.join(ROOT, '\u539f\u7248\u8d44\u6e90', '\u5907\u4efd',
                              'de_dust2_geo.bin.bak')   # 原版资源/备份/de_dust2_geo.bin.bak
 
@@ -314,7 +310,6 @@ def main():
     # 位图是**单层 2D**（一格一位），而地图是多层。旧口径 `∃f`（**存在**某层地面，
     # 其人体带上没有墙 ⇒ 整格可走）在多层的图上会漏：箱顶/楼板/岩顶自身就是"地面候选"，
     # 它们那层的带当然是空的 ⇒ 整列被判可走，而玩家实际走在**下面那层** ⇒ 直接穿进去。
-    # 实测（2026-09-21）：现役位图有 582 格"位图说可走、人在该格最低可站面上却被实心几何挡住"，
     # 用户报的"箱子能穿 / A 门贴边穿"就在这批里。
     # 新口径：只判玩家**实际站得到的那一层** = 最低地面候选 ± 一个台阶（CsConst.StepUpHeight），
     # 这一层里 ∀ 个候选都必须通。顶面只比脚面高一个台阶的面算**台阶**（能迈过去），不算墙。

@@ -291,7 +291,7 @@ namespace Cs16.Module.Match
             }
 
             // 差异 #75：真正把"世界中的武器"生成出来。
-            // ⛔ C4 不在这里生成 —— 它的世界掉落走 Bomb 链（CsBomb.OnCarrierLost + TryPickupDropped），
+            // C4 不在这里生成 —— 它的世界掉落走 Bomb 链（CsBomb.OnCarrierLost + TryPickupDropped），
             //    两套并存会变成"同一次掉落能被捡两次"。
             if (weaponId != CsWeapons.C4)
                 _m.SpawnDroppedWeapon(weaponId, a.Team, a.Position, a.Yaw, dropMag, dropReserve);
@@ -495,9 +495,8 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
-            // 片FIX-4 线C：把序号一起打出来 —— 「换弹动画有时候不播」的排查里，
             // 唯一必须先确定的事实是"序号到底有没有推进"（表现层只认序号边沿）。
-            // ⛔ 不改任何判定，只是把已经存在的字段写进日志。
+            // 不改任何判定，只是把已经存在的字段写进日志。
             Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）seq={a.ReloadSeq}");
         }
 
@@ -505,12 +504,12 @@ namespace Cs16.Module.Match
         /// 差异 #68：attack2（右键按下沿）→ 切换**消音器**（USP·M4A1）或**连发模式**（Glock18·FAMAS）。
         ///
         /// <para>只对 <c>CsWeaponDef.CanSilence</c> / <c>CanBurst</c> 为真的武器有动作；其余一律
-        /// **不动状态**、只记一条 rate-limited 日志（⛔ 无出处就不许"顺手给点什么效果"）。</para>
+        /// **不动状态**、只记一条 rate-limited 日志（无出处就不许"顺手给点什么效果"）。</para>
         ///
-        /// <para>⛔ 切枪期间按右键**照样切**（与 <see cref="Reload"/> 不同）：原版的消音器拆装不受
+        /// <para>切枪期间按右键**照样切**（与 <see cref="Reload"/> 不同）：原版的消音器拆装不受
         /// 切枪影响，硬拦反而会造出一个原版没有的规则。</para>
         ///
-        /// <para>⚠️ 本方法只改「状态」。**数值影响未落地**（消音后的伤害/散布、连发的发数与节奏都没有
+        /// <para>本方法只改「状态」。**数值影响未落地**（消音后的伤害/散布、连发的发数与节奏都没有
         /// 出处）⇒ 缺口留在 <c>策划/差异登记.tsv</c> #68，判据 = 离线断言（状态切换可观测）。</para>
         /// </summary>
         public void ToggleWeaponMode(CsActor a, float now)

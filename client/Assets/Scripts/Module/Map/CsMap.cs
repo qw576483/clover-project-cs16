@@ -16,8 +16,6 @@ namespace Cs16.Module.Map
     /// 由 <c>Clover/CS16/烘焙 de_dust2</c> 导出，与服务端同源）。它回答"这一格能不能走"。</item>
     /// <item><b>命名标记点</b>：**同一份 <c>.bytes</c> 的 <c>FlagMarkers</c> 段**
     /// （名字 + 世界坐标；引擎 <c>CloverMapFormat</c> / <c>IMapData.Points/GetPoints/TryGetPoint</c> 读）。
-    /// 本类原来另外读一份 <c>Resources/MapData/de_dust2_markers.bytes</c> 文本表 —— 那条旁路
-    /// （文件 + 解析器）本片已删除：同一份空间事实不再有两份载体。
     /// 生成侧出处：<c>MapBakeRunner</c> 的 <c>MapBakeOptions.MarkerRootName</c> ⇐
     /// <c>Dust2Builder</c> 摆的场景根对象 <c>Markers</c>；名字写错 / 少摆标记，契约校验仍会报 Error。</item>
     /// </list>
@@ -102,7 +100,6 @@ namespace Cs16.Module.Map
             if (IsLoaded)
             {
                 // 位图已经在了（别的调用方先加载过）——但标记表可能还没读，必须补上：
-                // 少了它 Points() 全是空数组，AI/包点会静默失效。
                 LoadMarkers(onLoaded);
                 return;
             }
@@ -136,10 +133,9 @@ namespace Cs16.Module.Map
         /// 失败**不阻断**地图加载（地图仍可玩），但一定打 Error：
         /// 标记缺失的表现是"机器人不动、下包无效"，不打日志就永远查不出来。
         ///
-        /// <para>⛔ 本类**不再自己解析**任何标记表：旧实现读
+        /// <para>本类**不再自己解析**任何标记表：旧实现读
         /// <c>Resources/MapData/de_dust2_markers.bytes</c> 文本旁路（每行 <c>标记名 x y z</c>，
-        /// <c>ParseMarkers</c> 手工 <c>Split</c> / <c>float.TryParse</c>）—— 那条旁路与它的解析器本片已删除，
-        /// 标记点与位图同行装在同一份 <c>.bytes</c> 里（⛔ 同一份空间事实只有一份载体）。</para>
+        /// 标记点与位图同行装在同一份 <c>.bytes</c> 里（同一份空间事实只有一份载体）。</para>
         ///
         /// <para>本方法只做两件事：① 把引擎的 <c>IReadOnlyList&lt;MapPoint&gt;</c> 按名字拷进本地数组索引
         /// （<see cref="Points"/> 在 bot 决策热路径上，避免每次 <c>ToArray</c> 分配）；
@@ -247,7 +243,6 @@ namespace Cs16.Module.Map
             if (m == null || !m.Loaded)
             {
                 // 未加载 = 不阻挡（引擎语义：地图缺失是配置问题，不该表现成"玩家被锁死"）。
-                // 但**必须留痕**：否则"进图后走哪都不撞墙"这个症状会没人认领。
                 WarnOnce("walk.notloaded", "地图未加载，WalkableAt 一律返回 true（不阻挡）—— 检查地图数据是否烘出来了");
                 return true;
             }
@@ -255,7 +250,6 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// 该点是否站得下 —— **两层判据**（第二层是本片新增，修"箱子能穿 / 矮障碍跳不过去"）：
         /// <list type="number">
         /// <item><b>位图路径</b>（原判据，走绝大多数帧）：中心 + 8 向位图全可走
         /// **且**落点地面在当前脚高的一步台阶内（<see cref="CsConst.StepUpHeight"/>）。</item>
@@ -263,7 +257,7 @@ namespace Cs16.Module.Map
         /// （<see cref="BodyHeightClear"/>）。</item>
         /// </list>
         ///
-        /// <para>⛔ **为什么必须有第二层**：位图是**单层 2D**（一格一位，没有高度），
+        /// <para>**为什么必须有第二层**：位图是**单层 2D**（一格一位，没有高度），
         /// 而"这一格能不能立足"本质上是**高度问题** —— 同一个格子在 y=0（地面）被箱子侧壁挡住、
         /// 在 y=1.2（跳起来）却是通的；矮墙/扶手/箱子顶面在位图里一律只有"挡"或"通"一个答案。
         /// 只按位图判会同时产生两个相反的错误：
@@ -324,7 +318,7 @@ namespace Cs16.Module.Map
         /// </summary>
         private bool BodyHeightClear(Vector3 pos, float radius)
         {
-            // ⛔ 体积复核只能在**中心**判一次：9 点探针是零宽射线（与 BitmapClear 同形），
+            // 体积复核只能在**中心**判一次：9 点探针是零宽射线（与 BitmapClear 同形），
             //    若在 9 个点上各加一颗半径 PlayerRadius 的球，等效半径会放大到 2×PlayerRadius
             //    ⇒ 把"贴着墙能站"误杀成不能站。
             if (BodyVolumeBlocked(pos)) return false;
@@ -332,9 +326,6 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// **切片U 之前的**几何分支判据（9 点零宽向下射线），**原样保留、不进任何真实路径**：
-        /// 只作为 <see cref="BodyHeightClearForTest"/> 的"**改前口径**"对照 ——
-        /// 这样"改前 vs 改后"就是**同一份构建上的 A/B**（各跑一次），而不是拿旧日志比新日志。
         /// </summary>
         private bool LegacyBodyHeightClear(Vector3 pos, float radius)
         {
@@ -374,7 +365,6 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// **整具玩家体积**复核（切片U 新增，修"人藏在实心块柱内仍被判通过"这个洞）：
         /// 以 <see cref="CsConst.PlayerRadius"/> 为半径的胶囊，覆盖身高带
         /// <c>[pos.y + GroundCheckDistance, pos.y + StandHeight]</c>；与任何世界几何重叠 ⇒ 判**挡**。
         ///
@@ -386,7 +376,7 @@ namespace Cs16.Module.Map
         /// ⇒ **位图判挡之后，几何分支又把这一格放行了**（人钻进实心块柱）。
         /// 体积检测求的是"**占据**"，与"起点在不在实体内部"无关，所以它能看见这种形态。</para>
         ///
-        /// <para><b>⛔ 为什么"站在箱顶 / 台阶上"仍能站</b>：胶囊的两个端点各**内缩一个半径**
+        /// <para><b>为什么"站在箱顶 / 台阶上"仍能站</b>：胶囊的两个端点各**内缩一个半径**
         /// ⇒ 胶囊的**最低点**正好落在 <c>pos.y + GroundCheckDistance</c>、**最高点**正好落在
         /// <c>pos.y + StandHeight</c> —— 与向下射线的"脚面容差 / 身高"逐字对齐。
         /// 顶面正好在脚面高度（甚至高出一个 <see cref="CsConst.StepUpHeight"/>）的箱顶/台阶
@@ -406,7 +396,7 @@ namespace Cs16.Module.Map
             if (hi <= lo)
             {
                 // 身高带比两个半径还短：没有可判的体积（退化配置）。
-                // ⛔ 只加留痕：`hi <= lo` 判据与 `return false` 走向**逐字不变**（不改数值语义）。
+                // 只加留痕：`hi <= lo` 判据与 `return false` 走向**逐字不变**（不改数值语义）。
                 // 走 WarnOnce（按 key 去重）—— 本方法在 CanStand 的半径采样路径上，不许每帧刷屏。
                 WarnOnce("volume.degenerate",
                     "身高带比两个半径还短（退化配置）：本点跳过体积复核 —— 检查 CsConst.StandHeight / PlayerRadius");
@@ -426,8 +416,6 @@ namespace Cs16.Module.Map
         /// <summary>
         /// **测试入口**：与 <see cref="ResolveMove"/> 走**同一条实现**（不是复制体），
         /// 额外把每一步的 <c>(i, want, curBefore, curAfter)</c> 交给 <paramref name="trace"/>。
-        /// 为什么要它：单看"终点"无法区分"被钳住"与"被跳过去"（切片U 实测：同一个 `to`，
-        /// 有的 d 停在墙面、有的 d 越过了 1.2m 厚的墙带 ⇒ 必须看每一步）。
         /// </summary>
         public Vector3 ResolveMoveTraceForTest(Vector3 from, Vector3 to,
             Action<int, Vector3, Vector3, Vector3> trace, float radius = CsConst.PlayerRadius)
@@ -442,7 +430,6 @@ namespace Cs16.Module.Map
                 return to;
             }
 
-            // ── ★ 片FIX-4 线M：起点站不下时**不再"原地不动"**（用户 #1/#5「卡住动不了」的根因）──
             // 旧写法 = `if (!CanStand(from)) return WalkableAt(to) ? to : from;`
             // 【实测后果（逐帧 dump：tools/probes/move-stuck.cs 的 `.ai-tmp/test/move-drive-*`）】
             //   B 通台阶（中门 → B，底 (-10.500,-2.824,31.500) 走向顶）走到
@@ -457,11 +444,10 @@ namespace Cs16.Module.Map
             //   位图那一列判挡（单层 2D 位图，差异 #64/#76），几何分支的 `BodyHeightClearAt`
             //   又用 `GroundCheckDistance`(0.12) 当"算不算脚面"的容差 ⇒ 把它读成"身高带里有实体"。
             //   ⇒ 人**站得好好的却"这一格不能站"**，于是走进旧的那句"原地不动"。
-            // 【修法】起点站不下时**走同一条扫掠解算**（`StepOnce`：≤0.25m 细分 + 分轴滑墙 + 台阶）
             //   —— 这正是原版 `PM_WalkMove` 的行为：站位不完美时照走，靠滑墙/台阶把身体解出来。
-            //   ⛔ 不再"能直接到目标就跳过去"之前的那种**无几何复核**放行：目标格仍必须过
+            //   不再"能直接到目标就跳过去"之前的那种**无几何复核**放行：目标格仍必须过
             //     `CanStand` 或 `TryStepUp`（后者带台阶高差 / 陡坡 / 膝盖射线 / 体积四道闸门）。
-            //   ⛔ 只有"一步都挪不动"时才退回旧口径（且只在目标格位图可走时直接过去）——
+            //   只有"一步都挪不动"时才退回旧口径（且只在目标格位图可走时直接过去）——
             //     那是真的被墙夹住，此时**不许**凭空穿墙。
             if (!CanStand(from, radius))
             {
@@ -473,19 +459,15 @@ namespace Cs16.Module.Map
                     trace?.Invoke(0, to, from, stepped);
                     return new Vector3(stepped.x, to.y, stepped.z);
                 }
-                // ── 片FIX-4 线M · 差异 #92：`? from` 那条支路把 `to.y` 一起吃掉 ──────────────────
-                // 【症状（逐帧实测，tools/probes/move-stuck.cs 的 MoveStuck.Drive）】站在合法凹角里
                 //   （本工程 B 通台阶 (-18.887, 0.653, 36.948)）按跳：`a.Velocity.y` 被置成 `JumpSpeed`
                 //   5.804、`OnGround` 1→0，但 `CsActor.Position.y` **连续 6 帧一个字没变**（恒 0.653）
                 //   ⇒ 一次跳的竖向位移**精确为 0** ⇒ 玩家在墙角**永远跳不出去**。
-                // 【根因】这里三元有**两个子情形**，旧码把两者一起交给水平几何：
                 //   · `WalkableAt(to.x,to.z)==true` ⇒ 返回 **`to`**（含 `to.y`）—— 这是刻意留的"目标格
-                //     位图可走时直接过去"逃生口（见上 `:470-472`），**本来就没错**，⛔ 不许动它；
+                //     位图可走时直接过去"逃生口（见上 `:470-472`），**本来就没错**，不许动它；
                 //   · `==false` ⇒ 返回 **`from`** ⇒ 连 `free.y` 也变成 `from.y`，**竖向分量被水平几何否决**。
-                // 【修法（最小）】**只动 `false` 支路的 Y**：水平仍钳在 `from`（⛔ 不穿墙，行为逐位不变），
                 //   Y 取 `to.y` —— 与上面 `:482`（`stepped` 出口已用 `to.y`）同口径，也与本函数 `:427-430`
                 //   的 doc「**Y 分量原样跟随目标**（重力/落地由调用方用 SampleGround 收尾）」一致。
-                // ⛔ 位图只准否决**水平**分量；竖向由重力/落地（调用方）说了算。
+                // 位图只准否决**水平**分量；竖向由重力/落地（调用方）说了算。
                 var free = WalkableAt(to.x, to.z) ? to : new Vector3(from.x, to.y, from.z);
                 trace?.Invoke(0, to, from, free);
                 return free;
@@ -533,7 +515,7 @@ namespace Cs16.Module.Map
         /// <list type="number">
         /// <item><b>格子中心</b>可走 ⇒ 走原路径；<b>位图判挡</b>时改用真几何四道闸门放行
         /// （该列有地面 ∨ 落点不比脚下低 ∨ 高差 ≤ 一步台阶 ∨ 法线不陡 ∨ 体积不被占 ∨ 膝盖射线通畅）——
-        /// 见下面 ★ 段：单层 2D 位图对"侧面挡人、顶面能站"的台阶/扶手只有"挡"一个答案，
+        /// 见下面 段：单层 2D 位图对"侧面挡人、顶面能站"的台阶/扶手只有"挡"一个答案，
         /// 硬否决它就是用户报的「台阶上跳一下就卡住」；</item>
         /// <item>落点地面比当前脚下**高出不超过 <see cref="CsConst.StepUpHeight"/>**（0.45m）——
         /// 高过它就是一堵台沿，不许"神抬腿"迈上去；</item>
@@ -555,17 +537,14 @@ namespace Cs16.Module.Map
             if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ) return false;
             if (hasGround && point.y - from.y > CsConst.StepUpHeight) return false;
 
-            // ── ★ 片FIX-4 线M：位图判挡**不再是硬否决**（用户 #1/#5 的另一半根因）──
             // 旧写法第一行是 `if (!WalkableAt(target.x, target.z)) return false;` ——
             // 而位图是**单层 2D**（一格一位、没有高度，差异 #64/#76）：楼梯踏步 / 扶手 / 台沿
             // 这些"侧面挡人、顶面能站"的几何在位图里**只有"挡"一个答案**。
             // ⇒ 旧写法把"迈上台阶 / 走上扶手顶面"整条路掐掉，而调用方 `AxisPassable` 只有
             //   `CanStand || TryStepUp` 两条路 ⇒ 两条都假 ⇒ 该轴被钳住、速度被清 0 ⇒ 卡死。
-            // 【修法】位图判挡时，改用**真几何**放行，四道闸门一个不少：
             //   ① 该列必须探得到地面（`hasGround`）—— 没地面（虚空/墙外）一律不许进；
             //   ② 落点地面必须**不比脚下低**（低了就交给位图管：位图说挡就是挡，不许从边沿掉下去）；
             //   ③ 高差 ≤ `CsConst.StepUpHeight`、法线 ≥ `MaxStandableSlopeNormalZ`（上面两条已判）；
-            //   ④ 落点**整具玩家体积**不与被实体占据（`BodyVolumeBlocked`，切片U 的胶囊判据）；
             //   ⑤ 膝盖高度朝落点的射线通畅（下面一行，原口径不变）。
             //   ⇒ 0.9 m 台沿 / 高墙照旧过不去（②③⑤ 挡），0.3 m 台阶、0.3 m 扶手能迈上去。
             if (!WalkableAt(target.x, target.z))
@@ -580,7 +559,7 @@ namespace Cs16.Module.Map
             if (dist < 0.001f)
             {
                 // 落点与本点在水平面上重合（这一轴已经到位）：没有可推进的方向。
-                // ⛔ 只加留痕：阈值 `0.001f` 与 `return false` 走向**逐字不变**（不改数值语义）。
+                // 只加留痕：阈值 `0.001f` 与 `return false` 走向**逐字不变**（不改数值语义）。
                 // StepOnce 的按轴推进每帧都会走到这里 ⇒ 必须限频（WarnOnce 按 key 只报一次）。
                 WarnOnce("stepup.zerodist",
                     "TryStepUp 的落点与本点水平重合（dist < 0.001f）：本轴无可推进，按未通过处理");
@@ -665,22 +644,20 @@ namespace Cs16.Module.Map
         }
 
         // ==================================================================
-        //  测试入口（类型化；⛔ 不参与任何真实玩家路径）
+        //  测试入口（类型化；不参与任何真实玩家路径）
         // ==================================================================
         //
-        // 为什么是 public 类型化入口而不是"驱动侧反射"：clover-engine skill §0.6 第 3 条
         // （把高风险动作做成**专用、类型化**的入口，别藏在反射里），形状与
         // `CombatModule.SetFireHeldForTest` / `PlayerMotor.ForceLookForTest` 一致。
-        // ⛔ 没有任何 Update / 事件会调它们；它们只把**已经存在的纯函数**暴露成可复现的入口。
+        // 没有任何 Update / 事件会调它们；它们只把**已经存在的纯函数**暴露成可复现的入口。
 
         /// <summary>
         /// **测试入口**：解算一次并把「期望 vs 实际」写成一行日志（返回实际终点）。
         /// 语义与 <see cref="ResolveMove"/> **逐字一致** —— 本方法只是它的类型化壳，
-        /// ⛔ 不改动 <see cref="ResolveMove"/> 的任何行为。
+        /// 不改动 <see cref="ResolveMove"/> 的任何行为。
         ///
         /// <para><b>为什么必须有它</b>：走位验证过去靠"每回合 tp3 重定位 + 持续按住输入"驱动真实角色，
         /// 而 <c>ResolveMove</c> 在 <c>Freeze</c>/<c>RoundEnd</c> 阶段根本不生效
-        /// （片S 实测：输入开着而位置冻在 tp3 点）⇒ 轨迹被回合重置污染、无法下结论。
         /// 本入口直接对**纯函数**求解，与回合相位无关（数值类证据：秒级、可复跑）。</para>
         /// </summary>
         public Vector3 ResolveMoveForTest(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius)
@@ -722,7 +699,7 @@ namespace Cs16.Module.Map
             if (step <= 0.01f)
             {
                 // 非预期参数（测试入口）：步长过小时按 0.1 走 —— 静默改值会让"量法变了"没人认领。
-                // ⛔ 只加留痕：判据 `<= 0.01f` 与赋值 `0.1f` **逐字不变**（不改数值语义）。
+                // 只加留痕：判据 `<= 0.01f` 与赋值 `0.1f` **逐字不变**（不改数值语义）。
                 WarnOnce("walkline.step",
                     "WalkLineForTest 传入步长过小（<= 0.01）：本次按 0.1 处理（测试入口，不参与真实玩家路径）");
                 step = 0.1f;
@@ -756,9 +733,7 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// **测试入口**：把"这一点能不能站"的**每一条判据**分别报出来（本片改前/改后的关键对照）：
         /// 位图 9 点 → 落点地面高差 → 向下射线（<see cref="BodyHeightClearAt"/>，旧判据）
-        /// → 整身体积（<see cref="BodyVolumeBlocked"/>，本片新增）→ 最终 <see cref="CanStand"/>。
         /// </summary>
         public string BodyHeightDiagnoseForTest(Vector3 pos, float radius = CsConst.PlayerRadius)
         {
@@ -783,32 +758,26 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// **测试入口**：单独读"位图 9 点"这一条判据（供走线取证逐点采样，⛔ 不刷日志）。
+        /// **测试入口**：单独读"位图 9 点"这一条判据（供走线取证逐点采样，不刷日志）。
         /// </summary>
         public bool BitmapClearForTest(Vector3 pos, float radius = CsConst.PlayerRadius)
             => BitmapClear(pos, radius);
 
         /// <summary>
         /// **测试入口**：单独读 <see cref="BodyHeightClearAt"/>（**旧**判据：向下射线的首交点）。
-        /// 有了它，探针才能把"改前放行、改后判挡"这件事在**同一个点**上对照出来。
         /// </summary>
         public bool RayClearForTest(float x, float feetY, float z) => BodyHeightClearAt(x, feetY, z);
 
-        /// <summary>**测试入口**：单独读 <see cref="BodyVolumeBlocked"/>（**本片新增**的整身体积判据）。</summary>
         public bool VolumeBlockedForTest(float x, float feetY, float z)
             => BodyVolumeBlocked(new Vector3(x, feetY, z));
 
         /// <summary>
         /// **测试入口**：落点地面是否在当前脚高的一步台阶内（<see cref="GroundWithinStep"/>）。
         /// 探针拿它与 <see cref="BitmapClearForTest"/> 组合，就能在同一份构建上复算
-        /// **改前 / 改后的 <see cref="CanStand"/>**（唯一权威 = 产品代码，⛔ 探针不抄公式）。
         /// </summary>
         public bool GroundWithinStepForTest(Vector3 pos) => GroundWithinStep(pos);
 
         /// <summary>
-        /// **测试入口**：几何分支判据的**改前 / 改后**对照（**同一份构建内的 A/B**）。
-        /// <para><paramref name="legacy"/>（<c>out</c>）= 切片U 之前的口径：9 点零宽向下射线；</para>
-        /// <para>返回值 = 本片口径：整身体积（<see cref="BodyVolumeBlocked"/>）+ 9 点射线。</para>
         /// </summary>
         public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
         {

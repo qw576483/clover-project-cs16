@@ -22,7 +22,6 @@ namespace Cs16.Module.View
     /// （否则蹲下时名字/血条也会被压扁）。</para>
     ///
     /// <para><b>网格为什么按命中区切成 4 份</b>：这样"隐藏本地玩家自己的模型"只要关掉这 4 个
-    /// Renderer，碰撞体原样保留 —— 而且 agent-04 的 <c>FirstPersonCamera.HideOwnBody</c>
     /// （按 <see cref="CsHitboxProxy"/> 反查子 Renderer）也天然生效，两条路不会互相打架。</para>
     ///
     /// <para><b>只读契约</b>：本类只读 <see cref="CsActor"/>，一个字段都不写
@@ -100,7 +99,6 @@ namespace Cs16.Module.View
         /// <summary>阵营（决定模型目录与名牌颜色）。</summary>
         public CsTeam Team { get; private set; }
 
-        /// <summary>4 个命中区代理（自检用：任务书要求"每个角色 4 个"）。</summary>
         public CsHitboxProxy[] Proxies => _proxies;
 
         /// <summary>
@@ -119,8 +117,6 @@ namespace Cs16.Module.View
         //  对象池复用前置清理
         // ==================================================================
         /// <summary>
-        /// **对象池复用前的清理**（改前每个角色视图都是"新建 → 用 → Destroy"，没有这个必要性；
-        /// 现在实例由 <c>Game.Pool</c> 在世界掉落 / 角色视图之间复用，同一实例可能被交给另一个 actor）。
         ///
         /// <para><b>为什么必须有</b>（不清就会静默画出错的东西）：池交回的实例**带着上一世的状态** ——
         /// <list type="number">
@@ -342,7 +338,6 @@ namespace Cs16.Module.View
         /// <summary>
         /// 只读感知「刚刚发生了什么」：权威状态里 <c>NextFireTime</c> 前推 = 打出一发、
         /// <c>ReloadSeq</c> 变了 = 开始换弹（与 <see cref="ViewModelRig"/> 同口径 ——
-        /// 不去抢 agent-04 的射击队列，保证表现与模拟永远一致）。
         /// <para>差异 #72：换弹**不能**再用「<c>ReloadEndTime</c> 比上一帧大」当边沿 —— 那是截止时间，
         /// 结算/切枪会把它归零、同帧内"开始→完成"更是连一次采样都没有 ⇒ 动画整段丢。改用单调序号。</para>
         /// </summary>
@@ -419,7 +414,6 @@ namespace Cs16.Module.View
         }
 
         /// <summary>
-        /// 角色模型同样必须**恒更新蒙皮与骨骼变换**（与 <c>ViewModelRig.EnsureAlwaysAnimate</c> 同一根因）。
         ///
         /// <para>实测：<c>player_T.cs16anim</c> 的网格**绑定姿态** bbox = x∈[-0.1947,+0.2722]、
         /// y∈[0.0000,1.8000]、z∈[-0.9111,+0.8997]；而它自己 <c>idle1</c> 轨道第 0 帧蒙皮出来的姿态 =
@@ -477,12 +471,10 @@ namespace Cs16.Module.View
                 var r = _renderers[i];
                 if (r == null) continue;
 
-                // ★ 量的是**网格自带的绑定姿态包围盒**（`Mesh.bounds`，生成器按绑定姿态归一化到
+                // 量的是**网格自带的绑定姿态包围盒**（`Mesh.bounds`，生成器按绑定姿态归一化到
                 //   目标身高），**不是** `Renderer.bounds`。
-                //   为什么（实测缺陷）：`Renderer.bounds` 是"**当前姿态**"的包围盒。Bind 发生在
                 //   实例化当帧的 LateUpdate，此刻 Animator 已经把 clip 的第 0 帧写进骨骼 ——
                 //   实测量到的最低点是 `1.0195`（正好 = 根骨骼 `Bip01` 的绑定 y），于是
-                //   `_modelLift = -1.0195`，整具模型沉到地面以下 1.0m（任务书里"下沉约 1.2m"的残余）；
                 //   而渲染时 Animator 用的是 clip 的根骨骼 y（≈0），这个 lift 就成了纯粹的偏移。
                 //   `Mesh.bounds` 与姿态无关（Unity 不会按蒙皮结果重算 mesh 包围盒）⇒ 量出来
                 //   就是导出时归一化的那一个姿态：身高 = 目标值、脚底 = 0 ⇒ fitScale=1、lift=0。

@@ -54,10 +54,8 @@ LEDGER = os.path.join(ROOT, 'tools', 'probes', 'coverage-hits.tsv')
 GEN = os.path.join(ROOT, 'tools', 'probes', 'enumerate-entities.py')
 PROV_MARK = '# |prov| '
 
-# ⛔ 只用"能重算的东西"表达标识（规矩 `R-归档不用易失标识`）：以下是**跑本文件时的观测**，
-#    凡报给别人的数都带观测时刻；哈希只作**脚注**、⛔ 不当"现行版本"标识。
-#    最近一次刷新 = 2026-09-23 15:50（片BW-ZERO-P3 落 `scope_note()` + 删本文件三个准备模式之后**现取**）；
-#    ⛔ 上一版记的 `enumerate-entities.py 317745B / 219F93EEAF2F6EB3 / _sha1_8 @2706` 已被本片改动取代。
+# 只用"能重算的东西"表达标识（规矩 `R-归档不用易失标识`）：以下是**跑本文件时的观测**，
+#    凡报给别人的数都带观测时刻；哈希只作**脚注**、不当"现行版本"标识。
 OBSERVED = {
     'coverage-hits.tsv sha256[:16]': '65A99757D5F0309B',
     'coverage-hits.tsv bytes': 330405,
@@ -71,13 +69,11 @@ OBSERVED = {
 ANCHOR_NONE = '--'
 LINE_RE = re.compile(r'^(\d+)\t([^\t]*)\t(.*)$')
 
-# --- 内联反样本（自足：⛔ 不读任何 .ai-tmp 产物）--------------------------------------
-#   NEGATIVE = "有锚点却写 unresolved=1" —— 卡 #3 §2.2 的**真实**缺陷形态（在途版本 70 行），
+# --- 内联反样本（自足：不读任何 .ai-tmp 产物）--------------------------------------
 #   这里逐字复刻其中一行（F3/F4 "裸文件名" 形态）。
-#   ⚠️ 形态必须与**真 ledger** 同形：`<row id>\t<锚点字段>\t<实测字段...>`（TAB 分隔）——
+#   形态必须与**真 ledger** 同形：`<row id>\t<锚点字段>\t<实测字段...>`（TAB 分隔）——
 #   实测教训：本草案第一版把 fixture 写成"空格分隔、无 row id"，`hit_quality` 的
 #   `line.split('\t')[1:]` 取到空 ⇒ 反样本**没打到判据**（`lying=False`）⇒ 自检当场判 FAIL。
-#   这正是卡 #3 §5 第 2 条要防的"永不触发的阈值"形态，留作注释。
 FIXTURE_LYING = ('1891\tF1:client/Assets/Scripts/Core/CsConst.cs:113\t'
                  'probe=enumerate-entities(static) measured=bytes=0 lines=0 unresolved=1')
 #   （`--` 行的实测字段必须让 `unresolved=1` 的**前一个字符不是 `=`**，否则正则
@@ -108,13 +104,12 @@ def check_ledger(crit, path):
             continue
         rows += 1
         rid, anchor, rest = m.group(1), m.group(2), m.group(3)
-        # 形态普查 = **纯句法**（取锚点字段的前缀），⛔ 不用 `classify_anchor` 重算形态。
+        # 形态普查 = **纯句法**（取锚点字段的前缀），不用 `classify_anchor` 重算形态。
         #   为什么（本草案实测）：`classify_anchor(ev)` 的入参是**整行证据串**（它内部先
         #   `PATHLINE_RE` 找 `路径:行`、再 GUID、再 bare path，并用 `resolve()` 判可达），
-        #   ⛔ 不是"锚点字段"。第一版拿锚点字段喂它 ⇒ 得到 `F1=3 / F2=1180 / F4=2612`，
-        #   与卡 #3 §0 的 `F1=1002 / F2=1180 / F4=1089 / F3=524` **不一致** —— 那是**输入契约用错**，
+        #   不是"锚点字段"。第一版拿锚点字段喂它 ⇒ 得到 `F1=3 / F2=1180 / F4=2612`，
         #   不是判据变了。⇒ **权威的各形态计数只由真判据 `audit-verdict-rows.py` 自己打印**
-        #   （本资产用 `--crit` 去调它并回显，⛔ 不在这里造第二份）。
+        #   （本资产用 `--crit` 去调它并回显，不在这里造第二份）。
         form = anchor if anchor == ANCHOR_NONE else (
             anchor.split(':', 1)[0] if ':' in anchor else '(bare)')
         counts[form] = counts.get(form, 0) + 1
@@ -200,7 +195,7 @@ def main():
     if '--selftest' in sys.argv:
         return selftest(crit)
     if '--crit' in sys.argv:
-        # 权威的各形态计数 / unresolved-lying **只由真判据自己打印**（⛔ 本资产不造第二份）
+        # 权威的各形态计数 / unresolved-lying **只由真判据自己打印**（本资产不造第二份）
         import subprocess
         p = subprocess.run([sys.executable, CRIT], cwd=ROOT, stdout=subprocess.PIPE,
                            stderr=subprocess.STDOUT, timeout=1800)
@@ -224,31 +219,23 @@ if __name__ == '__main__':
 
 # |prov| 来源块：前置条件卡 #3（`unresolved` 字段兼职两种语义）
 # |prov| 源 = `.ai-tmp/test/bwe-todo-card-03.md`
-# |prov|   bytes=8796  sha256[:16]=899A58D753601A36  mtime=2026-09-23 14:19:20
-# |prov|   已与 899A58D7 版（≈14:1x）核对，差异仅 L65（§7 同步，不涉数字）
 # |prov| 形态 = 整块 `# |prov| ` 前缀 ⇒ 可机械剥离；剥离后必须与本文件**代码部分逐字节相同**
 # |prov| 剥离入口 = `python tools/probes/field-form-contract.py --strip-provs <file>`
-# |prov| ⛔ 本块是**来源/依据**，不是可执行代码；⛔ 不改判据、不参与运行
+# |prov| 本块是**来源/依据**，不是可执行代码；不改判据、不参与运行
 # |prov| 剥离校验（放在落地后的资产里，或直接跑命令）：
 # |prov|   python tools/probes/field-form-contract.py --strip-provs tools/probes/field-form-contract.py
 # |prov|   python .ai-tmp/test/bwzr-card3-asset-draft.py --strip-check <副本>   # 本轮用的预演命令
 # |prov|   ⇒ 断言 = strip_provs_text(landed) == strip_provs_text(code_only)，必须逐字节相同；
-# |prov|   ⇒ ⛔ 必须**先落盘再读回**再校验（⛔ 不许只校验内存里那份）。本轮实测 = IDENTICAL。
+# |prov|   ⇒ 必须**先落盘再读回**再校验（不许只校验内存里那份）。本轮实测 = IDENTICAL。
 # |prov| ---- 以下为卡 #3 原文（逐行前缀化，一字未改）----
-# |prov| **本卡不是当前缺陷（现行 `unresolved` 非 `--` = 0）；它是「重启字段3 升级」时的前置条件。**
-# |prov| > **性质变更（team-lead 裁决）**：由"待修项卡"改为**前置条件卡** —— ① 在途版本证据、② 四条验收判据（尤其负样本）、③ 归一化定义，三样**全部保留**；只把「是否当前缺陷」这一问按实测收口（= 不成立）。
 # |prov| # 前置条件卡 #3（原「待修项卡 #3」）：`unresolved` 字段兼职两种语义
-# |prov| > ⛔ **先读第 0 节** —— 我在回报里说过"现在这版盘上产物有同类缺陷"，**那句是推断、不是实测，我撤回**。
 # |prov| > 本文件在 `.ai-tmp/test/`（`.gitignore:4`）⇒ **收尾会清**；**权威副本在回报正文**（`bw-m` 固化时请照抄，并**保留第 7 节归属标注**）。
 # |prov| 
 # |prov| ## 0 结论（先给判定，再给证据）
-# |prov| | 版本 | 该缺陷是否成立 | 实测 |
 # |prov| |---|---|---|
-# |prov| | **现行盘上版本**（`tools/probes/coverage-hits.tsv`，2026-09-23 复测） | ❌ **不成立** | 生成器侧：`unresolved rows = 5 ; by anchor form = {'--': 5} ; 非 '--' = 0`；**闸门侧**（新落的那版机检，`audit-verdict-rows.py`）：`unresolved-lying = 0` ⇒ **两侧同判** |
-# |prov| | 我在途的"字段3 升级"版本（P1–P4 打上、**已撤回**；⚠️ 盘上正式版**已落盘且不撒谎**，单列见下） | ✅ 成立 | `unresolved rows = 75`（其中 70 非 `--`），行号清单见下 |
-# |prov| | **盘上正式版实现**（`tools/probes/enumerate-entities.py:2663-2833`，`_sha1_8` @2705） | ❌ **不成立** | 真产物 3800 行实测：形态 `F1=1002 F2=1180 F4=1089 F3=524 '--'=5`；摘要位数 **8 hex × 3795 行（无一行 16 位）**；**撒谎行 = 0**；`unresolved=1` 共 5 行 ⇒ **全部为 `--`** |
+# |prov| | 我在途的"字段3 升级"版本（P1–P4 打上、**已撤回**；盘上正式版**已落盘且不撒谎**，单列见下） | 成立 | `unresolved rows = 75`（其中 70 非 `--`），行号清单见下 |
+# |prov| | **盘上正式版实现**（`tools/probes/enumerate-entities.py:2663-2833`，`_sha1_8` @2705） | **不成立** | 真产物 3800 行实测：形态 `F1=1002 F2=1180 F4=1089 F3=524 '--'=5`；摘要位数 **8 hex × 3795 行（无一行 16 位）**；**撒谎行 = 0**；`unresolved=1` 共 5 行 ⇒ **全部为 `--`** |
 # |prov| ⇒ **处置建议**：**本案不必单开一片**。要保留的是**规则**（一个字段一个含义）+ **两向自证要求**；只有当"字段3 升级"重新启动时才需要一并做"口径对齐"。
-# |prov| > ⚠️ **哈希会失 ⇒ 本卡不引用哈希**：归档时记的 `coverage-hits.tsv DAA2C032…`，2026-09-23 复测已是 `5DEB1688…`（ledger 每被任一执行片重注入一次就整体变）⇒ 拿产物哈希当"现行版本"标识 = **指向会消失的东西**（与 #82 同一形态）。
 # |prov| > 本卡只依托两样**不随重注入失效**的东西：**行 id 清单**（= 判定表行号）+ **两侧度量**。（前提：判定表行序不变；plan 变了就要重测 ⇒ 这不是"永久的锚"，是"可复算的锚"。）
 # |prov| 
 # |prov| ## 1 现象
@@ -257,7 +244,6 @@ if __name__ == '__main__':
 # |prov| ⇒ 后者的输出**不报错**，只会让"锚点明明存在、摘要算不出"的行**静默说成"没找到"**。
 # |prov| 
 # |prov| ## 2 实测证据（可单独复核）
-# |prov| **2.1 现行版本（盘上真产物）—— 缺陷不成立**
 # |prov| ```
 # |prov| $ python -c "...读 tools/probes/coverage-hits.tsv..."
 # |prov| rows total = 3800
@@ -266,7 +252,6 @@ if __name__ == '__main__':
 # |prov| NON-dash (illegitimate) count = 0
 # |prov| dash (legit) ids = 3176,3268,3302,3373,3753      ← 恰是 5 行 CROSS（允许差异 #87）
 # |prov| ```
-# |prov| **2.2 在途版本（已撤回）—— 缺陷成立，行号清单（75 行）**
 # |prov| ```
 # |prov| 非 --（= 不应写 unresolved）共 70 行：
 # |prov| 1891,1892,3298,3299,3300,3378,3379,3380,3381,3382,3383,3384,3385,3386,3387,3388,3389,3390,3391,
@@ -275,7 +260,6 @@ if __name__ == '__main__':
 # |prov| 3783,3784,3785,3791,3792,3793,3794,3795,3796,3797,3798,3799,3800
 # |prov| --（= 合法）5 行：3176,3268,3302,3373,3753
 # |prov| ```
-# |prov| 来源：`bwe-patch3.py`（`.ai-tmp/test/bwe-patch3.py`，2026-09-23 复测仍在盘）+ 其沙箱 stdout（`.ai-tmp/test/bwe-patch3-out.txt`，同）⇒ 现均可复核。⚠️ 但两者都在 `.ai-tmp/**`（收尾必清）⇒ **行号清单的权威副本 = 回报正文**。
 # |prov| 
 # |prov| ## 3 root cause（**只在做"字段3 升级"时才会撞上**）
 # |prov| 三种形态在"生成器"与"判据资产"两侧的**解析口径不同**：
@@ -284,14 +268,12 @@ if __name__ == '__main__':
 # |prov| 3. **F3/F4**：token 形态与 `_resolve_any()`（`_AV.resolve(_AV.norm_path(tok))`）存在差异。
 # |prov| ⇒ 现行版本之所以没暴露：它对 F2 走 `GUID2PATH`、对 F1/F3/F4 走 `ROOT` 相对 `os.path.getsize`，**两条都成功**，所以只写 `bytes=/lines=`（真实测量），不会落到 `unresolved`。
 # |prov| 
-# |prov| ## 4 修法（若重启字段3 升级）
 # |prov| - **方案 β（团队已裁）**：字段3 按形态语义唯一 —— F1 → `line=<n> hash=<该行归一化 sha1[:8]>`；F2 → `meta_line=<n> hash=<…>`；F3/F4 → `file_bytes=<n> sha1=<原始字节 sha1[:8]>`；**只有 `--` 行写 `unresolved=1`**。
 # |prov| - **前置**：先做"口径对齐"（至少把 F2 的索引域与判据资产对齐，或明确"F2 摘要拿不到时写另一形态而非 unresolved"）。
-# |prov| - **归一化定义**（必须逐字写进注释，否则"同盘同源逐字节相同"不可被第三方复算）：`取该行不含行终止符的原文 → strip() → UTF-8 → sha1().hexdigest()[:8]（⛔ **位数的唯一来源** = `tools/probes/enumerate-entities.py:2705` 的 `_sha1_8()`；它是**实现事实**，**不是"团队裁定"** —— 消费方照抄/复用这一行，⛔ 不许按记忆写。本片曾把归档用的 **`sha256[:16]`** 串到 sha1 语境上，已在 §7 记为待核/已更正）`。
 # |prov| 
 # |prov| ## 5 验收判据（**两向自证**，缺一不可）
 # |prov| 1. **正样本**：全新盘 + 全新源码跑 `--inject` 两次 ⇒ 六件产物 + ledger **逐字节相同**（幂等）；
-# |prov| 2. **负样本**：喂一个"**有锚点却写 `unresolved=1`**"的 ledger 样本 ⇒ 判据必须 **FAIL**（⛔ 否则这条机检就是"永不触发的阈值"，等于 TABLE-ECHO v1）；
+# |prov| 2. **负样本**：喂一个"**有锚点却写 `unresolved=1`**"的 ledger 样本 ⇒ 判据必须 **FAIL**（否则这条机检就是"永不触发的阈值"，等于 TABLE-ECHO v1）；
 # |prov| 3. **覆盖数**：输出必须打印**各形态的计数**（`line= / meta_line= / file_bytes= / bytes= / unresolved=`）与**非 `--` 的 `unresolved` 行数 = 0**；
 # |prov| 4. 现行规则：**`unresolved=1` 只许出现在 `--` 行**。
 # |prov| 
@@ -299,12 +281,8 @@ if __name__ == '__main__':
 # |prov| **一个判据字段只能有一个含义**；需要表达 N 种情况就用 N 个明确形态。兼职字段的错**不报错**，只让某类行静默说假话 —— 而"静默"意味着任何靠"看有没有报错"的把关都抓不到它。
 # |prov| 
 # |prov| ## 7 归属标注（固化时必须一起保留）
-# |prov| - **本片实测**：§0 两侧度量、§2.1 现行版度量、§2.2 在途版行号清单、§3 root cause（F1/F2/F3/F4 由**读两侧源码**得出，**未**逐行跑"形态对齐"验证）、§4 归一化定义中的**操作序列**（`[:8]` 的位数 = 实现事实，来源 `enumerate-entities.py:2705` 的 `_sha1_8()`）。
-# |prov| - **转述、未复核**：`TABLE-ECHO v1` 那个"永不触发的阈值"一例（来自 `slice BB`，本片未复核其原始证据）；`sha1[:16]` 这个写法（= 我把归档用的 sha256[:16] 串到了 sha1 语境；见本节末"收口"条，**以 `[:8]` 为准**）。
-# |prov| - **非本片产出**：§4 方案 β 的形态划分（F1→`line=` / F2→`meta_line=` / F3F4→`file_bytes=`）= **团队已裁**，本片仅记录。
 # |prov| - **收口（"同一件事两个数"的正解）**：`sha1[:8]` vs `[:16]` —— 盘上**唯一**实现 = `enumerate-entities.py:2705` `_sha1_8()`，用 **`[:8]`**；真产物 **3795 行摘要全为 8 hex、0 行 16 位**；`[:16]` 的真实来源 = **sha256 语境**（我的归档/报告写 `sha256[:16]`；`tools/probes/overview-window.py:166`、`make-check-glyph.py:137`、`render-cs16anim-frame.py:461` 三处 `[:16]` **全是 sha256**）⇒ **两个位数属两个不同算法，本就不是同一件事**；"[:8] 是团队裁的位数"这个表述**无盘上出处，撤回**。
 # |prov| 
-# |prov| ## 8 复测记录（2026-09-23，写本卡时顺手做的第三项）
 # |prov| | 项 | 归档时（team-lead §③） | 复测当下 |
 # |prov| |---|---|---|
 # |prov| | `coverage-hits.tsv` sha256[:8] | `DAA2C032` | `5DEB1688` |

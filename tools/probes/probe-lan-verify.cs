@@ -3,7 +3,7 @@
 // 用法（须在跑过 probe-lan-host.cs 之后 ≥6s）：
 //   unity command eval_file --file tools/probes/probe-lan-verify.cs
 //
-// 判定口径（⛔ 写死在探针里，不靠人眼看）：
+// 判定口径（写死在探针里，不靠人眼看）：
 //   PASS ⇔ ① 应答端计数器 Queries > 0（**确实收到过查询**，不是"扫了但没人问"）
 //          ② Replies == Queries（每一问都答了，没有静默丢）
 //          ③ Game.LanBrowser.Hosts 里存在一台 gateway == 应答端广播的 主机:端口
@@ -13,7 +13,7 @@ var sb = new System.Text.StringBuilder();
 var browser = CloverEngine.Game.LanBrowser;
 if (browser == null) return "ERROR: Game.LanBrowser == NULL";
 
-// ⛔ 不许写 `var host = Cs16.Module.Net.CsLanHost;` —— `CsLanHost` 是**静态类**，
+// 不许写 `var host = Cs16.Module.Net.CsLanHost;` —— `CsLanHost` 是**静态类**，
 //    C# 不允许声明"静态类型的变量"（实测编译报
 //    `'CsLanHost' is a type, which is not valid in the given context` /
 //    `Cannot declare a variable of static type 'CsLanHost'`）⇒ 全程用**全限定名**调用。
@@ -44,7 +44,7 @@ sb.Append("\n判据：收到查询=").Append(q).Append("（>0） 回出应答=")
 var pass = q > 0 && r == q && found;
 sb.Append("\nRESULT: ").Append(pass ? "PASS" : "FAIL");
 
-// 收尾：停应答端（幂等）。⛔ 不停的话下一轮扫描会一直有应答，把"没主机"这类负例测不出来。
+// 收尾：停应答端（幂等）。不停的话下一轮扫描会一直有应答，把"没主机"这类负例测不出来。
 Cs16.Module.Net.CsLanHost.Stop();
 sb.Append("\n收尾：").Append(Cs16.Module.Net.CsLanHost.Describe());
 return sb.ToString();

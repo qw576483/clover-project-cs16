@@ -97,7 +97,7 @@ namespace Cs16.EditorTools
             EnsureFolder(Dust2Layout.SkyboxDir);
             EnsureFolder("Assets/Resources/MapData");
 
-            // ★ 必须先于 BuildVisual：贴图导入尺寸不对时几何/材质的 UV 口径会跟着错（见 NormalizeTextureImporters）
+            // 必须先于 BuildVisual：贴图导入尺寸不对时几何/材质的 UV 口径会跟着错（见 NormalizeTextureImporters）
             NormalizeTextureImporters();
             AssertTextureSizesMatchSource();
 
@@ -108,7 +108,7 @@ namespace Cs16.EditorTools
             var blockerRoot = NewChild(level, "Blockers");
             var lightingRoot = NewChild(level, "Lighting");
 
-            // ★ 标记点容器是**场景根对象**（⛔ 不是 Level 的子物体）：引擎烘焙器 MapBaker 按
+            // 标记点容器是**场景根对象**（不是 Level 的子物体）：引擎烘焙器 MapBaker 按
             //   `MapBakeOptions.MarkerRootName` 在**场景根对象列表**里按名字找它，找到后把该根下
             //   每个子物体的"对象名 = 标记名、世界坐标 = 点位"写进 .bytes 的 FlagMarkers 段
             //   （Engine: Editor/MapBake/MapBaker.cs:424-427 与 :418-457；参数见 Dust2Layout.MarkerRoot）。
@@ -131,7 +131,6 @@ namespace Cs16.EditorTools
             // 为什么：CsMap.GroundMask() / 子弹 / 视线都按层走。层契约在 Core/CsConst.PhysicsLayers，
             // 层名由 PhysicsLayerSetup 写进 TagManager。**世界几何必须真的挂在那一层上**，
             // 否则 GroundMask 取到的是"只打 CsWorld"的掩码而世界在 Default ⇒ 贴地射线一个都打不到 ⇒
-            // 角色一路下坠（另一种静默失效）。角色命中盒的层由 ActorView 在运行期按 bot/真人赋（同一套契约）。
             AssignWorldLayer(level);
             // 标记点容器已不在 Level 子树下（见上），单独标一次 —— 它们没有碰撞体，
             // 与 Level 同一层只是为了"层级语义一致"（原注释口径不变）。
@@ -149,7 +148,6 @@ namespace Cs16.EditorTools
             // 它们随 `de_dust2.bytes` 的 FlagMarkers 段一起导出：引擎烘焙器从**场景根对象**
             // `Markers`（Dust2Layout.MarkerRoot）收集"对象名 = 标记名、世界坐标 = 点位"，
             // 客户端用 `Game.Map.GetPoints(名字)` 取（见 MapBakeRunner 的 MarkerRootName）。
-            // ⛔ 旧的 `Resources/MapData/de_dust2_markers.bytes` 文本表与它的解析器已删除（本条替代它）。
             RegisterSceneInBuildSettings();
 
             Debug.Log($"{Tag} 完成：{Dust2Layout.ScenePath}｜几何 {geo.TotalTriangles} 三角面 / " +
@@ -191,7 +189,7 @@ namespace Cs16.EditorTools
                 var mesh = new Mesh { name = "Dust2_" + Path.GetFileNameWithoutExtension(g.PngName) };
                 if (g.Vertices.Length > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
                 mesh.vertices = g.Vertices;
-                // ★ UV 的单位是**原版 miptex 的原始 w×h**：转换脚本按 `u = …/miptex.w`、`v = 1 − …/miptex.h`
+                // UV 的单位是**原版 miptex 的原始 w×h**：转换脚本按 `u = …/miptex.w`、`v = 1 − …/miptex.h`
                 //   算（`原版资源/解包产物/dust2_build.py:945-951`），不做任何二次幂取整。
                 //   ⇒ 贴图**导入后尺寸必须等于原图尺寸**（`npotScale = None`，见 NormalizeTextureImporters），
                 //   否则 Unity 把非 POT 贴图拉到最近的 2 的幂再上传，UV 却仍按原尺寸走 ⇒ 比例失真。
@@ -208,7 +206,7 @@ namespace Cs16.EditorTools
                 go.transform.SetParent(visualRoot.transform, false);
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 go.AddComponent<MeshRenderer>().sharedMaterial = LoadOrMakeMaterial(g.PngName, ref missingTex);
-                // ★ 非凸 MeshCollider：子弹打墙、脚下地面、斜坡台阶全部靠它（运行时那套）
+                // 非凸 MeshCollider：子弹打墙、脚下地面、斜坡台阶全部靠它（运行时那套）
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
                 // 静态批处理：地图不动，标记成静态后 Unity 会合批绘制
                 GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
@@ -242,9 +240,7 @@ namespace Cs16.EditorTools
             // 出处：原版 GoldSrc 渲染管线**没有「材质色乘算」这一级** —— miptex 贴图本身即 albedo，
             // 亮度只由 lightmap / 顶点光（BSP light_environment）决定（见 策划/对照表.md 的 T-08 / B-03）。
             // ⇒ 原版值 = **恒等白 (1,1,1)**。
-            // 这里原先那句 `new Color(0.79f,0.65f,0.42f)`（#C9A66B「沙色」）**没有任何原版出处**，
             // 它是一级额外的暖色乘算：中性石头 (150,149,159) 乘它 ⇒ (118,97,67) ⇒ 整图偏土黄。
-            // （切片Y 给的量化预测；切片Z 已落地并实测，数字见 策划/对照表.md B-03 行。）
             mat.color = Color.white;
             mat.SetFloat("_Glossiness", 0.05f);                   // 沙土/砖墙：几乎无高光
             mat.SetFloat("_Metallic", 0f);
@@ -278,7 +274,7 @@ namespace Cs16.EditorTools
 
                 var col = go.AddComponent<BoxCollider>();
                 col.size = new Vector3(w, h, d);
-                // ★ 必须是 trigger：这些盒子**只服务烘焙**（供 MapBaker 复算阻挡格），不是真实几何 ——
+                // 必须是 trigger：这些盒子**只服务烘焙**（供 MapBaker 复算阻挡格），不是真实几何 ——
                 //   真实几何已经有 MeshCollider（Visual 那 21 个材质组）。若它们是实心碰撞体，就会**挡住子弹与视线**：
                 //   实测拿到"子弹被 Blocker_0145 在 3.12m 处挡下"这类现场，机器人隔着这些隐形墙根本打不到人。
                 //   运行时所有射线都带 QueryTriggerInteraction.Ignore，所以设成 trigger 后它们自动退出弹道计算，
@@ -303,7 +299,7 @@ namespace Cs16.EditorTools
                 if (pts.Length < req.MinCount) missing.Add($"{req.Marker}({pts.Length}<{req.MinCount})");
             }
 
-            // ★ 标记点先做「落阻挡格 ⇒ 吸附到最近可走格心」（见 SnapMarkerToWalkable 的长注释）：
+            // 标记点先做「落阻挡格 ⇒ 吸附到最近可走格心」（见 SnapMarkerToWalkable 的长注释）：
             //   采样点落在箱子/台阶上时，运行时的 A*/CanStand 拿到的起点就是"站不住"的格。
             //   这里改一次就够：烘焙器直接读**场景对象的坐标**（不再有第二份"运行时表"要走同一段逻辑）。
             var blocked = geo.BuildBlockedBitmap();
@@ -347,13 +343,12 @@ namespace Cs16.EditorTools
         // ==================================================================
 
         /// <summary>
-        /// 把一个标记点从"落在阻挡格上"挪到**最近的可走格心**（只改 XZ，⛔ y 原样不动）。
+        /// 把一个标记点从"落在阻挡格上"挪到**最近的可走格心**（只改 XZ，y 原样不动）。
         ///
         /// <para><b>为什么必须有</b>：标记点来自 BSP 实体原点（<c>info_player_*</c> / <c>func_bomb_target</c> /
         /// <c>func_buyzone</c>）与位图 BFS 采样，采样点会落在箱子、台阶、墙沿上 —— 那一格在
         /// <c>de_dust2.bytes</c> 里是**阻挡**。运行时消费方（<see cref="BotNavigator"/> 的
         /// <c>AStar.Find</c> / <c>ICsMap.CanStand</c>）对"起点不可走"直接判失败，于是机器人在这些路点上
-        /// 集体退化（片BA 实测 19 个点落阻挡格：Bombsite_A 4 / Bombsite_B 5 / BuyZone_CT 7 / BuyZone_T 2 /
         /// Route_CT_Mid 1）。**治本只能在生成侧**：把点挪到最近的可走格心。</para>
         ///
         /// <para><b>判据口径与引擎逐字一致</b>：格坐标 = <see cref="Dust2GeoData.CellOf"/>（
@@ -368,7 +363,7 @@ namespace Cs16.EditorTools
         /// （同一输入两次生成必须得到同一个点，否则生成器不幂等）。</para>
         ///
         /// <para><b>返回值 / <paramref name="moved"/> 口径</b>：<c>0</c> = 原本就在可走格（点未动）；
-        /// <c>&gt;0</c> = 挪了几环（切比雪夫半径）；<c>-1</c> = 半径内没有可走格（**保留原值**，⛔ 不许丢点）；
+        /// <c>&gt;0</c> = 挪了几环（切比雪夫半径）；<c>-1</c> = 半径内没有可走格（**保留原值**，不许丢点）；
         /// <c>-2</c> = 几何/位图不可用，无法判定（**保留原值**）。调用方对一切负值都必须留痕。</para>
         /// </summary>
         private static Vector3 SnapMarkerToWalkable(Dust2GeoData geo, bool[] blocked, Vector3 p, out int moved)
@@ -436,46 +431,36 @@ namespace Cs16.EditorTools
             var sun = sunGo.AddComponent<Light>();
             sun.type = LightType.Directional;
             sun.color = new Color32(255, 255, 128, 255);
-            // intensity 1.75（片X）→ **0.70**（片AA 2026-09-21 重新平衡）：片X 定的 1.75 是配
-            // **旧材质色 (0.79,0.65,0.42) 乘算**（albedo 亮度 0.663）调出来的；片Z 把材质色改成
             // `Color.white`（原版 GoldSrc 无材质色乘算这一级）后 albedo 亮度 → 1.0（×1.51），
             // 同一套光照下画面整体**过曝**（同机位 1920×1080 帧 meanLum 153.4、p95=245、
             // ≥250 像素占 **21.6%**；地面石板框 260,880,660,1050 由 (159,106,39) 跳到 (242,217,97) Lum 214.1）。
-            // 材质色与光照是一个整体、不能各调各的，故本片**只按实测像素数字**把光重新压回基线量级。
             // 量化出处 = 原版基线图 `策划/基线图/original/de_dust2_freecam_A_00.jpg` 的**内容区**
             // （裁掉上下信箱黑边后 1280×810）meanLum 123.1 / p50 127 / p95 175 / 平均饱和度 0.523
             // / ≥250 像素 0.055%（G-17 已登记"原版 `_light "255 255 128 70"` 的亮度口径在 Unity
             // intensity 上无逐值对应" ⇒ 以基线图像素为准）。
-            // 逐档实测（同机位、单变量，见 策划/对照表.md §AA）：
             //   sun 1.75→153.4 / 1.20→130.8 / 1.10→126.3 / 1.05→124.0 / 0.90→117.2 / 0.85→115.0 / 0.70→?
             // 只降直射时 meanLum 落不回 123 且 p95 几乎不动（峰值来自由环境梯度照亮的整片沙地，
             // 不只是直射高光）⇒ 改成"**降直射 + 抬 Trilight 环境梯度**"：环境占比高、直射才产生尖峰，
             // 这样能在同一 meanLum 下把 ≥250 像素压到基线量级。最终档 sun 0.70 + 环境梯度 ×1.40：
             //   meanLum **123.5**（Δ +0.4 / +0.3%）· p50 118 · p95 208 · 平均饱和度 0.384 · ≥250 像素 **0.145%**。
-            // ⛔ 只动光照参数，⛔ 不加任何滤镜/后处理；⛔ 未把材质色乘算加回来。
+            // 只动光照参数，不加任何滤镜/后处理；未把材质色乘算加回来。
             sun.intensity = 0.70f;
             sun.shadows = LightShadows.Soft;
             sun.shadowStrength = 0.75f;
 
             RenderSettings.ambientMode = AmbientMode.Trilight;
-            // Trilight 的三条梯度色 = 本场景**真正的**环境光（见下）；片AA 按 ×1.40 抬：
             //   150,150,170 → 210,210,238 ｜ 130,115,90 → 182,161,126 ｜ 80,68,50 → 112,95,70
             // 目的：把整体亮度从"直射"转一部分到"环境"，从而在 meanLum 不变的前提下削掉直射尖峰
             // （≥250 像素 21.6% → 0.145%，基线 0.055%）。
             RenderSettings.ambientSkyColor = new Color32(210, 210, 238, 255);
             RenderSettings.ambientEquatorColor = new Color32(182, 161, 126, 255);
             RenderSettings.ambientGroundColor = new Color32(112, 95, 70, 255);
-            // ambientIntensity 归 1（默认）：**片AA 实测它是空操作** —— `ambientMode = Trilight` 下
             // Unity **不把 ambientIntensity 计入 ambient 计算**（只在 Flat / Skybox 模式生效），
-            // 所以片X 那句"1→1.55"改了个没有任何效果的值（aa-L0/L1/L2 三档 ambIntensity=1.55/1.00/0.70
-            // 采出的 1920×1080 帧**逐像素完全相同**，见 策划/对照表.md §AA）。真正的环境光在这里是
             // 上面三条 Gradient 颜色（ambientSky/Equator/Ground），它们**不被 ambientIntensity 调制**。
             // ⇒ 归 1，避免再有人以为"调 1.55 能补亮度"。
             RenderSettings.ambientIntensity = 1.0f;
 
             // 沙漠薄雾：远处沙色发白，贴近原版 dust2 的通透感（不影响近处辨识）
-            // density 0.0025 → 0.010（片X 定案）：目标不是"抬远景带 RMS"（实测雾对本场景的远景带 RMS **无影响**，
-            //   见 策划/对照表.md §X：那一段是天空盒主导，而 Unity 天空盒着色器**不吃雾**），
             //   而是按下述**实测**效果收敛到基线：meanLum +4.7（99.4 → 104.1）、平均饱和度 −0.038（0.546 → 0.508）。
             RenderSettings.fog = true;
             RenderSettings.fogMode = FogMode.ExponentialSquared;
@@ -491,20 +476,18 @@ namespace Cs16.EditorTools
         {
             string[] slots = { "_FrontTex", "_BackTex", "_LeftTex", "_RightTex", "_UpTex", "_DownTex" };
 
-            // ✅ 绑定 = **同名直塞**（`_LeftTex ← sky_lf` / `_RightTex ← sky_rt`），
+            // 绑定 = **同名直塞**（`_LeftTex ← sky_lf` / `_RightTex ← sky_rt`），
             //    且 `up`/`dn` 用**预先旋转好的**贴图（`sky_up_r90cw` / `sky_dn_r270cw`）。
             //
-            // 依据（agent-24 用 Unity 自己的渲染实测 + 原版像素直算，见 `策划/外观差异清单.md` C1/C1-b / 对照表 §9-C）：
             //   · 6 面**像素**与原版 TGA 逐像素相同（6/6，maxdiff = 0）⇒ 不是缺面 / 装错文件 / 分辨率不符；
             //   · 4 条竖边的真实邻接（两两竖边逐像素差，越小越接得上）= `ft` 右 = `lf` 左（3828）·
             //     `lf` 右 = `bk` 左（4777）· `bk` 右 = `rt` 左（4134）· `rt` 右 = `ft` 左（3158）
             //     ⇒ 真环序 = `ft → lf → bk → rt`（4 条缝全接得上）；镜像装配 4 条缝全部对不上（7× 差）
             //     —— 用户报的"天空盒左右两侧有接缝/破洞"就在这里。
-            //   · ⛔ **Unity 的槽位方向是 `Left=+X` / `Right=-X`**（内置着色器属性名逐字：`_LeftTex "Left [+X]"`、
+            //   · **Unity 的槽位方向是 `Left=+X` / `Right=-X`**（内置着色器属性名逐字：`_LeftTex "Left [+X]"`、
             //     `_RightTex "Right [-X]"`，见 `unity_builtin_extra`），edit-mode 渲染也实测 `sky_rt` 落在 +X、
             //     `sky_lf` 落在 -X。⇒ 要让**世界**环序 = `ft→lf→bk→rt`（即 +Z → +X → -Z → -X），
             //     **同名直塞就是唯一对的**；写成 `_LeftTex ← sky_rt` 会得到**镜像环**
-            //     （agent-22 那次"交换一对相对面"就是踩了这个：它按"Left = 你向左看看到的那面"假设，与 Unity 相反）。
             //   · `up`/`dn`：edit-mode 把 6 个轴向各渲一遍再与源贴图做 8 朝向匹配，**6/6 都是"不旋转不翻转"**
             //     （即 Unity 把贴图原样贴上去），而 `Skybox/6 Sided` 没有逐面旋转/平铺（`[NoScaleOffset]`）
             //     ⇒ 只能**预先把贴图转好**：`up` 需 90° 顺时针、`dn` 需 270° 顺时针。
@@ -565,13 +548,12 @@ namespace Cs16.EditorTools
             cam.nearClipPlane = 0.05f;
             cam.farClipPlane = 1000f;
 
-            // 先站在"地图中部上空俯瞰"：真正的 FPS 相机由 agent-04 接管，这里只保证场景不是黑屏
             go.transform.position = new Vector3(geo.WorldMin.x * 0.25f, 28f, geo.WorldMin.z * 0.35f);
             go.transform.rotation = Quaternion.Euler(28f, 25f, 0f);
         }
 
         // ==================================================================
-        //  命名标记点（**随 .bytes 导出，⛔ 不再有独立旁路产物**）
+        //  命名标记点（**随 .bytes 导出，不再有独立旁路产物**）
         // ==================================================================
         // 本文件只负责把标记对象摆进场景根对象 `Markers`（见 Generate 里的 markerRoot 与
         // Dust2Layout.MarkerRoot）；把它们写进 `de_dust2.bytes` 的 FlagMarkers 段由**引擎烘焙器**
@@ -579,12 +561,10 @@ namespace Cs16.EditorTools
         // 引擎 `Editor/MapBake/MapBaker.cs:418-457` 收集"对象名 = 标记名、世界坐标 = 点位"。
         // 客户端取点：`Game.Map.GetPoints(名字)` / `TryGetPoint(名字, out pos)`（见 Module/Map/CsMap.cs）。
         //
-        // ⛔ 已删除（本片 2026-09-24）：
         //   · `ExportMarkerResource(Scene)` —— 它写 `Resources/MapData/de_dust2_markers.bytes`
         //     文本表（每行 `标记名 x y z`），与引擎的标记点段**并存**等于同一份空间事实两份载体；
         //   · `RefreshMarkerTable()` —— 只为重生成上面那张表而存在。
         //   那两份的**吸附逻辑**（落阻挡格 ⇒ 挪到最近可走格心）仍在本文件里：
-        //   场景对象的坐标由 `DumpMarkers` 落定，烘焙器直接读场景，不再需要第二条导出路径。
 
         // ==================================================================
         //  贴图导入尺寸（非二次幂贴图**不许被缩放**）
@@ -610,7 +590,7 @@ namespace Cs16.EditorTools
         /// 已经是 <c>None</c> 的只读不写 ⇒ 重跑不炸、不重复导入、结果一致。
         /// 末尾**读回复核**一遍（不靠"我设过了"，靠"再查一遍"），仍有非 None 就报 Error。</para>
         ///
-        /// <para>⛔ 只改**导入设置**，PNG 像素一个字节都不动（改的是 <c>.meta</c>）。</para>
+        /// <para>只改**导入设置**，PNG 像素一个字节都不动（改的是 <c>.meta</c>）。</para>
         /// </summary>
         private static void NormalizeTextureImporters()
         {

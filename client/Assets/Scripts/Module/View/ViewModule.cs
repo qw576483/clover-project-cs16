@@ -12,11 +12,9 @@ namespace Cs16.Module.View
     ///
     /// <para><b>职责边界</b>：本模块只做"把 <see cref="ICsMatch"/> 的权威状态画出来" ——
     /// 位置/朝向只读 <see cref="CsActor"/>，一个字段都不写；伤害/回合/经济/买枪一概不碰；
-    /// 相机与射线归 agent-04（<c>Module/CameraRig</c>、<c>Module/Combat</c>），枪声归它放，
     /// 本模块只负责"音效资源 + 脚步/换弹/命中/回合/炸弹蜂鸣"（见 <c>Module/Audio</c>）。</para>
     ///
     /// <para><b>为什么在 LateUpdate</b>：模拟在 <c>MatchModule.Update</c>（默认 order 0）推进，
-    /// agent-04 的相机在 <c>PlayerModule.LateUpdate</c>（order -200，先跑）里算好；
     /// 本模块跟着在 LateUpdate 里读结果，保证"画面上的位置 == 本帧模拟的位置"，不会慢一帧。</para>
     ///
     /// <para><b>两个硬约束</b>：</para>
@@ -27,7 +25,6 @@ namespace Cs16.Module.View
     /// </list>
     /// </summary>
     /// <remarks>
-    /// 执行顺序 <c>-100</c>：晚于 agent-04 的 <c>PlayerModule</c>（<c>-200</c>，它负责算相机位姿与射线），
     /// 早于默认的 <c>0</c>。视图只读模拟结果，这个顺序保证"画面上的位置 == 本帧模拟的位置"。
     /// </remarks>
     [DefaultExecutionOrder(ExecutionOrder)]
@@ -219,10 +216,9 @@ namespace Cs16.Module.View
                 return;
             }
 
-            // 实例化走**引擎对象池**（改前是裸 Object.Instantiate）：掉落物是"一局里反复出现、又被拾取"的短命物，
             // 正是池的用途；它的生命周期终点也是池（Game.Pool.Despawn，见 DestroyDropView / ClearDropViews）。
             // 存在性仍由 _prefabs 缓存把关（上面刚判过），池只负责"造 / 复用"。
-            // ⛔ 不许在这里直接 Destroy —— 池里会留下已销毁的引用，下次 Spawn 把它发给业务。
+            // 不许在这里直接 Destroy —— 池里会留下已销毁的引用，下次 Spawn 把它发给业务。
             var pool = Game.Pool;
             if (pool == null)
             {
@@ -255,7 +251,7 @@ namespace Cs16.Module.View
         {
             if (!_dropViews.TryGetValue(d, out var view)) return;
             _dropViews.Remove(d);
-            // 生命周期终点 = 归还对象池（⛔ 不是 Destroy：Destroy 会让池里留下已销毁引用）
+            // 生命周期终点 = 归还对象池（不是 Destroy：Destroy 会让池里留下已销毁引用）
             if (view != null) Game.Pool.Despawn(view.gameObject);
         }
 
@@ -424,8 +420,7 @@ namespace Cs16.Module.View
                 return null;
             }
 
-            // 实例化走**引擎对象池**（改前是裸 Object.Instantiate）：同一路径的实例在局间复用，
-            // 生命周期终点 = Game.Pool.Despawn（见 RemoveView / ClearViews）——⛔ 不许直接 Destroy，
+            // 生命周期终点 = Game.Pool.Despawn（见 RemoveView / ClearViews）——不许直接 Destroy，
             // 否则池里留下已销毁引用，下一次 Spawn 会把它发给业务。
             // 存在性仍由 _prefabs 缓存把关（上面刚判过）：池只负责"造 / 复用"，不负责"要不要造"。
             var pool = Game.Pool;
@@ -474,7 +469,6 @@ namespace Cs16.Module.View
             // 存在性把关：预制体还没加载好（异步在途）/ 不存在时**不建**，也不重复发起加载（见 LoadPrefab）。
             if (!_prefabs.TryGetValue(CsViewTuning.NameplatePath, out var prefab) || prefab == null) return null;
 
-            // 名牌随角色视图建 / 销，也是短命物 ⇒ 走引擎对象池（改前是裸 Object.Instantiate）。
             // 回收在 ActorView.PrepareForReuse（复用时）与 Despawn 链上。
             var pool = Game.Pool;
             if (pool == null)
@@ -501,15 +495,12 @@ namespace Cs16.Module.View
             _views.TryGetValue(actorId, out var view);
             _views.Remove(actorId);
             _skinOf.Remove(actorId);
-            // 生命周期终点 = 归还对象池（改前是 Destroy 场景对象）。
             // 用 _views 里的引用而不再按名字 _root.Find：池回收后对象被移出 _root，按名字找不到会漏回收。
             if (view != null) Game.Pool.Despawn(view.gameObject);
         }
 
         private void ClearViews()
         {
-            // 逐个归还对象池（⛔ 不 Destroy：Destroy 会让池里留下已销毁引用，
-            // 下一次 Spawn 把它当作"可复用实例"发给业务 —— 那是"角色凭空消失"的根因）。
             foreach (var kv in _views)
             {
                 if (kv.Value != null) Game.Pool.Despawn(kv.Value.gameObject);
@@ -593,7 +584,6 @@ namespace Cs16.Module.View
         //  第一人称武器视图
         // ==================================================================
         /// <summary>
-        /// 把 <see cref="ViewModelRig"/> 挂到**当前的第一人称相机**上（agent-04 自建的 <c>CsFpsCamera</c>）。
         ///
         /// <para>为什么运行期绑定而不是 Bootstrap 里挂：那台相机是 agent-04 在自己 Start 里创建/启停的，
         /// 装配期还不存在；而且主菜单相机也带 <c>MainCamera</c> 标签，必须"比赛运行中"才绑，

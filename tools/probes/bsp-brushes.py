@@ -11,7 +11,7 @@
 本脚本补上这一层：把原版那两段的 **面形态数字**（踏面级数 / 每级高宽 / 总高 或 斜面倾角）
 与工程侧那 10 格 × 0.333 m 并排成表。
 
-## 格式依据（出处，⛔ 不是"看着像"）
+## 格式依据（出处，不是"看着像"）
 * lump 表：`de_dust2.bsp` 偏移 0 = int32 `ver=30`，其后 15 个 `(offset:i32, len:i32)` 对。
   lump 顺序 = `entities, planes, miptex, vertexes, visibility, nodes, texinfo, faces,
   lighting, clipnodes, leafs, marksurfaces, edges, surfedges, models`。
@@ -94,7 +94,6 @@ HL_UNIT = 0.0254            # 出处：策划/对照表.md §单位换算（原�
 OX, OY, OZ = 384.0, 0.0, 1120.0   # 出处：策划/对照表.md G-02/G-03（原点平移量，unit）
 EPS = 2.0e-3
 
-# 工程侧数字（出处：tools/probes/bstairs-walkline.txt 的 (D) 段，片BD）
 OURS_T = dict(cells=10, step=1.000, dz=0.333, nz=0.949, slant_deg=18.4,
               run_lo=(-20.5, 29.5), run_hi=(-11.5, 29.5), bottom=(-10.5, -2.523, 31.5),
               top=(-29.5, 0.0, 39.5))

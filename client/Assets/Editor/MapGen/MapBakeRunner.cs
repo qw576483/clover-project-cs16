@@ -61,7 +61,6 @@ namespace Cs16.EditorTools
 
             // ---- ⓪ 命名标记点必须先就位（否则烘出来的 .bytes **没有** FlagMarkers 段）----
             // 引擎烘焙器按 `MapBakeOptions.MarkerRootName` 在**场景根对象**里找那个容器；
-            // 找不到时引擎只打一条 Warn 然后导出"没有标记点"的文件 —— 那是最难查的一类静默失败
             // （进图后机器人不动 / 包点无效），所以这里**硬拦**：先重跑生成器再烘。
             if (Dust2Builder.FindInScene(scene, Dust2Layout.MarkerRoot) == null)
             {
@@ -74,10 +73,10 @@ namespace Cs16.EditorTools
 
             // ---- ① 临时关掉"运行时物理"那一层（见类注释）----
             //
-            // ★ 必须**存盘**再烘：引擎 MapBaker.Export 内部会按路径把场景**重新打开**一遍
+            // 必须**存盘**再烘：引擎 MapBaker.Export 内部会按路径把场景**重新打开**一遍
             //   （它要防"批处理里 active scene 变成空场景"那个坑），内存里的开关会被这次重开冲掉。
             //   所以顺序是：关 → 存盘 → 烘（Export 重新打开时看到的就是关着的）→ 再打开 → 开 → 存盘。
-            //   ⚠️ 若在"关着"的状态下进程被杀，磁盘上的场景会留下关掉的碰撞体 ——
+            //   若在"关着"的状态下进程被杀，磁盘上的场景会留下关掉的碰撞体 ——
             //   探针 <see cref="MapConnectivityProbe"/> 会专门检查这一条并报 Error，重跑本方法即可恢复。
             var visual = Dust2Builder.FindInScene(scene, Dust2Layout.VisualRoot);
             var disabled = new List<Collider>();
@@ -99,7 +98,6 @@ namespace Cs16.EditorTools
 
             try
             {
-                // ---- ② 参数（全部来自转换脚本产出的数据，不靠 EditorPrefs 里可能过期的旧值）----
                 var o = new MapBakeOptions
                 {
                     ScenePath = Dust2Layout.ScenePath,
@@ -117,7 +115,7 @@ namespace Cs16.EditorTools
                     ClientDir = Dust2Layout.ClientMapDir,
                     SpawnMarkerPrefix = Dust2Layout.SpawnMarkerPrefix,
                     // 命名标记点随**同一份 .bytes** 导出（引擎 `CloverMapFormat.FlagMarkers` 段）：
-                    // 客户端用 `Game.Map.GetPoints(名字)` 取 —— ⛔ 不再有 de_dust2_markers.bytes 旁路。
+                    // 客户端用 `Game.Map.GetPoints(名字)` 取 —— 不再有 de_dust2_markers.bytes 旁路。
                     // 取点前必须先确认那道勾（上面的 ⓪），否则引擎只会 Warn 并导出空标记点。
                     MarkerRootName = Dust2Layout.MarkerRoot,
                 };
@@ -130,14 +128,12 @@ namespace Cs16.EditorTools
                 }
                 Debug.Log($"{Tag} 烘焙成功：{summary}");
 
-                // ---- ③ 产物自检（存在 + 阻挡数 > 0；=0 说明没收到障碍，是典型静默失败）----
                 VerifyOutputs();
             }
             finally
             {
                 // ---- ④ 恢复碰撞体（Export 内部重开过场景，手里的 Scene 已失效）----
-                // ⛔ 这里不再"顺手刷新运行时标记表"：命名标记点已随上面的 `.bytes` 导出，
-                //    没有第二份产物要同步（本片 2026-09-24 删除 de_dust2_markers.bytes 旁路）。
+                // 这里不再"顺手刷新运行时标记表"：命名标记点已随上面的 `.bytes` 导出，
                 var reloaded = EditorSceneManager.OpenScene(Dust2Layout.ScenePath, OpenSceneMode.Single);
 
                 int restored = 0;

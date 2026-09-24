@@ -27,10 +27,8 @@ namespace Cs16.Module.Match
         private readonly Collider[] _overlap = new Collider[64];
 
         /// <summary>
-        /// 切片K（D8）：本模块的**事件音**出口（刀命中 / 闪光弹爆炸 —— 这两件事只在模拟内部结算，
         /// 表现层看不到）。复用音频层那份唯一的转发闸门 <see cref="SfxService"/>
         /// （问引擎"在不在" → 转发 <c>Game.Sound</c>，闸门与限频都在引擎那一层），
-        /// ⛔ 这里不另起一套探测 / 计数（`结构规则.md` §4.4：已有能力不准平行再起一套）。
         /// </summary>
         private readonly SfxService _sfx = new SfxService("Match");
 
@@ -58,7 +56,6 @@ namespace Cs16.Module.Match
             }
             if (victim == null || !victim.IsAlive) return;
 
-            // 切片K（D8）：刀命中（盘上 sfx/knife_hit.wav 此前无人挂事件）。
             // 位置在"确实是命中（victim 非空）"之后 —— 刀砍空气（CsInventory.RaycastActor 返回 null）
             // 会走进来的 victim==null 早退，因此不会误响。
             // 只在**本地玩家出刀命中**时播（机器人的刀命中不给本地播，避免与刀声混淆）。
@@ -69,10 +66,9 @@ namespace Cs16.Module.Match
                     $"刀命中音 knife_hit @ {point}（命中 {victim.Name} 的 {box}）");
             }
 
-            // ---- 受击表现事件（差异 #74，片 FX-ALL 2026-09-23）----
             // 位置在"确实命中了角色"之后、**任何伤害闸门之前**：原版"出血"与"扣血"是两件事 ——
             // 友好伤害关闭 / 护甲全吸收时 OnDamaged 不会发，但子弹打在身上的血迹照样在。
-            // ⛔ 这里只**发事件**，本层不碰特效（表现归 Module/Combat）。
+            // 这里只**发事件**，本层不碰特效（表现归 Module/Combat）。
             var hitDir = shooter != null ? point - shooter.EyePosition : Vector3.zero;
             if (hitDir.sqrMagnitude < 0.000001f) hitDir = Vector3.down;   // 退化：没有射手（如环境）时按"血往下淌"
             _m.RaiseBulletHit(victim, point, hitDir.normalized, box == CsHitbox.Head);
@@ -314,7 +310,6 @@ namespace Cs16.Module.Match
             var radius = CsMatchConst.FlashRadius;
             var list = _m.ActorList;
 
-            // 切片K（D8）：闪光弹爆炸音（盘上 sfx/flash_explode.wav 此前无人挂事件）。
             // 挂在"手雷确实炸了"这一处（<c>CsInventory</c> 的闪光弹分支调用本函数），
             // 与"有没有致盲到人"无关：原版爆炸音对附近所有人响。
             _sfx.PlayAt(CsAudioTuning.FlashExplode, center);

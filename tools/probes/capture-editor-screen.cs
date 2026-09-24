@@ -1,6 +1,5 @@
 // 判据资产（tools/probes/）：**采「用户真正看到的那个画面」** —— 编辑器窗口级（屏幕像素）截屏。
 //
-// 为什么必须有它（片BV 的根因所在）：
 //   `unity command capture_game_view --source camera|screen` 采的是**游戏自己渲染出来的后缓冲**
 //   （source=screen 也只多含 Overlay 画布）。Unity 编辑器**在 Game view 上叠加绘制**的东西
 //   —— 组件图标（AudioSource 喇叭 / Light 太阳 / Camera）、DrawGizmos 线框 —— **不在那个后缓冲里**，
@@ -46,7 +45,6 @@ internal static class BvWin32
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] public static extern int GetWindowTextW(IntPtr h, StringBuilder s, int n);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
-    // 2026-09-23 实测：`HWND_TOPMOST + SWP_SHOWWINDOW` **拉不回最小化的窗口**——编辑器一旦被
     // 最小化，窗口矩形恒为 `-32000,-32000 160x28`，`GameViewRect()` 跟着跑到屏外，`BitBlt`
     // 于是采到**纯黑**（三张 `_abr-*.png` 各 10798 B、meanRGB=0.00、sha256 三同）。补这两个
     // API 才能做到"先还原、再置顶"。
@@ -67,11 +65,8 @@ public static class Entry
     // 不能写死"上一级"（那是 client/，`.ai-tmp` 在 clover-project-cs16/ 下）。
     //
     // 判据与 tools/probes/probe-ui-visibility.cs 的 FindProjectRoot() **逐字同口径**
-    // （⛔ 不另造第二套）：项目根 = **同时**含 `client/` 与 `.ai-tmp/` 的那一层。
-    // 为什么不能只找"第一个含 .ai-tmp 的祖先"（片BW-G 补的兜底）：本机实测
+    // （不另造第二套）：项目根 = **同时**含 `client/` 与 `.ai-tmp/` 的那一层。
     // `client/.ai-tmp/screenshots/bootd_shot.png` 曾存在（别的切片把相对路径写歪了）⇒
-    // 只判 `.ai-tmp` 会把 spec 路径解析到 `client/.ai-tmp/`（片BV-R 实测：probe 回
-    // "spec missing"）。诱因已被清除（移到 .ai-tmp/test/misplaced-client-ai-tmp/），
     // 这里是**防复发**，不是修当前故障。
     private static string FindProjectRoot()
     {
@@ -183,9 +178,7 @@ public static class Entry
         var log = new StringBuilder();
         for (var i = 0; i < winds.Length; i++)
         {
-            // 实测（片BV 第一轮）：只写 showGizmos 时画面**一个像素都不变**
             // （A/B 两张 PNG MD5 完全相同）⇒ 真正决定"画不画"的是 m_Gizmos / drawGizmos，
-            // 三个成员一起写，并在返回值里逐项回读，避免"设了但没生效"这种静默失败。
             foreach (var n in props)
             {
                 var p = t.GetProperty(n, flags);
@@ -227,7 +220,7 @@ public static class Entry
     public static string Raise()
     {
         var h = MainWindow();
-        // ⛔ 顺序不能反：只 SetWindowPos(TOPMOST) 时最小化窗口纹丝不动，后面 Shot 采到的就是
+        // 顺序不能反：只 SetWindowPos(TOPMOST) 时最小化窗口纹丝不动，后面 Shot 采到的就是
         //    屏外那片黑。先 SW_RESTORE 把窗口拉回屏内，再置顶；wasIconic/restore 一并回读，
         //    调用方据此判断"这次 raise 到底有没有把窗口弄回来"（不再靠猜）。
         var iconic = BvWin32.IsIconic(h);
@@ -272,8 +265,6 @@ public static class Entry
         var s = ReadSpec();
         string path, mode;
         if (!s.TryGetValue("path", out path) || path.Length == 0) return "spec missing path=";
-        // ⛔ 判据资产**不许静默产出名字不是 .png 的产物**（2026-09-23 实测的真实缺陷）：
-        //    spec 文件里若把 `path=… mode=screen raise=0` 写成**同一行**（拼行缺陷），`d["path"]`
         //    拿到的就是带空格的长值，截出来的文件名会变成 `xxx.png mode=screen raise=0`。
         //    该名字不以 `.png` 结尾 ⇒ 正常 glob / `Get-ChildItem -Filter *.png` 看不见它，
         //    **但 Windows 的 8.3 短名（`_PROBE~1.PNG`）会让 `-Filter *.png` 仍然匹配到它**

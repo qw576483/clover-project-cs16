@@ -15,7 +15,6 @@ namespace Cs16.Module.Player
     /// <para><b>执行顺序是这个模块的正确性前提，不能改</b>：</para>
     /// <code>
     /// PlayerModule.Update   (order -200)  采集输入 → match.SetLocalInput(cmd)      ← 必须早于模拟 Tick
-    /// MatchModule.Update    (order    0)  模拟推进：扣弹/限速/累后坐力/移动解算    ← agent-03
     /// PlayerModule.LateUpdate             ① 相机算位姿与视线 ② 射击队列消费+射线 ③ 写相机
     /// </code>
     /// <para>放反了会得到两种典型故障：输入慢一帧（开火"点了没反应"）、以及"射线打的是上一帧的眼睛位置"。</para>
@@ -37,7 +36,6 @@ namespace Cs16.Module.Player
         public const int ExecutionOrder = -200;
 
         /// <summary>
-        /// 常驻 HUD 面板名（`Resources/UI/HudPanel`，agent-06）——它整个比赛都开着，
         /// **不能**被当成"挡住了操作"。（与 AppFlow 的判据一致：除 HUD 外还有面板 = 有遮挡。）
         /// </summary>
         private const string HudPanelName = "HudPanel";
@@ -57,7 +55,6 @@ namespace Cs16.Module.Player
         };
 
         // ---- 玩家设置键：唯一真源 = `Core/CsSettingsKeys`（契约层）----
-        // 改前这里自持一份字面量、UI 层的 `CsPlayerSettingsStore` 另持一份 ⇒ 两处漂移时不报错，
         // 只表现为"设置改了不生效"（本模块读到的是默认值）。分层禁止 Module 引用 UI，
         // 所以真源落在两边都能引用的 Core（见 CsSettingsKeys 的类注释）。
 
@@ -135,7 +132,7 @@ namespace Cs16.Module.Player
 
         /// <summary>
         /// 视点晃动的**数值口径**：7 个数值**逐字沿用**原 <c>Module/CameraRig/ViewBob.cs</c> 里写死的常量
-        /// （下沉到引擎后改为"业务传配置" —— ⛔ 数值一个都没动）：
+        /// （下沉到引擎后改为"业务传配置" —— 数值一个都没动）：
         /// 满幅基准速度 = <see cref="CsConst.SpeedRifle"/>（4.4 m/s，拿"步枪速度"当满幅基准）、
         /// 幅度 = <see cref="CsConst.ViewBobAmount"/>、频率 = <see cref="CsConst.ViewBobSpeed"/>、
         /// 振幅平滑 / 横滚角 / 落地沉降两组四个来自 <see cref="CsCombatTuning"/>。
@@ -248,7 +245,6 @@ namespace Cs16.Module.Player
             var input = Game.Input;
             if (input == null)
             {
-                // 非预期分支：没有输入后端就永远切不了观战目标（照 §7 留痕，降频只报一次）
                 if (!_warnedNoInput) { _warnedNoInput = true; _log.Warn("spectate.noinput", "Game.Input 为 null，观战切换目标（空格）无法采集"); }
                 return;
             }
@@ -356,8 +352,6 @@ namespace Cs16.Module.Player
             return false;
         }
 
-        // ==================================================================
-        //  玩家设置（Game.Setting 是唯一真源，键与 agent-01 的 UI 层实现一致）
         // ==================================================================
         private int ReadFov()
         {

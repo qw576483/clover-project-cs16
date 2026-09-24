@@ -1,32 +1,27 @@
 // ============================================================================
-// 判据资产 · 切片BF：真人按键链路 —— 在真机（Play）里用**输入驱动**（按住前进键）
 // 从 B 楼梯底走到顶，采**逐帧运行时日志**，对照纯函数基准
-// （片BD `tools/probes/bstairs-walkline.txt`：T 162 帧到顶 / CT 125 帧到顶 / 被钳住 0 帧）。
 //
 // 为什么必须进 Play（差异 #66 的收口依据）：
 //   被判的是 **输入 → PlayerMotor → CsMatch.UpdateLocalPlayer → StepActorPhysics** 这条真链，
-//   它只在 Play 里 tick。片BD 只判到 `CsMap.ResolveMove`（物理层），
 //   "本地玩家输入层能不能把这台人送上去"这一格没采过 —— 本探针就是采这一格。
 //
 // 输入注入口径（**复用**既有驱动，不另造通道）：
 //   本组件 [DefaultExecutionOrder(-160)] **先于**驱动跑，改写
 //   `.ai-tmp/drivers/cs16-play-driver.cs` 的输入状态文件 `.ai-tmp/drivers/state.txt` 的 `input=` 行；
 //   驱动（order -150）随后在 Apply() 里把它写进 `match.SetLocalInput`。
-//   ⛔ 本组件**不自己调** `SetLocalInput`（两条注入路径会互相覆盖，是驱动注释里记过的坑）。
-//   ⛔ 不写 `input=` 行时，PlayerModule（order -200）每帧写的"无按键"输入生效 ⇒ 角色停下。
+//   本组件**不自己调** `SetLocalInput`（两条注入路径会互相覆盖，是驱动注释里记过的坑）。
+//   不写 `input=` 行时，PlayerModule（order -200）每帧写的"无按键"输入生效 ⇒ 角色停下。
 //
 // 三个 case（一轮 Play 采齐）：
 //   1) T 侧走廊路径（A* 复算，与 bstairs-walkline.cs 同口径）逐帧改 yaw 朝下一路点 + 按住前进
 //   2) CT 侧走廊路径，同上
 //   3) T 侧「直线复现」：**只设一次 yaw 朝目标**、之后不再转向、按住前进
-//      —— 用来复现用户所见（片BD 纯函数直线推进在第 400 帧卡在 x≈-10.961 贴墙滑行）
 //
 // 探针的写权限：只**写输入**、只**读位置**。唯一的写坐标动作 = 每个 case 开始把角色摆到楼梯底
-//   （日志里逐条 `SETUP` 标注 ⇒ ⛔ 那不是"走上去"的证据；证据 = 其后的逐帧位移）。
+//   （日志里逐条 `SETUP` 标注 ⇒ 那不是"走上去"的证据；证据 = 其后的逐帧位移）。
 //
 // 用法（在 client/ 里跑）：
 //   unity command run_script --file <本文件绝对路径> --entry RealWalkBStairs.Begin
-//   之后本组件自行 tick（不再需要 unity 调用），逐帧日志写
 //   <项目根>/.ai-tmp/test/bf-realwalk.txt
 // ============================================================================
 using System;

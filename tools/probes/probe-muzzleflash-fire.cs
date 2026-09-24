@@ -1,7 +1,7 @@
 // 判据资产（tools/probes/）：差异 #89 的**真调用半**（拆出来的后半，理由见 probe-muzzleflash-geom.cs 的头注）。
 //
 // 做了什么：
-//   [A] 读 FX 池台账（**反射取 CombatEffects._root**，⛔ 不做全场景扫描 —— 那是上一个版本超时的原因之一）
+//   [A] 读 FX 池台账（**反射取 CombatEffects._root**，不做全场景扫描 —— 那是上一个版本超时的原因之一）
 //   [B] 反射取 CombatModule._fx → 调 **真的** MuzzleFlash(eye, cam.rotation, "m249")
 //       （= CombatModule.cs 里右键/开火那条链的同一个入口；第 3 参 = 武器 id，决定用哪张原版贴图）
 //   [C] 再读一次台账 ⇒ 判"这条路径到底生不生成可见像素"（贴图名 / enabled / 世界宽 / 灯）

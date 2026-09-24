@@ -80,13 +80,11 @@ CK_END = '<!-- COVERAGE-END -->'
 P_HIT = '# probe-hits plan='
 
 DIMS = ['D%d' % i for i in range(1, 13)] + ['S1', 'S2', 'S3']
-# The two classes that behave differently for the hit contract (main-agent ruling 2026-09-23,
 # option (b)).  Defined ONCE at module scope so the counting, the reporting and the rule can never
 # drift apart -- tonight's recurring lesson: one semantic, one place.
 ENUM_DIMS = ['D1', 'D5']                    # the entity enumerator's own output is their ledger
 BEH_DIMS = ['D6', 'D7', 'D9', 'D10', 'D11', 'D12', 'S2', 'S3']   # REAL probes required
 ANCHOR_NONE = '--'                          # the only legal anchor for an unresolved=1 line
-# Measurement SHAPES the producer may emit.  MEASURED on the real ledger 2026-09-23 (P4 landed):
 # file_bytes=1612 meta_line=1180 line=1002 unresolved=5 head_bytes=1 => unknown=0.  `bytes=`/`lines=`
 # are the pre-P4 enumerator shape, kept so an older-but-valid ledger is not called a degradation.
 DECLARED_SHAPES = set('line meta_line file_bytes head_bytes bytes lines unresolved'.split())
@@ -274,7 +272,6 @@ def classify_anchor(ev):
     return (None, None)
 
 
-# R2 TIGHTENED 2026-09-24 (team-lead ruling): the set of extensions a `probe=<name>` value may be
 # completed with when the hit line names the probe WITHOUT a path (the real ledger's shape).  Kept
 # next to ART_EXT for the same reason: the extension list is part of "what counts as a judgement
 # asset", and that question must have ONE answer.
@@ -398,7 +395,6 @@ def hit_quality(dim, line):
         if unresolved:
             return (False, 'unresolved', lying)      # self-declared failure is never a hit
         has_probe = PROBE_VAL_RE.search(joined) is not None
-        # R2 TIGHTENED 2026-09-24: a `probe=` that names nothing on disk is NOT a pointer, so the
         # row is not hit.  Checked BEFORE the has_meas test so the diagnosis says WHICH half failed
         # (a missing measured value is a different defect from a fabricated probe name).
         if has_probe and (probe_asset(PROBE_VAL_RE.search(joined).group(1)) is None):
@@ -589,11 +585,9 @@ def main():
     echo_ex = []
     liar_ids = set()        # unresolved=1 on a line that HAS an anchor (the field is lying)
     nodisk_ids = set()      # a `probe=` value that names NOTHING on disk (R2 tightening 2026-09-24)
-    # --- AGGREGATE FIRST, JUDGE ONCE (caliber fix 2026-09-23) --------------------------------
     # TWO reasons, both load-bearing:
     #  (1) DOUBLE COUNT: the old loop added the row id to a bucket PER LINE.  A row can have
     #      several lines -- `bwp-input-hits.tsv` with `probe=` AND `coverage-hits.tsv` without --
-    #      so a row a real probe DID hit landed in hit_ids AND noprobe_ids (measured 2026-09-23 on
     #      the real table: 24 rows), and the printed "without a REAL probe hit" was FALSE for them.
     #  (2) ORDER DEPENDENCE: because those branches were an if/elif CHAIN, which bucket a row ended
     #      in depended on the order the carriers happened to be walked in => the number was not
@@ -652,7 +646,6 @@ def main():
     # NO carrier line at all belongs here too.  0 such rows today, but the old per-line loop could
     # never see them -- it silently dropped them.
     #
-    # KNOWN GAP (recorded 2026-09-23, deliberately NOT changed here): BEH_DIMS (module scope)
     # excludes D8 -- 123 sound-effect rows, the "the clip exists but no event is wired" family,
     # 3.2% of the matrix -- so those rows pass under the enumeration rule without a real probe.
     # That is a caliber difference against the 12+3 dimension table in
@@ -684,14 +677,12 @@ def main():
           '(the field is lying; unresolved=1 is legal ONLY on a "--" line)' % len(liar_ids))
     print('unresolved-only      = %d   row(s) whose only hits are unresolved=1 on a "--" line '
           '(the producer says it resolved nothing => not a hit)' % len(unres_ids))
-    # R2 TIGHTENED 2026-09-24 (observability only -- this line adds NO red condition: every row
     # counted here is already inside `behaviour-no-probe`, whose counter the gate reads).
     print('probe-not-on-disk    = %d   row(s) whose hit line writes probe=<name> where NOTHING on '
           'disk carries that name (`ls` cannot hit it) -- `probe=` is the EVIDENCE POINTER, so a '
           'value that names nothing is a FABRICATED FINGERPRINT and is not a hit; `run=` describes '
           'HOW a probe ran and can never substitute for the pointer' % len(nodisk_ids))
 
-    # ---- INVARIANTS (added with the aggregate-first fix 2026-09-23) ---------------------------
     # WHY: the numbers above are only meaningful if they PARTITION the behaviour class.  Two equal
     # COUNTS can still be different SETS (measured: a 3-row fixture gave 3 under both the old and
     # the new caliber, i.e. it proved nothing), so the partition is ASSERTED, not eyeballed.
@@ -715,7 +706,6 @@ def main():
     for _name, _good, _val in inv:
         print('invariant %-38s = %s (%s)' % (_name, 'OK' if _good else 'VIOLATION', _val))
 
-    # ---- SHAPE HISTOGRAM (main-agent approved 2026-09-23) -------------------------------
     # WHY: the relay slice's first P4 attempt looked correct in every visible way while 1180 rows
     # silently fell into a degradation shape (a NameError swallowed by a wide except).  "Every field
     # has a value" is NOT "every field is right", so the SHAPE of the measurement is made visible:
@@ -723,7 +713,6 @@ def main():
     #      say meta_missing today";
     #    * an UNDECLARED shape additionally turns the item red, because the whole point is that a
     #      degraded shape otherwise looks like a normal one.  The declared set is measured, not
-    #      guessed (real ledger 2026-09-23: file_bytes=1612 meta_line=1180 line=1002 unresolved=5
     #      head_bytes=1 => unknown=0), so this rule adds no false red today.
     shapes = collections.Counter()
     unknown_shapes = []
@@ -759,7 +748,6 @@ def main():
         miss_ids = sorted(want_ids - hit_ids, key=lambda x: int(x))
         print('  sample un-hit row id(s) = ' + ','.join(miss_ids[:12]))
 
-    # ---- LAYERED contract (main-agent ruling 2026-09-23) -------------------------------
     # A green TOTAL must never hide an empty class, so the hit rate is reported per dimension and
     # rolled up into the two classes that behave differently:
     #   * enumeration-class (D1, D5): the ENTITY ENUMERATOR's own output is a legitimate ledger --

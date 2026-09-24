@@ -1,4 +1,3 @@
-// 判据资产（tools/probes/）：**编辑器图标宿主对象**的运行时节点树原文（片BV）。
 //
 // 判据用途（用户原话：「开一枪竟然能看到 unity 组件的喇叭和太阳的图标…还有 ui 控件」）：
 //   Unity 在 Game view 上叠加绘制的**组件图标**只跟着组件走 —— 喇叭=AudioSource、太阳=Light、
@@ -7,7 +6,6 @@
 //   * hideFlags：None（=0）= 编辑器会为它画图标；HideInHierarchy/HideAndDontSave 等 = 不画。
 //   * activeInHierarchy=false ⇒ Game view 的图标也不画（这条决定了"修前/修后"哪些行该变）。
 //   * 同时回读 Game view 的 showGizmos（叠加层的总开关）：它为 True 时上面每一条 active 的
-//     AudioSource/Light/Camera/Canvas 都会在 Game view 上长出一个图标 —— 这就是根因的机械判据。
 //
 // 只读，不改进程状态。用 eval_file 调；同时把 TSV 落 <项目根>/.ai-tmp/test/bv-overlay-hosts.tsv。
 var inv = System.Globalization.CultureInfo.InvariantCulture;
@@ -22,7 +20,6 @@ System.Func<UnityEngine.Transform, int, string> dig = (tr, depth) =>
     return s;
 };
 
-// Game view 的叠加层总开关（根因 A 的唯一真源）
 var gvt = System.Type.GetType("UnityEditor.GameView,UnityEditor");
 var gvProp = gvt != null ? gvt.GetProperty("showGizmos",
     System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.NonPublic) : null;

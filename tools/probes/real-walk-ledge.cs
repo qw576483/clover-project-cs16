@@ -11,20 +11,18 @@
 //   低台：cell(x=21..26, z=31..35)  h = 2.35 m
 //   ⇒ 高差 Δ = 0.90 m = 2× StepUpHeight(0.45) ⇒ **离线判据说纯走过不去**；
 //     而 0.90 ≤ 跳跃可达 1.1445（JumpSpeed 6.82 / Gravity 20.32）⇒ 离线判据说跳能上去。
-//   ⚠️ 本片（2026-09-24）实测：**这条离线结论在实机上不成立** —— 见下方 LANE 循环，
 //      在 x=-39.5 车道上人在低处 y=1.200（离线写 2.35）、高处 y=2.907（离线写 3.25），
 //      且 y 随 z **连续**爬升 = 那是一段**斜坡**，不是台沿。故本支改为**扫 3 条车道**
 //      （cell x=21/23/25 ⇒ 世界 x=-41.5/-39.5/-37.5），每道 5 次纯走 + 3 次带跳，
 //      以判"这块地方到底有没有一条纯走过不去的沿"。
 //
-// 判定（写死在输出末行，判据是可证伪的；⛔ 期望值由**实测几何**给出，不用离线假设）：
+// 判定（写死在输出末行，判据是可证伪的；期望值由**实测几何**给出，不用离线假设）：
 //   期望的前置事实：本批三条车道 `SampleGround(终) − SampleGround(起)` = **1.750 m > StepUpHeight(0.45)**
 //   ⇒ 它们是**坡/阶**，正常情况纯走**应该**上得去（`GEOM-BASIS` 行逐轮打印这条）。
 //   `RESULT-LEDGE: PASS`            每条车道 walk 5/5 上得去 且 jump 3/3
 //   `RESULT-LEDGE: PROBABILISTIC`   任一车道 0 < walk < 5 ⇒ **用户报的"概率卡住"成立**
 //   `RESULT-LEDGE: FAIL`            任一车道 jump 0/3（跳跃闸门比常量小）或每条车道 walk 0/5（全都上不去）
 //   `RESULT-LEDGE: MIXED`           各车道结论不一致
-//   ⚠️ 2026-09-24 片LEDGE-ROOT **作废旧口径**：旧版写"PASS = 每条车道 walk **0/5**"，
 //      那是拿离线 `bm-step-audit.py` 的"这里有一道 0.90 m 台沿"当期望；该假设已被实机证伪
 //      （runtime 是连续斜坡）⇒ 旧口径会在**修好之后**判 FAIL（自相矛盾）。详见 Finish() 注释① ②。
 //
@@ -46,7 +44,7 @@ public static class RealWalkLedge
 
     /// <summary>
     /// 差异 #66 的**受控实验**开关：这个文件里写一个整数 = 把 <c>Application.targetFrameRate</c>
-    /// 压到该值（⛔ 只在取证时用）。
+    /// 压到该值（只在取证时用）。
     /// <para><b>为什么要有它</b>：两轮同车道同输入的实测结果不同，唯一显著差异是**帧率**
     /// （失败轮 dt≈0.018 ⇒ ~58 fps；成功轮 dt≈0.0074 ⇒ ~135 fps）。要把它从"相关"变成"因果"，
     /// 必须有**唯一的自变量** ⇒ 用帧率上限人为造出低帧率轮。</para>
@@ -238,7 +236,7 @@ public sealed class RealWalkLedgeTick : MonoBehaviour
         _dtSum = 0f;
         _dtN = 0;
         _vyMin = 0f;
-        // ⚠️ 这两处用 maxDrop=40：默认 8 m 的采样从 y=30 往下探**够不到**地面的 y≈1.2
+        // 这两处用 maxDrop=40：默认 8 m 的采样从 y=30 往下探**够不到**地面的 y≈1.2
         //    ⇒ 早期版本这一列恒为 -Infinity（看着像"样本被摆在空中"，其实是参数没给够）。
         _stepUpStart = CsMatch.StepUpProbeHits;
         _gyStart = _map.SampleGround(new Vector3(LaneXOf(_case), 30f, StartZ), 40f);
@@ -360,15 +358,12 @@ public sealed class RealWalkLedgeTick : MonoBehaviour
             if (_jumpTried[i] > 0 && _jumpTopped[i] < _jumpTried[i]) lanesJumpBad++;
         }
 
-        // ---- 口径（2026-09-24 片LEDGE-ROOT 修正；⛔ 旧版口径是错的，见注释②）----
         // ① 期望值必须由**实测几何**给出，而不是由离线清单的假设给出：本探针每道都记
         //    `该道起/终地面y`（`SampleGround(maxDrop:40)`，硬事实）⇒ 终比起高 **> 一个台阶** 即
         //    "这是一段**坡/阶**，纯走理应上得去" ⇒ 期望 **walk 5/5**；
         //    若那道终比起只高 ≤ 一个台阶，它本来就没有可测的"上不去"，本探针不构成判据（记为 n/a）。
         // ② 旧口径（"PASS = 每条车道 walk **0/5** 上得去"）是拿**离线假设**当期望：`bm-step-audit.py` 的 A 清单
         //    说这里有 0.90 m 台沿 ⇒ 于是把"纯走 5/5"当成了 FAIL。那个假设已被**实机证伪**
-        //    （片LEDGE：同一处 runtime 是**连续斜坡**，成功例 y 逐帧 1.200→2.8 平滑上升、无台阶突变；
-        //      离线把"每格全部候选朝上面"里的一对当成了"该格的可走地面"）。
         //    口径若继续钉在错误期望上，就会出现"修好了反而判 FAIL"这种自相矛盾的输出。
         var slopeLanes = 0;
         for (var i = 0; i < LaneXs.Length; i++)

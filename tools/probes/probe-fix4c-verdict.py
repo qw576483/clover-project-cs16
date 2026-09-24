@@ -167,9 +167,8 @@ def messages(obj):
     data = obj.get("data", obj)
     res = data.get("result", data)
     for e in res.get("entries", []):
-        # ⛔ 条目必须是对象（`{seq,timestampUtc,level,logType,message,…}`）。
+        # 条目必须是对象（`{seq,timestampUtc,level,logType,message,…}`）。
         #    夹具/拼接缓冲里混进裸字符串时要**跳过**而不是崩掉 —— 崩掉会让整条判据链
-        #    "报错=看起来没绿"，和"真的有缺陷"分不开（实测踩过一次）。
         if isinstance(e, dict):
             msgs.append(e.get("message", ""))
         elif isinstance(e, str):
@@ -222,7 +221,7 @@ def main():
                         % (local_name, "/".join(local_names) if local_names else "未解析到，回落 Player"))
 
         all_start = [m for m in msgs if re.search(r"\[Match\]\s+\S+\s+开始换弹", m)]
-        # ⛔ 口径：只数**本地玩家**的（bot 的换弹是第三人称 ActorView 的事，混进来会弄脏判据）
+        # 口径：只数**本地玩家**的（bot 的换弹是第三人称 ActorView 的事，混进来会弄脏判据）
         reload_start = [m for m in msgs
                         if re.search(r"\[Match\]\s+%s\s+开始换弹" % re.escape(local_name), m)]
         reload_play = [m for m in msgs if "第一人称播换弹" in m]
@@ -298,8 +297,7 @@ def main():
             rows_out.append("      " + m.split("] ")[-1][:180])
 
         # ---- J-R5：换弹动画**真的在跑**（Animator 真实状态取样，不只看那句 Play 调用）----
-        #   ⛔ 豁免「被打断=True」：换弹中切枪会取消换弹（原版行为），取消后 Animator 当然不在
-        #      reload 剪辑上。把原版正确行为判成红 = 判据自己错（本片实测踩过一次）。
+        #   豁免「被打断=True」：换弹中切枪会取消换弹（原版行为），取消后 Animator 当然不在
         probes = [m for m in msgs if "换弹动画心跳" in m]
         live = [m for m in probes if "被打断=True" not in m]
         excused = [m for m in probes if "被打断=True" in m]
@@ -379,12 +377,9 @@ def main():
                          "⇒ OnClipFinished 的陈旧完成回调仍在，用户报的『换弹有时候没有动画』未修好"
                          % len(jr7_bad))
 
-        # ---- J-R6 覆盖态必须归位（修法的**残留风险**：换弹末帧卡住）----
         #   判据的**目的**（本文档 35-36 行、ViewModelRig.cs 的 SettleReload 注释）写得很窄：
         #     「枪**定格在换弹末帧**」—— 即 0.6 s 后 `_overrideState` **仍是换弹剪辑**。
-        #   ⛔ 旧实现写的是 `over != "-"` 就算红 ⇒ 只要窗口内**另一次动作合法接管**
         #      （最典型：玩家一直按着左键，换弹窗口一结束 viewmodel 立刻切 `fire1`）
-        #      就被误判成"末帧卡住"。2026-09-24 13:30:05.424 实测踩到：
         #      `seq=1 over=fire1 active=False` —— 而同一轮的 `seq=2 over=-` 是绿的，
         #      驱动侧的 `SetFireHeldForTest(true)`（13:29:59.525）一直按到 13:30:09.932，
         #      settle 取样点（13:30:05.424）**整个落在按住期间** ⇒ fire 接管是**必然**的。
@@ -434,7 +429,7 @@ def main():
                          % (len(stuck), reload_state))
 
         # ---- J-D1 弹痕可见性 ----
-        #   ⛔ 判据必须用**与距离无关**的量，否则会自我误判：`核心投影` 是"按本发距离"算出来的，
+        #   判据必须用**与距离无关**的量，否则会自我误判：`核心投影` 是"按本发距离"算出来的，
         #      同一块 0.04 m 的核心在 2.0 m 是 19.2 px、在 2.82 m 只有 13.6 px —— 实测就踩过这一次
         #      （13.6 px 被判红，其实只是那一枪离墙远）。⇒ 通过条件改成"可见核心宽(米) ≥ 参考值"，
         #      参考值 = 在**参考距离** 2 m 上投影到 15 px 所需的米宽：15 / (1920/(2*2)) = 0.03125 m。
@@ -491,11 +486,9 @@ def main():
     judged_tags, unjudged_tags = [], []
     for tag, after in (("floor", args.after), ("wall", args.after2)):
         if not (os.path.exists(args.before) and after and os.path.exists(after)):
-            # ⛔ 2026-09-24 线C 修（**判据假绿**）：这里原来是 `⇒ 跳过` —— 只 append 到 rows、
             #    **不进 fails**。实测后果：把 `fix4c_*`/`fix4d_*` 帧全删掉再跑，两条都"跳过"，
             #    而 FAIL 列表里**一条 J-D2 都没有** ⇒ 帧一块都没采到，#4「弹痕还是没有」
             #    会**静默地从未被判**，判据却照样可能打 GATE GREEN。这就是"判据测的是素材、不是代码"的孪生形态。
-            #    口径与 J-R6 一致（主 agent 2026-09-24 裁决：**`UNJUDGED` 不算通过**）。
             if tag == "floor":
                 # 本轮派活范围 = before/after **一对**（地面）。它是核心，缺了就是红。
                 rows_out.append("J-D2[floor] 帧不全（before=%s after=%s）⇒ UNJUDGED（不是通过）"
@@ -505,8 +498,8 @@ def main():
                              % (os.path.exists(args.before), bool(after) and os.path.exists(after)))
             else:
                 # wall 面不属于本轮派活范围（本轮只采 before/after 一对）。
-                # ⛔ 但**不等于通过**：显式单列一行，并把"已判 tag 集合"写进 GATE 行，
-                #    让复核的人一眼看到"哪些面真的被判了"。⛔ 不许把它算进 judged。
+                # 但**不等于通过**：显式单列一行，并把"已判 tag 集合"写进 GATE 行，
+                #    让复核的人一眼看到"哪些面真的被判了"。不许把它算进 judged。
                 rows_out.append("J-D2[wall] 本轮未采（`--after2` 未给）⇒ ⛔ 不是通过、也不是红："
                                 "**未判**。原因：本判据的 `before` 是**共用一张**，只有与它同机位的那个面"
                                 "才能过 J-D2b(b) 局部性；本轮派活书要的就是 before/after 一对。")
@@ -555,7 +548,6 @@ def main():
     print("\n".join(rows_out))
     print("-" * 72)
     # 判了哪些**面**必须进结论行 —— 否则"哪几个 tag 真被判过"只存在于读者脑子里
-    # （这正是 2026-09-22 那次 `3798 == 3798` 假绿的同型病：两边数相等，但覆盖关系没验）。
     print("J-D2 面貌：已判 = %s；未判 = %s（⛔ 未判 ≠ 通过）"
           % (",".join(judged_tags) or "(无)", ",".join(unjudged_tags) or "(无)"))
     if args.json:

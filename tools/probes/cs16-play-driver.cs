@@ -94,7 +94,6 @@ namespace Cs16Drv
             }
 
             // 文件读取节流到 50ms；但 Apply() **必须每帧调**（本地输入会被 PlayerModule 每帧覆盖，
-            // 隔帧写会让玩家"一步一停" —— 实测把 5.2 m/s 的移动压成 0.9 m/s 的假象，是驱动自身缺陷）。
             if (now - _lastRead >= 0.05f) { _lastRead = now; ReadState(); }
             Apply();
             TrackTick(now);
@@ -106,7 +105,7 @@ namespace Cs16Drv
         /// 记分板（G11 / `22_scoreboard.png`：TAB **按住**显示）——驱动没有键盘层，
         /// 而 <c>HudPanel.HandleInput</c> 每帧都在判"TAB 没按下 ⇒ 关掉记分板"，
         /// 所以只能在 <c>LateUpdate</c>（所有 Update 之后、渲染之前）把 <c>tab=1</c> 的记分板补开回来。
-        /// ⛔ 不能放在 <c>Apply()</c>：那里是 order -150（HudPanel 之前），同帧就会被关掉、渲染不出来。
+        /// 不能放在 <c>Apply()</c>：那里是 order -150（HudPanel 之前），同帧就会被关掉、渲染不出来。
         /// </summary>
         private void LateUpdate()
         {
@@ -197,10 +196,6 @@ namespace Cs16Drv
         private float _lastNoMatchLog = -100f;
 
         /// <summary>
-        /// 取比赛模块。**不用 <c>FindObjectOfType</c>**（Unity 6 已废弃，且它在本环境里静默返回 null，
-        /// 导致整条驱动通道无声失效 —— 2026-09-21 实测：`snap  matchModule=null`，
-        /// 根因是 Play 从 <c>StageDust2</c> 进而不是从 <c>Boot.unity</c> 进，
-        /// 而 <c>Bootstrap</c>（比赛模块的挂载点）只在 <c>Boot.unity</c> 里）。
         /// 改走业务给出的模块入口 <see cref="MatchModule.Instance"/>。
         /// </summary>
         private MatchModule Module()
@@ -211,7 +206,6 @@ namespace Cs16Drv
             return _matchModule;
         }
 
-        /// <summary>拿不到比赛模块时**必须留痕**（降频）—— "静默早退"是这条通道历史上最贵的一个缺陷。</summary>
         private void NoMatchWarn()
         {
             var now = Time.realtimeSinceStartup;
@@ -354,7 +348,6 @@ namespace Cs16Drv
             }
 
             // ---- use=1：按住 E（下包 / 拆包）----
-            // 为什么这一行能生效（切片P 只读查证，⛔ 未改任何游戏代码）：
             //   本帧「按住 E」的**真值**由 CombatModule.FillInput 在 PlayerModule.Update 里
             //   按真实键盘写进 CsMatch._localUseHeld（PlayerModule 是 [DefaultExecutionOrder(-200)]，
             //   而 CombatModule 本身没有 Update，只被 PlayerModule 调用）⇒ 那个覆盖发生在 order -200；
@@ -548,8 +541,6 @@ namespace Cs16Drv
         // 为什么需要：射线方向取自 FirstPersonCamera.AimDirection，而它的 yaw/pitch 来自
         // PlayerMotor（LookAccumulator，鼠标累加）——驱动没有鼠标层 ⇒ 默认只能朝出生朝向开枪。
         //
-        // 【切片R 起：改为**类型化的测试入口**，本处已无反射】
-        // 旧做法是反射调 PlayerMotor 的 `internal ForceLook`。按 skill §0.6 第 3 条
         // （把高风险动作做成**专用、类型化**的入口，别藏在反射里），游戏侧新增了
         // public `PlayerMotor.ForceLookForTest(yaw, pitch)`（语义与 ForceLook 逐字一致），本驱动改用它。
         private Cs16.Module.Player.PlayerMotor _motor;
@@ -579,7 +570,6 @@ namespace Cs16Drv
         // ------------------------------------------------------------------
         // 为什么要它：下包要求"站在 A/B 包点半径内"，而包点坐标是地图标记（`CsMarkers.Bombsite*`
         // 的 13 类标记点之一）⇒ 从地图门面把标记点读出来，而不是在驱动里写死一个坐标
-        // （写死 = 换个地图/标记调整就静默失效）。地图门面与 CsBomb.IsInBombsite 同一取法。
         private string _lastTpbs;
 
         private void ApplyTpBombsite(ICsMatch match)
@@ -589,7 +579,6 @@ namespace Cs16Drv
             _lastTpbs = spec;
 
             var mm = MatchModule.Instance;
-            // 【切片R 起：本处已无反射】MatchModule.Map 本来就是 public 属性 ⇒ 直接读。
             var map = mm != null ? mm.Map : null;
             if (map == null || !map.IsLoaded) { AppendLine("tpbs.fail", "地图门面拿不到 / 未加载"); return; }
 
@@ -612,7 +601,6 @@ namespace Cs16Drv
         // ------------------------------------------------------------------
         //  fireheld=1 —— 把「本帧按下了左键」也补进 CombatModule
         // ------------------------------------------------------------------
-        // **为什么光有 input=(...,fire=1) 不够**（切片P 实测，一次真实的坑）：
         // 下发的 <c>cmd.Fire</c> 只让**模拟**开火（扣弹、推 NextFireTime、给 bot 一条枪声记录），
         // 而 <c>CombatModule</c> 要不要**射线/枪口火焰/弹痕**，取决于它自己那个
         // `_fireRequested`（`FillInput` 里由真实鼠标置位）—— 见 `IsLocalShot` 的类注释：
@@ -620,13 +608,11 @@ namespace Cs16Drv
         // 恒 false ⇒ 弹匣照扣、**却一条弹痕都不画**（实测：glock18 20→16 发、控制台 0 条
         // `hitwall.*` / `shot.miss`）。所以弹痕取证必须把这一位也补上。
         //
-        // 【切片Q 起：改为**类型化的测试入口**，本处已无反射】
-        // 切片P 当时是"反射写组件实例的私有 bool"。按 skill §0.6 第 3 条
         // （把高风险动作做成**专用、类型化的入口**，别藏在自由命令/反射里 —— 否则 harness
         //  拿不到可拦截的钩子），游戏侧新增了 CombatModule.SetFireHeldForTest(bool)
         // （public，注释写明"测试入口，供离线驱动使用"），本驱动改用它。
         // 调用时序不变：FillInput(-200) 先清零 → 本驱动(-150) 每帧置位 → PlayerModule.LateUpdate 消费。
-        // ⚠️ 必须**每帧**调（不能只在值变化时调一次）：FillInput 每帧开头都会把这一位清零。
+        // 必须**每帧**调（不能只在值变化时调一次）：FillInput 每帧开头都会把这一位清零。
         private CombatModule _combatMod;
         private bool _lastFireHeld;
 
@@ -1043,7 +1029,6 @@ namespace Cs16Drv
             UnityEngine.EventSystems.ExecuteEvents.Execute(b.gameObject, data,
                 UnityEngine.EventSystems.ExecuteEvents.pointerEnterHandler);
             // 注意：**不要**再 SetSelectedGameObject —— 那会把状态从 Highlighted 改成 Selected，
-            // 而 Selected 的 tint 取 ColorBlock.selectedColor（本项目没设）⇒ 实测悬停色不出现（本片第一轮踩到）。
             _hovered = b;
             AppendLine("hover", "enter " + goName + " interactable=" + b.IsInteractable());
         }
@@ -1249,7 +1234,7 @@ namespace Cs16Drv
     {
         /// <summary>挂载驱动（幂等）。返回一句结果。</summary>
         /// <remarks>
-        /// ⚠️ 必须**按类型名**找现存组件，不能用 <c>GetComponent&lt;Cs16Driver&gt;()</c>：
+        /// 必须**按类型名**找现存组件，不能用 <c>GetComponent&lt;Cs16Driver&gt;()</c>：
         /// run_script 每次调用都编译出一个**新程序集**，同名类型是**不同的 Type 对象**，
         /// 于是 GetComponent 会看不见上一次挂上去的那个实例（实测：Snap 报 "driver not mounted"
         /// 而同一实例的心跳还在涨）。跨程序集一律走反射。
@@ -1305,7 +1290,6 @@ namespace Cs16Drv
         {
             Cs16.Module.Map.ICsMap map = null;
             var mm = Cs16.Module.Match.MatchModule.Instance;
-            // 【切片R 起：本处已无反射】MatchModule.Map 本来就是 public 属性 ⇒ 直接读。
             if (mm != null) map = mm.Map;
             var cm = UnityEngine.Object.FindAnyObjectByType<Cs16.Module.Map.CsMapModule>();
             if (map == null && cm != null) map = cm.Map;
@@ -1513,7 +1497,6 @@ namespace Cs16Drv
             return "probe cam on actorId=" + target.ActorId;
         }
 
-        // 【切片Q】删掉了旧的 `CallLive(method, arg)` —— 它用**反射**去调本驱动自己的
         // internal 方法（Sample / SampleViews），而它**没有任何调用点**（全文件 0 处引用）。
         // 死代码 + 反射，一并去掉；本驱动要反射自己的方法时改走 public 直调。
 
@@ -1527,12 +1510,8 @@ namespace Cs16Drv
         public static string StartSolo() => EmitLaunch(0, CsTeam.CT);
 
         /// <summary>
-        /// 开局：4 v 4 且**本地玩家是 T**（切片P 的 C4 取证用）。
         /// 为什么不用 <see cref="StartShortSoloT"/> / <see cref="StartSolo"/>：本工程里
         /// 「一队只有本地玩家」= 该队人数为 0 侧被立刻判定全歼 ⇒ 回合**秒结束**
-        /// （切片P 实测：solo T 局在 15:44:54 就已 `phase=RoundEnd round=2 score=CT2:T0` ⇒
-        /// 到达 `MatchEnd`、模拟停摆，`SetUseHeld` 因 `!_running` 直接返回 ⇒ 下包永远不发生）。
-        /// 所以下包取证必须**两边都有人**（4 v 4）。
         /// </summary>
         public static string StartMatchT() => EmitLaunch(4, CsTeam.T);
 
@@ -1551,8 +1530,7 @@ namespace Cs16Drv
 
         /// <summary>
         /// 发一次暂停请求（= AppFlow 里 ESC 键那条链发的事件）。
-        /// ⛔ 不能用 <c>match.SetPaused(true)</c> 代替：那只是把模拟暂停，**不切 FSM**，
-        /// 于是 PausePanel 根本不开（切片I 第一轮踩到：pause=1 之后截图里还是在局内）。
+        /// 不能用 <c>match.SetPaused(true)</c> 代替：那只是把模拟暂停，**不切 FSM**，
         /// </summary>
         public static string PauseRequest()
         {
@@ -1583,7 +1561,6 @@ namespace Cs16Drv
         /// 能跨程序集看见旧实例，但**旧程序集被卸载后**那个组件的类型解析不出来，于是
         /// <c>GetType().Name</c> 不再等于 "Cs16Driver" ⇒ 后续所有 entry 都报
         /// "driver not mounted"，而同实例的心跳还在涨（实测：Snap 之后 SweepAll 就开始报，
-        /// 但 driver.heartbeat 又继续了 5 拍）。⇒ 本片改成"每次取个新实例"，
         /// 用 <c>AddComponent</c> 拿本程序集的类型，**不依赖任何跨程序集句柄**。</para>
         /// </summary>
         internal static Cs16Driver Temp()
@@ -1810,7 +1787,7 @@ namespace Cs16Drv
         /// <summary>
         /// 短赛制单人 T 开局（`42_matchend.png` 取证）：<c>RoundsPerHalf=1</c> ⇒ 胜场阈值
         /// = <c>RoundsPerHalf + 1</c>（见 <c>CsRound.cs</c>）⇒ 两次 <c>ForceEndRound(T)</c>
-        /// 就会走到**真实**的 <c>MatchEnded</c>（⛔ 不是直接发事件）。
+        /// 就会走到**真实**的 <c>MatchEnded</c>（不是直接发事件）。
         /// </summary>
         public static string StartShortSoloT()
         {
@@ -1847,20 +1824,18 @@ namespace Cs16Drv
         }
 
         // ==============================================================
-        // 片AE：`42_matchend.png` 的**非平局**全场结算入口（测试入口，供离线取证驱动使用）
-        // ==============================================================
         // 为什么要先 "关掉换边"：生产配置 RoundsPerHalf=15 / MaxRounds=30 / HalfTimeSwap=true ⇒
         //   第 16 回合 SwapHalves() 把阵营**与比分**一起互换（"比分跟着人走"）⇒ 打满 30 回合
         //   最终必为 15:15，EndMatchInternal 只能给 Draw!（实测：ac-recapture6 连喂 34 次
         //   ForceEndRound(CT) 采到的就是 `Draw! CT 15 : 15 T 共 30 回合`）。
         // 本批 = 两件套：① 关掉**本局**换边（走业务侧类型化测试入口
-        //   `CsMatch.SetHalfTimeSwapForTest`，⛔ 不是反射、不是改 ICsMatch 签名）；② 按比分反馈把
+        //   `CsMatch.SetHalfTimeSwapForTest`，不是反射、不是改 ICsMatch 签名）；② 按比分反馈把
         //   本局 30 个回合的胜方依次喂给 `ICsMatch.ForceEndRound`（只在**买枪期**结算 ⇒ 不会
         //   出现"机器人自己打完"的意外回合）。比赛本身仍走菜单流程的正常开局（生产 15/30）。
 
         /// <summary>
         /// 测试入口，供离线取证驱动使用：关掉**本局**的半场换边
-        /// （经**具体类型** `CsMatch` 调 `SetHalfTimeSwapForTest` —— ⛔ 不改 `ICsMatch` 签名）。
+        /// （经**具体类型** `CsMatch` 调 `SetHalfTimeSwapForTest` —— 不改 `ICsMatch` 签名）。
         /// </summary>
         public static string DisableHalfTimeSwapForTest()
         {
@@ -1874,9 +1849,8 @@ namespace Cs16Drv
 
         /// <summary>
         /// 测试入口，供离线取证驱动使用：把**本局**的半场回合数改小（= 1 ⇒ 胜负阈值 2）并关掉换边
-        /// （经**具体类型** `CsMatch` 调 `SetShortMatchForTest` —— ⛔ 不改 `ICsMatch` 签名）。
+        /// （经**具体类型** `CsMatch` 调 `SetShortMatchForTest` —— 不改 `ICsMatch` 签名）。
         /// 于是"任意一方先赢 2 回合"就走到**真实** `EndMatchInternal`，给出**非平局**结算，
-        /// 且 2 个回合即可收场（生产 15/30 真打要 30 回合约 4 分钟，取证窗口内打不完 —— 见 片AE 实测）。
         /// </summary>
         public static string SetShortMatchForTest()
         {
@@ -1902,12 +1876,12 @@ namespace Cs16Drv
         /// <summary>
         /// 测试入口，供离线取证驱动使用：按**预置回合剧本**把本局推进到**非平局**的 MatchEnd。
         /// 每次调用只在"当前回合处于 **Freeze（买枪期）**"时结算一次（其余阶段空转，与
-        /// `CsRound.EndRound` 的阶段闸门一致；买枪期没有交战 ⇒ ⛔ 不会有"机器人自己打完"的意外回合）。
+        /// `CsRound.EndRound` 的阶段闸门一致；买枪期没有交战 ⇒ 不会有"机器人自己打完"的意外回合）。
         /// 胜方按**比分反馈**取（抗意外）：CT 未到 15 就先喂 CT；CT 到了 15 且 T 未到 14 且回合数还有余
         /// 就喂 T；否则喂 CT（最后一回合 = CT 的第 16 胜）。
         /// 换边已关（比分不互换）⇒ 第 30 回合结算后 = **CT 16 : 14 T**：
-        /// 16 胜阈值**正好落在第 30 回合**（第 29 回合后 CT 15 : T 14，两边都没到 16）⇒ ⛔ 不会提前结束。
-        /// ⛔ 只用业务对外 API（`ICsMatch.ForceEndRound` + 只读 `Phase/RoundNumber/Score*`），不新增业务行为。
+        /// 16 胜阈值**正好落在第 30 回合**（第 29 回合后 CT 15 : T 14，两边都没到 16）⇒ 不会提前结束。
+        /// 只用业务对外 API（`ICsMatch.ForceEndRound` + 只读 `Phase/RoundNumber/Score*`），不新增业务行为。
         /// </summary>
         public static string DriveMatchEndForTest()
         {
@@ -1930,7 +1904,6 @@ namespace Cs16Drv
             return "round " + rn + " -> " + winner + " (CT " + m.ScoreCT + " : " + m.ScoreT + " T)";
         }
 
-        // ══════════════ 切片J：H2「游戏内表现」批次入口 ══════════════
         // 全部走**业务自己的 API**（不是另造一套假面板）：
         //   面板 = Game.UI.Open<T>()（与 HudPanel 按键路由里那一行同一调用）、
         //   买卖 = CsMatch.TryBuyFor、切槽 = CsMatch.SwitchSlot、阵亡 = CsDamage.ApplyBombExplosion。
@@ -1981,10 +1954,9 @@ namespace Cs16Drv
         }
 
         /// <summary>
-        /// 关掉「回合结算 / 比赛结束」两个结果面板（切片P 重开一局前用）。
         /// 为什么需要：一局打完 MatchEndPanel 会留在屏上，**下一局的取证帧会被它盖住**
         /// （实测：重开一局后 MatchEndPanel 仍在场 ⇒ 采到的图全是结算画面）。
-        /// 关的是业务自己的面板门面 `Game.UI.Close&lt;T&gt;()`，⛔ 没有另造通路。
+        /// 关的是业务自己的面板门面 `Game.UI.Close&lt;T&gt;()`，没有另造通路。
         /// </summary>
         public static string CloseEndPanels()
         {
@@ -2010,9 +1982,8 @@ namespace Cs16Drv
 
         /// <summary>
         /// 请求换弹（R 键那条链的业务入口 <c>ICsMatch.RequestReload()</c>）——
-        /// 切片P 的交叉帧「跑步换弹」要用它：驱动没有键盘层，而 `R` 是
         /// <c>CombatModule.FillInput</c> 里的 `GetKeyDown`，只能由真实键盘触发。
-        /// ⛔ 没有给游戏加任何东西：调的就是 CombatModule 在 R 分支上调的同一个方法。
+        /// 没有给游戏加任何东西：调的就是 CombatModule 在 R 分支上调的同一个方法。
         /// </summary>
         public static string RequestReload()
         {
@@ -2027,8 +1998,7 @@ namespace Cs16Drv
         /// 清掉引擎的日志限频记录（<c>CloverEngine.LogThrottle.Reset()</c>）。
         /// **为什么要它**：<c>CsModuleLog.Info</c> 是**降频**的（同一 key 首次必打、之后每 N 次一条），
         /// 而编辑器进程一直活着 ⇒ 上一轮进图已经花掉了 `hitwall.sand` 等的"首次"，
-        /// 取证那一刻的弹着分类行就**不会落到控制台**（实测：切片P 第一次采弹痕帧时整段 15:43:0x 没有 [Combat] 行）。
-        /// ⛔ 只清计数表，不改任何判定/游戏逻辑（引擎自带的排障入口，出处见 CsModuleLog 类注释）。
+        /// 只清计数表，不改任何判定/游戏逻辑（引擎自带的排障入口，出处见 CsModuleLog 类注释）。
         /// </summary>
         public static string ResetLogs()
         {
@@ -2078,16 +2048,15 @@ namespace Cs16Drv
         /// <summary>
         /// 弹药只读快照（**测试入口：不写任何游戏状态**，照既有 *ForTest 入口的形状）。
         ///
-        /// **为什么要它**：切片P 的交叉帧「朝墙弹痕」（F-05）没拿到新弹痕 —— 根因是**买枪错过了买枪窗**：
         /// 买枪门 = <c>CsMatch.CanBuyTime</c>（<c>mp_buytime</c> = 15 s，出处 <c>server.cfg:42</c>）
         /// 外加 <c>a.InBuyZone</c>。<c>p-play.ps1</c> 旧序是"点 CT → 睡 16 s → 才买" ⇒ 窗口刚关，
         /// 三次 <c>TryBuyFor</c> 全 false ⇒ 手里还是默认 USP、且它的**弹匣读数是 0**（现场 <c>USP .45 0 / 71</c>）
         /// ⇒ <c>fireheld=1</c> 在空弹匣上**一条射线都不发** ⇒ 墙上当然没有新弹痕。
-        /// 所以"开火前"必须先断言 <c>mag &gt; 0</c>；⛔ 不许静默地在空弹匣上"开火"（那会产出一个假的"没有弹痕"结论）。
+        /// 所以"开火前"必须先断言 <c>mag &gt; 0</c>；不许静默地在空弹匣上"开火"（那会产出一个假的"没有弹痕"结论）。
         ///
-        /// ⛔ **只读**：直接查 <c>CsActor.Ammo</c> 字典，**不调 <c>GetAmmo()</c>**
+        /// **只读**：直接查 <c>CsActor.Ammo</c> 字典，**不调 <c>GetAmmo()</c>**
         /// （后者在缺项时会把初始弹药**写回**字典 —— 见 <c>CsTypes.cs:74-83</c>；
-        /// <c>ViewModelRig.cs:407</c> 正是为此特意避开它）。⛔ 未改业务实现、未改 <c>ICsMatch</c> 签名。
+        /// <c>ViewModelRig.cs:407</c> 正是为此特意避开它）。未改业务实现、未改 <c>ICsMatch</c> 签名。
         /// </summary>
         public static string AmmoSnapshot()
         {
@@ -2137,13 +2106,11 @@ namespace Cs16Drv
         /// <summary>
         /// 让本地玩家阵亡并进观战（G9 / `23_thirdperson.png`）：
         /// 走**业务自己的伤害落地** <c>CsDamage.ApplyBombExplosion</c>（C4 在本地脚下爆），
-        /// ⛔ 不是直接置 <c>IsAlive=false</c> —— 后者绕过 <c>CsMatch.OnKilled</c>，
+        /// 不是直接置 <c>IsAlive=false</c> —— 后者绕过 <c>CsMatch.OnKilled</c>，
         /// 而"本地玩家阵亡 → 进入观战"那条日志与观战接管都在 OnKilled 里面。
         ///
-        /// 【切片R 起：改为**类型化的测试入口**，本处已无反射】
-        /// 旧做法是反射取 <c>CsMatch.Damage</c>（internal 字段）。按 skill §0.6 第 3 条，
         /// 游戏侧新增了 public <c>CsMatch.ApplyBombExplosionForTest(center)</c>（内部调同一个
-        /// <c>Damage.ApplyBombExplosion</c>），本驱动改用它。⛔ <c>ICsMatch</c> 契约未动
+        /// <c>Damage.ApplyBombExplosion</c>），本驱动改用它。<c>ICsMatch</c> 契约未动
         /// ⇒ 这里经 <c>m is CsMatch</c> 取具体类型（接口上没有这个测试入口）。
         /// </summary>
         public static string KillLocal()

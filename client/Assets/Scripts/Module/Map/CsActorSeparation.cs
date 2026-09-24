@@ -3,7 +3,6 @@ using System;
 namespace Cs16.Module.Map
 {
     /// <summary>
-    /// **角色间水平推开**（用户报「人物和人物能重合」的修复；原版行为出处见下）。
     ///
     /// <para><b>为什么需要它</b>：本工程的本地碰撞分两层 —— 水平走 2D 位图
     /// （<see cref="CsMap.ResolveMove"/>）、竖直走真实几何射线（<c>SampleGround</c>）。

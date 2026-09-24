@@ -127,17 +127,17 @@ def main(argv):
         code = [r for r in refs if r not in prose]
         inner = [r for r in code if os.path.basename(r[0]) in items]
         outer = [r for r in code if r not in inner]
-        # ⛔ 按"**能不能是可执行的引用**"分档：注释行（`#` 开头）与过程日志都**不是**依赖，
-        #    只有"代码/字符串里的真实路径"才算"需改指"。⚠️ 判据是**行首是否 `#`**（精确），
-        #    ⛔ 不按"在不在字符串里"判 —— 真实引用恰恰长在字符串里（`os.path.join(...,'x.py')`）。
+        # 按"**能不能是可执行的引用**"分档：注释行（`#` 开头）与过程日志都**不是**依赖，
+        #    只有"代码/字符串里的真实路径"才算"需改指"。判据是**行首是否 `#`**（精确），
+        #    不按"在不在字符串里"判 —— 真实引用恰恰长在字符串里（`os.path.join(...,'x.py')`）。
         def _cl(rec):
             return rec[2].lstrip().startswith('#')
         outer_code = [r for r in outer if not _cl(r)]
         outer_comment = [r for r in outer if _cl(r)]
         verdict = ('no reference anywhere' if not refs else
                    ('same batch only (internal)' if not outer and not prose else
-                    # ⚠️ 这里**不**断言"必须改指"：命中行在 `.py` 里也可能是**来源注记**
-                    #    （docstring/注释）⇒ 只报"有代码侧命中、须人判"，⛔ 不替人下结论。
+                    # 这里**不**断言"必须改指"：命中行在 `.py` 里也可能是**来源注记**
+                    #    （docstring/注释）⇒ 只报"有代码侧命中、须人判"，不替人下结论。
                     ('OUTER ref(s) -- judge by hand (repoint? or provenance note?): %s'
                      % ','.join(sorted(set(r[0] for r in outer_code)))
                      if outer_code else

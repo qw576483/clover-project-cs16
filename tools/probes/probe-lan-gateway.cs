@@ -15,12 +15,12 @@ var sb = new System.Text.StringBuilder();
 // 先把上一次可能残留的应答端/网关停掉（幂等）。
 Cs16.Module.Net.CsLanHost.Stop();
 
-// ⚠️ **本机默认网关口 8002 已被另一个进程占着**（净判据：`netstat -ano` 里
+// **本机默认网关口 8002 已被另一个进程占着**（净判据：`netstat -ano` 里
 //    `TCP 127.0.0.1:8002 LISTENING` + `UDP 127.0.0.1:8003`，同一个 PID，且另有一个 Unity 编辑器连着它）
 //    ⇒ 取证改用空闲端口 8012。
 //    端口是**参数**（`CsLanHost.Start` 的 `gatewayPort`，也就是广播报文里 `gateway` 那个字段），
 //    协议本身与端口无关 ⇒ 换端口不影响本判据的效力。
-//    ⛔ 顺带记一条工程事实：`CsLanGateway.Start` 现在会**先探测端口上是否已有别人在听**，
+//    顺带记一条工程事实：`CsLanGateway.Start` 现在会**先探测端口上是否已有别人在听**，
 //    有人听就拒绝启动（否则 SO_REUSEADDR 会让我们 bind 成功却一个连接都收不到 —— 实测踩过）。
 const int Port = 8012;
 

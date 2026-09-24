@@ -1,10 +1,9 @@
 // 判据资产（tools/probes/）：差异 #74 的**真集成半** —— 走一次**真实的命中链**
 // `CsDamage.ApplyHit`（= CombatModule 订阅的 OnBulletHit 的唯一发出点），
-// ⛔ 不是反射调 CombatEffects.BloodImpact（那是 probe-blood.cs 做的"真调用半"，两条互补）。
+// 不是反射调 CombatEffects.BloodImpact（那是 probe-blood.cs 做的"真调用半"，两条互补）。
 //
 // 为什么需要 CsMatch 上的一个新测试入口：
 //   `Damage` 是 **internal** 字段，离线驱动编进独立程序集 ⇒ 拿不到；
-//   而"打中角色到底出不出血"这条判据必须有真调用。按 clover-engine skill §0.6 第 3 条，
 //   在 CsMatch 上加 **public 类型化** 入口 `ApplyBulletHitForTest`（形状同 ApplyBombExplosionForTest）。
 //
 // 判据（可证伪）：

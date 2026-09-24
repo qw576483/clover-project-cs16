@@ -16,7 +16,6 @@ namespace Cs16.EditorTools
     /// 池对象 <c>go.AddComponent&lt;Light&gt;()</c>；</item>
     /// <item>选阵营时地图上的细线/方框 = 场景里 <c>OnDrawGizmos</c> 的绘制（相机/地标/区域）。</item>
     /// </list>
-    /// 实测（片BV，同一冻结帧 A/B，屏幕级截屏）：Game view 的 <c>m_Gizmos / drawGizmos / showGizmos</c>
     /// 三个成员全写 <c>false</c> 后，开火帧的**太阳图标整块消失**（差集 25 727 像素，且差值恰好落在该图标上），
     /// 选阵营帧的细线/方框也整块消失（差集 853 + 91 像素）。⇒ 消除它只需要关掉这一个开关。</para>
     ///
@@ -64,7 +63,6 @@ namespace Cs16.EditorTools
         /// <summary>
         /// 把所有 Game view 实例的叠加层开关写成 <c>false</c>（幂等）。
         /// 返回被改动的 Game view 个数；任何一步取不到（Unity 版本换了内部成员名）都留一行 Warn，
-        /// 这样"开关没关成"不会变成一个静默失败。
         /// </summary>
         public static int ForceGizmosOff()
         {
@@ -97,8 +95,6 @@ namespace Cs16.EditorTools
             if (changed > 0)
             {
                 // 全限定：本文件只 using 了 UnityEditor / UnityEngine，`InternalEditorUtility` 裸名
-                // 会 CS0103（片BV-R 实测：编辑器一直卡在 "Scripts still have compile errors"，
-                // Play 进不去 ⇒ 整条取证链拿到的是暗帧）。它住在 UnityEditorInternal 命名空间。
                 UnityEditorInternal.InternalEditorUtility.RepaintAllViews();
                 Debug.Log(Tag + " 已关闭 " + changed + " 个 Game view 的图标叠加层（AudioSource 喇叭 / Light 太阳 / " +
                           "Camera 与 Canvas 图框都来自这一层），避免它们在游戏画面上出现。");

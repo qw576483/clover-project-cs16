@@ -1,14 +1,12 @@
 // 判据资产（tools/probes/）：首页（主菜单）**运行时节点树**的机械判据源。
 //
-// 为什么需要它（clover-engine skill §8「品牌」）：`by clover-engine` 的判据是
-// **实机截图 / 运行时节点树**，⛔ 不是 grep 源码。改动前闸门第 10 条只做源码字面
+// **实机截图 / 运行时节点树**，不是 grep 源码。改动前闸门第 10 条只做源码字面
 // 检查，然后写 HUMAN-ONLY（"must be seen rendered and case-exact"）—— 那条
 // 只能由人判。本探针把同一件事变成可计算的：在真 Play 里把**当前屏幕上每个 Text
 // 节点**的「层级路径 / 文本 / 字号 / 屏幕矩形」dump 成固定文件
 // `tools/probes/home-screen-nodetree.txt`，闸门第 25 条（home-credit-rendered）
 // 再断言「最底部的那个文本节点逐字 == `by clover-engine`」。
 //
-// 坐标口径（⛔ 必须写死，否则判据会随实现漂移）：
 //   * 屏幕原点 = 左上角，**y 向下增长**（与 .txt 头部 `origin=` 行一致）；
 //   * 每行格式：`TEXT <路径> | text='<原文> | fontSize=<n> | bestFit=<bool> | rect=<x>,<y>,<w>,<h>`
 //     rect 的 (x, y) = 包围盒左上角，w/h = 包围盒宽高；bottom = y + h

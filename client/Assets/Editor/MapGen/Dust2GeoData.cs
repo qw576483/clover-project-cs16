@@ -233,7 +233,7 @@ namespace Cs16.EditorTools
                     {
                         var c = new Vector3(OriginX + (ix + 0.5f) * CellSize, probeCenterY,
                                             OriginZ + (iz + 0.5f) * CellSize);
-                        // ★ 与 MapBaker.Intersects 一致：必须**严格小于**，否则障碍会沿墙外扩一格
+                        // 与 MapBaker.Intersects 一致：必须**严格小于**，否则障碍会沿墙外扩一格
                         if (Mathf.Abs(c.x - center.x) < half.x + extents.x &&
                             Mathf.Abs(c.y - center.y) < half.y + extents.y &&
                             Mathf.Abs(c.z - center.z) < half.z + extents.z)

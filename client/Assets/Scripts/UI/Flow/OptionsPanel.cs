@@ -18,7 +18,7 @@ namespace Cs16.UI
     /// </para>
     ///
     /// <para>
-    /// ⛔ <b>页签条（7 个页签的位置）在载体里拿不到</b>：本包缺 GameUI 的 `OptionsDialog.res`
+    /// <b>页签条（7 个页签的位置）在载体里拿不到</b>：本包缺 GameUI 的 `OptionsDialog.res`
     /// （它在 GameUI 静态库里，不在两张 ISO 的资源目录里）⇒ 页签条是**按原版配色 + 原版字体 + 就近对齐
     /// 重建**的，**逐条登记为「允许的差异（本项目新增：tab 条坐标无载体出处）」**。
     /// 子页整体落点（<see cref="PageLeftX"/> / <see cref="PageTopY"/>）同理。
@@ -28,7 +28,6 @@ namespace Cs16.UI
     /// 与 CS 1.6 一致的三个对话框动作：<b>Apply</b>（保存并留在面板）、<b>Cancel</b>（丢弃本次改动并关闭）、
     /// <b>OK</b>（保存并关闭）。文案用原版 token `#GameUI_Apply` / `#GameUI_Cancel` / `#GameUI_OK`
     /// （`gameui_english.txt:29/28/42`），三个按钮的坐标来自 `optionssubmultiplayer.res:3-68`
-    /// —— 原版把这三个按钮就写在该子页里（对话框级按钮），本片只建一次、跨页可见。
     /// </para>
     ///
     /// <para>
@@ -45,12 +44,12 @@ namespace Cs16.UI
         /// <summary>页签名 = 原版 7 页（`gameui_english.txt`：Audio:99 / Video:100 / Mouse:98 / Keyboard:97 / Multiplayer:41 / Voice:101 / Advanced(`GameUI_AdvancedNoEllipsis`):44）。</summary>
         private static readonly string[] TabNames = { "Audio", "Video", "Mouse", "Keyboard", "Multiplayer", "Voice", "Advanced" };
 
-        /// <summary>页签条左上角（画布坐标）。⛔ 无出处 —— 见类注释。</summary>
+        /// <summary>页签条左上角（画布坐标）。无出处 —— 见类注释。</summary>
         private const float TabLeftX = 171f, TabTopY = -84f;
-        /// <summary>单个页签的尺寸 / 步距（画布坐标）。⛔ 无出处 —— 见类注释。</summary>
+        /// <summary>单个页签的尺寸 / 步距（画布坐标）。无出处 —— 见类注释。</summary>
         private const float TabWidth = 200f, TabHeight = 48f, TabStep = 208f;
 
-        /// <summary>子页内容原点（画布坐标）。⛔ 无出处：子页在缺失的 `OptionsDialog.res` 里的落点未知；取与 `teammenu.res` 同一个 Frame 左边距（76 设计 px → 171 画布 px）"就近对齐"。</summary>
+        /// <summary>子页内容原点（画布坐标）。无出处：子页在缺失的 `OptionsDialog.res` 里的落点未知；取与 `teammenu.res` 同一个 Frame 左边距（76 设计 px → 171 画布 px）"就近对齐"。</summary>
         private const float PageLeftX = 171f, PageTopY = -152f;
 
         /// <summary>面板标题文案 = `#GameUI_Options`（`gameui_english.txt:96` → `Options`）。</summary>
@@ -197,7 +196,6 @@ namespace Cs16.UI
             new ResCtrl("ContentlockButton", Kind.Button, 40f, 42f, 110f, 24f, "Content lock") { LogOnly = true },  // #GameUI_ContentLock :19
             new ResCtrl("ContentlockLabel", Kind.Label, 162f, 34f, 300f, 60f,
                 "Press this button and enter password to disable\nvisuals inappropriate for younger players.") { Dull = true }, // :20
-            // ★ 本项目新增（原版视频页**没有** FOV、也**没有**"显示 FPS"）：按任务书放在 Advanced 页，
             //   文案里显式标注「本项目新增」，供验收逐条对账。坐标沿用原版该页的左右两列（x 40 / 248）与
             //   原版 label/slider 的尺寸（label 160×24、slider 160×50），不是新的排布口径。
             new ResCtrl("FovLabel", Kind.Label, 40f, 120f, 160f, 24f, "Field of view（本项目新增）"),
@@ -383,7 +381,7 @@ namespace Cs16.UI
                 _working.BgmVolume = v;
                 RefreshValueLabels();
             };
-            // ⚠️ 原版 `Suit Slider` = HEV 护甲音量；CS 里没有 HEV 护甲语音 ⇒ 本项目用它承载既有的
+            // 原版 `Suit Slider` = HEV 护甲音量；CS 里没有 HEV 护甲语音 ⇒ 本项目用它承载既有的
             //    "主音量"设置（登记在验收表「允许的差异」：本项目新增映射）。
             _realSliders["audio/Suit Slider"] = v =>
             {
@@ -420,7 +418,7 @@ namespace Cs16.UI
                 _working.InvertMouseY = on;
                 RefreshValueLabels();
             };
-            // ★ 本项目新增（advanced 页）：FOV 与"显示 FPS"
+            // 本项目新增（advanced 页）：FOV 与"显示 FPS"
             _realSliders["advanced/Fov"] = v =>
             {
                 if (_working == null) return;
@@ -645,7 +643,7 @@ namespace Cs16.UI
 
         /// <summary>
         /// 句柄键 = `页名/控件名`，**页名一律小写**（与 `.res` 文件名 `optionssub<page>.res` 一致）。
-        /// ⚠️ 大小写必须统一：真设置表（<see cref="FillRealBindings"/>）与各 `Get/Set*` 助手用的都是
+        /// 大小写必须统一：真设置表（<see cref="FillRealBindings"/>）与各 `Get/Set*` 助手用的都是
         /// 小写键；这里若按 `TabNames` 的原样大写拼键，句柄会"查不到" —— 表现为滑杆拿不到当前值、
         /// 数值框不回显（实测踩过：`handles=25` 但 `audio/SFX Slider handle=MISSING`）。
         /// </summary>
@@ -846,7 +844,7 @@ namespace Cs16.UI
 
         /// <summary>
         /// 原版设计空间坐标 → 本工程画布坐标（唯一换算处，见 <see cref="CsUiStyle.ResScale"/>）。
-        /// ⚠️ `.res` 的 `ypos` 向下为正，而 <see cref="CsUiStyle.AnchoredTopLeft"/> 的 y 向上为正 ⇒ **y 取负**。
+        /// `.res` 的 `ypos` 向下为正，而 <see cref="CsUiStyle.AnchoredTopLeft"/> 的 y 向上为正 ⇒ **y 取负**。
         /// </summary>
         private static Vector2 ResPos(float x, float y)
         {

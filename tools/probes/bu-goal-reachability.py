@@ -34,8 +34,6 @@ STEP_UP = 0.45            # CsConst.StepUpHeight
 FOUR = ((1, 0), (-1, 0), (0, 1), (0, -1))
 EIGHT = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (1, -1), (-1, 1), (-1, -1))
 
-# T/CT 出生点格：出处 = 片BR 的运行时 L3 日志（.ai-tmp/test/br-hold-plant-log.tsv 的
-# "高度一致性层：从格 (54, 20)…" / "从格 (75, 106)…" 行），即机器人真实站的那一格。
 SPAWNS = (('Spawn_T_Minh', 'T', (54, 20)), ('Spawn_T_ZBot', 'T', (53, 22)),
           ('Spawn_CT_Cliffe', 'CT', (75, 106)), ('Spawn_CT_Darrell', 'CT', (67, 97)))
 
@@ -258,7 +256,6 @@ def main():
                 islands.append((c, comp.get(c)))
         out('   %-16s n=%-3d bitmap-main=%-3d island=%s' % (nm, len(pts), hit_main, islands if islands else '-'))
 
-    # ── 5. 本片的关键一问：T 出生点能走到包点 A / B 吗 ──
     out('')
     out('-- 5. THE question of this slice: can a T bot at spawn reach a bombsite? --')
     for nm, team, seed in SPAWNS:

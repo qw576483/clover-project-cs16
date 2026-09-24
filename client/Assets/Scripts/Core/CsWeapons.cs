@@ -12,7 +12,7 @@ namespace Cs16.Core
     /// <c>iMaxClip=+0x10</c>、<c>iMaxAmmo=+0x14</c>、<c>pszName=+0x1c</c>
     /// （字段语义的铁证见 <c>原版资源/解包产物/原版数值表.md</c> §0.3/§3）。</para>
     ///
-    /// <para>⛔ <b><see cref="CsWeaponDef.Damage"/> / <see cref="CsWeaponDef.ArmorPenetration"/> /
+    /// <para><b><see cref="CsWeaponDef.Damage"/> / <see cref="CsWeaponDef.ArmorPenetration"/> /
     /// <see cref="CsWeaponDef.Rpm"/> / <see cref="CsWeaponDef.ReloadTime"/> / <see cref="CsWeaponDef.Range"/>
     /// / <see cref="CsWeaponDef.Spread"/> / <see cref="CsWeaponDef.RecoilVert"/> /
     /// <see cref="CsWeaponDef.KillReward"/> 这几组仍无原版出处</b>（原版把它们写死在每把武器类的
@@ -48,7 +48,7 @@ namespace Cs16.Core
         /// <summary>
         /// 差异 #68：<b>attack2（右键 / 次级开火）能切换"消音器 on/off"</b>。
         /// 出处 = 原版 <c>client.dll</c> 的 `weapons/usp_silencer_on|off.wav`、`weapons/m4a1_silencer_on|off.wav`
-        /// （详见 <see cref="CsWeapons"/> 里 <c>MarkAttack2Capabilities</c> 的出处表）。⛔ 默认 false = 无出处不接。
+        /// （详见 <see cref="CsWeapons"/> 里 <c>MarkAttack2Capabilities</c> 的出处表）。默认 false = 无出处不接。
         /// </summary>
         public bool CanSilence;
 
@@ -100,11 +100,9 @@ namespace Cs16.Core
 
         // W(...) 的行尾注释 = 该武器在 mp.dll `WeaponInfo[]` 里的条目偏移与三项原版值
         // （格式：`mp.dll:偏移 iCost / iMaxClip / iMaxAmmo`，均照 mp.dll 逐条读出，读法见类注释）。
-        // 与 `策划/对照表.md` §5.3 的 W-01~W-24 逐行对齐；本片（agent-11）核对结果 = 只有 Elite 价格不一致（已改）。
         private static readonly List<CsWeaponDef> _all = new List<CsWeaponDef>
         {
             // 刀 / 手雷 / 装备 / C4 不在 `WeaponInfo[]` 里（该表只含 24 把枪 + 战术盾 idx25）：
-            // 它们的价格出处 = resource/ui/buy*.res 的 `cost` 字段（见对照表 §5.1 P-25~P-32）。
             W(Knife, "Knife", CsWeaponClass.Knife, CsWeaponSlot.Knife, 0, 55, 0.50f, 200, 0, 0, 0f, 0f, 0f, 0f, 0f, 1, 1.6f, 0f, 1500, false, CsTeamLimit.Any),
 
             W(Glock18, "Glock 18", CsWeaponClass.Pistol, CsWeaponSlot.Secondary, 400, 25, 0.47f, 400, 20, 120, 2.2f, 0.60f, 1.50f, 1.00f, 0.40f, 1, 30f, 0.02f, 300, false, CsTeamLimit.TerroristOnly), // mp.dll:0x10f728 400 / 20 / 120（W-02）
@@ -112,7 +110,6 @@ namespace Cs16.Core
             W(P228, "P228", CsWeaponClass.Pistol, CsWeaponSlot.Secondary, 600, 32, 0.50f, 400, 13, 52, 2.2f, 0.50f, 1.40f, 1.10f, 0.40f, 1, 30f, 0.02f, 300, false, CsTeamLimit.Any), // mp.dll:0x10f708 600 / 13 / 52（W-01）
             W(Deagle, "Desert Eagle", CsWeaponClass.Pistol, CsWeaponSlot.Secondary, 650, 54, 0.62f, 267, 7, 35, 2.4f, 0.60f, 2.00f, 1.80f, 0.60f, 1, 40f, 0.02f, 300, false, CsTeamLimit.Any), // mp.dll:0x10f9a8 650 / 7 / 35（W-21）
             W(FiveSeven, "Five-SeveN", CsWeaponClass.Pistol, CsWeaponSlot.Secondary, 750, 20, 0.60f, 400, 20, 100, 2.2f, 0.50f, 1.40f, 1.00f, 0.40f, 1, 30f, 0.02f, 300, false, CsTeamLimit.CounterTerroristOnly), // mp.dll:0x10f808 750 / 20 / 100（W-08）
-            // ★ 本片唯一改动的武器数值：1000 → 800（出处 mp.dll:0x10f7e8 iCost=800，逐字节重读见回报；buy*.res 同值）
             W(Elite, "Dual Berettas", CsWeaponClass.Pistol, CsWeaponSlot.Secondary, 800, 38, 0.47f, 400, 30, 120, 2.4f, 0.60f, 1.60f, 1.20f, 0.50f, 1, 30f, 0.02f, 300, false, CsTeamLimit.Any), // mp.dll:0x10f7e8 800 / 30 / 120（W-07）
 
             W(Mp5, "MP5 Navy", CsWeaponClass.SMG, CsWeaponSlot.Primary, 1500, 26, 0.52f, 750, 30, 120, 2.6f, 0.50f, 1.20f, 0.90f, 0.40f, 1, 40f, 0.015f, 600, false, CsTeamLimit.Any), // mp.dll:0x10f8e8 1500 / 30 / 120（W-15）
@@ -176,7 +173,7 @@ namespace Cs16.Core
         /// <para>⇒ 可证的语义只有两句：「**USP / M4A1 有一个消音器 on/off 状态**」「**Glock18 / FAMAS 有可切换的
         /// 连发模式**」，而 attack2 就是切换它们的那条输入。</para>
         ///
-        /// <para>⚠️ <b>仍未证</b>（⛔ 不许凭观感补）：消音后伤害/散布的**具体数值**、连发的**发数与节奏**、
+        /// <para><b>仍未证</b>（不许凭观感补）：消音后伤害/散布的**具体数值**、连发的**发数与节奏**、
         /// 以及逐武器的判定分支本身（要反汇编 <c>client.dll</c> 才定得下来）⇒ 本工程只落地
         /// 「状态可切换 + 切换可观测」，数值影响留缺口在 <c>策划/差异登记.tsv</c> #68。</para>
         /// </summary>

@@ -1,16 +1,12 @@
-// 判据资产（tools/probes/）：**HideFlags 实测**（片BV-R 第 2 件事）。
 //
-// 要回答的问题（⛔ 不许用推断回答）：
+// 要回答的问题（不许用推断回答）：
 //   "把运行时创建的图标宿主设成 HideFlags.HideInHierarchy，用户自己把 Game view 的 Gizmos 打开
 //    时，那些图标还会不会画出来？"
-//   —— 会 / 不会都必须给**运行时数字**（哪些宿主、改前改后的 hideFlags、同帧 A/B 屏幕差集），
 //      并据此决定"业务侧是否落地/引擎侧是否提建议"。
 //
-// 分组（按组件所在对象分类，机械分组，⛔ 不手写路径）：
-//   sound = 祖先里有名为 [Sound] 的对象（引擎音频池 SFX0..31，属引擎仓，本片只测不改）
-//   cam   = Camera（⛔ 不许藏着功能：只测，不落地）
-//   ui    = RenderMode == ScreenSpaceOverlay 的 Canvas（⛔ 同上）
-//   biz   = 其余（业务侧运行时创建的 AudioSource / Light / WorldSpace Canvas ⇒ 本片可落地的那类）
+// 分组（按组件所在对象分类，机械分组，不手写路径）：
+//   cam   = Camera（不许藏着功能：只测，不落地）
+//   ui    = RenderMode == ScreenSpaceOverlay 的 Canvas（同上）
 //
 // 用 run_script 调（--file <本文件> --entry Entry.Census|Entry.Hide|Entry.Restore），
 // 参数走 `<项目根>/.ai-tmp/test/bvr-spec.txt`：
@@ -82,7 +78,6 @@ public static class Entry
 
     private static string GroupOf(GameObject go, string kind)
     {
-        // 片BV-R：**AudioListener 也画图标**（小喇叭），它挂在第一人称相机上
         // （Module/CameraRig/FirstPersonCamera.cs:435 `AddComponent<AudioListener>()`）⇒ 归 cam 组。
         // 这条是主 agent 更正后的真因口径：用户看到的那只"喇叭"是**相机上的 AudioListener**，
         // 与引擎 [Sound] 池的 AudioSource 喇叭同类但不是同一个。
@@ -161,7 +156,7 @@ public static class Entry
         return Write(outPath, phase, lines, sb.ToString());
     }
 
-    /// <summary>把指定分组的所有图标宿主设成 HideFlags.HideInHierarchy，并回读（⛔ 不信"设了"）。</summary>
+    /// <summary>把指定分组的所有图标宿主设成 HideFlags.HideInHierarchy，并回读（不信"设了"）。</summary>
     public static string Hide()
     {
         var spec = ReadSpec();

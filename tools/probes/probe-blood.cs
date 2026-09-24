@@ -3,7 +3,7 @@
 // 编辑器须在 Play 且有一局在跑。
 //   [A] 反射取 CombatModule._fx → CombatEffects
 //   [B] 相机前方 26 方向扫面找一块**真实朝墙**（|normal.y|<0.5）：血迹要贴在"命中点背后的面"上，
-//       所以必须打真实几何（⛔ 不凭空摆）
+//       所以必须打真实几何（不凭空摆）
 //   [C] 调真入口 CombatEffects.BloodImpact(命中点, 弹道方向=-法线, headshot=false)
 //       —— 逐字同 CombatModule.cs:95 那条链的同一个入口
 //   [D] 连打 40 次收集血迹贴图名集合（原版 6 变体 {blood1..6）
@@ -118,15 +118,15 @@ for (var i = 0; i < root.childCount; i++)
 sb.Append("\n[E] active 血迹物件数=").Append(activeBlood);
 
 // ---------- [F] 不冻时间（同 probe-decal.cs：冻结会让驱动的 shot= 失效） ----------
-//   ⚠️ 口径更正（本探针第一版踩到）：`BloodImpact` 的返回值语义是
-//   **"是否真的落了血迹贴花"**（= 命中点沿弹道 2.5m 内找到可贴面），⛔ 不是"有没有出血" ——
+//   口径更正（本探针第一版踩到）：`BloodImpact` 的返回值语义是
+//   **"是否真的落了血迹贴花"**（= 命中点沿弹道 2.5m 内找到可贴面），不是"有没有出血" ——
 //   找不到面时它**照样出 0.14s 的血雾**、返回 false。所以判据里**不能**要求返回 true。
 sb.Append("\n[F] 未冻结时间（血迹贴花寿命 25s，驱动可直接截图）");
 
 // 口径：① 有 active 的血迹物件（血雾或贴花，两者都是 `fx_blood*`）≥1；
-//      ② 连打 40 次收集到的变体集合 ≥2（证"多变体随机"，⛔ 1 张就是没落地）；
+//      ② 连打 40 次收集到的变体集合 ≥2（证"多变体随机"，1 张就是没落地）；
 //      ③ 世界宽 > 0（证尺寸链在跑）。
-// ⛔ **不要求** BloodImpact 返回 true —— 它的语义是"有没有落到贴花"，见 [F] 段的口径更正。
+// **不要求** BloodImpact 返回 true —— 它的语义是"有没有落到贴花"，见 [F] 段的口径更正。
 var ok = activeBlood >= 1 && names.Count >= 2 && wide > 0.01f;
 sb.Append("\nRESULT-BLOOD: ").Append(ok ? "PASS" : "FAIL")
   .Append("\n  口径：有 active 血迹=").Append(activeBlood >= 1)

@@ -14,19 +14,18 @@ namespace Cs16.UI
     /// 4 列（0 / 256 / 512 / 768）× 3 行（0 / 256 / 512），拼成 <c>resolution 800 600</c>。
     /// 每块的尺寸取自贴图自身（实测 <c>800_{1,2}_a/b/c</c> = 256×256、<c>800_{1,2}_d</c> = 32×256、
     /// <c>800_3_a/b/c</c> = 256×88、<c>800_3_d</c> = 32×88；256×3+32 = 800、256+256+88 = 600 自洽）。
-    /// ⛔ 不许"拼成一张大图再拉伸" —— 那会改掉原版的缩放行为（每块各自按屏幕比缩放）。</para>
+    /// 不许"拼成一张大图再拉伸" —— 那会改掉原版的缩放行为（每块各自按屏幕比缩放）。</para>
     ///
     /// <para><b>缩放口径</b>：<c>scaled</c> 的语义是"按屏幕缩放"，即设计空间 800×600 → 当前画布：
     /// <c>x * (canvasW / 800)</c>、<c>y * (canvasH / 600)</c>，尺寸同比值。画布尺寸取本组件所在
     /// RectTransform 的 <c>rect</c>（铺满父层级节点，见 <see cref="Attach"/>）。</para>
     ///
     /// <para><b>贴图从哪来</b>：12 张 TGA 已逐字节复制进 <c>Resources/Background/</c>，
-    /// 路径经 <see cref="ResPaths.BackgroundMenuTile"/>（⛔ 不散落字符串、⛔ 不用 <c>Resources.Load</c>）。
+    /// 路径经 <see cref="ResPaths.BackgroundMenuTile"/>（不散落字符串、不用 <c>Resources.Load</c>）。
     /// sprite 引用**由编辑器生成器（<c>Editor/Flow/FlowSetup.cs</c>）在生成期绑进预制体**
     /// —— 运行期没有 AssetDatabase；<see cref="EnsureSprites"/> 只是预制体被改坏时的兜底。</para>
     ///
     /// <para><b>失败不许静默</b>：任何一块取不到都 <c>Warn</c> 出**是哪一块**（文件名），
-    /// 并保留面板原来那块纯色 <c>Backdrop</c> 当兜底 —— 绝不画成实心白块、也绝不静默黑屏。
     /// 12 块全部就绪时**逐块**打一条 <c>Info</c>（文件名 + 原图尺寸 + 原设计坐标），
     /// 这样"路径大小写错 / 贴图没导入"这类静默失败在日志里第一眼就能看出来。</para>
     /// </summary>
@@ -60,7 +59,7 @@ namespace Cs16.UI
         /// <b>逐行对应</b> `原版资源/cs16src/cs16game/app/valve/resource/backgroundlayout.txt`（:3-16）：
         /// 行序 = a/b/c/d；第 1/2 行 y = 0 / 256（高 256），第 3 行 y = 512（高 88）；
         /// 列 x = 0 / 256 / 512 / 768；宽 = 贴图实际宽度（d 列 = 32）。
-        /// ⛔ 这里的每个数都能与那份 .txt 逐字对上，不许"看起来差不多"就改。
+        /// 这里的每个数都能与那份 .txt 逐字对上，不许"看起来差不多"就改。
         /// </summary>
         private static readonly TileSpec[] Specs =
         {
@@ -111,7 +110,7 @@ namespace Cs16.UI
         /// 在 <paramref name="parent"/> 下建出本组件（铺满父节点）并搭好 12 块拼图。
         /// 面板的 <c>BuildLayout</c> 调它 —— 生成器与运行期兜底走的是同一条路径。
         ///
-        /// <para>⛔ 必须建在**纯色 Backdrop 之后、其余内容之前**：这样拼图盖住纯色兜底，
+        /// <para>必须建在**纯色 Backdrop 之后、其余内容之前**：这样拼图盖住纯色兜底，
         /// 而字标 / 菜单项 / 进度条仍压在拼图之上（层级不动）。</para>
         /// </summary>
         public static CsMenuBackground Attach(Transform parent)
@@ -167,7 +166,7 @@ namespace Cs16.UI
             {
                 var img = _tiles[i];
                 if (img == null) continue;
-                // ⛔ 逐块按原坐标摆（不是拼一张大图）：AnchoredTopLeft 的 y 为负才是向下，.txt 的 y 向下为正。
+                // 逐块按原坐标摆（不是拼一张大图）：AnchoredTopLeft 的 y 为负才是向下，.txt 的 y 向下为正。
                 UIFactory.AnchoredTopLeft(img.rectTransform,
                     new Vector2(Specs[i].X * sx, -Specs[i].Y * sy),
                     new Vector2(Specs[i].Width * sx, Specs[i].Height * sy));

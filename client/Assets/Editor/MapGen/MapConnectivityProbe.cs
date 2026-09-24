@@ -96,7 +96,6 @@ namespace Cs16.EditorTools
     }
 
     /// <summary>
-    /// de_dust2 **连通性自证探针**（任务书 §5 验收项）。三件事，任何一件不过就打 Error：
     /// <list type="number">
     /// <item><b>位图可复现</b>：按引擎 <c>MapBaker</c> 的同一套规则（格柱 ∩ 障碍 AABB、严格小于、
     /// 排除地面阈值）从场景 <c>Level/Blockers</c> 重算一遍位图，与烘焙产物
@@ -332,7 +331,7 @@ namespace Cs16.EditorTools
                                         geo.OriginZ + (iz + 0.5f) * geo.CellSize);
                     for (int i = 0; i < boxes.Count; i++)
                     {
-                        // ★ 必须严格小于（与 MapBaker 一致）：用 <= 会把贴墙的邻格也算阻挡，墙外扩一格
+                        // 必须严格小于（与 MapBaker 一致）：用 <= 会把贴墙的邻格也算阻挡，墙外扩一格
                         if (Mathf.Abs(c.x - boxes[i].center.x) < half.x + boxes[i].extents.x &&
                             Mathf.Abs(c.y - boxes[i].center.y) < half.y + boxes[i].extents.y &&
                             Mathf.Abs(c.z - boxes[i].center.z) < half.z + boxes[i].extents.z)

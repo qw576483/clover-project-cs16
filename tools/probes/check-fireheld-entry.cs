@@ -2,7 +2,6 @@
 // `CombatModule.SetFireHeldForTest(bool)` 真的存在于**已加载的游戏程序集**里。
 //
 // 为什么需要它：
-//   `.ai-tmp/drivers/cs16-play-driver.cs` 的 `fireheld=1` 走的是这个入口（切片Q 起，反射已删）。
 //   而 `unity command run_script` 编译的是**已加载**的 Assembly-CSharp —— 若编辑器中还没重编译
 //   `CombatModule.cs`（recompile_status 说 idle 也可能是旧程序集），驱动会整条链 FAIL。
 //   本探针用**反射查方法**（不直接调），所以哪怕入口不存在它也能编译，从而能明确回答

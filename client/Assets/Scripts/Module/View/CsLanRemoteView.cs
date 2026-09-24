@@ -12,24 +12,24 @@ namespace Cs16.Module.View
     ///
     /// <para><b>它画的是什么</b>：<see cref="CsLanClient"/> 从主机收到的一帧
     /// <see cref="CsLanRemoteActor"/>（对端权威的拷贝）—— 一个远端 <c>id</c> 一具视图，
-    /// 位置 / 朝向 / 存活**直接来自快照**（⛔ 不参与本机 <c>CsMatch</c> 的模拟：
+    /// 位置 / 朝向 / 存活**直接来自快照**（不参与本机 <c>CsMatch</c> 的模拟：
     /// 本机没有它们的权威，去 Tick 它们就是"两个模拟抢同一具身体"）。</para>
     ///
     /// <para><b>复用哪条链</b>：模型预制体与 <c>Module/View/ActorView.cs</c> 走**同一套取法与路径** ——
     /// 路径 = <c>CsViewTuning.ArtRoot + {T|CT} + "/" + 皮肤名</c>（皮肤按 id 稳定挑，
     /// 与 <c>ViewModule.PrefabPathFor</c> 同口径），取资源走引擎对象池
-    /// <c>Game.Pool.Spawn(key, …)</c>（引擎口径：角色**一律走池**，⛔ 不裸 <c>Instantiate</c>）；
+    /// <c>Game.Pool.Spawn(key, …)</c>（引擎口径：角色**一律走池**，不裸 <c>Instantiate</c>）；
     /// 实例上挂的仍是工程既有的 <see cref="ActorView"/> ⇒ 身高量测/贴地/骨骼动画/倒地留场
     /// 全部沿用既有实现，本类只补"数据从快照来"这一段。因此：
     /// <list type="bullet">
     /// <item><b>锚点仍传给 <see cref="ActorView.Apply"/>**一个 <c>CsActor</c> 载体**</b> ——
     /// 那是 <c>ActorView</c> 的只读入参（它一个字段都不写），本类拿它当"数据盒子"用，
-    /// ⛔ **不把它注册进 <c>CsMatch</c>**（不 Tick、不在 <c>CsMatch.Actors</c> 里出现）。</item>
+    /// **不把它注册进 <c>CsMatch</c>**（不 Tick、不在 <c>CsMatch.Actors</c> 里出现）。</item>
     /// <item>速度：快照里**没有**速度字段，本类按相邻两帧的位移差分算出来
-    /// （只为了选对"跑 / 站"序列；⛔ 不是自造数据 —— 位移本身就来自快照）。</item>
+    /// （只为了选对"跑 / 站"序列；不是自造数据 —— 位移本身就来自快照）。</item>
     /// </list></para>
     ///
-    /// <para><b>⛔ 本类刻意不做的事（写清楚，免得被当成漏做）</b>：
+    /// <para><b>本类刻意不做的事（写清楚，免得被当成漏做）</b>：
     /// <list type="number">
     /// <item>远端角色**不参与本机的碰撞 / 命中 / 音频链**：实例化后<b>销毁全部 Collider</b>
     /// （与"掉落武器视图"同一处置：世界物件绝不能进射线）⇒ 打不中它们、它们也不挡人。
@@ -42,7 +42,7 @@ namespace Cs16.Module.View
     /// </list></para>
     ///
     /// <para><b>池化</b>：视图由 <see cref="SyncAll"/> 按 id 复用（一帧内只 <c>Spawn/Despawn</c> 变化的那几具），
-    /// ⛔ 不每帧 <c>Destroy</c> / 新建对象；<see cref="Dispose"/> 把实例**还回对象池**（不是销毁）。</para>
+    /// 不每帧 <c>Destroy</c> / 新建对象；<see cref="Dispose"/> 把实例**还回对象池**（不是销毁）。</para>
     /// </summary>
     public sealed class CsLanRemoteView : MonoBehaviour
     {
@@ -69,7 +69,7 @@ namespace Cs16.Module.View
         /// <summary>真正画东西的既有视图组件（预制体自带）。</summary>
         private ActorView _actor;
 
-        /// <summary>喂给 <see cref="ActorView.Apply"/> 的**只读数据载体**（⛔ 不进 <c>CsMatch</c>，见类注释）。</summary>
+        /// <summary>喂给 <see cref="ActorView.Apply"/> 的**只读数据载体**（不进 <c>CsMatch</c>，见类注释）。</summary>
         private readonly CsActor _shadow = new CsActor();
 
         private Vector3 _lastSnapshotPos;
@@ -87,7 +87,7 @@ namespace Cs16.Module.View
         /// <summary>底下的既有角色视图（可能为 null —— 预制体没挂 <see cref="ActorView"/> 时）。</summary>
         public ActorView Actor { get { return _actor; } }
 
-        /// <summary>喂给 <see cref="ActorView"/> 的数据载体（探针要读"手上的值"时用它，⛔ 别改它）。</summary>
+        /// <summary>喂给 <see cref="ActorView"/> 的数据载体（探针要读"手上的值"时用它，别改它）。</summary>
         public CsActor Shadow { get { return _shadow; } }
 
         // ==================================================================
@@ -95,7 +95,7 @@ namespace Cs16.Module.View
         // ==================================================================
         /// <summary>
         /// 绑定一个远端 <c>id</c>（模型/身高校正/动画装配全交给既有 <see cref="ActorView.Bind"/>），
-        /// 并把视图**先摆到**快照的位置（⛔ 不先摆会看到"第一帧从池原点飞过来"）。
+        /// 并把视图**先摆到**快照的位置（不先摆会看到"第一帧从池原点飞过来"）。
         /// </summary>
         public void Bind(CsLanRemoteActor a)
         {
@@ -137,14 +137,12 @@ namespace Cs16.Module.View
         {
             if (a == null) return;
 
-            // ⛔ `_actor == null` 这一支**不可省**（片LAN-D 实机判据当场抓到的缺陷）：`_actor` 只在
             // <see cref="Bind"/> 里赋值，而"新建的视图"第一帧走进来时它必然是 null ——
             // 若只在 `a.Id != _remoteId` 时才 Bind，池里刚 Spawn 出来的这具**永远不会 Bind**：
-            // `_remoteId` 一直是 -1（视图层按它认"在场"）⇒ 远端角色**一具都画不出来**，
-            // 而日志/计数看起来一切正常（累计新建=3、注册表=3），是典型的静默失效。
+            // `_remoteId` 一直是 -1（视图层按它认"在场"）⇒ 远端角色**一具都画不出来**。
             if (_actor == null || a.Id != _remoteId)
             {
-                // 池化复用时也会走到这里（同一具实例换了远端 id）—— 重新绑定，⛔ 不是每帧新建
+                // 池化复用时也会走到这里（同一具实例换了远端 id）—— 重新绑定，不是每帧新建
                 Bind(a);
                 return;
             }
@@ -252,7 +250,7 @@ namespace Cs16.Module.View
         /// <summary>累计销毁的 Collider 数（"不参与命中"的量化口径）。</summary>
         public static int StrippedCollidersTotal { get; private set; }
 
-        /// <summary>累计"预制体缺失/池不可用"导致的建视图失败次数（失败必须留痕，⛔ 不静默）。</summary>
+        /// <summary>累计"预制体缺失/池不可用"导致的建视图失败次数（失败必须留痕，不静默）。</summary>
         public static int CreateFailures { get { return _createFailures; } }
 
         /// <summary>一行状态（日志 / 探针 / 报告共用）。</summary>
@@ -267,7 +265,7 @@ namespace Cs16.Module.View
         /// 让场上的远端视图与**最新一帧快照**对齐：新的建、有的刷、快照里没有的回收。
         ///
         /// <para>调用口径：主线程每帧一次（<c>MatchModule.Update</c>）。客户端没在跑时是
-        /// "回收一次 + 廉价空转"（⛔ 不会每帧扫字典）。</para>
+        /// "回收一次 + 廉价空转"（不会每帧扫字典）。</para>
         /// </summary>
         /// <returns>当前在场的远端视图数</returns>
         public static int SyncAll()
@@ -350,7 +348,7 @@ namespace Cs16.Module.View
             return _root;
         }
 
-        /// <summary>按远端 id 建一具视图（走引擎对象池；⛔ 不裸 <c>Instantiate</c>）。</summary>
+        /// <summary>按远端 id 建一具视图（走引擎对象池；不裸 <c>Instantiate</c>）。</summary>
         private static CsLanRemoteView Create(CsLanRemoteActor a)
         {
             var pool = Game.Pool;
@@ -371,7 +369,7 @@ namespace Cs16.Module.View
             var go = pool.Spawn(path, Root(), PoolGroup);
             if (go == null)
             {
-                // 非预期分支：预制体缺失（池内部已记 Error）⇒ 这里累计并留痕（⛔ 不静默）
+                // 非预期分支：预制体缺失（池内部已记 Error）⇒ 这里累计并留痕（不静默）
                 _createFailures++;
                 Game.Logger.Warn(Tag,
                     "远端角色 id=" + a.Id + " 的预制体 " + path + " 取不到（池返回 null）⇒ 这具看不见。" +
@@ -389,7 +387,7 @@ namespace Cs16.Module.View
         /// <summary>
         /// 阵营 + id → 角色模型预制体路径（<c>Art/{T|CT}/{皮肤}</c>）。
         /// 与 <c>ViewModule.PrefabPathFor</c> **同一套口径**：皮肤按 id 稳定挑（同一局内不变），
-        /// 常量取自 <c>CsViewTuning</c>（⛔ 本文件不出现任何路径字面量）。
+        /// 常量取自 <c>CsViewTuning</c>（本文件不出现任何路径字面量）。
         /// </summary>
         public static string PrefabPathFor(int id, CsTeam team)
         {

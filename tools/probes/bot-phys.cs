@@ -1,8 +1,5 @@
 // ============================================================================
-// 判据资产 · 切片BK：**"物理走不动"的逐帧证据**（只读）。
 //
-// 为什么要它：片BJ 的运行时复验显示机器人仍走不到包点（CT 进点 0、能动的 actor
-//   只有 5 个且位移 ≤9.9m），而片BJ 只给出一个**未证伪的假设**：
 //   "单层 2D 位图 + 多层几何的层间落差 ⇒ 机器人物理上走不动"。
 //   本探针把那个假设变成**数字**：某一帧、某个 bot、站在哪一格、
 //   脚下地面 y 是多少、法线 y 是多少、朝目标迈一步 ResolveMove 实际走了多远、
@@ -29,20 +26,17 @@
 //     <routeEndY> <rwp> <planRoute> <holdSite> <holdSlot> \
 //     <wantTopGroundY> <wantTopNormalY> <wantTopDy> <wantHighGroundY> <wantHighNormalY> <wantHighDy>
 //
-// 片BM 新增的 6 列（**追加在行尾**，⛔ 不改既有列序 —— 既有聚合脚本按列号取值）：
 //   为什么加：`want-no-ground`（"位图说这一格可走、朝目标迈一步的落点却探不到地面"）曾
 //     无法区分 (a) 落点是真空洞 / (b) 落点地面**高于脚底**（台阶、落差）/ (c) 落点地面低于脚底。
-//     既有列 `wantGroundY` 在 `hasWG==False` 时写 na ⇒ 三种读法全是空值（片BL-R2 的盲点）。
 //   口径（与 TrySampleGround **同源**：同一个 GroundMask、同一个 GroundCheckDistance）：
-//     wantTop*  = 从 `want.y + 3` 向下射（3 m / 8 m 落差）—— 任务书点的那一条；
 //     wantHigh* = 从 `want.y + 24` 向下射、丢 50 m。**必须同时采这条**：
 //                 "+3" 的起点可能已经在台阶实体内部（恰是 (b) 的形状）⇒ 射线不收"内部
 //                 起步"的命中 ⇒ 会把它**误判成空洞**。+24 的起点在台阶之上，才看得到那个面；
 //     *Dy       = 命中面 y − 当前脚底 y（可直接与 CsConst.StepUpHeight 比大小）。
-//   判据（离线聚合 tools/probes/analyze-bot-phys.py 第 3c 段按此实现，⛔ 不另立定义）：
+//   判据（离线聚合 tools/probes/analyze-bot-phys.py 第 3c 段按此实现，不另立定义）：
 //     wantHighGroundY == na ⇒ (a) 空洞；wantHighDy > 0 ⇒ (b) 面高于脚底；否则 ⇒ (c) 面低于脚底。
 //
-// 口径出处（⛔ 全部复用产品同源判据，不另立定义）：
+// 口径出处（全部复用产品同源判据，不另立定义）：
 //   可站       CsMap.CanStand(pos, CsConst.PlayerRadius)            Module/Map/CsMap.cs:290
 //   本地解算   CsMap.ResolveMove(from, to, CsConst.PlayerRadius)     Module/Map/CsMap.cs:431
 //   地面+法线  CsMap.TrySampleGround(pos, out point, out normal)     Module/Map/CsMap.cs:542
@@ -75,7 +69,6 @@ public static class BotPhys
     /// **默认**产物路径（保持历史值不变）。
     ///
     /// <para>⚠️ 片BN 修的坑：它是 `const` ⇒ 派驱动传 <c>$outF</c> **无效**，探针固定写这一个文件，
-    /// 于是片BL-R2 那次把冻结产物 <c>bk-bot-phys.tsv</c>（18952×33）**覆盖**成了 14192×39。
     /// 现在它是"默认值"，实际路径由 <see cref="Begin"/> 的 <paramref name="outPath"/> 决定，
     /// 而参数由 <c>unity command run_script --file … --entry BotPhys.Begin --args '["&lt;路径&gt;"]'</c>
     /// 传入（参数 schema 见 <c>unity command --format json</c> 的 <c>run_script.args</c>）。</para>
@@ -88,7 +81,6 @@ public static class BotPhys
 
     /// <param name="outPath">
     /// 产物 .tsv 的绝对路径；null / 空 = 用 <see cref="DefaultOutPath"/>。
-    /// ⛔ 传进来的路径**不会**再被默认值覆盖 —— 这正是片BN 要修的行为。
     /// </param>
     public static string Begin(string outPath = null)
     {
@@ -119,7 +111,6 @@ public sealed class BotPhysTick : MonoBehaviour
     private const float StuckEps = 0.15f;          // 2 s 内位移 < 0.15m ⇒ 卡住
     private const float StuckWindow = 2.0f;
 
-    // 片BM：`want` 处的"从上方起射"补测（列序见文件头；两档起点都要采，理由见文件头）
     private const float WantTopUp = 3f;            // 任务书口径：want.y + 3 起射
     private const float WantTopDrop = 8f;          // 与 CsMap.TrySampleGround 默认 maxDrop 同值
     private const float WantHighUp = 24f;          // 高于本图任何面：起点不会落在实体内部
@@ -142,8 +133,6 @@ public sealed class BotPhysTick : MonoBehaviour
     private bool _reflectDone;
     private bool _reflectWarned;
 
-    // ---- 片BL：环境自诊断（`E ENV` 行）----
-    // 片BK 的教训：`goalValid==1` 为 0/10656 时，**无法区分**是"实例没找到 / _brains 为空 /
     // 字段名不对 / 反射根本没跑"。反射的字段缓存原本只在"已经拿到 brain"时才建立（见 EnsureFields
     // 的调用点），而 brain 又只能从 ReadBrains 拿 —— 于是 `_fBrains==null ⇒ ReadBrains 返回 null
     // ⇒ brain==null ⇒ EnsureFields 永不调用 ⇒ _fBrains 永远 null`，**死循环恒返回 null**。
@@ -195,8 +184,6 @@ public sealed class BotPhysTick : MonoBehaviour
     }
 
     /// <summary>
-    /// 片BL：环境自诊断（值变化时落一行 <c>E ENV</c>，首行必落），**直接写进同一个 tsv** ——
-    /// 片BK 试过只写 <c>Game.Logger</c>，结果 0 命中（日志被别处刷掉 / 不在采集窗口）。
     /// 列：bots / fBrains / brainsCount / module / mode / match / map / fields / envLines。
     /// </summary>
     private void EmitEnv()
@@ -267,15 +254,12 @@ public sealed class BotPhysTick : MonoBehaviour
             _map = _map ?? _mod.Map;
         }
 
-        // 片BL：BotModule 的两条取法 —— ① MatchModule 同级组件（BotModule.cs:81 的 GetComponent<MatchModule>()
-        // 就是靠"同一个 GameObject"装配的，所以反向也走得通）② 场景里任意一个（含未激活）。
         if (_bots == null)
         {
             if (_mod != null) _bots = _mod.GetComponent<BotModule>();
             if (_bots == null) _bots = UnityEngine.Object.FindAnyObjectByType<BotModule>(FindObjectsInactive.Include);
         }
 
-        // 片BL：反射**必须在 ReadBrains 之前**建立 —— 否则 _fBrains 恒 null ⇒ ReadBrains 恒返回 null。
         EnsureFields(typeof(CsBotBrain));
         EmitEnv();
 
@@ -365,7 +349,6 @@ public sealed class BotPhysTick : MonoBehaviour
             var wantNormalY = float.NegativeInfinity;
             var wantCanStand = true;
             var wantStepDy = float.NegativeInfinity;
-            // 片BM 新增 6 列（行尾追加；口径见文件头）
             var wantTopGroundY = float.NegativeInfinity;
             var wantTopNormalY = float.NegativeInfinity;
             var wantTopDy = float.NegativeInfinity;
@@ -403,10 +386,9 @@ public sealed class BotPhysTick : MonoBehaviour
                     wantStepDy = wp.y - pos.y;
                 }
 
-                // 片BM：从上方起射（两档）—— 把"探不到地面"拆成 (a) 空洞 / (b) 面高于脚底 / (c) 面低于脚底。
                 // 起点抬升与探测深度复用产品同源口径：TrySampleGround 自己会把起点抬 GroundCheckDistance、
                 // 把射线长取 maxDrop + GroundCheckDistance（Module/Map/CsMap.cs:542-557）。
-                // ⛔ 两档都采：+3 的起点可能已在台阶实体内部（正是 (b) 的形状）⇒ 会把 (b) 误判成 (a)。
+                // 两档都采：+3 的起点可能已在台阶实体内部（正是 (b) 的形状）⇒ 会把 (b) 误判成 (a)。
                 var wantTopOrigin = new Vector3(want.x, pos.y + WantTopUp, want.z);
                 if (_map.TrySampleGround(wantTopOrigin, out var tp, out var tn, WantTopDrop))
                 {
@@ -480,8 +462,6 @@ public sealed class BotPhysTick : MonoBehaviour
 
     private Dictionary<long, object> ReadBrains()
     {
-        // 片BL：每一条失败路径都往 tsv 落一行 `E REFLECT`（不再只写 Game.Logger）——
-        // 否则"整段 brain 读取返回 null"这件事在产物里没有任何锚点（片BK 的困境）。
         if (_bots == null)
         {
             Once("E\tREFLECT\treason=botmodule-null\tfBrains=" + (_fBrains != null ? "ok" : "null"));

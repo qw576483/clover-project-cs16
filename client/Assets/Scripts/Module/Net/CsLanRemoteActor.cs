@@ -19,7 +19,7 @@ namespace Cs16.Module.Net
     /// 的 <c>BuildSnapshot</c> 里 <c>actors[i]</c> 拼的就是这些键 ——
     /// <c>id / name / team / x / y / z / yaw / hp / alive / w</c>；
     /// 其中 <c>x/y/z</c> 是三位小数、<c>yaw</c> 一位小数（<c>team</c> / <c>w</c> 是字符串）。
-    /// ⛔ 两端必须同值：改这里等于改线格式（本片不许改）。</para>
+    /// 两端必须同值：改这里等于改线格式。</para>
     /// </summary>
     public sealed class CsLanRemoteActor
     {

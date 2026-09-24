@@ -3,7 +3,6 @@
 # `By Clover-Engine`，闸门必须报 FAIL；还原后必须回到 PASS。
 #   python tools/probes/tamper-home-credit.py tamper    -> 改 dump => verify 必须 FAIL
 #   python tools/probes/tamper-home-credit.py restore   -> 还原（备份留在 .ai-tmp/test/）
-# 实测（2026-09-21 片AF）：tamper => `FAIL home-credit-rendered 1 problem(s) ... no on-screen
 # text node reads exactly "by clover-engine"`，还原 => `PASS ... bottom=1024.0`。
 import io
 import os

@@ -17,7 +17,7 @@ namespace Cs16.Module.Match
         public bool Zoom;      // 右键（AWP/Scout 开镜）
         /// <summary>
         /// 右键的**按下沿**（差异 #68）：USP·M4A1 切换消音器、Glock18·FAMAS 切换连发模式。
-        /// <para>⛔ 必须是"本帧刚按下"（采集方填 <c>GetKeyDown</c>）而**不是**按住 —— 原版的 attack2 是
+        /// <para>必须是"本帧刚按下"（采集方填 <c>GetKeyDown</c>）而**不是**按住 —— 原版的 attack2 是
         /// **切换型**（按一下切一次），按住会在每一帧翻转一次。出处见 <c>CsWeapons.MarkAttack2Capabilities</c>。</para>
         /// </summary>
         public bool Attack2;

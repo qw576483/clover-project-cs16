@@ -52,7 +52,7 @@ namespace Cs16.Module.Combat
         private int _unmatchedShotCount;
 
         /// <summary>切片K（D8）：上一次空仓击发音的时刻（秒，<c>CsClock.Now</c>）——见 <see cref="CanFire"/>。
-        /// ⛔ 不许直接读 <c>Time.time</c>：它要跟模拟写下的绝对时间（<c>ReloadEndTime</c> 等）比，
+        /// 不许直接读 <c>Time.time</c>：它要跟模拟写下的绝对时间（<c>ReloadEndTime</c> 等）比，
         /// 必须与模拟同一个时钟源（见 <c>Core/CsClock.cs</c> 的类注释）。</summary>
         private float _lastDryfireTime = -999f;
 
@@ -107,7 +107,7 @@ namespace Cs16.Module.Combat
         }
 
         // ==================================================================
-        //  测试入口（类型化；**只给离线取证驱动用**，⛔ 不在真实玩家输入链路上）
+        //  测试入口（类型化；**只给离线取证驱动用**，不在真实玩家输入链路上）
         // ==================================================================
         /// <summary>
         /// **测试入口，供离线取证驱动使用**：把「本帧左键按住」这一位直接置位 ——
@@ -117,12 +117,9 @@ namespace Cs16.Module.Combat
         /// <c>cmd.Fire</c>，而那**只让模拟开火**（扣弹 / 推 <c>NextFireTime</c> / 记一条枪声记录）；
         /// 本模块要不要射线（枪口火焰 / 弹痕 / 命中回传）取决于它自己那个由**真实鼠标**置位的
         /// <c>_fireRequested</c>（原因见 <c>IsLocalShot</c> 的注释：不拿别人的射击记录去射线 ⇒ 防双份伤害）。
-        /// 驱动没有鼠标层 ⇒ 弹匣照扣、却一条弹痕都不画（切片P 实测：glock18 20→16 发、控制台 0 条
-        /// <c>hitwall.*</c>）。切片P 于是用**反射**写这个私有位 —— 脆弱、且是「绕过类型系统的后门」；
-        /// 切片Q 按 skill §0.6 第 3 条（把高风险动作做成**专用、类型化的入口**，让 harness 有可拦截的钩子）
         /// 改成这个 public 方法，驱动侧的反射已删。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法**只在被显式调用时生效** —— 没有任何 Update /
+        /// <para><b>不改变真实玩家行为</b>：本方法**只在被显式调用时生效** —— 没有任何 Update /
         /// 事件会调它，真实玩家路径仍然只由 <see cref="FillInput"/> 按鼠标置位。
         /// 调用时序由驱动保证：order −150 落在 <c>PlayerModule.Update(−200)</c> 的
         /// <see cref="FillInput"/> 覆盖**之后**、模拟 Tick（order 0）消费**之前**。</para>
@@ -174,7 +171,7 @@ namespace Cs16.Module.Combat
             if (local == null || !local.IsAlive) return;
             if (input == null) return;
 
-            // ★ 必须早于模拟 Tick：这是"这一发到底是不是我打的"的判据（见类注释）。
+            // 必须早于模拟 Tick：这是"这一发到底是不是我打的"的判据（见类注释）。
             _preWeapon = local.ActiveWeapon;
             _preNextFireTime = local.NextFireTime;
 
@@ -193,7 +190,7 @@ namespace Cs16.Module.Combat
                 cmd.Zoom = input.GetKey(GameKey.MouseRight);
 
                 // ---- 右键**按下沿** = attack2（差异 #68）：USP·M4A1 拆装消音器、Glock18·FAMAS 切连发。
-                // ⛔ 必须 GetKeyDown（切换型输入）：用 GetKey(按住) 会在每一帧翻转一次。
+                // 必须 GetKeyDown（切换型输入）：用 GetKey(按住) 会在每一帧翻转一次。
                 cmd.Attack2 = input.GetKeyDown(GameKey.MouseRight);
 
                 // ---- 左键开火（门槛在模拟里也有一份，这里只是为了不产生必然失败的开火意图）----
@@ -255,7 +252,7 @@ namespace Cs16.Module.Combat
                 }
 
                 // M：换阵营（原版 chooseteam）。
-                // ⚠️ 原版 chooseteam 是**打开阵营菜单**；本工程局内没有"再开一次 TeamMenu"的流程入口，
+                // 原版 chooseteam 是**打开阵营菜单**；本工程局内没有"再开一次 TeamMenu"的流程入口，
                 //    因此等价为"直接换到另一边"并如实写日志 —— 差异登记见 策划/差异登记.tsv / 验收表「允许的差异」。
                 if (input.GetKeyDown(GameKey.M))
                 {
@@ -312,7 +309,6 @@ namespace Cs16.Module.Combat
                 var ammo = local.GetAmmo(def.Id);
                 if (ammo.inMag <= 0)
                 {
-                    // 切片K（D8）：空仓扣扳机 = 原版 dryfire（盘上 sfx/dryfire.wav 此前无人挂事件）。
                     // 这里就是"弹匣为空"的唯一分支（模拟侧同样拦在这里 ⇒ 没有第二处）。
                     // 按时间闸限速：按住左键时本分支**每帧**都会走到，不加闸就是每帧一响。
                     if (now - _lastDryfireTime >= CsAudioTuning.DryfireMinInterval)
@@ -554,10 +550,9 @@ namespace Cs16.Module.Combat
             {
                 _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i]);
 
-                // 切片K（D8）：打中**非角色**碰撞体 ⇒ 弹着音（原版 hit_wall，盘上 sfx/hit_wall.wav 此前无人挂事件）。
                 // "按材质分流"落在 CsAudioTuning.ClassifyImpact：先按命中物的材质名/节点名分类
                 // （沙 / 木箱 / 门板 / 混凝土 / 金属 / 未知），再播 hit_wall。
-                // ⚠️ 盘上**只有一条** hit_wall.wav（原版按材质分的多条弹着采样不在盘）⇒ 各类现在落同一 clip，
+                // 盘上**只有一条** hit_wall.wav（原版按材质分的多条弹着采样不在盘）⇒ 各类现在落同一 clip，
                 //    但"分类"是真的、且逐类可在日志核对；缺口已登记 策划/差异登记.tsv。
                 var matName = i < impactMaterials.Count ? impactMaterials[i] : null;
                 var cls = CsAudioTuning.ClassifyImpact(matName);
@@ -567,7 +562,6 @@ namespace Cs16.Module.Combat
                     "（原版按材质分流的多条采样不在盘，见 策划/差异登记.tsv）");
             }
 
-            // ---- 命中回传（伤害结算归 agent-03）----
             var hits = _firearm.Hits;
             for (var i = 0; i < hits.Count; i++)
             {
@@ -584,7 +578,6 @@ namespace Cs16.Module.Combat
             }
         }
 
-        /// <summary>命中反馈三件套里的两件：命中标记（写快照给 HUD）+ 命中音效；血条下降由 agent-07 的目标视图负责。</summary>
         private void OnLocalHit(in CsHitInfo hit, CsWeaponDef def, ICsMatch match)
         {
             var headshot = hit.Hitbox == CsHitbox.Head;

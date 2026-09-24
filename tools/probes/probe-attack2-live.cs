@@ -1,17 +1,16 @@
 // 判据资产（tools/probes/）：差异 #68「很多枪械的右键还是无效」的**实机消费点**取证。
 //
-// 为什么要有它：本行此前的判据只有两类 —— ① 结构断言（tools/probes/attack2-probe.py，查代码里有没有那条链）
 // ② 离线自检（CombatSelfTest.cs 的「差异 #68」段）。缺的正是用户能感知的那一层：
 // **在跑着的这一局里，右键那条链真的把状态翻过来了没有**。本探针补的即是它。
 //
 // 三段：
-//   [A] 能力表：逐武器读 CsWeapons.Get(id).CanSilence / CanBurst（⛔ 不在这里抄一份"应该是什么"）
+//   [A] 能力表：逐武器读 CsWeapons.Get(id).CanSilence / CanBurst（不在这里抄一份"应该是什么"）
 //   [B] 消费点：反射取 CsMatch.Inventory（`internal` 字段，跨程序集只能反射）→
 //               对本地玩家逐个武器调 **ToggleWeaponMode**（= CombatModule 右键那条链的**唯一**出口），
 //               读 CsActor.Silenced / BurstMode 的前后值 ⇒ 判"翻没翻"。
 //   [C] 幂等：同一把枪连调两次必须回到原值（否则"按一次右键状态自己在抖"）
 //
-// ⛔ 只读业务数据：改 ActiveWeapon 只是为了把"手里那把枪"换成待测武器（换完**恢复原值**），
+// 只读业务数据：改 ActiveWeapon 只是为了把"手里那把枪"换成待测武器（换完**恢复原值**），
 //    不点任何按钮、不发任何网络包、不改 state.txt。
 //
 // 用法（编辑器须在 Play 且有一局在跑）：
@@ -34,7 +33,7 @@ sb.Append("local=").Append(local.Name).Append(" id=").Append(local.Id)
 
 // ---------- [A] 能力表 ----------
 // 出处表在 CsWeapons.MarkAttack2Capabilities()（USP/M4A1 = 消音、Glock18/FAMAS = 连发；
-// 其余一律 false = 无出处不接）。这里**逐条读出来**，⛔ 不在探针里写死期望值 ——
+// 其余一律 false = 无出处不接）。这里**逐条读出来**，不在探针里写死期望值 ——
 // 探针只负责"报数"，期望值由人 / 断言脚本对比。
 var probeWeapons = new[] { "usp", "m4a1", "glock18", "famas", "ak47", "m249", "awp", "deagle", "knife" };
 sb.Append("\n[A] 能力表（CsWeapons.Get）：");
@@ -116,7 +115,7 @@ for (var i = 0; i < probeWeapons.Length; i++)
 sb.Append("\n[B] 能力表里应当能翻的武器数=").Append(expected)
   .Append("（口径 = Silence||Burst 为 true 的武器；== 实测翻过的数才是对的）");
 
-// 复原玩家手里的枪（⛔ 探针不改业务状态）
+// 复原玩家手里的枪（探针不改业务状态）
 local.ActiveWeapon = origWeapon;
 sb.Append("\n复原：local.ActiveWeapon=").Append(local.ActiveWeapon ?? "-");
 sb.Append("\nRESULT: ").Append(flips == expected ? "PASS" : "FAIL（实测翻过的武器数 != 能力表里的可翻武器数）");

@@ -1,4 +1,3 @@
-// 判据资产（tools/probes/）：勾选框 "Mark" 的**只读**运行时原文（切片AV，差异 #33 收口）。
 //
 // 判据用途：勾不再是"同色小方块"，而是原版 **Marlett gid 12** 的预渲染贴图
 //（`Resources/UI/Art/menu_check`，132x140）⇒ 逐格给四个数：

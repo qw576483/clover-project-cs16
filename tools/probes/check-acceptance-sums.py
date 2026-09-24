@@ -140,7 +140,6 @@ def num(s):
 
 
 def main():
-    # --plan-dir is the seam that makes this asset SAMPLABLE (added 2026-09-23).  WHY IT EXISTS:
     # verify.ps1 called this script with no arguments, so it ALWAYS read the REAL plan dir -- measured:
     # with a -PlanDir sandbox whose acceptance table had been replaced by ONE broken line, this item
     # still printed "PASS -- all 21 aggregate claims equal the table body" (had it read the sandbox it

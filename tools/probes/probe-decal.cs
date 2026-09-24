@@ -4,7 +4,7 @@
 //   [A] 反射取 CombatModule._fx → CombatEffects（同 CombatModule.cs 开火链的同一个实例）
 //   [B] 在相机前方**扫描 26 个方向**找两类真实命中面：
 //       朝墙 = |normal.y| < 0.5；朝地 = normal.y > 0.7
-//       （⛔ 不用"正前方一条射线"—— 出生点朝向不定，打不到面就会退化成"凭空摆一个"，
+//       （不用"正前方一条射线"—— 出生点朝向不定，打不到面就会退化成"凭空摆一个"，
 //         那不算取证；这里要求**命中真实几何**，命中失败就明确报 FAIL 而不是静默兜底）
 //   [C] 调真入口 CombatEffects.BulletImpact(point, normal) 两次（墙 / 地各一次）
 //   [D] 再连打 40 发（固定点）收集 sprite 名集合 ⇒ 判"到底是不是多变体随机"
@@ -94,7 +94,7 @@ if (hasWall) { bi.Invoke(fx, new object[] { wallHit.point, wallHit.normal }); }
 if (hasGnd) { bi.Invoke(fx, new object[] { gndHit.point, gndHit.normal }); }
 sb.Append("\n[C] 已调 BulletImpact ×").Append((hasWall ? 1 : 0) + (hasGnd ? 1 : 0));
 
-// ---------- [C2] 正前方扇形落痕（保证截图里看得见；⛔ 仍是打真实几何，不是凭空摆） ----------
+// ---------- [C2] 正前方扇形落痕（保证截图里看得见；仍是打真实几何，不是凭空摆） ----------
 var fanHits = 0;
 for (var yi = -1; yi <= 1; yi++)
     for (var xi = -1; xi <= 1; xi++)
@@ -148,15 +148,15 @@ for (var i = 0; i < root.childCount && shown < 6; i++)
 if (shown == 0) sb.Append("\n  (没读到 active 的 shot 弹痕物件)");
 
 // ---------- [F] 不冻时间（见下） ----------
-// ⛔ 本探针**刻意不**把 Time.timeScale 冻成 0：实测冻结后驱动（order -150）的 `shot=` 不再生效
+// 本探针**刻意不**把 Time.timeScale 冻成 0：实测冻结后驱动（order -150）的 `shot=` 不再生效
 // （该 Play 里 `SHOT-TIMEOUT decal_wall_ground`，同一个驱动在未冻结时正常出图）
 // ⇒ 截图改由驱动在"未冻结"状态下拍。弹痕寿命 CsCombatTuning.DecalDuration = 25s ⇒ 有充足窗口。
 sb.Append("\n[F] 未冻结时间（弹痕寿命 25s，驱动可直接截图）");
 
 // ---------- 判定 ----------
 // 口径：① 墙 / 地**都命中真实几何**；② 两次真调用各留下 ≥1 个 active 弹痕；
-//      ③ 40 发收集到的变体集合 ≥2（证"多变体随机"，⛔ 1 张就是没落地）；
-//      ④ 世界宽 > 0（证尺寸链在跑，⛔ 不是 0 缩放）。
+//      ③ 40 发收集到的变体集合 ≥2（证"多变体随机"，1 张就是没落地）；
+//      ④ 世界宽 > 0（证尺寸链在跑，不是 0 缩放）。
 var after = 0; var activeShots = 0;
 for (var i = 0; i < root.childCount; i++)
 {

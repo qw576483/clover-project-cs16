@@ -4,7 +4,7 @@
 // Dispatcher.Post 收敛到主线程）。一次 eval 调用里等不到它 —— 所以：
 //   ① 本探针：起应答端 + 发起一轮扫描（窗口 5s），立刻返回；
 //   ② `probe-lan-verify.cs`：隔一段时间（bash 里 sleep）再读 `Game.LanBrowser.Hosts` 断言。
-// ⛔ 两个探针都是只读业务状态；唯一写入 = 起/停 UDP 应答端（收尾用 probe-lan-verify 的 --stop 版）。
+// 两个探针都是只读业务状态；唯一写入 = 起/停 UDP 应答端（收尾用 probe-lan-verify 的 --stop 版）。
 //
 // 用法（编辑器须在 Play；Game.Launch 已跑过 ⇒ Game.LanBrowser 已挂接）：
 //   unity command eval_file --file tools/probes/probe-lan-host.cs

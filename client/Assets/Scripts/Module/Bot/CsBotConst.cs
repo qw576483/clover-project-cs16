@@ -11,33 +11,29 @@ namespace Cs16.Module.Bot
     /// **业务代码里不出现裸数字，改一处即可调平衡**。交付回报里已列出"建议收敛进 CsConst"的清单。</para>
     ///
     /// <para><b>出处口径（切片K 逐条补）</b>：本文件 66 条的出处分三类，逐条写在各自注释里 ——
-    /// ① **规格条款**：<c>策划/策划案/CS1.6单机参考规格.md</c> §2.4 的机器人三档表（反应时间 / 瞄准误差 /
     /// 行为特征）；② **本工程另有定义处的那个文件**（<c>CsBotProfile</c> 三档表在
     /// <c>Module/Match/CsTypes.cs:148</c>；<c>CsMarkers.BombsiteRadius</c> 在 <c>Module/Map/ICsMap.cs:83</c>；
     /// <c>CsMatch.DefuseRadius/PickupRadius</c> 在 <c>Module/Match/CsMatch.cs</c>）；
     /// ③ **本项目新增**（A = CS 1.6 本体**不含机器人 AI** —— 官方 bot 属 Condition Zero / PodBot，
     /// 不在本工程的载体范围内，所以"bot 手感阈值"在 A 里**没有对应量**，只能自定并如实标注）。
-    /// ⛔ 其中**确有一个原版对应量、但载体拿不到**的三组（瞄胸高度比例 / 脚步噪声阈值 / C4 无关）已单独登记
+    /// 其中**确有一个原版对应量、但载体拿不到**的三组（瞄胸高度比例 / 脚步噪声阈值 / C4 无关）已单独登记
     /// <c>策划/差异登记.tsv</c>，不许当成"有出处"。</para>
     ///
     /// <para><b>与 <see cref="CsConst"/> / <see cref="CsBotProfile"/> 的分工</b>（避免双重生效）：
     /// 三档难度参数（反应时间 / 瞄准误差 / 转视角速度 / 连发节奏 / 视野 / 偏好距离 / 买枪档位 / 爆头率 /
     /// 重决策间隔）**一律只从 <see cref="CsBotProfile.For"/> 取**，本文件里不许再写第二套；
-    /// 连发节奏与瞄准误差的落地由比赛模拟（agent-03 的 <c>CsMatch.UpdateBots</c>）执行，
     /// 这里只放"模拟没有、AI 才需要"的阈值。</para>
     ///
     /// <para><b>可见性 = public（切片BC 起）</b>：<c>Assets/Scripts/</c> 有独立程序集
     /// <c>Cs16.asmdef</c>，而 Editor 生成器在 <c>Assembly-CSharp-Editor</c> ⇒ <c>internal</c> 跨不过去。
     /// 生成侧（<c>Editor/MapGen/Dust2Builder.cs</c> 的标记点吸附）**必须**用本类
     /// <c>PathSnapRadiusCells</c> 这**同一个半径**，否则"生成侧吸附半径 / 消费侧 snap 半径"
-    /// 会各写一份、必然漂移。所以本类由 <c>internal</c> 放宽为 <c>public</c>（⛔ 未改任何常量值、
     /// 未改任何签名，只是可见性）。</para>
     /// </summary>
     public static class CsBotConst
     {
         // ==================== 感知 ====================
         /// <summary>
-        /// 目标记忆时长（秒）：看见后丢了视野也不立刻忘（任务书 §4.2）。
         ///
         /// <para><b>它同时是"反应时间要不要重算"的唯一分界</b>：反应计时（
         /// <see cref="CsBotProfile.ReactionTime"/>）绑在**目标身份**上 —— 换了目标、或彻底忘掉这个目标
@@ -55,10 +51,9 @@ namespace Cs16.Module.Bot
         public const float EnemyTooCloseRange = 5f;
 
         /// <summary>判定"跑动出声"的水平速度阈值（米/秒）。低于它 = 慢走/站定，不出声。
-        /// 出处：**本项目新增**（bot 听觉阈值）。⚠️ 原版对应的"脚步噪声判定"在服务端 <c>mp.dll</c>
+        /// 出处：**本项目新增**（bot 听觉阈值）。原版对应的"脚步噪声判定"在服务端 <c>mp.dll</c>
         /// （按 <c>mp_footsteps</c> 开关 + 速度档判定），该载体**已在盘、但尚未反汇编**
         /// （<c>原版资源/cs16src/cstrike/dlls/mp.dll</c>，1,640,960 B / SHA256 <c>D7294D9B…1F2974</c>，
-        /// 片AW 取回，见 <c>原版资源/清单.md</c>「切片AW」§1）⇒ 取不到 <c>文件:偏移</c> 级出处，
         /// 已登记 <c>策划/差异登记.tsv</c>（#58 的「脚步噪声阈值」条）。</summary>
         public const float RunNoiseSpeed = 2.5f;
 
@@ -85,7 +80,7 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 重求全局路径（引擎 <c>AStar.FindSmoothed</c>）的兜底间隔（秒）：到点就重求一次，兼作"被挤开后自我纠偏"。
         ///
-        /// <para>为什么需要一个闸：<c>AStar</c> 一次求解最多展开 <c>DefaultMaxNodes</c>(20000) 个节点，⛔ 不能每帧对
+        /// <para>为什么需要一个闸：<c>AStar</c> 一次求解最多展开 <c>DefaultMaxNodes</c>(20000) 个节点，不能每帧对
         /// 每个 bot 求一次。<see cref="BotNavigator"/> 只在"没有路径 / 目标格变了 / 路径走完 / 判到卡住"之外再按这个间隔兜底。</para>
         ///
         /// <para>出处：**本项目新增**（导航实现参数，A 无 bot AI；与同文件里 <see cref="StuckCheckInterval"/> 同一量级，
@@ -114,9 +109,7 @@ namespace Cs16.Module.Bot
         ///
         /// <para>取值出处：引擎自己的节点预算 <c>CloverEngine.AStar.DefaultMaxNodes</c> = <b>20000</b>
         /// （<c>Runtime/Core/AStar.cs:52</c> 一带，<see cref="BotNavigator"/> 求路径用的就是它）——
-        /// 同量级即可：切片BJ 离线实测那张 127×145 位图**全部可走格约 5.3k**（46 个连通分量，
-        /// 主分量 4393 + 其余 919，见 <c>tools/probes/marker-connectivity.py</c>），离 20000 有 4 倍余量。
-        /// 出处：**本项目新增**（护栏，不是玩法阈值；⛔ 与 <c>CsConst.StepUpHeight</c> 无关）。</para>
+        /// 出处：**本项目新增**（护栏，不是玩法阈值；与 <c>CsConst.StepUpHeight</c> 无关）。</para>
         /// </summary>
         public const int HeightReachMaxCells = 20000;
 
@@ -126,11 +119,10 @@ namespace Cs16.Module.Bot
         /// <para>必要性（切片BJ 实测根因）：引擎 <c>AStar.Find</c> 在**起终点都可走**但位图上不连通时返回 null
         /// （<c>astar.nopath</c>）。此时若照旧"朝目标直线走"，机器人每 <c>StuckCheckInterval</c>(0.5s) 判一次卡住、
         /// 位移恒为 0.00m，再触发换目标 → 换到的路线里又有同样落在孤岛里的路点 ⇒ **无限循环**
-        /// （切片BI 实测：<c>[AStar] 无可达路径 from=(79,96) to=(80,93)</c> ×21、换目标 ×28、373s 内除真人外
         /// 无任何 actor 位移 &gt; 5.8m）。判"不连通"要连续观测，单次失败可能只是"被挤进阻挡格 / 重求时机"。</para>
         ///
         /// <para>出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI；与 <see cref="StuckReplanStreak"/> 同一形状，
-        /// ⛔ 不复用它的值 —— "卡住次数"与"求路径失败次数"是两件事，混用会让调其中一个时另一个跟着变）。</para>
+        /// 不复用它的值 —— "卡住次数"与"求路径失败次数"是两件事，混用会让调其中一个时另一个跟着变）。</para>
         /// </summary>
         public const int PathFailStreakToUnreachable = 2;
 
@@ -156,7 +148,6 @@ namespace Cs16.Module.Bot
         public const float ProbeHoldSeconds = 0.5f;
 
         /// <summary>
-        /// **换向迟滞（片BU-R3）**：保持中的偏角被判"不可走"时，必须**连续**持续这么久才允许丢开它（秒）。
         /// 单帧（或少数几帧）的"不可走"**不算数** —— <see cref="WalkableAhead"/> 的判定落在
         /// <c>position + dir × ProbeClearance/ProbeDistance</c> 两个采样点上，机器人来回蹭 0.1m 就会让这两个
         /// 采样点跨过格子边界、结论翻转；按单帧判定换向 = 方向在 ~10 次/秒 的速率上翻。
@@ -303,7 +294,6 @@ namespace Cs16.Module.Bot
 
         // ==================== 交战 ====================
         /// <summary>近身换手枪的距离（米）：任务书 §4.2「距离 &lt; 3m → 倾向换手枪」。
-        /// 出处：**本项目新增**（阈值来自本片/前片任务书 §4.2；⚠️ 该任务书**不在工程内**、
         /// 规格 <c>策划/策划案/CS1.6单机参考规格.md</c> §2.4 未给该阈值 ⇒ 只能标"本项目新增"）。</summary>
         public const float MeleeSwitchRange = 3f;
 
@@ -359,16 +349,14 @@ namespace Cs16.Module.Bot
         public const float HeadshotRollSeconds = 1.2f;
 
         /// <summary>瞄胸时的高度比例（占角色身高的比例）。
-        /// 出处：**本项目新增**。⚠️ 原版**有**对应量（玩家模型三组 hitbox 的高度偏移，写在 mdl 的 hitbox 表里，
+        /// 出处：**本项目新增**。原版**有**对应量（玩家模型三组 hitbox 的高度偏移，写在 mdl 的 hitbox 表里，
         /// 由 <c>mp.dll</c> 消费），但承载它的原版 <c>models/player/*.mdl</c> 本机不在盘
         /// （<c>原版资源/</c> 实测只有 <c>cs16src/</c> 73 份 cstrike 资源 · <c>hlsdk/</c> · <c>备份/</c> ·
         /// <c>_moved-out-from-assets/</c>，无 <c>models/</c>；<c>mp.dll</c> 本身已在盘但尚未反汇编，
-        /// 见 <c>原版资源/清单.md</c>「切片AW」§1）⇒ 已登记 <c>策划/差异登记.tsv</c>（#58 的「瞄胸高度比例」条），
         /// 不许当"有出处"。</summary>
         public const float ChestHeightRatio = 0.78f;
 
         /// <summary>预瞄提前量的最大秒数（按难度插值：Normal 0 → Hard 满值）。
-        /// 出处：行为口径见规格 §2.4 的 Hard 行「会预瞄」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
         /// **上限秒数本项目新增**（A 无 bot AI）。</summary>
         public const float PredictSecondsMax = 0.12f;
 
@@ -405,7 +393,6 @@ namespace Cs16.Module.Bot
         public const float PickupStopRadius = 1.0f;
 
         /// <summary>炸弹剩余时间 ≤ 拆包所需 + 它时，优先拆包（Hard 的"拆包果断"）。
-        /// 出处：行为口径见规格 §2.4 的 Hard 行「拆包果断」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
         /// **余量秒数本项目新增**。</summary>
         public const float DefuseUrgencyMargin = 2f;
 
@@ -413,7 +400,6 @@ namespace Cs16.Module.Bot
         /// 已下包后，"眼前有多近的敌人才值得先打、而不是先去拆包"（米）。
         /// 超过它就一律先冲包点 —— 官方 CT 的行为是"下包即刻回防"，站在远处对枪等于把回合送掉。
         ///
-        /// <para>出处：行为口径见规格 §2.4 的 Hard 行「拆包果断」；**距离值本项目新增**（A 无 bot AI）。</para>
         /// </summary>
         public const float DefuseOverFightRange = 15f;
 
@@ -425,7 +411,6 @@ namespace Cs16.Module.Bot
         /// 出处：行为口径见规格 §2.4 的 Hard 行「会换位」；**半径值本项目新增**。</summary>
         public const float CampRepositionRadius = 6f;
 
-        // ==================== 包点守位表（切片BG） ====================
         /// <summary>
         /// 包点守卫**换位间隔**（秒）：CT 在自己的守位表里每这么多秒挪到下一个守位。
         ///
@@ -450,7 +435,7 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 携带 C4 的 T 走到离**最近的包点标记**多远就停下开下（米）。
         ///
-        /// <para>⛔ 为什么必须**远小于**包点判定半径 <see cref="SiteRadius"/>（= 7m，
+        /// <para>为什么必须**远小于**包点判定半径 <see cref="SiteRadius"/>（= 7m，
         /// 真源 <c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius</c>）：
         /// 停步半径 == 判定半径（旧行为用 <see cref="SiteRadius"/> 同时当"走到哪算到"与"能不能下"）时，
         /// 机器人会**正好停在判定球面上**，`CsBomb.CanPlant` 的 `IsInBombsite` 随浮点误差反复真假 ⇒
@@ -462,13 +447,12 @@ namespace Cs16.Module.Bot
         public const float PlantStopRadius = 1.5f;
 
         /// <summary>
-        /// 【片BU-R5 起**已废弃、不再被引用**，仅保留常量与出处以便回溯】
         /// 旧口径：只有 <c>id % 它 == 0</c> 的 T 会去捡掉落的 C4（想让 4 人一队只出一个人，避免全队扑向同一个点）。
         ///
         /// <para>为什么废弃：实测（片BU-R5 L3）它挑的人**不是离 C4 最近的那个**，而且"最近的 T 编号不整除"
         /// 时整条捡包分支一次都不进 ⇒ C4 躺到回合结束（`拾起了` = 0 条、A5 恒 0）。
         /// 现行口径 = **离 C4 最近的那一个 T 去捡**（<c>CsBotBrain.IsElectedBombHunter</c>，唯一且确定），
-        /// 仍然只有一个人去，⛔ 不改掉落/拾取规则本身。</para>
+        /// 仍然只有一个人去，不改掉落/拾取规则本身。</para>
         /// 出处：**本项目新增**（分工实现参数，A 无 bot AI）。
         /// 替代口径的落点：<c>CsBotBrain.IsElectedBombHunter</c>。
         /// </summary>
@@ -487,7 +471,6 @@ namespace Cs16.Module.Bot
         public const float BuyZoneWarnDelay = 1.5f;
 
         /// <summary>Hard 档买 AWP 的概率（任务书 §4.2：30%）。
-        /// 出处：**本项目新增**（概率值来自本片/前片任务书 §4.2；⚠️ 该任务书**不在工程内**，
         /// 规格 §2.4 的 Hard 行只写「会买最好枪」、未给概率 ⇒ 只能标"本项目新增"）。</summary>
         public const float AwpChanceTier2 = 0.30f;
 

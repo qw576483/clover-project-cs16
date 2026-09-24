@@ -1,6 +1,4 @@
 // ============================================================================
-// 判据资产（切片BQ 2026-09-22 从 `.ai-tmp/test/` 迁入 `tools/probes/`，与 bo-reach.cs /
-// bot-hold-plant.cs 等同一约定：**判据资产必须留在盘上可复跑**，删了就没法重判同一件事）。
 //
 // 用法（必须在 client/ 目录下跑，且 Play 会话已起、地图已加载）：
 //   unity command run_script --file <abs>/tools/probes/bp-oracle.cs --entry BpOracle.Run
@@ -13,7 +11,7 @@
 //     ② `CsMap._groundRayMask`（层名 → 层号只在运行时解析，退化会让贴地射线命中角色自己）；
 //     ③ 列几何在**活的 PhysX** 里长什么样（Collider 只在 Play 存在；edit-mode 下 collidersTotal = 0）。
 //   它只**调用**产品的 `ICsMap.SampleGround` / `BotNavigator.GroundYAbove` / `BuildHeightReach`，
-//   ⛔ 不重新实现任何射线。
+//   不重新实现任何射线。
 //   只读：不改比赛状态、不写 state.txt、不注入输入。
 // ============================================================================
 // slice BP -- THE ORACLE. Runs INSIDE a live Play session and asks the PRODUCT ITSELF

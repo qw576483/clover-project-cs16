@@ -4,11 +4,9 @@ using UnityEngine;
 namespace Cs16.Module.View
 {
     /// <summary>
-    /// **本项目新增**的角色/武器视图层可调数值（对应 agent-07 的产出）。
     ///
     /// <para><b>为什么单独一个文件</b>：与 <c>CsConst</c> 同语义（"改一处即可调表现"的旋钮），
     /// 但它们是视图层独有的，而 <c>CsConst</c> 是**契约文件（不许改）** ——
-    /// 与 agent-04 的 <c>CsCombatTuning</c>、agent-03 的 <c>CsMatchConst</c> 同一处置方式。
     /// 目的同样是：**业务脚本里不出现裸数字**。</para>
     ///
     /// <para><b>名字表就是"素材契约"</b>：<c>Assets/Resources/Art/**</c> 与
@@ -18,7 +16,6 @@ namespace Cs16.Module.View
     /// <remarks>
     /// 这里刻意是 <c>public</c>（不是其它模块那种 <c>internal</c>）：<c>Assets/Editor/Views/**</c>
     /// 属于默认的 <c>Assembly-CSharp-Editor</c> 程序集，**看不到** <c>Cs16.asmdef</c> 里的 internal 成员，
-    /// 而资源命名规范必须被"运行期"和"生成器"共用一份（否则两边名字一旦漂移，就是"看不到模型 + 只有一行日志"）。
     /// </remarks>
     public static class CsViewTuning
     {
@@ -40,7 +37,6 @@ namespace Cs16.Module.View
 
         /// <summary>
         /// T 阵营可用的皮肤（CS 1.6 里每个玩家在队内随机一个皮肤，这里按 actorId 稳定分配）。
-        /// 第一个必须是 <see cref="PlayerModelName"/>（任务书要求 <c>Art/T/player</c> 一定存在）。
         /// </summary>
         public static readonly string[] SkinsT = { "player", "leet", "arctic", "guerilla" };
 
@@ -83,7 +79,6 @@ namespace Cs16.Module.View
         /// 原版用 <c>crouch_idle</c> / <c>crouchrun</c> 两条序列表达蹲姿 ——
         /// 实测 <c>crouch_idle</c> 身高 47.95u，与绑定姿态 70.39u 同比例换算得 1.226m，
         /// 而同源常量 <c>CsConst.CrouchHeight</c> = 1.25m（差 2%）。再叠一个"整体压扁"就是蹲两次，
-        /// 而且会把挂在骨骼上的命中区胶囊一起压歪。旧值（CrouchHeight/StandHeight）是
         /// "没有蹲动画"时期的替代品。
         /// </summary>
         public const float CrouchScale = 1f;
@@ -97,11 +92,10 @@ namespace Cs16.Module.View
         /// <summary>
         /// 位置平滑时间常数（秒）。0 = 不平滑（直接用 <c>CsActor.Position</c>，模拟已是权威）。
         ///
-        /// <para>⛔ <b>这个 0 写不出原版出处</b>（原版客户端确实做插值 ——
+        /// <para><b>这个 0 写不出原版出处</b>（原版客户端确实做插值 ——
         /// <c>HLSDK/cl_dll/view.cpp:719-785</c> 的 <c>ViewInterp</c> 环形缓冲，
         /// 但它的口径是"<c>Length(delta) &lt; 64</c> 才插值"的**位置回放**，不是指数平滑的 tau，
-        /// 换算不出一个可写进代码的 tau 值）。⇒ 按任务书的口径登记在
-        /// <c>策划/验收表.md</c> 的「允许的差异」里（含为什么 / 出处 / 何时消除），⛔ 不再留裸数字。</para>
+        /// <c>策划/验收表.md</c> 的「允许的差异」里（含为什么 / 出处 / 何时消除），不再留裸数字。</para>
         /// </summary>
         public const float PositionSmoothTau = 0f;
 
@@ -124,7 +118,6 @@ namespace Cs16.Module.View
         public const float NameplateBarWidth = 0.70f;
         public const float NameplateBarHeight = 0.075f;
 
-        /// <summary>是否给敌人也显示血条（任务书验收要求"打中敌人时血条下降"，故默认开）。</summary>
         public const bool ShowEnemyHealth = true;
 
         /// <summary>是否给敌人显示**名字**（CS 1.6 原版只显示队友名字，默认关）。</summary>
@@ -168,9 +161,9 @@ namespace Cs16.Module.View
         ///
         /// <para>⚙️ <b>其余分量仍为零</b>：<c>v_*</c> 模型是在"相机空间"里直接建模的
         /// （实测 idle 姿态包围盒 x∈[0.03,0.24] 偏右、y∈[−0.29,−0.06] 在准星下方、z∈[0.09,0.71] 向前），
-        /// GoldSrc 也把原点直接放在相机原点 ⇒ x/z 不加偏移。⛔ 不许自己编 x/z。</para>
+        /// GoldSrc 也把原点直接放在相机原点 ⇒ x/z 不加偏移。不许自己编 x/z。</para>
         ///
-        /// <para>✅ <b>原版那段 <c>viewsize</c> 补偿不用管（已核实为"不生效"）</b>：
+        /// <para><b>原版那段 <c>viewsize</c> 补偿不用管（已核实为"不生效"）</b>：
         /// <c>view.cpp:667-684</c> 只给 110→+1 / 100→+2 / 90→+1 / 80→+0.5 unit 四档做补偿，
         /// 而原版 <c>viewsize</c> 的**出厂默认值实测 = <c>120</c></b>
         /// （出处：<c>原版资源/cs16src/cs16game/app/hw.dll</c> 偏移 <c>0x177684</c> 的 cvar 字面量区，
@@ -193,8 +186,6 @@ namespace Cs16.Module.View
 
         // ==================================================================
         //  骨骼动画（原版序列驱动；**帧率/帧数/关键帧全部来自 mdl 实测**，见
-        //  `原版资源/cs16src/cs16_anim.py` 与 agent-12 的导出日志）
-        // ==================================================================
         /// <summary>骨骼层级挂载节点名（生成器在角色预制体的 <c>Body</c> 下 / 视模型根下建它）。</summary>
         public const string SkeletonNodeName = "Skeleton";
 
@@ -205,10 +196,9 @@ namespace Cs16.Module.View
         /// <summary>
         /// 判定"在移动"的最小水平速度（米/秒）。低于它 = 静止（放静止序列）。
         ///
-        /// <para>⛔ <b>这个 0.15 写不出原版出处</b>：原版按速度选动画档位的那套阈值在服务端
+        /// <para><b>这个 0.15 写不出原版出处</b>：原版按速度选动画档位的那套阈值在服务端
         /// <c>cstrike/dlls/mp.dll</c> 里（<c>HLSDK/cl_dll/</c> **没有** CS 的角色动画选择），
-        /// 本工程未反汇编出它的阈值 ⇒ 按任务书的口径登记在 <c>策划/验收表.md</c>
-        /// 的「允许的差异」里（含为什么 / 出处 / 何时消除），⛔ 不再留裸数字。</para>
+        /// 的「允许的差异」里（含为什么 / 出处 / 何时消除），不再留裸数字。</para>
         /// </summary>
         public const float AnimMoveSpeedEpsilon = 0.15f;
 

@@ -14,12 +14,11 @@ namespace Cs16.Module.Net
     ///
     /// <para><b>它在整条链里的位置</b>：主机侧（<see cref="CsLanHost"/> + <see cref="CsLanGateway"/>）
     /// 已经把「能被发现 → 能连上 → 能收到世界快照」做完了；但**"收到数据 ≠ 看得见人"** ——
-    /// 客户端此前根本没有消费那些快照的代码。本类就是那个消费者：连上主机的 TCP 网关、
     /// 握手、此后每收到一条 <c>CS16-LAN-SNAP/1</c> 就把它解析成一组
     /// <see cref="CsLanRemoteActor"/>（最新一帧挂在 <see cref="TryGetActors"/> 上），
     /// 由 <see cref="Cs16.Module.View.CsLanRemoteView"/> 画成场上的远端角色。</para>
     ///
-    /// <para><b>线格式（⛔ 不臆造；逐字同 <see cref="CsLanGateway"/>，两端必须同值）</b>：
+    /// <para><b>线格式（不臆造；逐字同 <see cref="CsLanGateway"/>，两端必须同值）</b>：
     /// 一律 UTF-8、**一行一条报文、以 <c>\n</c> 结束**，形如 <c>&lt;MAGIC&gt;|&lt;json&gt;</c>：
     /// <list type="bullet">
     /// <item>客户端 → 主机：<c>CS16-LAN-JOIN/1|{{"name":"…","proto":1}}</c></item>
@@ -27,24 +26,24 @@ namespace Cs16.Module.Net
     /// <item>主机 → 客户端（每 0.1 s）：<c>CS16-LAN-SNAP/1|{{…"actors":[{{…}}]}}</c></item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{…}}</c></item>
     /// </list>
-    /// 单行上限 <see cref="MaxLineBytes"/>（与主机同值 4096；超了算非法行、丢弃，⛔ 不按它分配内存）。
+    /// 单行上限 <see cref="MaxLineBytes"/>（与主机同值 4096；超了算非法行、丢弃，不按它分配内存）。
     /// 本片**不发** <c>CS16-LAN-INPUT/1</c>：把远端输入接到主机模拟是"能开局"的下一段（见类末声明）。</para>
     ///
-    /// <para><b>线程模型（⛔ 关键：主线程不碰 socket）</b>：
+    /// <para><b>线程模型（关键：主线程不碰 socket）</b>：
     /// <list type="number">
     /// <item><b>读线程（<see cref="_thread"/>，<c>IsBackground = true</c>）</b>：连接 → 发 JOIN →
     /// 逐字节收行 → 解析。它就是本类**唯一**碰 socket 的地方。</item>
     /// <item><b>主线程</b>：每帧调 <see cref="Pump"/> —— 只做两件事：发现"线程已死但状态还写着在跑"时纠偏留痕、
-    /// 以及（见 <see cref="IsRunning"/>）供视图层判断要不要画。⛔ 主线程**一次 socket 都不读**。</item>
+    /// 以及（见 <see cref="IsRunning"/>）供视图层判断要不要画。主线程**一次 socket 都不读**。</item>
     /// <item>为什么日志要绕一圈：读线程是后台线程，而 Unity 的 Console / 落盘 Logger 都该在主线程口径上写
     /// （与 <c>CsLanHost</c> 避开 <c>UnityEngine.Time</c> 同一类顾虑）⇒ 读线程把日志投给
     /// **引擎的后台→主线程派发器**（<c>Game.Dispatcher.Post</c>，由 <c>Game.Tick</c> 每帧 Flush），
-    /// ⛔ 不再自建第二套线程队列（改前是 <c>ConcurrentQueue</c> + <see cref="Pump"/> 里排空）。</item>
+    /// 不再自建第二套线程队列。</item>
     /// </list></para>
     ///
-    /// <para><b>⚠️ 本类到哪一步为止（登记在差异 #88，⛔ 别当它没发生）</b>：
-    /// ✅ 能连上 / 能握手 / 能持续消费快照 / 能把最新一帧交给视图层。
-    /// ⛔ **未做**：把客户端的输入（<c>CS16-LAN-INPUT/1</c>）发给主机、驱动主机侧模拟；
+    /// <para><b>本类到哪一步为止（登记在差异 #88，别当它没发生）</b>：
+    /// 能连上 / 能握手 / 能持续消费快照 / 能把最新一帧交给视图层。
+    /// **未做**：把客户端的输入（<c>CS16-LAN-INPUT/1</c>）发给主机、驱动主机侧模拟；
     /// 以及"远端角色的预测/插值"（本片快照直接落到位置上，见 <c>CsLanRemoteView</c>）。</para>
     /// </summary>
     public static class CsLanClient
@@ -89,21 +88,16 @@ namespace Cs16.Module.Net
         private static readonly object StreamLock = new object();
 
         /// <summary>"派发器不可用期间丢掉的日志条数"（见 <see cref="PostLog"/>）：主线程下一次
-        /// <see cref="Pump"/> 报出来 —— ⛔ 不静默丢日志。</summary>
+        /// <see cref="Pump"/> 报出来 —— 不静默丢日志。</summary>
         private static int _droppedLogs;
 
         // ---------------------------------------------------------------- 尽力而为路径的限频留痕
-        // [sink4-best-effort-begin] 片SINK4 限频留痕闸门（C3 控制流指纹以此为**登记边界**：
         //   `.ai-tmp/test/sink4-sink-net-catch-selfcheck.ps1` 会把本区间整段剔除后再比对 ⇒
-        //   ⛔ 本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
+        //   本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
 
         /// <summary>
-        /// 片SINK4：LAN 的「收尾 / 关 socket」都是**尽力而为**路径 —— 关不掉也继续，⛔ 不抛异常、
-        /// 不改返回值（抛出去会改变行为）；但**"继续"不等于"无痕"**：一处失败没有任何日志时，
-        /// 「客户端为什么忽然不收快照了」这类问题会变成没人认领的静默失效。
-        ///
         /// <para>每处失败最多每 <see cref="BestEffortLogIntervalMs"/> ms 报一条（读线程随时可能被
-        /// 同网段无关流量打，⛔ 不许每包 / 每帧刷屏）；判定走 <see cref="ShouldLogBestEffort"/>。</para>
+        /// 同网段无关流量打，不许每包 / 每帧刷屏）；判定走 <see cref="ShouldLogBestEffort"/>。</para>
         ///
         /// <para><b>为什么直呼 <c>Game.Logger.Warn</c> 而不走上面的 <see cref="PostLog"/> 桥</b>：
         /// 桥是给**常态**日志（握手 / 快照 / 断线）用的，它的价值是"按帧与主线程日志对齐"；
@@ -192,7 +186,7 @@ namespace Cs16.Module.Net
         /// <paramref name="error"/> 只覆盖**同步**就能发现的失败（地址不合法 / 线程起不来）。</para>
         ///
         /// <para>幂等：已在跑且连的是同一台主机 ⇒ 只记一条 Info 返回 true；连的是另一台 ⇒
-        /// 先 <see cref="Stop"/> 再重连（⛔ 不允许两个客户端并存，否则视图层会出现两套远端角色）。</para>
+        /// 先 <see cref="Stop"/> 再重连（不允许两个客户端并存，否则视图层会出现两套远端角色）。</para>
         /// </summary>
         public static bool Start(string hostEndpoint, string playerName, out string error)
         {
@@ -260,7 +254,7 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 停下（幂等）。关 socket 让读线程立刻从阻塞里出来，并**有界地**等它退出
-        /// （最多 <see cref="ThreadJoinMs"/> ms；⛔ 不无限 Join —— 本方法可能从主线程调用）。
+        /// （最多 <see cref="ThreadJoinMs"/> ms；不无限 Join —— 本方法可能从主线程调用）。
         /// </summary>
         public static void Stop()
         {
@@ -271,7 +265,7 @@ namespace Cs16.Module.Net
 
             lock (StreamLock)
             {
-                // 尽力而为：关不掉也继续（⛔ 不改语义 —— 不抛、不提前返回）。但"继续"不等于"无痕" ⇒ 限频留痕。
+                // 尽力而为：关不掉也继续（不改语义 —— 不抛、不提前返回）。但"继续"不等于"无痕" ⇒ 限频留痕。
                 try { if (_stream != null) _stream.Close(); }
                 catch (Exception ex)
                 {
@@ -296,7 +290,7 @@ namespace Cs16.Module.Net
 
             if (th != null && th.IsAlive)
             {
-                // 尽力而为：Join 失败（线程已退 / 被中断）就当它退了（⛔ 不改语义，后面照旧判 th.IsAlive）。
+                // 尽力而为：Join 失败（线程已退 / 被中断）就当它退了（不改语义，后面照旧判 th.IsAlive）。
                 try { th.Join(ThreadJoinMs); }
                 catch (Exception ex)
                 {
@@ -359,7 +353,7 @@ namespace Cs16.Module.Net
         /// <summary>
         /// 把**最新一帧**的远端角色**追加**进 <paramref name="into"/>。
         ///
-        /// <para>⚠️ <b>语义（调用方必须知道）</b>：本方法**不清空** <paramref name="into"/>，
+        /// <para><b>语义（调用方必须知道）</b>：本方法**不清空** <paramref name="into"/>，
         /// 只往里追加 —— 想"每帧拿到完整一帧"的调用方要自己先 <c>Clear()</c>
         /// （<c>CsLanRemoteView.SyncAll</c> 就是这么用的）。</para>
         ///
@@ -392,7 +386,7 @@ namespace Cs16.Module.Net
                 if (!ar.AsyncWaitHandle.WaitOne(ConnectTimeoutMs))
                 {
                     Fail("连接 " + _endpoint + " 超时（" + ConnectTimeoutMs + " ms）——主机没起？端口被占？");
-                    // 尽力而为：连接都没成，关掉它只是收尾（⛔ 语义不变 —— 下面仍然 return）。
+                    // 尽力而为：连接都没成，关掉它只是收尾（语义不变 —— 下面仍然 return）。
                     try { tcp.Close(); }
                     catch (Exception ex)
                     {
@@ -411,7 +405,7 @@ namespace Cs16.Module.Net
                 catch (Exception ex)
                 {
                     Fail("取网络流失败：" + ex.GetType().Name + ": " + ex.Message);
-                    // 尽力而为：同上，关掉它只是收尾（⛔ 语义不变 —— 下面仍然 return）。
+                    // 尽力而为：同上，关掉它只是收尾（语义不变 —— 下面仍然 return）。
                     try { tcp.Close(); }
                     catch (Exception closeEx)
                     {
@@ -428,7 +422,7 @@ namespace Cs16.Module.Net
                 _phase = "已连接，等 WELCOME";
                 PostLog(false, "已连上主机 " + _endpoint + "，发 " + CsLanGateway.JoinMagic);
 
-                // ---- 握手（发 JOIN）。⛔ 只在这里写 socket，且只写这一次 ----
+                // ---- 握手（发 JOIN）。只在这里写 socket，且只写这一次 ----
                 var join = CsLanGateway.JoinMagic + "|{\"name\":\"" + JsonEscape(_playerName) +
                            "\",\"proto\":" + CsLanGateway.ProtocolVersion + "}";
                 WriteLine(stream, join);
@@ -448,7 +442,7 @@ namespace Cs16.Module.Net
                     catch (IOException)
                     {
                         // 读超时是**正常路径**（ReadTimeout=250ms，回去看 _running）；但若是真断线，
-                        // 这个 catch 会一轮接一轮地来 ⇒ 限次退出，⛔ 不做无限空转的忙等。
+                        // 这个 catch 会一轮接一轮地来 ⇒ 限次退出，不做无限空转的忙等。
                         if (!_running) break;
                         if (++consecutiveIoErrors > MaxConsecutiveReadErrors)
                         {
@@ -474,7 +468,7 @@ namespace Cs16.Module.Net
                         line.Append(ch);
                         if (line.Length > MaxLineBytes)
                         {
-                            // 非预期分支：超长行 ⇒ 丢弃并计数（⛔ 不按它分配内存、不静默）
+                            // 非预期分支：超长行 ⇒ 丢弃并计数（不按它分配内存、不静默）
                             Interlocked.Increment(ref _malformed);
                             line.Length = 0;
                         }
@@ -495,7 +489,7 @@ namespace Cs16.Module.Net
             }
             catch (ObjectDisposedException ex)
             {
-                // Stop() 关掉了 socket：正常路径，⛔ 不报错（异常照旧被吞、照旧走 finally 收尾）。
+                // Stop() 关掉了 socket：正常路径，不报错（异常照旧被吞、照旧走 finally 收尾）。
                 // 但"正常"不等于"无痕" —— 限频留一条，否则"客户端忽然不再收快照"没人知道是本地 Stop() 收的尾。
                 if (ShouldLogBestEffort(ref _nextDisposedLogAt))
                 {
@@ -511,7 +505,7 @@ namespace Cs16.Module.Net
             {
                 lock (StreamLock)
                 {
-                    // 尽力而为：finally 里的收尾失败不影响任何后续动作（⛔ 语义不变：下面照旧置空 + 置 _running=false）。
+                    // 尽力而为：finally 里的收尾失败不影响任何后续动作（语义不变：下面照旧置空 + 置 _running=false）。
                     try { if (_stream != null) _stream.Close(); }
                     catch (Exception ex)
                     {
@@ -585,7 +579,7 @@ namespace Cs16.Module.Net
                 return;
             }
 
-            // 非预期分支：不认识的 magic ⇒ 计数 + 前几条留痕（⛔ 不静默）
+            // 非预期分支：不认识的 magic ⇒ 计数 + 前几条留痕（不静默）
             Interlocked.Increment(ref _malformed);
             if (Malformed <= 3)
             {
@@ -604,7 +598,7 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 解析一行快照 JSON 的 <c>actors[]</c>。
-        /// 走引擎自己的 <c>MiniJson</c>（<c>Runtime/Core/Json.cs</c>）—— ⛔ 不手写 JSON 解析器：
+        /// 走引擎自己的 <c>MiniJson</c>（<c>Runtime/Core/Json.cs</c>）—— 不手写 JSON 解析器：
         /// 手写的转义/数字/嵌套处理是"看起来能跑、边界一碰就错"的典型。
         /// </summary>
         private static bool TryParseSnapshot(string json, out CsLanRemoteActor[] frame)
@@ -696,7 +690,7 @@ namespace Cs16.Module.Net
             stream.Flush();
         }
 
-        /// <summary>拆 <c>host:port</c>（IPv4 字面量或主机名；⛔ 不支持 IPv6 字面量 —— 局域网寻服给的就是 IPv4）。</summary>
+        /// <summary>拆 <c>host:port</c>（IPv4 字面量或主机名；不支持 IPv6 字面量 —— 局域网寻服给的就是 IPv4）。</summary>
         private static bool TryParseEndpoint(string endpoint, out string host, out int port)
         {
             host = null;
@@ -736,15 +730,13 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 读线程打日志：**投给引擎的后台→主线程派发器**（<c>Game.Dispatcher.Post</c>，由 <c>Game.Tick</c>
-        /// 每帧 <c>Flush</c>），⛔ 不再自建第二套"线程 + 队列"（改前是
-        /// <c>ConcurrentQueue&lt;PendingLog&gt;</c> + <c>Pump()</c> 里排空）。
         ///
         /// <para><b>为什么必须绕一圈</b>：读线程是后台线程，而 Unity 的 Console / 落盘 Logger 都该在
         /// 主线程口径上写（与 <c>CsLanHost</c> 避开 <c>UnityEngine.Time</c> 同一类顾虑）——
         /// 这条通道引擎已经有了，业务再抄一遍只会多一处"什么时候排空 / 排空了没"的自管逻辑。</para>
         ///
         /// <para>派发器为 null（引擎未 Launch / 已 Shutdown）⇒ **没有主线程可投递**：丢弃并计数，
-        /// 由主线程下一次 <see cref="Pump"/> 报出来（⛔ 不静默丢日志）。</para>
+        /// 由主线程下一次 <see cref="Pump"/> 报出来（不静默丢日志）。</para>
         /// </summary>
         private static void PostLog(bool error, string message)
         {

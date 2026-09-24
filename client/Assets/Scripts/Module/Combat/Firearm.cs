@@ -77,7 +77,6 @@ namespace Cs16.Module.Combat
         /// 各弹丸打在墙上那一点的**材质名**（与 <see cref="ImpactPoints"/> 一一对应）。
         /// 来源：命中碰撞体所在物体的 <c>MeshRenderer.sharedMaterial.name</c>
         /// （= BSP 贴图组名，如 <c>csSandWallDJ1</c>）；阻挡盒没有 MeshRenderer ⇒ 退到节点名
-        /// （<c>Blocker_*</c>）。切片K（D8）用它做 <c>hit_wall</c> 的"按材质分流"
         /// （分类口径见 <c>CsAudioTuning.ClassifyImpact</c>）。
         /// </summary>
         public IReadOnlyList<string> ImpactMaterials => _impactMaterials;
@@ -134,7 +133,7 @@ namespace Cs16.Module.Combat
             if (spreadDegrees <= 0f) return dir;
             // 散布：**玩法**（真人这一发的命中判定）。走全项目唯一的 WeaponSpread 流
             // （与 CsMatch.ApplySpread / CsInventory.ApplySpread 同一套欧拉角扰动口径，
-            // 见三处注释）—— ⛔ 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
+            // 见三处注释）—— 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
             var rng = CsRng.Stream(CsRngStream.WeaponSpread);
             var rot = Quaternion.Euler(
                 rng.Range(-spreadDegrees, spreadDegrees),

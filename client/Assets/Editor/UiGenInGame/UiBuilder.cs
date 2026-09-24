@@ -39,7 +39,6 @@ namespace Cs16.EditorTools
         private static readonly string HudIconDir = "Assets/Resources/UI/Art";
         private static string HudIconPngPath(string resourcePath) => $"Assets/Resources/{resourcePath}.png";
 
-        /// <summary>要生成的 8 个游戏内面板（顺序 = 任务书 §4 的顺序）。</summary>
         private static readonly string[] PanelNames =
         {
             nameof(HudPanel),
@@ -89,7 +88,6 @@ namespace Cs16.EditorTools
 
                 // 血量 / 护甲图标（原版 640hud7.spr 的 cross / suit_full / suithelmet_full，
                 // hud.txt:121/135/137；见 CsHudTheme 的"HUD 图标"一节）—— 同样是"解出原版像素再复制进工程"。
-                // 雷达底图（本片新增）：`Resources/UI/Art/overview_de_dust2.png`。
                 // 它**不是**从原版 spr/bmp 解出的（那两份载体本机不在盘），而是由原版地图几何
                 // 离线俯视栅格化生成 —— 生成命令写在下面的 hint 里；导入设置仍必须是 Sprite，
                 // 否则运行期 `Game.Res.LoadAsset<Sprite>` 取不到、雷达只有点没有地图。

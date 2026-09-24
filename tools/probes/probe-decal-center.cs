@@ -10,7 +10,7 @@
 //
 // 做了什么：
 //   [A] 取主相机 + 反射取 CombatModule._fx → CombatEffects
-//   [B] 「指定视口点」射线 → 真实几何命中（全候选都落空就明确报 FAIL，⛔ 不凭空摆一个）
+//   [B] 「指定视口点」射线 → 真实几何命中（全候选都落空就明确报 FAIL，不凭空摆一个）
 //   [C] 命中点贴 1 张 + 沿"相机右向在面内的投影"偏移 ±0.30 m 各贴 1 张（共 3 张，排成一排好认）
 //   [D] 逐张回报屏幕坐标（WorldToScreenPoint）—— 供裁图定位
 //   [E] 不冻时间（冻结会让驱动的 shot= 失效；弹痕寿命 25 s）
@@ -64,11 +64,11 @@ System.Func<int> CountShots = () =>
 var before = CountShots();
 
 // ---------- [B] 扫面：在**前方锥内**选最近的可贴面 ----------
-// ⚠️ 三个坑都实测踩过：
+// 三个坑都实测踩过：
 //   ① 只用"视口中心一条射线"⇒ 打到 **36 m** 外的墙，7.5 cm 弹痕在屏幕上约 **1 像素**，截图不可判；
 //   ② 扫"全 360° yaw"取最近 ⇒ 最近面在 3.2 m（约 22 px，够判）**但在画面外**（屏坐标 x=−569）；
 //   ③ 只按"最近"选面 ⇒ 最近面落在 **y=968（画面下缘）**，正被**第一人称视图模型（手/枪）挡住**，截图还是不可判。
-//   ④ **⚠️ 上一版写反了判据**：上一版丢的是 `sp.y > 0.62*H`（=只保留**下部**）——
+//   ④ **上一版写反了判据**：上一版丢的是 `sp.y > 0.62*H`（=只保留**下部**）——
 //      而 Unity 的屏坐标 y **自底部起算**，0.62*1080=670 ⇒ 选中的 y=656 其实落在**屏幕中部偏上**，
 //      可第一人称枪身恰好压在中线 ⇒ 截出来的图**整片是枪**，弹痕被挡得干干净净（实测 `z-decal-closeup2.png`）。
 //   ⇒ 正解 = **不再依赖"前方锥"**（玩家朝向每次 Play 都不一样：实测同一驱动两次 fwd 分别是
@@ -122,12 +122,12 @@ sb.Append(" point=").Append(V3(best.point)).Append(" n=").Append(V3(best.normal)
   .Append(" 屏坐标=").Append(V0(cam.WorldToScreenPoint(best.point)));
 
 // ---------- [C] 三张：中心 1 张 + 沿相机右向在面内 ±0.30 m ----------
-// ⛔ CombatEffects 是 internal（`internal sealed class CombatEffects`）⇒ 不能写 typeof(CombatEffects)；
+// CombatEffects 是 internal（`internal sealed class CombatEffects`）⇒ 不能写 typeof(CombatEffects)；
 //    必须从**实例**上取类型再反射（与 probe-decal.cs 同一写法）。
 var bi = fx.GetType().GetMethod("BulletImpact",
     System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance);
 if (bi == null) return sb.Append("\nERROR: CombatEffects.BulletImpact 不存在").ToString();
-// 沿"相机右向在命中面内的投影"偏移，再**沿法线反打**把偏移点吸回面上（⛔ 不吸的话偏移点可能悬空）。
+// 沿"相机右向在命中面内的投影"偏移，再**沿法线反打**把偏移点吸回面上（不吸的话偏移点可能悬空）。
 var right = UnityEngine.Vector3.ProjectOnPlane(cam.transform.right, best.normal);
 if (right.sqrMagnitude < 0.0001f) right = cam.transform.right;
 right = right.normalized;

@@ -7,7 +7,6 @@ using UnityEngine.UI;
 namespace Cs16.UI
 {
     /// <summary>
-    /// 买枪菜单（规格 G3，任务书 §4.2）：<c>B</c> 键开，数字键切分类，点条目买枪。
     ///
     /// <para><b>武器数据一律来自 <see cref="CsWeapons"/></b>（<c>BuyableByClass(cls, team)</c> +
     /// <c>CsWeaponDef.Price/DisplayName</c>）—— 界面上没有任何硬编码的价格或武器名，
@@ -107,7 +106,6 @@ namespace Cs16.UI
                 CsHudTheme.MoneyCanBuy);
             CsHudTheme.PlaceTopRight(_moneyText.rectTransform, new Vector2(-28f, -18f), new Vector2(340f, 48f));
 
-            // 只能显示一条原因：不在买枪区 / 不在买枪时间都走这里（规格 §4.2 要求顶部红字）
             _warnText = CsHudTheme.CreateText("Warn", boxRt, string.Empty, 22, TextAnchor.MiddleLeft,
                 CsHudTheme.Danger);
             CsHudTheme.PlaceTopLeft(_warnText.rectTransform, new Vector2(28f, -64f), new Vector2(900f, 30f));

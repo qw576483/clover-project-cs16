@@ -3,24 +3,22 @@
 // 本局随机源的**唯一入口**：把业务里散落的裸 `UnityEngine.Random` 收敛到
 // 引擎的可复现随机器 <see cref="CloverEngine.Rng"/>（`clover-client-unity-engine/Runtime/Core/Rng.cs`）。
 //
-// 为什么必须收敛（根因，不是洁癖）：
 //   `UnityEngine.Random` 是**全局静态**状态。任何一个模块随手调一次，都会把别人的序列往后推一格
 //   ⇒ 同一局重放对不上、bug 现场无法复现（引擎 `Rng.cs:13-17` 明令禁用）。
 //
 // 为什么在 `Core/`（而不是某个 Module 里）：
 //   随机器是**跨模块通用底座**（玩法模拟 / bot AI / 弹道 / 表现 / 音效 / UI 自动选边都要），
-//   而 `UI/**` ⛔ 不许 `using Cs16.Module.*`（`conventions.md` 目录边界）⇒ 只能放契约层。
+//   而 `UI/**` 不许 `using Cs16.Module.*`（`conventions.md` 目录边界）⇒ 只能放契约层。
 //   引擎自己也是按同一条规则把 `Rng` 下沉到 `Runtime/Core/`（见 `Rng.cs:9-11`）。
 //   形态与本层既有设施一致（`CsHudSnapshot` 的静态状态、`ResPaths` 的字面量表）。
 //
-// 语义约束（改一条 = 可复现性漂移）：
 //   ① **一路一 salt**：每个用途（<see cref="CsRngStream"/>）派生一条**独立子序列**，
 //      互不干扰（"别人多抽一次"不会改变你这一路的值）；按 actor 的场合再用 `Derive(流, id)` 再分一路。
 //   ② 派生是纯函数：同一 (种子, 用途, salt) 恒定得同一子流（引擎 `Rng.Derive` 口径）。
 //   ③ **seed 一定留痕**：定种子 / 变种子都打 `Info`（含 seed 与来源），所以任何一局
 //      "从日志里的 seed 重放"都能复现 —— 这是引擎对"不可复现入口"的既有口径
 //      （`Rng.cs:47-54`：唯一允许的时钟入口是 `Rng.FromTime()`，且必须打日志）。
-//   ④ ⛔ **绝不静默退到时间种子**：未定种子时不是"悄悄用当前时间"，而是**显式定一次**
+//   ④ **绝不静默退到时间种子**：未定种子时不是"悄悄用当前时间"，而是**显式定一次**
 //      并打出「来源=首次使用（时间）」；离线驱动 / 自检要确定性就走 `InjectSeed`（注入优先）。
 //   ⑤ 非线程安全：主线程使用（与引擎 `Rng` 同约定）。
 // ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +34,7 @@ namespace Cs16.Core
     /// <para>命名口径 = 「谁在抽、抽来干什么」：同一份语义只允许一个流（例如全项目的"弹道散布"
     /// 共用一个 <see cref="WeaponSpread"/>，因为三处 <c>ApplySpread</c> 本来就是同一套口径）。</para>
     ///
-    /// <para>⛔ 新增取值只许**追加**，不许改已有取值的数字 —— 改了就等于换掉那一流的历史序列。</para>
+    /// <para>新增取值只许**追加**，不许改已有取值的数字 —— 改了就等于换掉那一流的历史序列。</para>
     /// </summary>
     public enum CsRngStream
     {
@@ -83,7 +81,7 @@ namespace Cs16.Core
 
         /// <summary>受击摇晃方向（`FirstPersonCamera` 交给引擎 rig 的 `AddShake`）。表现：与玩法无关，
         /// 但同样走本入口 —— 引擎禁用全局静态随机器（`Runtime/Core/Rng.cs:13`），
-        /// 原来这里用的是裸 `UnityEngine.Random`（会把别人的序列往后推）。⛔ 只许**追加**取值。</summary>
+        /// 只许**追加**取值。</summary>
         CameraShake = 14,
     }
 
@@ -169,7 +167,7 @@ namespace Cs16.Core
         /// <summary>
         /// 兜底（约束 ④）：**未定种子**时显式定一次 —— 走引擎唯一允许的时钟入口
         /// <see cref="Rng.FromTime"/>（它自带 `Info: FromTime seed=…`），我们再打一条说明来源。
-        /// ⛔ 不是"静默退回时间"：日志里既有 seed 也有"来源=首次使用（时间）"。
+        /// 不是"静默退回时间"：日志里既有 seed 也有"来源=首次使用（时间）"。
         /// </summary>
         private static void EnsureSettled()
         {

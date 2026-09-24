@@ -23,13 +23,11 @@ namespace Cs16.UI
     }
 
     /// <summary>
-    /// 记分板的**本地统计累加器**（规格 G11 / 任务书 §4.4）。
     ///
     /// <para><b>为什么需要它</b>：<see cref="CsHudSnapshot"/> 里**没有花名册**
     /// （没有"每个玩家一行：名字/阵营/击杀/死亡/存活/金钱"的结构），UI 又按分层铁律不许
     /// 引用 <c>Cs16.Module.Match</c> 去拿 <c>ICsMatch.Actors</c>。
     /// 因此这里用快照里**确实有的**唯一逐人数据 —— <see cref="CsHudSnapshot.KillFeed"/>
-    /// （agent-03 每帧重填的击杀历史，带击杀者/受害者名字与阵营）—— 逐帧增量累加，
     /// 得到与实际比赛一致的击杀/死亡数（与 agent-03 的 <c>CsActor.Kills/Deaths</c> 同源同口径）。</para>
     ///
     /// <para><b>能力的边界（不掩饰）</b>：</para>
@@ -40,7 +38,6 @@ namespace Cs16.UI
     /// </list>
     /// <para>
     /// 若主 agent 后续在 <see cref="CsHudSnapshot"/> 上加一份花名册（建议
-    /// <c>List&lt;CsScoreRow&gt; Scoreboard</c>，由 agent-03 每帧填），
     /// 只需把 <see cref="Build"/> 换成读它即可，面板本身不用改。
     /// </para>
     /// </summary>

@@ -124,7 +124,6 @@ namespace Cs16.Module.Match
         /// 回合开始后 <c>mp_buytime</c> = <b>15 s</b> 内（出处 <c>server.cfg:42</c>；出厂默认 90 s ·
         /// <c>mp.dll:0x11b9a8</c>）、且身处 <c>func_buyzone</c>（T/CT 各一块）、且活着，才能买；
         /// 15 s 用尽即不能买。冻结期 <c>mp_freezetime</c> = 4 s（<c>server.cfg:51</c>）只是这 15 s 的前 4 秒。
-        /// 所以"冻结结束 + 还在买枪区"仍然可以买（本项目旧实现是"冻结期全时段 + Live 全时段都能买"，
         /// 两者都不对：旧实现没有 15 s 上限）。</para>
         /// </summary>
         private void BeginBuyWindow()

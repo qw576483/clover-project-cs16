@@ -8,7 +8,6 @@ using UnityEngine.UI;
 namespace Cs16.UI
 {
     /// <summary>
-    /// 控制台（规格 H14，任务书 §4.8）：显示最近 N 行日志 + 输入命令。
     ///
     /// <para><b>开关键</b>：<c>GameKey</c> 枚举里**没有 BackQuote（`）**（这是契约缺口，主 agent 已知），
     /// 因此这里与 <see cref="HudPanel"/> 一致：<c>/</c>（<see cref="GameKey.Slash"/>）或
@@ -79,7 +78,6 @@ namespace Cs16.UI
 
             // 输入框的构造已收敛到引擎（通用件只做一份），这里直接调它，只把 HUD 的配色 / 字号档
             // （CsHudTheme.InputFieldStyle）传进去。
-            // ⛔ 旧注释"CsUiStyle.CreateInputField 当前编译不过"结论**不成立**：真实根因是 uGUI 的
             // InputField.placeholder 声明类型为 Graphic，必须 `as Text` 才能设字体 / 字号 / 文案（CS1061）；
             // 那条坑的说明与正确写法都在 UIFactory.CreateInputField 的注释里。
             _input = UIFactory.CreateInputField("Input", boxRt, new Vector2(0f, 0f), new Vector2(0f, 0f),

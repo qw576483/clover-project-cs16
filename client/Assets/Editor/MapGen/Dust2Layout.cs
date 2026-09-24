@@ -7,8 +7,7 @@ namespace Cs16.EditorTools
     /// de_dust2 的**布局数据**（纯数据，扩展/调整只改这里）。
     ///
     /// <para>
-    /// ★ 本项目的几何**不来自手写矩形表**，而来自 **CS 1.6 官方 de_dust2 的 BSP**（用户指示：
-    /// "资源就用 CS 1.6 的现成资源和地图，你只需要实现逻辑"）。原来 §3 那种"布局数据 → 批量生成 Box"
+    /// 本项目的几何**不来自手写矩形表**，而来自 **CS 1.6 官方 de_dust2 的 BSP**（用户指示：
     /// 只是兜底方案，本工程走的是保真路线：
     /// </para>
     /// <list type="bullet">
@@ -57,7 +56,7 @@ namespace Cs16.EditorTools
         public const string BlockerRoot = LevelRoot + "/Blockers";
         /// <summary>
         /// 标记点根对象（名字 = <see cref="CsMarkers"/> 里的字符串）。
-        /// <para>⚠️ <b>必须是**场景根对象**</b>（⛔ 不是 <c>Level</c> 的子物体）：引擎烘焙器按
+        /// <para><b>必须是**场景根对象**</b>（不是 <c>Level</c> 的子物体）：引擎烘焙器按
         /// <c>MapBakeOptions.MarkerRootName</c> 在**场景根对象列表**里按名字找它
         /// （<c>Editor/MapBake/MapBaker.cs:424-427</c> 的 <c>scene.GetRootGameObjects()</c>），
         /// 找到后把该根下每个子物体的"对象名 = 标记名、世界坐标 = 点位"写进 <c>.bytes</c> 的
@@ -69,12 +68,10 @@ namespace Cs16.EditorTools
         public const string LightingRoot = LevelRoot + "/Lighting";
 
         /// <summary>
-        /// 出生点标记的对象名前缀：引擎 <c>MapBaker</c> 按此前缀收集出生点写进 .bytes
         /// （与 <c>MapBakeOptions.SpawnMarkerPrefix</c> 的默认值一致，两边不许各写一个）。
         /// </summary>
         public const string SpawnMarkerPrefix = "Spawn";
 
-        /// <summary>标记名 + 验收最小点数（任务书 §5 的硬要求，探针按此断言）。</summary>
         public static readonly (string Marker, int MinCount)[] RequiredMarkers =
         {
             (CsMarkers.SpawnT, 5),

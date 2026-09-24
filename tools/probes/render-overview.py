@@ -96,7 +96,7 @@ HL_UNIT = 0.0254                                             # GoldSrc 1 unit = 
 # 出处：策划/对照表.md G-25 记录 `原版资源/.../cstrike/overviews/de_dust2.txt:5-7` 曾是
 # `ZOOM 1.50 / ORIGIN -223 1097 -192 / ROTATED 0`；该文件与 `overviews/de_dust2.bmp`
 # （787510 B = 1024x768x8bpp + 256 色调色板）在本机已不在盘（原版资源/清单.md）。
-# 这两条只作为"未来拿到载体后按原样复现"的入口参数，⛔ 不参与当前默认窗口的计算
+# 这两条只作为"未来拿到载体后按原样复现"的入口参数，不参与当前默认窗口的计算
 # （原因见 --report 的输出：它们与本机地图包围盒不自洽，硬套会把整图裁掉）。
 ORIG_ZOOM = 1.50
 ORIG_ORIGIN = (-223.0, 1097.0, -192.0)
@@ -179,7 +179,6 @@ def read_geo(path):
 
     # locate the marker section: the tail must parse exactly to EOF (see try_parse_markers).
     #
-    # NOTE (2026-09-21, cs16-sliceG): a blocker record is **24** bytes
     #   (u32 ix0, iz0, ix1, iz1 + f32 yMin, yMax -- Editor/MapGen/Dust2GeoData.cs:150-165).
     # The old code used a 20-byte stride; with the current on-disk file
     # (blockerCountField=656, size=712680 B, blockers at 695060) the marker table sits at

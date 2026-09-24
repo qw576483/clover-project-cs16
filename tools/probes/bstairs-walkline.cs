@@ -1,5 +1,4 @@
 // ============================================================================
-// 判据资产 · 切片BD：实机逐帧定位「B 旋转楼梯上不去」到底卡在哪一格、哪道闸门。
 //
 // 为什么是 C# 而不是 Python（与 tools/probes/bodyheight-walkline.cs 同一条理由）：
 //   被判的是**真代码 + 真物理** —— CsMap.CanStand / ResolveMove / TrySampleGround /
@@ -10,7 +9,6 @@
 //   取**运行时**标记表（CsMap.Points 的真源）里每条到 B 的路线的**最后一段**：
 //       Route_T_To_B  pts[-2] -> pts[-1]     （T 侧楼梯 底 -> 顶）
 //       Route_CT_To_B pts[-2] -> pts[-1]     （CT 侧楼梯 底 -> 顶）
-//   （同口径见 tools/probes/bot-path-check.py 的 stair_cases()；片BA 已离线断言"位图层面全通"）
 //   对每一侧出三张表：
 //     (A) 俯视占用图 —— 0.5m 网格上 map.WalkableAt 的 ASCII 图（看走廊形状，判"哪一格"）
 //     (B) 地面剖面   —— 沿 底->顶 直线每 0.25m：地面 y / 逐段高差 Δy / 地面法线 y /
@@ -19,7 +17,7 @@
 //                       报 cur/want/end/实际位移/四个闸门/是否被钳住；卡住时做**横向偏移扫描**
 //                       （贴左/贴右/斜着上），把"某条特定路线/某个角上不去"一并试掉。
 //
-// 四道闸门的口径与出处（⛔ 探针只**读**产品常量与产品公开入口，不抄任何公式）：
+// 四道闸门的口径与出处（探针只**读**产品常量与产品公开入口，不抄任何公式）：
 //   ① 中心格可走            = CsMap.WalkableAt(x,z)                     出处 CsMap.cs:516
 //   ② 落点地面高差 ≤ 0.45m  = CsConst.StepUpHeight                      出处 CsMap.cs:522 / CsConst.cs:113
 //   ③ 落点法线 y ≥ 0.70     = CsConst.MaxStandableSlopeNormalZ          出处 CsMap.cs:521 / CsConst.cs:135
@@ -137,7 +135,7 @@ public static class BStairsWalkline
     // ── 走廊路径（A*，契约与引擎 CloverEngine.AStar 逐条对齐）─────────────────────
     //  判据资产口径同 tools/probes/bot-path-check.py：8 邻接；直走 10 / 斜走 14；
     //  对角要求两侧正交格都可走；展开上限 20000；不可达 => None。
-    //  ⛔ 这里**独立复算**一遍（不是导航实现）——运行时那一半在 C# 引擎 AStar + BotNavigator。
+    //  这里**独立复算**一遍（不是导航实现）——运行时那一半在 C# 引擎 AStar + BotNavigator。
     //  格子口径：cell = 1.0 m、格心 = 标记点自身（标记点即格心，见 de_dust2.bytes 头部）。
     private const float PathCell = 1.0f;
     private const int PathMaxNodes = 20000;
@@ -344,7 +342,7 @@ public static class BStairsWalkline
         var anchor = 0;
         for (var i = 2; i < path.Count; i++)
         {
-            // ⛔ 这里只数拐点，不重新判 LOS（LOS 由 python 侧 bot-path-check 负责）——
+            // 这里只数拐点，不重新判 LOS（LOS 由 python 侧 bot-path-check 负责）——
             //    避免探针里再抄一遍 Bresenham。
             var straight = (path[i][0] - path[anchor][0]) == 0 || (path[i][1] - path[anchor][1]) == 0;
             if (straight) continue;

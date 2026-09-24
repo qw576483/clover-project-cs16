@@ -1,14 +1,14 @@
 // 判据资产（tools/probes/）：差异 #88「能开局」第②段的**实机侧**取证 —— Unity 客户端消费远端快照、
 // 把远端角色画出来。与 `tools/probes/lan-remote-view-check.py`（**独立进程**当主机）配对跑。
 //
-// 角色分工（⛔ 别搞反）：
+// 角色分工（别搞反）：
 //   · python 脚本 = **主机**（第二个进程、真 socket）：发 CS16-LAN-SNAP/1，坐标是它脚本化的；
 //   · 本探针跑在 **Play 里的 Unity 侧** = **客户端**：`CsLanClient.Start()` 连上去，
 //     `CsLanRemoteView` 把 actors[] 画成场上的人；本探针只**读运行时对象**并把值落盘。
 //   · "手上的值"（视图 transform / 存活 / Collider 数）出自本探针；"收到的值"出自 python 侧
 //     ⇒ 两侧由**不同进程各自独立**产生，最后由 python 逐字段比对（不靠任何一方的叙述）。
 //
-// 模式由落盘文件给定（`eval_file` 每次只跑一段、受 5s 主线程上限 ⇒ ⛔ 不许在本文件里 Sleep）：
+// 模式由落盘文件给定（`eval_file` 每次只跑一段、受 5s 主线程上限 ⇒ 不许在本文件里 Sleep）：
 //   .ai-tmp/test/lan-remote-mode.txt  内容 = whereami | start | observe | observe0 | cam [id] | camall | stop
 //   whereami  → 把本地玩家坐标 + **最开阔的水平方向**写进 .ai-tmp/test/lan-remote-place.txt
 //               （给 python 当"底座"：远端角色摆在开阔方向上、同一片可行走地面，而不是埋进墙里）
@@ -51,18 +51,18 @@ if (verb == "whereami")
     var lp = m != null ? m.LocalPlayer : null;
     if (lp == null) return sb.Append("\nERROR: 本地玩家为 null（这一局还没开局？先 New Game → Start）").ToString();
 
-    // ⛔ 为什么连朝向一起写：远端角色要摆在「本地玩家**正前方**的一片地上」——
+    // 为什么连朝向一起写：远端角色要摆在「本地玩家**正前方**的一片地上」——
     // ① 前方 = 一定在本机相机视野里（截图才拍得到它们）；② 前方 = 大概率和玩家踩的是同一片可行走地面
     //    （凭空给一个世界坐标很可能埋在墙里）。python 侧按 f（前）/ r（右）拼出绝对坐标。
     var yr = lp.Yaw * UnityEngine.Mathf.Deg2Rad;
     var fx = UnityEngine.Mathf.Sin(yr);
     var fz = UnityEngine.Mathf.Cos(yr);
 
-    // ---- 再选一个"最开阔的水平方向"（ax,az）：**远端角色按它摆**，⛔ 不按玩家朝向摆。
+    // ---- 再选一个"最开阔的水平方向"（ax,az）：**远端角色按它摆**，不按玩家朝向摆。
     // 实测教训（第 1 轮实拍）：CT 出生点朝向前方 ~2 m 就是一堵墙 ⇒ 按朝向摆会把三个人**放进墙里**，
     // 第一人称原视角拍出来只有墙（`lan_remote_actor.png` 第一版就是那样）。
-    // 口径：从玩家身边 1.5 m 外沿 8 个方向各打 12 m 射线（**只打 CsWorld 层**，⛔ 不打角色/bot，
-    // 否则"最开阔的方向"会被自己人挡住），取"最远的那条"当开阔方向。⛔ 不引入随机。
+    // 口径：从玩家身边 1.5 m 外沿 8 个方向各打 12 m 射线（**只打 CsWorld 层**，不打角色/bot，
+    // 否则"最开阔的方向"会被自己人挡住），取"最远的那条"当开阔方向。不引入随机。
     var worldMask = 1 << Cs16.Core.PhysicsLayers.World;
     var bestDir = new UnityEngine.Vector3(0f, 0f, 1f);
     var bestClear = -1f;
@@ -106,7 +106,7 @@ if (verb == "stop")
 {
     Cs16.Module.Net.CsLanClient.Stop();
     var cam0 = UnityEngine.GameObject.Find("LanRemoteProbeCam");
-    // （探针文件不在业务扫描范围里，这里用 Find 只为收掉自己架的那台相机；⛔ 业务代码不许这么写）
+    // （探针文件不在业务扫描范围里，这里用 Find 只为收掉自己架的那台相机；业务代码不许这么写）
     if (cam0 != null) UnityEngine.Object.Destroy(cam0);
     sb.Append("\n[stop] 已停：").Append(Cs16.Module.Net.CsLanClient.Describe());
     sb.Append("\n[stop] 下一帧 MatchModule.Update 的 SyncAll 应把远端视图收干净（再跑 observe0 看）");
@@ -114,11 +114,11 @@ if (verb == "stop")
 }
 
 // ------------------------------------------------------------------ 收集视图
-// ⚠️ 口径（照引擎源码定的，⛔ 不是猜）：`ObjectPool.Despawn` = `SetActive(false)` + 挂回 [ObjectPool] 根，
+// 口径（照引擎源码定的，不是猜）：`ObjectPool.Despawn` = `SetActive(false)` + 挂回 [ObjectPool] 根，
 //    **不销毁**（com.clover.unity-engine/Runtime/Presentation/ObjectPool.cs:164）。所以"远端角色收干净了没有"
 //    绝不能数"场上对象总数 == 0" —— 回收后的实例仍在内存里。正确口径 = **本系统自己的账**：
 //    `RemoteId >= 0` ⟺ 该视图还在 `CsLanRemoteView.Views` 字典里（`Dispose()` 会把它复位成 -1）。
-//    三组各自落盘（在场 / 非活跃 / 回池），原始数字全在，⛔ 不靠"看着收干净了"。
+//    三组各自落盘（在场 / 非活跃 / 回池），原始数字全在，不靠"看着收干净了"。
 var found = UnityEngine.Object.FindObjectsByType<Cs16.Module.View.CsLanRemoteView>(
     UnityEngine.FindObjectsInactive.Include);
 var live = new System.Collections.Generic.List<Cs16.Module.View.CsLanRemoteView>();    // 在场（RemoteId>=0）
@@ -169,11 +169,11 @@ if (verb == "cam")
     }
     if (pick == null) return sb.Append("\nERROR: 找不到 id=").Append(wantId).Append(" 的远端视图").ToString();
 
-    // ⚠️ 为什么"贴近拍"这条路被放弃（两次实拍都失败）：出生点往外是**带坡/台阶的地形**，
+    // 为什么"贴近拍"这条路被放弃（两次实拍都失败）：出生点往外是**带坡/台阶的地形**，
     //    把镜头挪到目标近旁（回退 2.8 m、只抬 1.55 m）会**扎进地面以下** ⇒ 拍出来整幅是地面
     //    （`lan_remote_actor_closeup.png` 前两版都是那样）。⇒ 改成**长焦**：站到 `camall` **已证可用**
     //    的那处视点（质心沿开阔方向回退 5.0 m、抬高 3.0 m），把 FOV 收窄、直接瞄那一具 ⇒
-    //    视点可靠 + 目标占满画面，两个目的同时满足。⛔ 不用任何"试探位置"。
+    //    视点可靠 + 目标占满画面，两个目的同时满足。不用任何"试探位置"。
     var c2 = UnityEngine.Vector3.zero;
     for (var i = 0; i < live.Count; i++) c2 += live[i].transform.position;
     c2 /= live.Count;
@@ -217,7 +217,7 @@ if (verb == "camall")
     c /= live.Count;
 
     // 回退方向 = 从玩家指向"三人质心"的那条线：远端角色就摆在玩家选出的开阔方向上
-    // ⇒ 沿这条线往回退，镜头必然在开阔一侧（⛔ 不是从墙里往外看）。
+    // ⇒ 沿这条线往回退，镜头必然在开阔一侧（不是从墙里往外看）。
     var mm2 = Cs16.Module.Match.MatchModule.Instance;
     var lp2 = mm2 != null && mm2.Match != null ? mm2.Match.LocalPlayer : null;
     var back = lp2 != null ? c - lp2.Position : new UnityEngine.Vector3(0f, 0f, -1f);
@@ -345,8 +345,7 @@ for (var i = 0; i < snap.Count; i++)
     if (a.Alive && !v.gameObject.activeSelf) okAlive = false;
 }
 
-// 死亡那一具：系统必须**仍然为它保留一具视图**（⛔ 不是被丢掉），且 alive 标记跟着快照走；
-// 至于"是否还渲染着"单列一行报出来（ActorView 的倒地留场策略属于既有实现，不拿它当本片的闸门）。
+// 死亡那一具：系统必须**仍然为它保留一具视图**（不是被丢掉），且 alive 标记跟着快照走；
 var okCorpseHeld = true;
 var corpses = 0;
 var corpseActive = 0;

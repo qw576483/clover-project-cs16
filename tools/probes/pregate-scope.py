@@ -79,10 +79,9 @@ FRAG_NAME = '\u8986\u76d6\u77e9\u9635\u5224\u5b9a.fragment.md'
 SB = os.path.join(TEST, 'pregate-scope-sandbox')            # ① 一次性产物只放 .ai-tmp/test/
 SB_SELF = os.path.join(TEST, 'pregate-scope-selftest-sbx')  # 非空性对照用（跑完即删）
 
-# 缺席关键词（与闸门侧 `bwzr-p3-selftest.py` 的 `ABSENCE` 同形；⛔ 两处要一起改）
+# 缺席关键词（与闸门侧 `bwzr-p3-selftest.py` 的 `ABSENCE` 同形；两处要一起改）
 ABS_KW = ('\u5168\u4ed3', '\u96f6\u8c03\u7528', '\u4e0d\u5b58\u5728', '=0 \u547d\u4e2d',
           '\u7f3a\u5e2d', '\u547d\u4e2d 0', '\u547d\u4e2d **0**')
-# ⛔ 分隔符必须是 `[|/]`（实测第 6 个缺陷）：生成器渲染 markdown 表时把 `|` 打成 `/`。
 SCOPE_RE = re.compile(
     r'\u8303\u56f4=\{ \u6839:\[[^\]]*\]\s*[|/]\s*'
     r'\u5f0f:\[[^\]]*\]\s*[|/]\s*'
@@ -103,7 +102,6 @@ def census(frag_path, tag):
         return None
     text = io.open(frag_path, encoding='utf-8', errors='replace').read()
     rows = text.split('\n')
-    # ⛔ **必须把"多行单元格的续行"归回它所属的那一行**（本片干跑实测的口径错）：
     #   判定行的证据列里有真的换行符（`\n` 落在字符串里）⇒ 朴素按行切会把一条续行当成"一行"
     #   ⇒ 报出一条 `(no-numeric-id)` 的**假缺口**（实测：它其实是 3336 那行的续行）。
     #   判据：`| <数字> |` 开头的 = 新行，其余非空行 = 上一行的续行。
@@ -119,7 +117,6 @@ def census(frag_path, tag):
     gap = [b for b in blocks if any(any(k in x for k in ABS_KW) for x in b)
            and not any(SCOPE_RE.search(x) for x in b)]
     ids = [re.match(r'^\|\s*(\d+)\s*\|', b[0]).group(1) for b in gap]
-    # ⚠️ 两个数**必须分开报**（本片自己踩过：把"含 `范围=` 子串"当成"canonical 形态"⇒ 得出假结论）：
     #   `范围=` 子串 = 盘上还有 **9** 处**早期形态**（`; ` 分隔、无 `排除:`）⇒ 闸门**不认**；
     #   canonical（`范围={ 根:[…]`）= 落地前 **0** ⇒ 这正好印证"正样本必须等 ③ 产出"。
     print('%s: bytes=%d rows=%d canonical=%d ("\u8303\u56f4=" substring=%d) absence=%d GAP=%d'
@@ -149,7 +146,7 @@ def run_gen(sb, tag):
     return p.returncode
 
 
-# ---- 非空性对照（⛔ 证明 absence>0 这条不是永不触发的空锁）-----------------------------
+# ---- 非空性对照（证明 absence>0 这条不是永不触发的空锁）-----------------------------
 _VACUOUS_FRAG = ('| id | judgement | evidence |\n|---|---|---|\n'
                  '| 1 | \u706b\u7130\u5b58\u5728 | client/Assets/x.cs:1 |\n')
 _DEFECT_FRAG = ('| id | judgement | evidence |\n|---|---|---|\n'

@@ -159,7 +159,6 @@ class Scanner(object):
     def __init__(self, root, plan_dir=''):
         self.root = os.path.abspath(root)
         # --plan-dir is the seam that makes this asset SAMPLABLE.  WHY IT EXISTS (measured
-        # 2026-09-23): verify.ps1 used to invoke this script with no arguments, so it always read
         # the REAL plan dir -- while the gate self-test's samples inject their ghost carrier into a
         # -PlanDir SANDBOX copy.  The samples therefore could not trip the item, and the item was
         # blind to the override (the sandbox injection vanished into a file nothing read).

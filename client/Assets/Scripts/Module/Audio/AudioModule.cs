@@ -57,7 +57,6 @@ namespace Cs16.Module.Audio
         // ---- 炸弹蜂鸣 ----
         private float _beepTimer;
 
-        /// <summary>切片K（D8）：当前 C4 蜂鸣是不是"加速档"（用于只在档位变化时打一条日志）。</summary>
         private bool _beepFast;
         private bool _wasPlanted;
 
@@ -100,7 +99,6 @@ namespace Cs16.Module.Audio
             _sfx.Prewarm(CsAudioTuning.RoundStart, CsAudioTuning.Step[0], CsAudioTuning.Land,
                 CsAudioTuning.HitFlesh, CsAudioTuning.Death[0], CsAudioTuning.BombBeep,
                 CsAudioTuning.BombPlant, CsAudioTuning.BombExplode, CsAudioTuning.WinT, CsAudioTuning.WinCT,
-                // 切片K（D8）：新增接线的 5 条一并预热（首播不再吃在加载里）
                 CsAudioTuning.BombBeepFast, CsAudioTuning.FlashExplode, CsAudioTuning.HitWall,
                 CsAudioTuning.Dryfire, CsAudioTuning.KnifeHit);
 
@@ -129,7 +127,6 @@ namespace Cs16.Module.Audio
             _match.OnMatchEnd += OnMatchEnd;
             _match.OnBombStateChanged += OnBombStateChanged;
 
-            // 回合开始没有门面事件 → 走事件总线（agent-03 发的 Events.RoundStarted）
             var bus = Game.Event;
             if (bus != null)
             {
@@ -233,8 +230,6 @@ namespace Cs16.Module.Audio
                     PlayFor(a, localId, CsAudioTuning.Jump, spatialFrom: pos);
                 }
 
-                // ---- 脚步：口径 = 原版 pm_shared.c 的 PM_UpdateStepSound（片FX-ALL 2026-09-23 逐行对账后重做）----
-                //   ⛔ 之前是**距离制**（累计水平位移 >= 0.62 m 且距上次 >= 0.16 s）——那**不是原版口径**。
                 //   原版是**时间制冷却**：PM_ReduceTimers 每帧先 `flTimeStepSound -= cmd.msec`，冷却归零后
                 //   PM_UpdateStepSound 才决定"再装多少毫秒"，装完即静默 ⇒ 同一冷却下跑得越快步幅越大。
                 //   照抄原版的五道顺序：
@@ -243,9 +238,8 @@ namespace Cs16.Module.Audio
                 //     ④ 速度 < StepMinSpeed（150 u/s，:519）⇒ 只把冷却装成 400 ms、不发声（:521）；
                 //     ⑤ 否则放音并装 300 ms（混凝土，:626），蹲行再 +100 ms（:632）。
                 //   速度取 `Length(pmove->velocity)`（三维模长，:517），**不是**水平分量。
-                //   ⛔ "慢走无声"在原版就是第 ④ 行给的：慢走 5.4 x 0.42 = 2.27 m/s、蹲行 1.84 m/s
+                //   "慢走无声"在原版就是第 ④ 行给的：慢走 5.4 x 0.42 = 2.27 m/s、蹲行 1.84 m/s
                 //   都低于 3.81 m/s。原版并没有另写一条"Shift 静音"规则 —— 这里保留 IsWalking 只是
-                //   冗余加固（万一将来配置漂移把慢走速度提上去，仍不出声）。
                 st.StepCooldownMs -= dt * 1000f;
                 if (st.StepCooldownMs < 0f) st.StepCooldownMs = 0f;   // 原版 :2406-2408 同此夹零
 
@@ -334,8 +328,7 @@ namespace Cs16.Module.Audio
                 if (now <= prev + 0.0001f) continue;      // 没开始换弹
                 if (string.IsNullOrEmpty(a.ActiveWeapon)) continue;
 
-                // 短名前缀真源 = CsAudioTuning.ClipRoot；⛔ 不在这里另写一份字面量（同款"前缀两处
-                // 维护"的漂移在设置键上已经吃过一次，见 Core/CsSettingsKeys.cs）。
+                // 短名前缀真源 = CsAudioTuning.ClipRoot；不在这里另写一份字面量（同款"前缀两处
                 var clip = CsAudioTuning.ClipRoot + a.ActiveWeapon + "_reload";
                 if (a.Id == localId) _sfx.Play(clip);
                 else PlaySpatialIfNear(new[] { clip }, a.Position);
@@ -370,7 +363,6 @@ namespace Cs16.Module.Audio
                 var hasArmor = victim.Armor > 0 || victim.HasHelmet;
                 _sfx.Play(hasArmor ? CsAudioTuning.HitKevlar : CsAudioTuning.HitFlesh);
             }
-            // 别人被打中的"命中标记音"由 agent-04 在射击者侧播放，这里**不重复**。
         }
 
         // ==================================================================
@@ -389,7 +381,6 @@ namespace Cs16.Module.Audio
         /// <summary>
         /// **双保险**：回合开始音的触发既订阅了事件总线，也在 <c>Update</c> 里盯
         /// <c>ICsMatch.RoundNumber</c> 的变化。原因：总线的参数签名（<c>On&lt;int&gt;</c>）
-        /// 一旦与 agent-03 实际发出的不一致，<c>On&lt;int&gt;</c> 的处理器就**静默不触发**
         /// —— 那种"声音没了但也不报错"最难查。这里用去重窗口保证两条路都通也只响一次。
         /// </summary>
         private void PlayRoundStart(string source)
@@ -467,7 +458,6 @@ namespace Cs16.Module.Audio
 
             var left = _match.BombTimeLeft;
 
-            // 切片K（D8）：加速档**换 clip**（原版快蜂鸣是另一条采样 ⇒ bomb_beep_fast.wav），
             // 不再是"同一个音只靠间隔区分"。分界值与 CsConst 的 BombBeepIntervalSlow/Fast 同一处口径
             // （见 CsAudioTuning.BombBeepFastBelow 的注释）。
             var fast = left <= CsAudioTuning.BombBeepFastBelow;
@@ -511,8 +501,6 @@ namespace Cs16.Module.Audio
                 return;
             }
 
-            // 设置键真源 = Core/CsSettingsKeys.cs（字符串与原先本模块持有的音量键字面量逐字同值
-            // ⇒ 老存档不受影响）。⛔ 这里不再走本模块自己的常量副本。
             var master = Mathf.Clamp01(setting.Get(CsSettingsKeys.VolumeMaster, 1f));
             var sfx = Mathf.Clamp01(setting.Get(CsSettingsKeys.VolumeSfx, 1f));
             var want = master * sfx;

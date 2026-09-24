@@ -11,7 +11,6 @@ namespace Cs16.Module.Bot
     /// 一个机器人的大脑：<c>Idle → Patrol → Engage → (Plant | Defuse | Camp)</c>。
     ///
     /// <para><b>职责边界（任务书 §2）</b>：本类**只决策**，产出 <see cref="CsBotIntent"/>；
-    /// 移动解算、射击射线、下包/拆包结算全部由比赛模拟（agent-03）执行 ——
     /// 所以这里不调 <c>ICsMatch.SwitchWeapon</c>（那只作用于本地玩家），换枪走 <c>intent.SwitchTo</c>。</para>
     ///
     /// <para><b>意图契约（以 <c>CsTypes.cs</c> 注释为准）</b>：</para>
@@ -48,7 +47,6 @@ namespace Cs16.Module.Bot
         private readonly long _id;
         private readonly Dictionary<string, int> _rateCounters = new Dictionary<string, int>(8);
 
-        // ---- 本 bot 的随机源（片 sink4-cs16-random；`Core/CsRng.cs` 的"一路一 salt"）----
         // 为什么按 actor id 再派生，而不是共用一路：同一难度下 N 个 bot 都在抽随机，
         // 共用一路时"第 3 个 bot 的瞄头掷"取决于前 2 个 bot 抽了几次 ⇒ 谁先出生 / 谁掉线
         // 都会改掉别人的行为；per-bot 子流后，每个 bot 的序列只由 (本局 seed, 用途, 自己的 id) 决定。
@@ -72,15 +70,13 @@ namespace Cs16.Module.Bot
         private int _planRound = -1;
 
         /// <summary>
-        /// 本机器人的**战术分工**（<see cref="CsBotRoles"/>；用户 2026-09-24 复查原话
-        /// 「机器人 ai 没有分工吗？感觉行为方式都是一样的」）。角色是 <c>(阵营, 队内序号 % 4)</c> 的**纯函数**，
         /// 每回合在 <see cref="MaybeResolveRound"/> 里重算一次（换边 / 换 id 都能跟上），
         /// 影响三处：守点时长倍率、偏好交战距离倍率、以及"守够了要不要换目标"。
         /// </summary>
         private CsBotRole _role = CsBotRole.Support;
 
         /// <summary>本机器人在**本方阵营内的序号**（0 起；<see cref="CsBotPlans.TeamLocalOrdinal"/>）。
-        /// ⛔ 不是全局 actor Id —— 全局 Id 会被"真人玩家在哪一队"整体位移（旧实现按全局取模，导致 CT 队撞槽位）。</summary>
+        /// 不是全局 actor Id —— 全局 Id 会被"真人玩家在哪一队"整体位移。</summary>
         private int _ordinal;
 
         /// <summary>本回合的计划槽位（<see cref="CsBotPlans.SlotOf"/>；决定路线与目标点，见 <see cref="CsBotPlans"/>）。
@@ -118,7 +114,6 @@ namespace Cs16.Module.Bot
         private float _campPickAt;
         private Vector3 _campSpot;
 
-        // ---- 包点守位表（切片BG：守卫在包点内**多点分布 + 定时换位**，而不是单点站桩）----
         /// <summary>本包点的守位表（数据源 = 该包点的地图标记点，全部经 <c>ICsMap.CanStand</c> 过滤）。</summary>
         private readonly List<Vector3> _holdSpots = new List<Vector3>(16);
         /// <summary>自己当前占的守位下标（<c>-1</c> = 还没选过）。</summary>
@@ -174,7 +169,7 @@ namespace Cs16.Module.Bot
         public string Name => _name;
         public string PlanRoute => _planRoute;
 
-        /// <summary>本回合的计划槽位（0..3；探针与日志用。⛔ 只读）。</summary>
+        /// <summary>本回合的计划槽位（0..3；探针与日志用。只读）。</summary>
         public int PlanSlot => _planSlot;
 
         /// <summary>本机器人在本方阵营内的序号（探针用来核对"角色 = <c>(阵营, 序号)</c>"这条纯函数口径）。</summary>
@@ -208,7 +203,6 @@ namespace Cs16.Module.Bot
             _map = map;
             _sense = sense;
             _id = actorId;
-            // 随机源（片 sink4-cs16-random）：本局 seed 由 CsMatch.Start → CsRng.BeginMatch 定，
             // 这里只按 (用途, 本 bot id) 派生 —— 纯函数，同 seed 同 id ⇒ 同序列，可重放。
             _rngAim = CsRng.Derive(CsRngStream.BotAimFlavor, _id);
             _rngDecision = CsRng.Derive(CsRngStream.BotDecision, _id);
@@ -227,7 +221,7 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 注册两层状态机（每个 bot 各一份实例）。
         ///
-        /// <para><b>状态与转换的出处</b>（缺口一律标注，⛔ 不许编）：</para>
+        /// <para><b>状态与转换的出处</b>（缺口一律标注，不许编）：</para>
         /// <list type="bullet">
         /// <item>骨架 = 规格 <c>策划/策划案/CS1.6单机参考规格.md:117-131</c>：「行为树（3 档共用、参数不同）：
         /// 巡逻 → 发现敌人 → 交战 → 目标死亡/丢失 → 回到巡逻 / 找目标（T 去炸弹点 / CT 去守卫点）」。</item>
@@ -269,11 +263,8 @@ namespace Cs16.Module.Bot
         {
             if (!self.IsAlive) return ForceTopState(CsBotFsmStates.Idle);
 
-            // ★ 片BU-R5：「掉落 C4 的拾取优先级」——**高于 Engage** 的一条分支（且只对**一个** bot 成立）。
             //
             // 依据（原版行为，不是本项目自创）：CS 1.6 里 T 会去捡掉在地上的 C4（bot 也会）——
-            //   "交战中无人捡包"是**缺陷**而不是设计。
-            // 片BU-R5 的实测病灶（L3）：round-1 持包者 ZBot 开打约 5s 被打死 ⇒
             //   `[Match] ZBot 携带的 C4 掉落在 (-36.34, 0.00, -29.20)（T 走过去可拾取）`，
             //   随后**整回合无人捡**（`拾起了` = 0 条）⇒ 回合时间到、CT 取胜、A5 恒 0。
             //   机制：捡包写在 `TryPlantOrPickup` 里，而它只在 `branch != Engage` 时才被走到（见 ThinkLive ④）；
@@ -281,9 +272,8 @@ namespace Cs16.Module.Bot
             //
             // 边界（三条同时成立才生效；准入量法见 IsElectedBombHunter）：
             //   ① 只在"场上**确实没有任何 T 持 C4** 且 C4 已掉落在地（`BombPosition` 有意义、且未被安放）"时成立；
-            //   ② 执行者 = **离 C4 最近的那一个 T**（并列取 Id 小者）—— ⛔ 不是全队都去捡，其余 T 照常交战；
+            //   ② 执行者 = **离 C4 最近的那一个 T**（并列取 Id 小者）—— 不是全队都去捡，其余 T 照常交战；
             //   ③ 一旦有人拾起（`AnyTCarriesBomb()` 为真）或包被安放，本分支立刻不成立 ⇒ 回到正常分支。
-            // ⛔ 掉落/拾取规则本身一字未改（`CsBomb.OnCarrierLost` / `TryPickupDropped` 不在本片改动范围）。
             if (IsElectedBombHunter(self)) return ForceTopState(CsBotFsmStates.Objective);
 
             if (_targetId != 0 && now - _lastSeenTime <= CsBotConst.TargetMemorySeconds &&
@@ -407,8 +397,7 @@ namespace Cs16.Module.Bot
 
             _planRound = _match.RoundNumber;
 
-            // ★ 片FIX-4 线B：角色按**队内序号**取（不是全局 Id）—— 全局 Id 会被"真人在哪一队"整体位移。
-            //   序号在这里算一次，ChoosePlan 直接复用（两处同一口径，⛔ 不各算一套）。
+            //   序号在这里算一次，ChoosePlan 直接复用（两处同一口径，不各算一套）。
             _ordinal = CsBotPlans.TeamLocalOrdinal(_match.Actors, self.Team, self.Id);
             _planSlot = -1;
             _role = CsBotRoles.For(self.Team, _ordinal);
@@ -472,10 +461,7 @@ namespace Cs16.Module.Bot
                 return;
             }
 
-            // ★ 片FIX-4 线B（用户第三次投诉「为什么每个机器人的操作，路线都是相同的…为什么没有分工？？？」
-            //   2026-09-24）：本轮计划改为**4 槽位计划表**（CsBotPlans），而不是旧的 `self.Id % 4` + 三分支 if。
             //
-            // 旧实现的病灶（用户本人日志 client/Logs/2026-09-24.log 实测 22 个"队-回合"）：
             //   ① T 队 idx==0 与 idx==1 走**同一条路、同一个目标点**；
             //   ② CT 队 `idx % 3` ⇒ 槽位 0 与槽位 3 撞在 Route_CT_To_A + 同一个点；
             //   ③ 每回合固定出现 1 对 bot 的「路线+目标点」完全一样（Spliff/Darrell 恒同、Gooseman/ZBot 恒同），
@@ -487,9 +473,8 @@ namespace Cs16.Module.Bot
             //   持包者恒落槽位 0 = 主攻包点路线（出处：策划/策划案/CS1.6单机参考规格.md:130「T 持包到 B 点 → 下包」）。
             var ordinal = CsBotPlans.TeamLocalOrdinal(_match.Actors, self.Team, self.Id);
             _ordinal = ordinal;
-            // ⛔ 平移量必须取**本回合缓存的那一份**（RoundCarrierOrdinal），不能每只 bot 各问一次
+            // 平移量必须取**本回合缓存的那一份**（RoundCarrierOrdinal），不能每只 bot 各问一次
             //   "现在谁持包"：实测持包者中途被打死会让后来的 bot 拿到 -1、先来的拿到 k ⇒ 槽位重合
-            //   （2026-09-24 11:31:09 实机审计抓到 `同队路线撞车：Minh(槽位3) 与 Gooseman(槽位3)`）。
             var carrierOrdinal = CsBotPlans.RoundCarrierOrdinal(
                 _match.Actors, _match, self.Team, _match.RoundNumber);          // CT ⇒ -1（该函数内已判）
             var plan = CsBotPlans.For(self.Team, CsBotPlans.SlotOf(ordinal, carrierOrdinal), _match.RoundNumber);
@@ -500,7 +485,6 @@ namespace Cs16.Module.Bot
             _planRoute = routeMarker;
             _nav.SetRoute(_map, routeMarker, self.Position);
 
-            // ★ 片BU-R（根因②）：包点目标点必须过**可达门禁**。
             //   旧行为 = `TryPickPoint(siteMarker)` 取**裸标记点**（只判"地图上有这个标记"），
             //   而实测（.ai-tmp/test/br-hold-plant-log.tsv）该点可能落在"位图说可走、但从出生点
             //   按抬腿 ≤ 0.45m 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
@@ -523,7 +507,7 @@ namespace Cs16.Module.Bot
             }
             else if (_nav.HasRoute)
             {
-                // 兜底：连可达终点都取不到 ⇒ 退回旧的"路线最后一点"（⛔ 不许比旧行为更差），并留下数字
+                // 兜底：连可达终点都取不到 ⇒ 退回旧的"路线最后一点"（不许比旧行为更差），并留下数字
                 _goalPos = _nav.RouteEnd;
                 _goalValid = true;
                 Game.Logger.Warn(Tag,
@@ -539,9 +523,7 @@ namespace Cs16.Module.Bot
 
             ArmGoal(self, now);
 
-            // ★ 片FIX-4 线B：这一行是用户"看得见分工"的**唯一载体**（8 只 bot 各一行，人眼可逐条核对
-            //   「谁走哪条路、去哪个点、担任什么角色、路的头一段是哪」）。⛔ 不许删字段：
-            //   tools/probes/bot-route-dup.py 与本片验收表的重复率判据都从这一行/同名字段抽数。
+            //   「谁走哪条路、去哪个点、担任什么角色、路的头一段是哪」）。不许删字段：
             Game.Logger.Info(Tag,
                 $"{self.Name}（{self.Team}/{_difficulty}/角色={RoleText()}）第 {_match.RoundNumber} 回合计划：" +
                 $"槽位={_planSlot}/队内序号={_ordinal}{(self.HasBomb ? "(持C4)" : "")} 路线={_planRoute ?? "无"}" +
@@ -551,7 +533,6 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// 按**槽位序号**取目标点（★ 片FIX-4 线B 新增；取代"取最靠近自己的那个点"）。
         ///
         /// <para><b>为什么要"按序号"而不是"取最近"</b>：一个包点标记里有 6~9 个点，两个槽位（T 槽位 0 与 1）
         /// 都去同一个包点 —— 若各自"取离自己最近的点"，两只 bot 从相邻出生点出发会**取到同一个点**
@@ -560,9 +541,9 @@ namespace Cs16.Module.Bot
         /// 于是"同队两个槽位必得不同目标点"是构造性的。</para>
         ///
         /// <para><b>确定性序列</b> = 该标记的全部点先过滤 <c>CanStand</c>（与移动解算同口径），再按 (x, z) 排序
-        /// —— 排序键与 <see cref="CsBotHoldSpots.Build"/> 完全一致（同一份口径，⛔ 不另写一套）。
+        /// —— 排序键与 <see cref="CsBotHoldSpots.Build"/> 完全一致（同一份口径，不另写一套）。
         /// 然后从第 <c>ordinal % count</c> 个起**向后找第一个走得到**的点（<see cref="BotNavigator.CanReach"/>）；
-        /// 一个都走不到时退化为旧的"最近的走得到的点"并打 Warn（⛔ 不许比旧行为更差）。</para>
+        /// 一个都走不到时退化为旧的"最近的走得到的点"并打 Warn（不许比旧行为更差）。</para>
         /// </summary>
         /// <returns>true = 目标点已落进 <paramref name="point"/>。</returns>
         private bool TryPickGoalPoint(CsActor self, string marker, int ordinal, out Vector3 point)
@@ -637,7 +618,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float ObjectiveHoldSeconds()
         {
-            // ★ 片BOT-ROLE（差异 #67）：再乘一层**角色倍率** —— 同一个难度档下，
             //   突破手（0.6×）到点就走、守点位（2.5×）赖着不走，这才是用户要的"分工"。
             //   难度倍率与角色倍率是**两层**：前者定"这局 bot 多勤快"，后者定"队里每个人干什么"。
             var roleScale = CsBotRoles.HoldScale(_role);
@@ -647,7 +627,7 @@ namespace Cs16.Module.Bot
 
         /// <summary>
         /// 偏好交战距离（米）= <c>CsBotProfile.PreferredRange × <see cref="CsBotRoles.RangeScale"/></c>。
-        /// ⛔ 唯一取值处：交战段（<c>Engage</c>）不许再直接读 <c>_profile.PreferredRange</c>，
+        /// 唯一取值处：交战段（<c>Engage</c>）不许再直接读 <c>_profile.PreferredRange</c>，
         /// 否则角色倍率只在一半的判定里生效（同一支枪在"推进"和"开火"上按两套距离走）。
         /// </summary>
         private float PreferredRange()
@@ -754,7 +734,6 @@ namespace Cs16.Module.Bot
             if (self.UseProgress >= 0f) return;
             if (_match.BombPlanted && self.Team == CsTeam.CT) return;
 
-            // ★ 片BU 防抖（根因修复之一）：两次"因卡住而换目标"至少隔 CsBotConst.StuckReplanCooldownSeconds。
             //   没有这道闸时：0.5s 一次判定 / 2 次即升级 ⇒ 最快 1.0s 就换一次目标，而每个新目标都在
             //   86m 外（实测 C4 push 行 d=86.68 恒定）⇒ 一次都没走完就换掉 ⇒ 目标反复横跳、净位移≈0。
             if (now < _nextStuckReplanAt)
@@ -828,7 +807,6 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// "换一条路线"候选（★ 片FIX-4 线B 重写）：沿**本队 4 个计划槽位**轮转，而不是旧实现的
         /// <c>(self.Id + _replanCount) % 3</c>。
         ///
         /// <para><b>旧行为的病灶</b>：只有 3 条路可选、且起点取 <c>(Id + replanCount) % 3</c> —— 4 只 bot
@@ -843,7 +821,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         private bool TryRouteObjective(CsActor self, string reason, float now)
         {
-            // ---- 互斥门禁（★ 2026-09-24 实机缺陷的修复；见 CsBotPlans.AliveSlotTable 的注释）----
             // 「路线家族」是同队的**共享资源**：计划表保证开局 4 只各占一格，轮转也必须遵守同一条互斥，
             // 否则一只卡住的 bot 会轮转进队友正走着的路 —— 实机证据（本工程审计自己打出来的）：
             //   11:39:30 [Warn] [Bot] 同队路线撞车：Cliffe(T/槽位3) 与 ZBot(T/槽位3) 都走 'Route_T_To_A'
@@ -873,7 +850,6 @@ namespace Cs16.Module.Bot
                     continue;
                 }
 
-                // ★ 片BU-R（根因①）：换路线时目标点也要过**可达门禁** —— 走不到的目标 = 等价于没有目标。
                 //   旧行为直接 `_nav.RouteEnd` / 裸包点标记点，实测这两者都可能是"可走但走不到"的格。
                 var goal = Vector3.zero;
                 var isSite = false;
@@ -902,10 +878,8 @@ namespace Cs16.Module.Bot
                 return true;
             }
 
-            // ---- 退一档：4 条家族都被**活着的**队友占着（全队都活着 = 常态）⇒ ⛔ 不抢队友的路，
+            // ---- 退一档：4 条家族都被**活着的**队友占着（全队都活着 = 常态）⇒ 不抢队友的路，
             //      留在自己的槽位、只把**目标点**换成同一条路线上另一个点（序号也要与队友互斥）。----
-            //      为什么不是"随便挑一条"：那样就回到用户投诉的"路线都是相同的"（旧实现 3 条路 + 4 只 bot
-            //      必然撞车）。宁可"同一路线的另一个点"，也不要"两个人的路一模一样"。
             var mySlot = from;
             var myPlan = CsBotPlans.For(self.Team, mySlot, _match.RoundNumber);
             if (!string.IsNullOrEmpty(myPlan.RouteMarker))
@@ -980,9 +954,6 @@ namespace Cs16.Module.Bot
         /// "去巡逻"候选：走 <see cref="CsMarkers.Patrol"/>，目标 = **走得到且离自己最近**的那个巡点
         /// （距离 ≥ <see cref="CsBotConst.MinPatrolDistance"/>）。
         ///
-        /// <para>★ 片BU-R（根因③）：旧行为取 `_nav.RouteEnd`（最近邻排序后的**最后一个** = 离自己最远的那个）
-        /// 或 `TryPickFarthestWalkable`（**最远**可走点）—— 两者都只判"可走"、不判"走得到"，
-        /// 实测该远端常年落在"位图可走但高度层到不了"的格上（日志 `终点不可走 to=(45, 15)` ×13）。</para>
         /// </summary>
         private bool TryPatrolObjective(CsActor self, string reason, float now)
         {
@@ -994,7 +965,6 @@ namespace Cs16.Module.Bot
                 return false;
             }
 
-            // ★ 2026-09-24（互斥门禁，与 TryRouteObjective 同一口径）：巡逻线是槽位 2 的**路线家族**。
             //   旧行为里"换目标"可以直接跳进巡逻线 —— 于是槽位 2 的主人（本来就该走巡逻）与这只 bot
             //   同时走 `Route_Patrol`，实机审计当场打出"同队路线撞车"（用户看到的就是这个）。
             //   活着的队友在走 ⇒ 不抢；死人的家族算空出来的（可以被接手）。
@@ -1014,7 +984,7 @@ namespace Cs16.Module.Bot
             _nav.SetRoute(_map, CsMarkers.Patrol, self.Position);
             if (!_nav.HasRoute) return false;
 
-            // 近的优先（⛔ 不再"专挑最远"）：门口那个走得到的巡点，比 80m 外走不到的那个有用。
+            // 近的优先（不再"专挑最远"）：门口那个走得到的巡点，比 80m 外走不到的那个有用。
             if (!TryPickReachable(self, pts, CsBotConst.MinPatrolDistance, false, out var goal))
             {
                 // 退化一层：去掉最小距离限制（回到旧口径）再问一次，并把"为什么退化"写进日志
@@ -1035,7 +1005,6 @@ namespace Cs16.Module.Bot
             return true;
         }
 
-        /// <summary>"回出生点"兜底候选（★ 片BU-R：同样过可达门禁 —— 出生点标记也可能被几何体压住）。</summary>
         private bool TrySpawnObjective(CsActor self, string reason, float now)
         {
             var marker = self.Team == CsTeam.T ? CsMarkers.SpawnT : CsMarkers.SpawnCT;
@@ -1068,25 +1037,21 @@ namespace Cs16.Module.Bot
                 $"守点时长={ObjectiveHoldSeconds():F1}s（第 {_replanCount} 次换目标）");
         }
 
-        // ⛔ 2026-09-24（片FIX-4 线B）**已删除** `RouteSlot(team, slot, out route, out site)`：
         //   它把 3 条路按 `slot` 0/1/2 映射（slot 2 = 中路、其余 = 两个包点），是"每队必有一对 bot 同路同点"
         //   的直接来源（T: 槽位 0 与 1 都落主攻路；CT 由 `idx % 3` 使槽位 0 与 3 同路）。
         //   现在路线/目标一律由 `CsBotPlans.For(team, slot, round)` 这张**4 槽位表**给（含巡逻线，4 条路互不相同），
-        //   换目标走 `TryRouteObjective` 的槽位轮转。⛔ 需要改路线选择时改 `CsBotPlans`，不要在这里复活三分支映射。
+        //   换目标走 `TryRouteObjective` 的槽位轮转。需要改路线选择时改 `CsBotPlans`，不要在这里复活三分支映射。
 
         /// <summary>
-        /// ★ 片BU-R 新增：从一组候选标记点里挑一个**真的走得到**的（近的优先；<paramref name="farthest"/> = true 时远的优先）。
         ///
         /// <para><b>为什么必须有这一层（本片根因①②③的统一修复）</b>：旧口径只有"可走"两档
         /// （<see cref="ICsMap.WalkableAt"/> / <see cref="ICsMap.CanStand"/>），而"可走"与"走得到"是两件事 ——
-        /// 片BR 的 L3 实测把它拆得很清楚：13 次 `[AStar] Find: 终点不可走 to=(45, 15)`（位图判可走、
-        /// 但高度一致性层从起点扩张不到）+ 18 次真·孤立分量 `无可达路径`。选目标时不问这一句，
         /// 就等于"挑了一个求不出路径的点去追"，而 <c>EnsurePath</c> 失败后只会退化成直线走 ⇒ 顶着墙卡死
         /// （Minh 全程 net 位移 0.00m、换目标 70 次全由 stuck-escalate 触发）。</para>
         ///
         /// <para><b>判据同源</b>：可达性只走 <see cref="BotNavigator.CanReach"/>（= 同一份
         /// <c>SnapToWalkable</c> + <c>WalkableCellHeightAware</c> + 引擎 <c>AStar.Find</c>），
-        /// ⛔ 不另写一套连通性算法（否则判据与被判对象会漂移）。</para>
+        /// 不另写一套连通性算法（否则判据与被判对象会漂移）。</para>
         ///
         /// <para><b>调用顺序省算力</b>：先按距离过滤（&lt; minDistance / 不比自己好）**再**问可达 ——
         /// 于是越问越近，每轮最多问到的点数是"当前最优被刷新"的次数，且 <c>CanReach</c> 的
@@ -1144,8 +1109,6 @@ namespace Cs16.Module.Bot
 
         /// <summary>取"离 <paramref name="from"/> 最远且可走"的一个标记点（<paramref name="minDistance"/> 以内的不要）。
         /// 为什么要可走：目标点本身在墙里 = 永远走不到 —— 旧行为会顶着墙把卡住日志刷到天荒地老。
-        /// <para>⚠️ 片BU-R 起**不再被选目标使用**（"可走"不够，见 <see cref="TryPickReachable"/>）；
-        /// 保留它是为了不删改历史行为的判据痕迹。</para>
         /// </summary>
         private bool TryPickFarthestWalkable(Vector3[] pts, Vector3 from, float minDistance, out Vector3 point)
         {
@@ -1200,7 +1163,6 @@ namespace Cs16.Module.Bot
             if (string.IsNullOrEmpty(_planRoute)) return;
 
             var remainingBefore = _nav.RemainingWaypoints;              // 先取值：SetRoute 会把 _index 归零
-            // ★ 片BU-R2（根因③）：这里**只能"原地重求路径"，不能"重排路线"**。
             //   本方法的注释已经写明要避免"把已经走顺的路线反复重排成'回头找最近路点'"，
             //   但旧代码调的是 `SetRoute` —— 它会按"离**当前位置**最近优先"重排整条路线并把 `_index` 归零，
             //   于是"最近的路点"（很可能是刚走过、在身后的那个）排到最前 ⇒ 机器人掉头。
@@ -1267,15 +1229,10 @@ namespace Cs16.Module.Bot
             // ④ 炸弹任务（下包 / 拆包 / 捡包）。**两条分支都要走这一步**：T 手里没包时"去捡掉落的 C4"
             //    属于炸弹任务而不是推进，只在 Objective 分支里调用会让捡包整条失效。
             //
-            // ★ 片BU-R4 根因修复：`CsBotIntent` 是 **struct**（值类型，见 CsTypes.cs），而这几个
-            //   返回 bool 的"炸弹任务"方法此前是**按值**收 intent ⇒ 它们写在 intent 上的
             //   `Move` / `State` / `Use` **全部落在副本上、返回即丢**。
-            //   后果（片BU-R4 实测 L3）：**T 持包者整个回合 Move 恒 0、State 恒 Idle**，站在出生点
             //   一动不动（Gooseman/Rikk 均 0.000m 整回合），却在副本上照常打印
             //   `[C4] 携带 C4 冲向包点` 与 `[BOTFLIP]`，并被导航判成"卡住 0.00m"→ 每 0.5s 换目标 11 次
             //   ⇒ **T 永远到不了包点 ⇒ 永远不下包（A5 恒 0）**。
-            //   修法 = 唯一正确的最小改动：把这几个方法改成 `ref CsBotIntent`（不是改 struct 语义 ——
-            //   结构体本身是刻意的：提交给模拟时按值拷贝、调用方改不了已提交的意图）。
             if (TryBombObjective(self, ref intent, now)) return intent;
 
             // ⑤ 推进 / 守点
@@ -1332,9 +1289,9 @@ namespace Cs16.Module.Bot
         /// 「**T 持包到 B 点 → 下包**」—— 进了包点还在交战 = 把"下包"这条回合目标丢掉了。
         /// 判定半径与 <c>TryPlantOrPickup</c> / <c>CsBomb.IsInBombsite</c> **同口径**
         /// （<c>CsBotConst.SiteRadius</c> = <c>Module/Map/ICsMap.cs:83</c> 的 <c>CsMarkers.BombsiteRadius = 7m</c>），
-        /// ⛔ 不新增第二个半径。</para>
+        /// 不新增第二个半径。</para>
         ///
-        /// <para>⚠️ 与 <see cref="ContinueUse"/> 的分工：那一条管"已经开始下包、别被抢走"，
+        /// <para>与 <see cref="ContinueUse"/> 的分工：那一条管"已经开始下包、别被抢走"，
         /// 这一条管"还没开始下包、站在包点里却还在打仗"。</para>
         /// </summary>
         private bool MustPlantFirst(CsActor self)
@@ -1377,12 +1334,11 @@ namespace Cs16.Module.Bot
                 d.y = 0f;
                 if (d.sqrMagnitude > 0.0004f && Vector3.Angle(forward, d) > halfFov) continue;
 
-                // ★ 视线用 BotSight（CS 1.6 语义：其它角色不挡视线）而不是直接问契约 —— 理由见该类的注释。
+                // 视线用 BotSight（CS 1.6 语义：其它角色不挡视线）而不是直接问契约 —— 理由见该类的注释。
                 var sight = BotSight.Check(_match, eye, targetEye, _profile.VisionRange,
                     out var sightBlocker, out _);
                 if (sight == BotSightResult.BlockedByActorOnly)
                 {
-                    // 只被"别人身上的受体"挡住 → 放行，并留证（这条日志就是"为什么以前一发不开"的证据）
                     LogSightActorBlock(sightBlocker, now);
                 }
                 else if (sight != BotSightResult.Clear)
@@ -1403,7 +1359,7 @@ namespace Cs16.Module.Bot
             {
                 // "重新首次看见"的判据 = **已经忘了这个目标**（距上次看见超过记忆时长）。
                 //
-                // ⛔ 不要用"换了目标就重置"，也不要掺进"本 tick 是否可见"：
+                // 不要用"换了目标就重置"，也不要掺进"本 tick 是否可见"：
                 //    ① 多人交火时 `best`（最佳可见目标）会在几个敌人之间来回切；
                 //    ② 机器人在视野边缘走动时可见性会**逐帧闪烁**（实测诊断行：`可见=True（距上次看见 0.00s）
                 //       反应=未过（0.00/0.32s）`）。
@@ -1478,18 +1434,15 @@ namespace Cs16.Module.Bot
             intent.Crouch = false;
             intent.Walk = false;
 
-            // ★ 片BU-R6：**持包 T 的"压上"方向 = 本轮包点，而不是敌人。**
             //
-            // 出处（⛔ 不是本项目自创）：规格 `策划/策划案/CS1.6单机参考规格.md` §2.4 的行为树
             //   第 130 行「**T 持包到 B 点 → 下包**」—— 下包是 T 持包者这一回合的**唯一**回合目标；
             //   规格三档表（第 119-121 行）里没有任何一档写了"持包者与敌人保持偏好距离对峙"。
-            // 病灶（片BU-R5 实测 L3）：round2 持包者 Rikk 在 `Engage` 里按 `PreferredRange × 1.5`
             //   （Normal = 16×1.5 = 24m）判"够近" ⇒ 不进压上分支 ⇒ 站在离敌人 23.6m 处
             //   **连续静止 21.3s / 21.4s**，整回合只把"到最近包点标记"从 87.1m 挪到 29.6m
             //   （同段日志 `状态 Plant → Engage 目标=actor 9 距离=39.7m`、`换弹失败：MP5 Navy 备弹为 0`、
             //   `交战中开火被抑制第 124/143/154/155 次`）。
-            // ⛔ 只改"压上方向"：瞄准 / 开火 / 难度参数一字不动（`ApplyAimAndFire` 已在上方跑完）；
-            //    ⛔ 也不新增第二个半径 —— 停步半径复用既有 `CsBotConst.PlantStopRadius`（与
+            // 只改"压上方向"：瞄准 / 开火 / 难度参数一字不动（`ApplyAimAndFire` 已在上方跑完）；
+            //    也不新增第二个半径 —— 停步半径复用既有 `CsBotConst.PlantStopRadius`（与
             //    `TryPlantOrPickup` 同值），"进包点判定区就下包"由 `CommitTacticalDecision.MustPlantFirst` 负责。
             var plantAim = Vector3.zero;
             var pressing = false;
@@ -1500,7 +1453,7 @@ namespace Cs16.Module.Bot
 
             if (pressing)
             {
-                // 持包：边走边打，朝本轮包点压上（⛔ 不因"距敌人够近"而置零）
+                // 持包：边走边打，朝本轮包点压上（不因"距敌人够近"而置零）
                 intent.Move = _nav.ComputeMove(self.Position, plantAim, CsBotConst.PlantStopRadius, now);
             }
             else if (dist > PreferredRange() * CsBotConst.AdvanceRangeFactor)
@@ -1512,14 +1465,11 @@ namespace Cs16.Module.Bot
             {
                 if (dist > PreferredRange() && _nav.RemainingWaypoints <= 0)
                 {
-                    // 任务书 §4.2：距离 > PreferredRange → 蹲下（提高精度）。
                     //
-                    // 这里额外要求"本轮的路线已经走完（= 已到守点/包点）"：因为比赛模拟内部的
                     // `CsMatch.UpdateBots` 只写了 `if (intent.Crouch) a.IsCrouching = true;` —— **没有反向赋值**，
                     // 所以蹲下之后 AI 无法让它站起来（除非下一回合复活时被 RespawnActor 清掉）。
                     // 让"推进中的 bot"蹲下 = 全队以 0.34 倍速度爬行（B7"会走"会明显退化）。
                     // → 只在"站定射击"时启用蹲；同时我想表达"不想蹲"时也会显式提交 Crouch=false，
-                    //   这样 agent-03 一旦把那一行改成 `a.IsCrouching = intent.Crouch;`，本逻辑无需再改。
                     intent.Crouch = true;
                 }
 
@@ -1652,7 +1602,6 @@ namespace Cs16.Module.Bot
             var target = _match.Find(_targetId);
             if (target != null && !target.IsAlive) target = null;
 
-            // 目标已不可见时，_lastSight 可能是"上一次看见"的旧值 → 就地补一次视线查询，把"为什么看不见"说清楚
             if (!_visibleNow && target != null)
             {
                 sight = BotSight.Check(_match, self.EyePosition, target.EyePosition, _profile.VisionRange,
@@ -1741,17 +1690,8 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 交战中的横向走位（"走位"）。
         ///
-        /// <para><b>★ 片BU-R6 根因修复</b>：本方法此前第一行是
-        /// <c>if (PredictSeconds() &lt;= 0.0001f) return Vector3.zero;   // 低难度：站定打</c> ——
-        /// 而 <c>PredictSeconds()</c> 的归一化下界 <c>CsBotConst.PredictSkillSpeedLo</c> 恰好等于
-        /// **Normal 档的 <c>AimSpeedDegrees = 300</c>**（<c>CsBotConst.cs:377</c> / <c>CsTypes.cs:185</c>）
-        /// ⇒ Normal 与 Easy 的 <c>InverseLerp</c> 结果恒为 0 ⇒ <c>Strafe</c> **恒返回零向量**。
-        /// 于是 <see cref="Engage"/> 在"够近"分支里 <c>intent.Move = canFire ? zero : Strafe(...)</c>
-        /// 对 Normal **无论开不开火都是零** ⇒ 交战中的机器人整段不动。
-        /// 片BU-R5 实测（L3）：round2 持包者 Rikk 在距敌人 23.6m 处 **连续静止 21.3s / 21.4s**。</para>
         ///
-        /// <para><b>出处（⛔ 不是本项目自创）</b>：规格 <c>策划/策划案/CS1.6单机参考规格.md</c>
-        /// §2.4 第 123 行「行为树（**3 档共用**，参数不同）」+ 第 127 行「交战（停/蹲 → 瞄准 → 射击 → **走位**）」
+        /// <para><b>出处（不是本项目自创）</b>：规格 <c>策划/策划案/CS1.6单机参考规格.md</c>
         /// —— "走位"是**三档共有的行为**，档位差别只在参数上。本方法里随档位变化的参数本来就有
         /// （<c>period = max(0.6, RepathInterval)</c>：Easy 1.6s / Normal 1.0s / Hard 0.5s ⇒ 换向节奏不同），
         /// 所以修法 = **去掉"低难度不产生走位"这个非参数性的门**，把三档交回同一个行为。</para>
@@ -1803,7 +1743,6 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 炸弹任务（T 下包/捡包；CT 拆包）。<b><paramref name="intent"/> 必须 <c>ref</c></b> ——
         /// <see cref="CsBotIntent"/> 是 struct（值类型），按值传时本方法写入的 Move/State/Use 会在返回时丢掉
-        /// （片BU-R4 实测：T 持包者整回合 0.00m 不动、永不下包）。见 <c>ThinkLive</c> ④ 的注释。
         /// </summary>
         private bool TryBombObjective(CsActor self, ref CsBotIntent intent, float now)
         {
@@ -1840,7 +1779,6 @@ namespace Cs16.Module.Bot
                 return true;
             }
 
-            // 冲包点（任务书 §4.2：已下包 → CT 全部冲向 BombPosition）。
             // 路上若看得见敌人，就"边走边盯边打"：不停下（停下就到不了包点），但不放弃警戒。
             SetState(CsBotState.Defuse, now);
             intent.State = CsBotState.Defuse;
@@ -1855,11 +1793,10 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// 片BU-R6：持包 T 的**下包目标点** —— "本轮计划包点里离自己最近的那个标记点"；
         /// 本轮计划不可用时退化为"全场离自己最近的包点标记"。
         ///
         /// <para>抽出来的唯一理由：<see cref="Engage"/> 的"持包压上"要用**同一份**取值
-        /// （⛔ 不是第二套口径）—— 它与 <see cref="TryPlantOrPickup"/> 下行处的 <c>aim</c> 是同一个算式，
+        /// （不是第二套口径）—— 它与 <see cref="TryPlantOrPickup"/> 下行处的 <c>aim</c> 是同一个算式，
         /// 那一边改成调用本方法，保证两边永远一致。</para>
         /// <returns>false = 地图未加载 / 没有可用的包点标记（调用方退回原行为）。</returns>
         /// </summary>
@@ -1882,9 +1819,8 @@ namespace Cs16.Module.Bot
 
             if (self.HasBomb)
             {
-                // ★ 切片BG · 下包决策：判据 = **离最近的包点标记**的水平距离 ≤ SiteRadius
                 //   （与 CsBomb.IsInBombsite 同口径，见 NearestBombsitePoint 注释）。
-                //   ⛔ 旧行为用"到本轮计划目标点"的距离 + 用 SiteRadius 当**停步半径** ⇒
+                //   旧行为用"到本轮计划目标点"的距离 + 用 SiteRadius 当**停步半径** ⇒
                 //      机器人正好停在判定球面上，CanPlant 的 IsInBombsite 随浮点误差真假 ⇒ 表现为"到了又走了"。
                 var near = NearestBombsitePoint(self.Position, out var zoneDist, out var zoneName);
 
@@ -1908,15 +1844,13 @@ namespace Cs16.Module.Bot
                 }
 
                 // 还没进包点：朝"本轮计划的包点"推进；计划不可用时退化为"离自己最近的包点"。
-                // 目标点 = 该包点里**离自己最近的那个标记点**；停步半径 = PlantStopRadius（⛔ 不是 SiteRadius）。
+                // 目标点 = 该包点里**离自己最近的那个标记点**；停步半径 = PlantStopRadius（不是 SiteRadius）。
                 if (!_goalValid)
                 {
                     RateWarn("plant.nogoal",
                         $"{_name} 拿着 C4 但没有可用包点标记（本轮计划无目标）→ 只能朝最近的包点标记走");
                 }
 
-                // ★ 片BU-R6：这里改为调用 `TryGetPlantAim`（同一算式，抽出去给"持包压上"复用）
-                //   ⇒ 两处永远一致。地图/标记不可用时退回 `near`（原行为）。
                 if (!TryGetPlantAim(self, out var aim)) aim = near;
 
                 SetState(CsBotState.Plant, now);
@@ -1936,10 +1870,8 @@ namespace Cs16.Module.Bot
 
             // 持包者阵亡 → 包掉在地上：**只派离 C4 最近的那一个 T** 去捡（其余人继续交战/推进，不许全队扑向同一个点）。
             //
-            // ★ 片BU-R5：旧写法是 `self.Id % BombHunterModulo == 0`（只有编号整除 4 的 T 走进来）。它有两个缺陷：
             //   ① 被选中的人**往往不是离 C4 最近的**（捡包要多走很多路，容易在途中被打死）；
             //   ② 叠加"交战中直接走 Engage"的路径（见 CommitTacticalDecision 的新分支）⇒ 最近的 T 若编号不整除，
-            //      整条捡包分支**一次都不进**，C4 躺到回合结束（片BU-R5 实测：`拾起了` = 0 条）。
             //   现在准入量法 = 选举（全场**唯一**一人为真），与 `CommitTacticalDecision` 用的是同一个判据。
             if (!IsElectedBombHunter(self)) return false;
             if (AnyTCarriesBomb()) return false;
@@ -1984,13 +1916,12 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// 片BU-R5：「掉落 C4 拾取分支」的**准入判据** —— 本 tick 是否轮到"这一个人"去捡掉落的 C4。
         ///
         /// <para>三条同时成立才为真：</para>
         /// <list type="number">
         /// <item>本人在世、本方为 T；</item>
         /// <item>场上**确实没有任何 T 持 C4**，且 C4 **掉在地上**：判据 = <c>BombPlanted == false</c>
-        /// 且 <c>BombPosition</c> 有意义。⚠️ 这里用的是**现有 API 的既有语义**、⛔ 不新增状态：
+        /// 且 <c>BombPosition</c> 有意义。这里用的是**现有 API 的既有语义**、不新增状态：
         /// <c>ICsMatch.BombPosition</c> 在未安放时返回 <c>CsBomb.LastKnownPosition</c>，而
         /// <c>CsBomb.OnCarrierLost</c> 正是把**掉落点**写进 LastKnownPosition（且 <c>CsBomb.Reset</c>
         /// 每回合把它清零，<c>sqrMagnitude &lt; 1</c> 即"本回合还没人拿过包"）；
@@ -2003,7 +1934,7 @@ namespace Cs16.Module.Bot
         /// 把本地人类选手算进选举，会出现"最近的是人类 ⇒ 全体 bot 都不去捡"——
         /// 那等于把这条分支再次变成"没人捡"。人类若自己捡起，<see cref="AnyTCarriesBomb"/> 立刻为真，bot 自动让位。</para>
         ///
-        /// <para>⛔ 本方法不改变"谁能不能捡包"：真正的拾取仍由模拟每帧的
+        /// <para>本方法不改变"谁能不能捡包"：真正的拾取仍由模拟每帧的
         /// <c>CsBomb.TryPickupDropped</c>（1.2m 内自动拾取）完成，本方法只决定"**谁**该往掉落点走"。</para>
         /// </summary>
         private bool IsElectedBombHunter(CsActor self)
@@ -2056,12 +1987,8 @@ namespace Cs16.Module.Bot
 
             var radius = _goalIsSite ? CsBotConst.SiteRadius : CsBotConst.DefaultObjectiveRadius;
 
-            // ★ 片BU-R（根因④）：CT 的包点守卫**不再被"必须站到目标点上"卡住**。
             //   旧行为：`Arrived(self, _goalPos, SiteRadius)` 不成立就永远走不到 `Camp`，
-            //   于是 `HoldRotate`（换位）整段代码**一次都执行不到** —— 片BR 实测 `hold slot swaps: none`，
-            //   而守位表其实建好了（Darrell/Scuzzy/Spliff 各 6/9/6 个守位）。根因就是"到达判定"与"守卫态"
             //   耦合在一起：目标点是包点里的**一个标记点**，站不到它 ≠ 没进包点。
-            //   修法：进包点的判据改成"**人在包点区域内**"（到该包点任一标记点 ≤ SiteRadius，与
             //   `CsBomb.IsInBombsite` 同口径）；"到了没有"只作用于**当前守位**（在 Camp 里按
             //   CampSpotArriveRadius 判，且不阻塞换位计时）。
             if (_goalIsSite && self.Team == CsTeam.CT && _holdSpots.Count >= 2 &&
@@ -2107,8 +2034,7 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            // ★ 切片BG · 包点守卫：**站住 + 定时换位**（守位表 ≥2 个时才走这条路）。
-            //   ⛔ 关键差别：这里**不会**走下面的 ③"守够时间就换目标" ——
+            //   关键差别：这里**不会**走下面的 ③"守够时间就换目标" ——
             //   守卫整回合留在自己这个包点，只是在包点内的 2~3 个守位之间轮换。
             //   （旧行为 = 守 ObjectiveHoldSeconds（2.5~4.8s）就换路线/去巡逻/回出生点 ⇒ 用户报的"原地踱步、警不去守点"。）
             if (HoldSiteActive(self))
@@ -2152,11 +2078,10 @@ namespace Cs16.Module.Bot
             }
 
             // ③' 角色 = **守点**（Anchor，CT 的 A/B 守位）：守点时长到点后**不换目标**，只把计时重新起算。
-            //     这一条直接对着用户 2026-09-24 的原话「警不去守点…一直在原地踱步」：旧行为里**所有** bot
             //     守够 2.5~4.8s 就 ReplanObjective（换路线 / 去巡逻 / 回出生点），CT 守卫也每几秒改一次
             //     目的地 ⇒ 观感就是"全队都在乱走、没人真的守点"。
-            //     ⛔ 这不是"站着不动"：本函数上面的守位表轮换（_holdSpots + _holdSwapAt）照常跑，
-            //        玩家看到的是"在包点里换位置盯人"；⛔ 也不影响卡住/包已下等其它换目标路径。
+            //     这不是"站着不动"：本函数上面的守位表轮换（_holdSpots + _holdSwapAt）照常跑，
+            //        玩家看到的是"在包点里换位置盯人"；也不影响卡住/包已下等其它换目标路径。
             if (_goalHoldUntil > 0f && now >= _goalHoldUntil && _goalIsSite && self.Team == CsTeam.CT &&
                 CsBotRoles.StaysOnObjective(_role))
             {
@@ -2237,8 +2162,6 @@ namespace Cs16.Module.Bot
         }
 
         // ==================================================================
-        //  包点守卫：站住 + 定时换位（切片BG）
-        // ==================================================================
         /// <summary>
         /// 自己**在不在某个包点区域内**（到该包点任一标记点 ≤ <see cref="CsBotConst.SiteRadius"/>），
         /// 并把命中的包点标记名带出来。
@@ -2246,8 +2169,6 @@ namespace Cs16.Module.Bot
         /// <para>口径与 <c>CsBomb.IsInBombsite</c>（<c>Module/Match/CsBomb.cs:478</c>）同一份：
         /// 到**任一**包点标记的水平距离 ≤ <c>CsMarkers.BombsiteRadius</c>（= 7m）。</para>
         ///
-        /// <para>★ 片BU-R（根因④）：这是"进守卫态"的判据 —— 旧行为要求**站到 <c>_goalPos</c> 那个标记点**，
-        /// 于是"人在包点里但没踩上那一个点"就永远进不了守卫态 ⇒ 换位逻辑形同不存在。</para>
         /// </summary>
         private bool InsideHoldSite(CsActor self, out string marker)
         {
@@ -2389,7 +2310,6 @@ namespace Cs16.Module.Bot
 
         private void SetState(CsBotState leaf, float now)
         {
-            // ★ 片BU：状态提交改走**两层状态机**（引擎 IFsm 语义）。分支选择权从"if 链的书写顺序"
             //   移到状态表 + 转换守卫上 —— 顶层定 Idle/Patrol/Engage/Objective，目标层定 Approach/Plant/Hold/Defuse。
             var next = RouteLeafState(leaf);
             if (_state == next) return;
@@ -2451,7 +2371,6 @@ namespace Cs16.Module.Bot
                     _fsm.Transition(CsBotFsmStates.Objective);
                     break;
                 default:
-                    // 非预期分支必须留痕（skill 写码清单 §3）：新加叶子状态却忘了映射时，日志能直接指出来
                     RateWarn("fsm.unmapped." + leaf,
                         $"{_name} 的状态 {leaf} 没有映射到状态机（CsBotBrain.RouteLeafState 漏了一支）→ 保持现状");
                     return _state;

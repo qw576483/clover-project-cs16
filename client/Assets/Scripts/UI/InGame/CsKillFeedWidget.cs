@@ -11,7 +11,6 @@ namespace Cs16.UI
     /// <see cref="CsConst.MaxKillFeedEntries"/> 条 <c>A [AK-47] B</c>，爆头带一个红点图标。
     ///
     /// <para>
-    /// 数据源是 <see cref="CsHudSnapshot.KillFeed"/>（agent-03 每帧重填，条目带
     /// <see cref="CsKillFeedItem.BornTime"/>）。本件**不自己记时间**（不订阅事件、不看 <c>Time.time</c> 与
     /// BornTime 的差）—— 因为 BornTime 用的是比赛模拟的时钟（<c>CsMatch.Clock</c>，默认 <c>Time.time</c>，
     /// 自动化测试里会被换成假时钟）。改成本地"第一次看到该条目的时刻"计时，
@@ -33,8 +32,7 @@ namespace Cs16.UI
         /// <para><b>为什么是 5.4</b>：原版 <c>hud_deathnotice_time</c> 默认 <b>6 秒</b>
         /// （出处 <c>原版资源/cs16src/cs16game/app/cstrike/cl_dlls/client.dll:0x0e77f8</c>）=
         /// "击杀条在屏幕上的总时长"。本件 = 停留 <see cref="HoldTime"/> + 淡出 <see cref="FadeTime"/>，
-        /// 所以取 <c>6 − 0.6 = 5.4</c>，总时长正好 6 s（与 <see cref="CsHudTheme.MessageLifetime"/> 同源）。
-        /// ⛔ 旧值 <c>4.5</c>（总 5.1 s）没有出处（对照表 U-36：差 −2 s 的口径按"系统消息行"记）。</para>
+        /// 所以取 <c>6 − 0.6 = 5.4</c>，总时长正好 6 s（与 <see cref="CsHudTheme.MessageLifetime"/> 同源）。</para>
         /// </summary>
         public const float HoldTime = 5.4f;
         /// <summary>淡出时长（秒）。</summary>

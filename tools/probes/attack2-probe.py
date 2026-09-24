@@ -40,7 +40,7 @@ S = os.path.join(ROOT, 'client', 'Assets', 'Scripts')
 DLL = os.path.join(ROOT, '\u539f\u7248\u8d44\u6e90', 'cs16src', 'cstrike', 'cl_dlls', 'client.dll')
 
 # ---- B) 登记的文件偏移（真源 = Core/CsWeapons.cs 的 MarkAttack2Capabilities 注释）----
-# 格式: (文件偏移, 期望串)。⛔ 串里的 / 是 ASCII，与 dll 里的 C 串一致（无结尾 NUL）。
+# 格式: (文件偏移, 期望串)。串里的 / 是 ASCII，与 dll 里的 C 串一致（无结尾 NUL）。
 DLL_STRINGS = [
     (0x0e3804, 'weapons/usp_silencer_off.wav'),
     (0x0e3824, 'weapons/usp_silencer_on.wav'),
@@ -113,7 +113,7 @@ def main():
     if not any(f.startswith('A3') for f in fails):
         notes.append('A3 CsActor 的 Silenced / BurstMode 状态位在盘')
 
-    # ⛔ Attack2 必须在 CsInputState 里（不能是别的 struct 里的同名字段）
+    # Attack2 必须在 CsInputState 里（不能是别的 struct 里的同名字段）
     ms = re.search(r'struct\s+CsInputState\s*\{(.*?)\n\s{4}\}', icm, re.S)
     if not ms:
         fails.append('A4 ICsMatch.cs 解析不到 `struct CsInputState`')
@@ -132,7 +132,7 @@ def main():
         notes.append('A5 CombatModule 用 GetKeyDown 填 Attack2（按下沿），未用 GetKey')
 
     # ---------------- A6 ----------------
-    # ⛔ 正则**不许**再吃一行：第一版写成 `...[^\n]*\n([^\n]*\n)?`，那个可选组正好把
+    # 正则**不许**再吃一行：第一版写成 `...[^\n]*\n([^\n]*\n)?`，那个可选组正好把
     #    `_preAttack2 = inp.Attack2;` 那一行吞掉，于是 A6 永远报"没紧跟"（判据自己写错的假红）。
     medge = re.search(r'if\s*\(\s*inp\.Attack2\s*&&\s*!\s*_preAttack2\s*\)[^\n]*\n', mt)
     if not medge:

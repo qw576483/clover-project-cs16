@@ -36,12 +36,9 @@ namespace Cs16.Module.Bot
     [DisallowMultipleComponent]
     public sealed class BotModule : MonoBehaviour
     {
-        /// <summary>日志 tag（模块名，见《步骤文档》§6）。</summary>
         public const string Tag = "Bot";
 
-        // 片AC（2026-09-21）：原 _verboseStats 开关只服务于 LogStats 里一条与上一行
         // Game.Logger.Info 完全重复的 Debug.Log（允许的差异 #8 ①）。冗余行与只服务于它的
-        // 字段一并移除 —— hard-rule 非注释命中 8→7；日志一律走 Game.Logger（skill §8）。
 
         private readonly Dictionary<long, CsBotBrain> _brains = new Dictionary<long, CsBotBrain>(16);
         private readonly List<long> _removeScratch = new List<long>(16);
@@ -61,12 +58,10 @@ namespace Cs16.Module.Bot
         private int _ambiguousAttribution;
         private int _prevRoundNumber;
 
-        // ---- 片FIX-4 线B：同队路线互斥审计（见 AuditRouteDistinctness）----
         private float _nextRouteAuditAt;
         private bool _routeAuditClear = true;
         private int _routeAuditCount;
 
-        // ★ 2026-09-24：被判据**排除**（集体目标：守 C4 / 回出生点）的同队同路对数 —— 排除必须看得见。
         private int _routeAuditOffPlan;
 
         /// <summary>最近一次审计里"同队两人走同一条路"的对数（0 = 互斥成立）。给探针只读用。</summary>
@@ -291,15 +286,13 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// **同队路线互斥审计**（★ 片FIX-4 线B 新增；用户投诉「每个机器人的路线都是相同的」）。
         ///
         /// <para>为什么要有它：<see cref="CsBotPlans"/> 用"模 4 循环平移"**构造性**保证同队 4 只 bot 的
         /// 槽位互不相同，但**运行期**仍有两种途径让两只 bot 撞到同一条路：① 回合中途加入的 bot
-        /// （它的槽位是按"当时的 actor 集合"算的，可能与先来的那只重合）；② 上一回合遗留的目标
         /// （换目标前的 <c>_planRoute</c>）。这两种都是**非预期分支** —— 按项目铁律必须留痕，
         /// 所以这里逐 tick 审计一次（8 只 bot ⇒ 28 对比较，可忽略），撞了就降频 Warn 并给出**是哪两只、哪条路**。</para>
         ///
-        /// <para>⛔ 只审计、不"纠正"：纠正会让"谁先 tick 谁赢"进入计划（不可复现）；互斥必须靠计划表的构造性质。</para>
+        /// <para>只审计、不"纠正"：纠正会让"谁先 tick 谁赢"进入计划（不可复现）；互斥必须靠计划表的构造性质。</para>
         /// </summary>
         private void AuditRouteDistinctness(float now)
         {
@@ -326,7 +319,6 @@ namespace Cs16.Module.Bot
                     var sb = _match.Find(b.ActorId);
                     if (sa == null || sb == null || sa.Team != sb.Team) continue;   // 跨队同路是正常的
 
-                    // ★ 2026-09-24：只数**活着**的两只。死人不再移动，与死人同名一条路不产生用户可见的
                     //   "行为相同"；反过来，死人让出的家族/目标序号应当可以被卡住的活人接手
                     //   （口径与 CsBotPlans.AliveSlotTable 一致，两处必须同步改）。
                     if (!sa.IsAlive || !sb.IsAlive) continue;
@@ -335,7 +327,7 @@ namespace Cs16.Module.Bot
                     {
                         // 「包已下 → 全队回 C4 守包」（_match.BombPlanted 后所有 T 都走守C4）与
                         // 「回出生点」（换目标全部失败时的兜底）是**集体**目标 —— 全队去同一个点是有意的，
-                        // 不属于"分工路线"判据。⛔ 但也不许静默放过：单独计数 + 打日志，让它看得见。
+                        // 不属于"分工路线"判据。但也不许静默放过：单独计数 + 打日志，让它看得见。
                         _routeAuditOffPlan++;
                         Game.Logger.Warn(Tag,
                             $"同队非分工路线共用（已排除在互斥判据外）：{sa.Name}({sa.Team}) 与 {sb.Name}({sb.Team}) " +
@@ -360,8 +352,8 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 这个路线标记是不是**计划表里的分工家族**（4 槽位表给出的路线 ∪ 巡逻线）。
         /// <para>用途：互斥判据只对"分工路线"成立；守 C4 / 回出生点这类集体兜底目标要排除，
-        /// 但会用 <see cref="RouteOffPlanPairs"/> 单独计数并打日志（⛔ 不静默放过）。</para>
-        /// <para>⛔ 表不在这里重写一份：直接问 <see cref="CsBotPlans.For"/>（回合取 0/1 两种奇偶，
+        /// 但会用 <see cref="RouteOffPlanPairs"/> 单独计数并打日志（不静默放过）。</para>
+        /// <para>表不在这里重写一份：直接问 <see cref="CsBotPlans.For"/>（回合取 0/1 两种奇偶，
         /// 因为 T 的主攻包点按回合奇偶轮换）。</para>
         /// </summary>
         private static bool IsPlanFamily(string routeMarker)
@@ -409,7 +401,7 @@ namespace Cs16.Module.Bot
                 var brain = new CsBotBrain(_match, _map, _watcher.Sense, a.Id, a.Name, a.Difficulty);
                 _brains[a.Id] = brain;
 
-                // ★ 验收证据：每个 bot 建 brain 时打印一次名字 / 阵营 / 难度 / 反应时间 / 瞄准误差
+                // 验收证据：每个 bot 建 brain 时打印一次名字 / 阵营 / 难度 / 反应时间 / 瞄准误差
                 Game.Logger.Info(Tag, $"新建 brain：{a.Name}（{a.Team}）难度={a.Difficulty} {brain.ProfileText()}");
             }
 

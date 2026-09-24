@@ -9,7 +9,6 @@ using UnityEngine;
 namespace Cs16.EditorTools
 {
     /// <summary>
-    /// 比赛核心模拟的自检探针（任务书 §5 要求）。
     ///
     /// <para>它做的事：造一个假地图 → <c>Start(cfg)</c> → 给 4v4 机器人每帧下发意图 → 用假时钟
     /// **快进 60 秒**模拟 → 断言：回合推进过 ≥1 次、发生过击杀、比分变化、无异常日志、数值自洽。</para>
@@ -297,8 +296,6 @@ namespace Cs16.EditorTools
             Physics.SyncTransforms();
         }
 
-        // ==================================================================
-        //  极简 bot 大脑（探针专用；真 AI 由 agent-05 提供）
         // ==================================================================
         private static void SubmitBrains(CsMatch match, float now)
         {

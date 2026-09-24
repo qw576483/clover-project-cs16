@@ -1,17 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ============================================================================
-#  判据资产 - 片BU-R2：**逐帧运动抖动**的离线定位脚本（只读产物，⛔ 不进 Play）
 #
 #  为什么需要它：
-#    片BU-R 修完"换目标风暴"后，残余根因只剩一条：每回合总路径 ~176m / 净位移 3~8m。
 #    已有脚本（analyze-bot-phys.py / analyze-bot-goal.py）只报汇总数字，**判不出抖动来自哪一层**。
 #    本脚本把两件产品自己写的 L3 产物按"每一帧在干什么"摊开，用数字回答三问：
 #      ① 人真的在动吗？（逐采样步长 / 静止窗口 / 最大步 = 是否发生了传送/重开）
 #      ② 动得"有方向"吗？（相邻步的夹角 >120° 的比例 = rev%）
 #      ③ 抖动来自哪一层？（rwp 游标 / goal 是否在翻 / state 是否在翻 / 探针 reason 分布）
 #
-#  输入（产品 L3 产物，⛔ 不读画面）：
+#  输入（产品 L3 产物，不读画面）：
 #    B 行  <项目根>/.ai-tmp/test/<probe>-bot-phys.tsv   （bot-phys.cs，order=201，每 15 帧一采样）
 #      列：0=B 1=frame 2=t 3=Name 4=Id 5=Team 6=state 7..9=pos 10..12=goal 13=hasGoal
 #          14=distXZ 15=goalDy 16=canStand 17=groundY 18=normalY 19=pos-ground 20=dirsMovable

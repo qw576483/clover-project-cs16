@@ -54,7 +54,7 @@ def sec_range(L):
 def main():
     os.makedirs(ST, exist_ok=True)
     prod = os.path.join(PLAN, '\u9a8c\u6536\u8868.md')
-    # ⛔ 两个片段不是同一份：覆盖矩阵片段给 section-ownership --check，差异片段给 diffs-align。
+    # 两个片段不是同一份：覆盖矩阵片段给 section-ownership --check，差异片段给 diffs-align。
     covfrag = os.path.join(PLAN, '\u8986\u76d6\u77e9\u9635\u5224\u5b9a.fragment.md')
     difffrag = os.path.join(PLAN, '\u5dee\u5f02\u767b\u8bb0.fragment.md')
     src = rm(prod)

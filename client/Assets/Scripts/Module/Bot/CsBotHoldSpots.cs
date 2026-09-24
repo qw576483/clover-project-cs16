@@ -7,10 +7,9 @@ using UnityEngine;
 namespace Cs16.Module.Bot
 {
     /// <summary>
-    /// 包点**守位表**（切片BG）：把"一个包点"整理成 2~3 个（或更多）可站的守位，
     /// 让守卫能在包点内**多点分布 + 定时换位**，而不是全队挤在同一个标记点上站桩。
     ///
-    /// <para><b>数据源（⛔ 不硬编码任何世界坐标）</b>：包点自己的地图标记点
+    /// <para><b>数据源（不硬编码任何世界坐标）</b>：包点自己的地图标记点
     /// （<c>CsMarkers.BombsiteA / BombsiteB</c>，运行时读 <c>Resources/MapData/de_dust2_markers.bytes</c>）。
     /// 这批点同时就是 <c>CsBomb.IsInBombsite</c>（<c>Module/Match/CsBomb.cs:478</c>）判定"在不在包点里"用的那一批 ——
     /// 所以**站在守位上 ⇒ 一定在包点判定区内**，两处口径同源、不会漂移。</para>

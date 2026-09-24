@@ -89,7 +89,7 @@ namespace Cs16.UI
         /// <summary>秒表图标缺失/加载失败已经报过一次（防刷屏）。</summary>
         private bool _warnedStopwatch;
 
-        // ─────────── 血量 / 护甲 位图图标（原版 640hud7 精灵；⛔ 不再用字形 ♥ / 🛡 / +）───────────
+        // ─────────── 血量 / 护甲 位图图标（原版 640hud7 精灵；不再用字形 ♥ / 🛡 / +）───────────
         /// <summary>血量图标 sprite（编辑器绑定 / 运行期兜底加载）。</summary>
         private Sprite _iconHealth;
         /// <summary>护甲图标 sprite（无头盔）。</summary>
@@ -127,8 +127,7 @@ namespace Cs16.UI
 
             // ---- 左下：血量 / 护甲 / 金钱（H1 / H2）----
             // 图标 = **原版位图精灵**（hud.txt:121/135/137，各 24×24），数字排在图标右边；
-            // 旧实现是字体字形（♥ / 🛡 / +），已按任务书换掉。出处与编码见 CsHudTheme 的"HUD 图标"一节。
-            // ⚠️ 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**，必须等 sprite 到手再开。
+            // 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**，必须等 sprite 到手再开。
             _healthIcon = CsHudTheme.CreateBlock("HealthIcon", hud,
                 Vector2.zero, Vector2.zero,
                 new Vector2(Margin, HealthY + 20f - CsHudTheme.HudIconSizePx * 0.5f),
@@ -192,7 +191,7 @@ namespace Cs16.UI
                 CsHudTheme.ScoreFontSize, TextAnchor.MiddleRight, CsHudTheme.TextHud);
 
             // 秒表图标（原版在计时左侧，见 CsHudTheme 的"秒表图标"一节）。
-            // ⚠️ 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**
+            // 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**
             // （Graphic.OnPopulateMesh 的实心分支），必须等 sprite 到手（生成器绑定 / Game.Res 加载）再开。
             _stopwatchIcon = CsHudTheme.CreateBlock("StopwatchIcon", hud,
                 new Vector2(1f, 1f), new Vector2(1f, 1f), Vector2.zero,
@@ -271,14 +270,11 @@ namespace Cs16.UI
         /// 并在缺失时补建竖分隔线。
         ///
         /// <para>出处与逐项实测值见 <see cref="CsHudTheme"/> 的"右上角比分 / 回合计时块"一节（对照表 V-01~V-03，
-        /// 量测口径见 <c>原版资源/解包产物/原版HUD布局.md</c> §0.4/§0.5，本片重跑复核的原始输出在 agent-11 回报里）；
         /// 本单位参考分辨率也是 1920×1080 ⇒ **直接写原版像素、不换算**。</para>
         ///
         /// <para><b>为什么单独抽出来、并在 <see cref="OnOpen"/> 里再调一次</b>：HudPanel 的运行期布局来自
         /// **序列化的预制体**（<c>Resources/UI/HudPanel.prefab</c>，由 <c>Assets/Editor/UiGenInGame/UiBuilder</c>
         /// 调 <see cref="BuildLayout"/> 生成；<c>CsPanelBase.Awake</c> 见预制体已有子节点就跳过 BuildLayout）。
-        /// 只改 BuildLayout 里的坐标/颜色，在**没重跑生成器**的工程里实机看到的仍是旧值（"代码改了但画面没变"
-        /// 就是这条机制）。这两处调用同一份定位：重跑生成器后两者给出同样的值（幂等、不冲突），
         /// 没重跑时实机也已经是本片对齐后的结果。</para>
         /// </summary>
         private void ApplyScoreBlock()
@@ -344,7 +340,6 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// 秒表图标节点不存在时补建（**未重跑生成器的预制体里没有这个节点** —— 它是本片新增的元素）。
         /// 父节点与 <see cref="BuildLayout"/> 里一致（<c>_hudRoot</c>）：它属于"比赛停了就整组隐藏"的那批。
         /// </summary>
         private void EnsureStopwatchIcon()
@@ -550,7 +545,6 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// <c>Map: &lt;地图名&gt;</c> 文本不存在时补建（**未重跑生成器的预制体里没有这个节点** —— 本片新增的元素）。
         /// 父节点与 <see cref="BuildLayout"/> 里一致（<c>_hudRoot</c>）：它属于"比赛停了就整组隐藏"的那批。
         /// </summary>
         private void EnsureMapText()
@@ -572,7 +566,6 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// 竖分隔线不存在时补建（**未重跑生成器的预制体里没有这个节点** —— 它是本片新增的元素）。
         /// 父节点与 <see cref="BuildLayout"/> 里一致（<c>_hudRoot</c>）：它属于"比赛停了就整组隐藏"的那批。
         /// </summary>
         private void EnsureScoreDivider()
@@ -603,7 +596,6 @@ namespace Cs16.UI
             WarnIfNull(_ammoText, "弹药文本");
             WarnIfNull(_flashOverlay, "闪光弹遮罩");
 
-            // 本片（agent-11）按原版 1920×1080 截图对齐的几件，在每次打开时重放一次：
             // 预制体里序列化的是"生成时的旧坐标/旧颜色"，只改 BuildLayout 的话实机看不到（见 ApplyScoreBlock 注释）。
             // 重跑生成器后 BuildLayout 与这里给出同一份值，幂等。
             ApplyScoreBlock();
@@ -869,22 +861,18 @@ namespace Cs16.UI
             }
         }
 
-        // ⛔ 切片N 下架：这里原有 ObserveLocalDamage / ShowDamageNumber 一对方法，把"本地掉血"
         //    渲染成屏幕上的 `-<数字>` 飘字（Game.UI.FloatText），时长取 CsConst.DamageNumberTime。
         //    它们**并非 A（CS 1.6）的行为** —— 原版 HUD 里没有"伤害数字"这一项（依据：`策划/对照表.md`
-        //    §4 把原版 HUD 元素逐条出处化（U-01~U-37，引到 `hud.txt:110~183`），其中只有 hitmarker
         //    （`hud.txt:179` 的 `d_headshot`）与击杀条，**没有伤害数字**；`策划/验收表.md` B 段我方 HUD
         //    项清单与 `client/资源欠缺清单.md` 的"A 有/我方缺"对账里同样没有它）。
-        //    ⚠️ 原版硬载体（`cstrike/sprites/hud.txt` / `原版资源/解包产物/`）本机不在盘
+        //    原版硬载体（`cstrike/sprites/hud.txt` / `原版资源/解包产物/`）本机不在盘
         //    （`原版资源/清单.md` 实测为空）⇒ 拿不到 hud.txt 原文级直证；故本条按「本项目新增、
-        //    与原版无关」登记在 `策划/差异登记.tsv`，并在此按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。
         //    受击的**方向**反馈仍在（屏幕边缘红框 = CsDamageIndicatorWidget，见下面 RefreshWidgets
         //    里 `_damage?.Refresh(...)` 那一行），其时长常量已改名 CsConst.DamageIndicatorTime。
         //    若要恢复，请先给出原版出处的 file:line（当前载体里没有）。
 
         private void UpdateRadarBounds()
         {
-            // ── 口径（片AS 改）：雷达的世界窗口 = **原版 overview 的窗口**，不再取引擎位图包围盒 ──
             // 底图换成原版 `overviews/de_dust2.bmp`（1024×768）后，"雷达覆盖哪块世界"这件事就由
             // **原版底图**决定，与引擎位图的包围盒无关：
             //     X ∈ 中心 ± 2048 单位、Z ∈ 中心 ± 2730.6667 单位
@@ -894,7 +882,7 @@ namespace Cs16.UI
             //     窗口中心 = 原版 ORIGIN 经地标配准到本工程坐标系（推导与不确定度见
             //      `CsHudTheme.RadarWindowCenter` 的注释）。
             // 常量在这里只做单位换算（GoldSrc 单位 → 米，和引擎地图/地形同口径）后下发给
-            // CsRadarWidget；⛔ 雷达件自己不读 Game.Map（窗口是常量，与地图加载与否无关）。
+            // CsRadarWidget；雷达件自己不读 Game.Map（窗口是常量，与地图加载与否无关）。
             if (_haveBounds) return;
 
             var c = CsHudTheme.RadarWindowCenter;

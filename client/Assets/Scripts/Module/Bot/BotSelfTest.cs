@@ -34,7 +34,6 @@ namespace Cs16.Module.Bot
         private const float MoveSampleInterval = 0.5f;
 
         /// <summary>
-        /// 离线自检的**固定随机种子**（片 sink4-cs16-random）。
         ///
         /// <para><b>为什么必须固定</b>：本自检的判据是"三档的命中率 / 击杀 / 位移 / 下包数"这类数字 ——
         /// 若每次跑都换一条随机序列，同一份代码两次跑出的数字就会抖动，判据本身不再可信
@@ -70,8 +69,6 @@ namespace Cs16.Module.Bot
             ReportThreeTiers(results);
         }
 
-        // ==================================================================
-        //  ② 战术分工表（差异 #67，用户 2026-09-24：「机器人 ai 没有分工吗？」）
         // ==================================================================
         /// <summary>
         /// 断言 <see cref="CsBotRoles"/> 这张纯函数表**真的分了工**，并把整张表打出来。
@@ -181,9 +178,6 @@ namespace Cs16.Module.Bot
         /// 断言 <see cref="CsBotPlans"/> 这张**4 槽位路线计划表**真的把同队 4 只 bot 岔开了，
         /// 并且**判据本身可失败**（同一次跑正控 + 负控）。
         ///
-        /// <para>为什么光有角色表不够：上一轮交付的是"角色名不同 + 守点秒数不同"（角色探针 PASS），
-        /// 而用户看到的仍是"每个机器人的操作、路线都是相同的" —— 角色差异**用户看不见**，
-        /// 路线的岔开才是看得见的那一半。</para>
         /// </summary>
         [MenuItem("Clover/自检/机器人 路线计划表（差异 #67 之路线）")]
         public static void RunRoutePlanTable()
@@ -685,7 +679,7 @@ namespace Cs16.Module.Bot
         {
             var go = new GameObject($"BotSelfTest_{actorId}_{suffix}");
             // 自检受击体是**临时物**：两层保护 —— ① 编辑器 Gizmos 叠层不画它（HideInHierarchy 只改叠加层，
-            // ⛔ 不动物理：射线/命中判定照旧）② 用完整例逐个 DestroyImmediate（RunTier 的 finally）。
+            // 不动物理：射线/命中判定照旧）② 用完整例逐个 DestroyImmediate（RunTier 的 finally）。
             go.hideFlags = HideFlags.HideInHierarchy;
             var col = go.AddComponent<SphereCollider>();
             col.radius = box == CsHitbox.Head ? CsConst.PlayerRadius : CsConst.PlayerRadius * 2f;

@@ -48,7 +48,6 @@ namespace Cs16.Core
         /// <summary>参数：int roundNumber</summary>
         public const string RoundStarted = "Game.RoundStarted";
         /// <summary>
-        /// 回合结束。**参数形态由 agent-03 定为两个参数**：`Emit&lt;CsRoundEndReason, CsTeam&gt;(Events.RoundEnded, reason, winner)`。
         /// （RoundEndPanel 必须按这个签名订阅；`CsRoundEndInfo` 在 Module.Match 里，UI 按分层铁律不许引用。）
         /// </summary>
         public const string RoundEnded = "Game.RoundEnded";

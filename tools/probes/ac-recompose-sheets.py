@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# 片AC：用 compose-contact-sheet.py 的**同参数**（cell 480x320 + title）重拼受影响的联络图，
 # 几何尺寸必须与重拼前一致（1920x722 / 1440x1068 / 1920x2106）。
 import importlib.util
 import os

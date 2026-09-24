@@ -8,7 +8,6 @@ namespace Cs16.Module.View
     ///
     /// <para><b>模型来源 = 降级链，必须留在台账里</b>：原版掉落物用 <c>models/w_*.mdl</c>，
     /// 而**本机全盘 <c>.mdl</c> 计数 = 0**（<c>原版资源/</c> 下没有 <c>models/</c>，差异 #75/#1415 已登记）
-    /// ⇒ 按 skill §3 降级链退到"复用第一人称视模型 <c>Art/{T,CT}/viewmodel_&lt;weapon&gt;.prefab</c>"
     /// （同一批 CS 1.6 原始资产转出的 prefab，**不是**占位色块 / 内置几何体）。
     /// ⇒ 这条降级**要写进差异 #75 的正文**，别当它没发生。</para>
     ///

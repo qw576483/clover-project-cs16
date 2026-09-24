@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """判据资产（**新增**）：位图可走格之间的**地面高差**审计 —— "斜坡/台阶/楼梯/扶手边走过去会不会卡住"。
 
-## 为什么需要它（缺口是有登记的，⛔ 不是我临时起意）
+## 为什么需要它（缺口是有登记的，不是我临时起意）
 `策划/验收表.md` 的 §G 行（`全图楼梯 / 坡道 / 台阶（同类漏检：#1 只报了 B 旋转楼梯）`）原文：
 > `geom-check.py` 的 A5 只覆盖"低矮障碍"，⇒ **全图所有楼梯/坡道/台阶没有任何 A→B 可走性判据**。
 
 A5 判的是「**位图判挡** + 顶面高差 ∈ (一步台阶, 跳跃可达]」= "矮墙/扶手跳不跳得过去"。
 它**看不见**另一半：两格**位图都说可走**，但走过去时地面**台阶式抬升**。
 
-## 运行时口径（判据从代码读，⛔ 不写死）
+## 运行时口径（判据从代码读，不写死）
 `client/Assets/Scripts/Module/Map/CsMap.cs`：
 * `CanStand(pos)` = `BitmapClear(pos, radius) && GroundWithinStep(pos)` **或** `BodyHeightClear(pos, radius)`（:290-300）
 * `GroundWithinStep(pos)`: `SampleGround(pos).y - pos.y <= StepUpHeight` —— **单边**：只挡"往上抬"，**往下掉不挡**（:324-328）
@@ -19,7 +19,7 @@ A5 判的是「**位图判挡** + 顶面高差 ∈ (一步台阶, 跳跃可达]�
 `TryStepUp` 的高度闸门再否一次）。**这就是用户报的"斜坡会概率卡住"的确定性那一半**；
 "概率"那一半来自半径 8 向采样 / 几何兜底谁先命中，由实机判据管。
 
-## ⛔ 踩过的口径坑（写在这里，别重复踩）
+## 踩过的口径坑（写在这里，别重复踩）
 第一版直接拿 `geom-check.up_face_by_cell()`（= 格内**最高**朝上面）当"地面高度"，
 结果全图报出 176 对 Δ≈**8.94 m** 的"隐形墙" —— 全是**屋顶**：cell(66,95) 的格内最高朝上面是
 房顶 5.69 m，而人在街上（-3.25 m）⇒ 拿"最高面"当"脚下面"必然自造假差异。
@@ -48,7 +48,7 @@ import importlib.util
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(os.path.dirname(HERE))
 
-# ---- 复用 geom-check.py 的读取层（同一个口径只有一份，⛔ 不另写一套解析）----
+# ---- 复用 geom-check.py 的读取层（同一个口径只有一份，不另写一套解析）----
 _spec = importlib.util.spec_from_file_location('geomcheck', os.path.join(HERE, 'geom-check.py'))
 GC = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(GC)

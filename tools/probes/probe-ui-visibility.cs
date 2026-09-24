@@ -1,14 +1,12 @@
 // 判据资产（tools/probes/）：把「16 个流程态下到底哪些 UI 面板/UI 根是可见的」做成**机械可复核**的原文。
 //
-// 为什么必须是运行时原文（片BV-R 第 3 件事）：
-//   用户原话「选阵营看地图时候，还有 ui 控件」只有两类可能：① 编辑器叠加层（片BV 已 A/B 证死），
 //   ② 真实 UI 节点残留（该隐藏的面板仍然 active）。判"②"的判据**只能**是运行时节点树的
 //   `activeInHierarchy` —— 截图看不出一张"半透明/无内容的空面板"，源码里 grep 到 `Close<T>()`
 //   也不等于运行时真的关掉了（引擎门面 `UIPanel.SetActive` 才是真源）。
 //   所以本探针逐态把**每个派生于 MonoBehaviour 的 Cs16.*Panel 类型**（含从未实例化的 ⇒ absent）
 //   与**每个画布的每个直接子节点**（= 玩家眼里的"UI 控件"根）记成 TSV 原文。
 //
-// 机械性（⛔ 不是手写清单）：
+// 机械性（不是手写清单）：
 //   * 面板类型 = 扫**所有已加载程序集**里 namespace 以 Cs16. 开头、非抽象、实现 MonoBehaviour、
 //     类型名以 "Panel" 结尾的类型 ⇒ 新增面板自动进入矩阵，不需要改本文件。
 //   * 实例 = `Resources.FindObjectsOfTypeAll(type)`（**含未激活**）；active 判据 = activeInHierarchy。
@@ -31,13 +29,12 @@ public static class Entry
 {
     private static readonly UTF8Encoding Utf8NoBom = new UTF8Encoding(false);
 
-    // Application.dataPath = <client>/Assets ⇒ 往上找到含 .ai-tmp 的项目根（⛔ 不写死"上一级"）
+    // Application.dataPath = <client>/Assets ⇒ 往上找到含 .ai-tmp 的项目根（不写死"上一级"）
     private static string FindProjectRoot()
     {
         // 只认"项目根"：**同时**含 `client/` 与 `.ai-tmp/` 的那一层。
         // 为什么不能只找第一个含 .ai-tmp 的祖先：本机实测 `client/.ai-tmp/` 里有一个游离的
         // 相对路径产物（别的切片写歪了）⇒ 只判 .ai-tmp 会把 spec 路径解析到 `client/.ai-tmp/`
-        // （片BV-R 第一轮实测：probe 回 "spec missing ui_state"，keys=0）。
         var d = new DirectoryInfo(Application.dataPath);
         for (var i = 0; i < 5 && d != null; i++, d = d.Parent)
         {

@@ -10,10 +10,7 @@ namespace Cs16.Module.Combat
     /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
     ///
     /// <para><b>2026-09-24 补（片 FX-MUZZLE，差异 #89）</b>：用户复查「枪口火焰没有效果」。
-    /// 根因**不是"没做"**（这条链一直在跑），是落点/尺寸两处口径错：
-    /// ① 落点旧值 `eye + dir*0.34 + right*0.13 + down*0.09` 把火焰放进**枪身内部**
     ///    （视模型动画后包围盒 z 到 0.705）⇒ 被近端枪身几何深度盖掉；
-    /// ② 尺寸旧值 `Vector3.one * 0.30f` 把"米"当**倍率**写，64 px/PPU=100 的贴片实际只有 0.192 m。
     /// 现在：落点走 <see cref="CsCombatTuning.MuzzleOffsetForward"/> 等三个**相机局部系**分量，
     /// 尺寸走 <see cref="SpriteScaleForMeters"/>，并按武器选贴图（B51/M249 → 十字形
     /// <see cref="ResPaths.FxMuzzleFlashCross"/>）。判据资产 = <c>tools/probes/probe-muzzleflash.cs</c>
@@ -25,7 +22,7 @@ namespace Cs16.Module.Combat
     /// ② **新增血迹**（<see cref="BloodImpact"/>）：子弹命中角色时"命中点出血雾 + 在后面的面上贴
     /// `{blood1..6` 血迹贴花"，载体与名表出处写在该方法自己的注释里。
     /// 两张新族都由 `tools/probes/wad3-extract.py` 从**已在盘**的 `decals.wad` 解出
-    /// （落盘台账：`.ai-tmp/test/fx-decal-variants.tsv`）⇒ ⛔ 不是程序化替身。</para>
+    /// （落盘台账：`.ai-tmp/test/fx-decal-variants.tsv`）⇒ 不是程序化替身。</para>
     ///
     /// <para><b>2026-09-20 修正（用户报"开枪有黄色球 / 墙上没有弹痕"）</b>：
     /// 上一版枪口火焰是 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
@@ -90,7 +87,7 @@ namespace Cs16.Module.Combat
         private readonly List<EffectItem> _items = new List<EffectItem>(128);
         private Transform _root;
 
-        // ---- 贴图（异步加载；缺资源时只 Warn 一次并退化成"点光 + 无贴片"，⛔ 绝不退回黄色球）----
+        // ---- 贴图（异步加载；缺资源时只 Warn 一次并退化成"点光 + 无贴片"，绝不退回黄色球）----
         private Sprite _sprFlash;
         /// <summary>枪口火焰**十字形**变体（原版 `sprites/muzzleflash3.spr` 帧 0）—— 差异 #89：B51/M249 用它。</summary>
         private Sprite _sprFlashCross;
@@ -157,7 +154,7 @@ namespace Cs16.Module.Combat
             res.LoadAsset<Sprite>(ResPaths.FxBulletHole, s => _sprHole = s);
             res.LoadAsset<Sprite>(ResPaths.FxSpark, s => _sprSpark = s);
 
-            // 弹痕五变体：按 ResPaths 的**字面量 key 表**逐个加载（⛔ 不拼串：拼出来的 key
+            // 弹痕五变体：按 ResPaths 的**字面量 key 表**逐个加载（不拼串：拼出来的 key
             // 在静态扫描里看不见 ⇒ 闸门 coverage-diff/D1 会把这些贴图判成"文件在盘上但无人读"）。
             for (var i = 0; i < ResPaths.FxBulletHoleKeys.Length; i++)
             {
@@ -173,7 +170,7 @@ namespace Cs16.Module.Combat
             }
         }
 
-        /// <summary>从一组贴图里**均匀随机**取一张非空的（原版是五变体随机；⛔ 不用"最旧的一张"之类的假随机）。</summary>
+        /// <summary>从一组贴图里**均匀随机**取一张非空的（原版是五变体随机；不用"最旧的一张"之类的假随机）。</summary>
         private static Sprite PickRandom(Sprite[] pool)
         {
             var have = 0;
@@ -234,9 +231,6 @@ namespace Cs16.Module.Combat
         /// 且换任何 PPU / 任何像素宽的贴图都不会再错（不必依赖"meta 里的 PPU 别写错"这种共识 ——
         /// 重导一次就静默回退）。</para>
         ///
-        /// <para>⛔ 本片只把两处**贴花**改走这里：枪口火焰 / 火星 / 血雾三处直接写
-        /// <c>Vector3.one * &lt;米&gt;</c>，同一因子仍在（它们也被缩小了），但那三样是**已验收**的
-        /// 成片观感，本片不动，只在差异 #69 的"尺寸映射"段登记。</para>
         /// </summary>
         /// <param name="s">贴片；null 时退回 <paramref name="meters"/>（调用方随后会把 renderer 关掉，不会显示）</param>
         /// <param name="meters">期望的世界宽度（米）</param>
@@ -257,7 +251,7 @@ namespace Cs16.Module.Combat
         /// 正对相机看就是一条线。表现上又是"没有弹痕"。
         /// 地板命中改用一个与法线不平行的参考上向（前向），四元数就良定义了。</para>
         ///
-        /// <para>⛔ 三处贴片（弹痕 / 火星 / 血迹）都必须走这里 —— 只修一处等于把同一个坑
+        /// <para>三处贴片（弹痕 / 火星 / 血迹）都必须走这里 —— 只修一处等于把同一个坑
         /// 挪到另外两处等着复发（本片就是这么又捞出来两处的）。</para>
         /// </summary>
         private static Vector3 SurfaceUp(Vector3 normal)
@@ -269,15 +263,12 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 枪口火焰：**一张原版亮斑贴片**（面向相机）+ 一盏点光。
         /// 点光是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
-        /// ⛔ 不许退回"一颗球"（用户报的就是它）。
+        /// 不许退回"一颗球"（用户报的就是它）。
         ///
-        /// <para><b>2026-09-24 修（差异 #89，用户报「枪口火焰没有效果」）</b>：</para>
         /// <list type="number">
         /// <item><b>落点</b>从"相机前方 0.34 m"改成 <see cref="CsCombatTuning.MuzzleOffsetForward"/>
-        /// （= 0.72 m）—— 旧值把火焰埋在**枪身内部**（视模型动画后包围盒 z 到 0.705），
         /// 被近端枪身几何在深度测试里盖掉。三个分量都在 <c>CsCombatTuning</c> 里逐条带推导。</item>
         /// <item><b>尺寸</b>改走 <see cref="SpriteScaleForMeters"/>：旧代码直接写
-        /// <c>Vector3.one * 0.30f</c>，而贴片 PPU=100、64 px 天生宽 0.64 世界单位 ⇒ 实际只画出
         /// 0.192 m（小 3.1 倍）。同族坑见 <see cref="CsCombatTuning.DecalSize"/>。</item>
         /// <item><b>逐武器贴图</b>：原版按武器选 <c>muzzleflash1..4</c>（B51/M249 是**十字形**，
         /// 对应载体 <c>muzzleflash3.spr</c>）。映射出自引擎 <c>hw.dll</c>（不在盘）⇒ 只有
@@ -287,7 +278,7 @@ namespace Cs16.Module.Combat
         /// </summary>
         /// <param name="eyePosition">视点（相机世界坐标）</param>
         /// <param name="viewRotation">相机世界旋转 —— 落点按**相机局部系**给（见 CsCombatTuning 的三个偏移），
-        /// ⛔ 不再用 world-up 叉乘算 right/up：那在俯仰接近 ±90° 时会退化。</param>
+        /// 不再用 world-up 叉乘算 right/up：那在俯仰接近 ±90° 时会退化。</param>
         /// <param name="weaponId">当前武器 id（决定用哪张原版贴图；未知/为空走默认那张）</param>
         public void MuzzleFlash(Vector3 eyePosition, Quaternion viewRotation, string weaponId)
         {
@@ -305,7 +296,7 @@ namespace Cs16.Module.Combat
             item.Sprite.sprite = sprite;
             item.Sprite.enabled = sprite != null;
             item.Billboard = true;
-            // ⛔ 必须按贴片自己的宽度反算倍率（见 SpriteScaleForMeters）：直接写米会小 1/PPU 倍。
+            // 必须按贴片自己的宽度反算倍率（见 SpriteScaleForMeters）：直接写米会小 1/PPU 倍。
             item.Tr.localScale = Vector3.one * SpriteScaleForMeters(sprite, CsCombatTuning.MuzzleFlashSize);
             if (sprite == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
 
@@ -328,10 +319,8 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 逐武器选枪口火焰贴图。原版按武器类别在**引擎**里选 <c>muzzleflash1..4</c>
         /// （四张载体在盘、但选择表在 `hw.dll`，不在盘）⇒ 只有一条映射有证据：
-        /// <b>B51 / M249 用十字形</b>（用户 2026-09-24 实机记忆 + 四张载体里**只有**
         /// <c>muzzleflash3.spr</c> 是十字/X 形，唯一匹配）。其余武器维持默认那张
-        /// （<see cref="ResPaths.FxMuzzleFlash"/> = <c>muzzleflash2.spr</c> 帧 0，旧版即如此）。
-        /// ⛔ 不许凭"哪张好看"给别的武器编映射 —— 缺口登记在 `策划/差异登记.tsv` #89。
+        /// 不许凭"哪张好看"给别的武器编映射 —— 缺口登记在 `策划/差异登记.tsv` #89。
         /// </summary>
         private Sprite PickMuzzleFlash(string weaponId)
         {
@@ -356,7 +345,7 @@ namespace Cs16.Module.Combat
                 decal.Tr.position = point + normal * 0.01f;
                 decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
                 // 尺寸 = 7.5 cm（口径见 CsCombatTuning）—— 必须按贴片自己的宽度反算倍率，
-                // ⛔ 不能直接写 `Vector3.one * DecalSize`：那等于把 7.5 cm 画成 1.2 cm（见 SpriteScaleForMeters）。
+                // 不能直接写 `Vector3.one * DecalSize`：那等于把 7.5 cm 画成 1.2 cm（见 SpriteScaleForMeters）。
                 var scale = SpriteScaleForMeters(sprite, CsCombatTuning.DecalSize);
                 decal.Tr.localScale = Vector3.one * scale;
                 decal.Sprite.sprite = sprite;
@@ -365,7 +354,6 @@ namespace Cs16.Module.Combat
 
                 // 可核对日志（字段是照着"看不见弹痕"的三个岔口设计的，见文件头）：
                 // 贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.128 ⇒ 尺寸口径坏了。
-                // 片FIX-4（2026-09-24，用户第 4 次报「弹痕还是没有」）：再补两个**可见性**字段 ——
                 // 「可见核心宽」= 整块 × 载体实测的核心占比（alpha≥160 只有 2~4 px / 256）——
                 // 并给出它在**当前这一发的实际距离**上的屏幕投影像素数。
                 // 判据 = 「可见核心投影 ≥ 6 px 且出现在画面内」，肉眼看不到时第一件事是核这一对数
@@ -414,7 +402,7 @@ namespace Cs16.Module.Combat
         /// </summary>
         /// <param name="point">命中点（世界坐标，来自射线）</param>
         /// <param name="direction">弹道方向（单位向量，从射手指向命中点）</param>
-        /// <param name="headshot">是否爆头（目前只影响日志口径；⛔ 不做"爆头喷更多血"这类无出处的放大）</param>
+        /// <param name="headshot">是否爆头（目前只影响日志口径；不做"爆头喷更多血"这类无出处的放大）</param>
         /// <returns>是否真的落了血迹贴花（供自检 / 日志用）</returns>
         public bool BloodImpact(Vector3 point, Vector3 direction, bool headshot)
         {
@@ -455,8 +443,7 @@ namespace Cs16.Module.Combat
             decal.Billboard = false;
 
             var px = spr != null ? (int)spr.rect.width : 48;
-            // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 0.225 m、64 px -> 0.30 m；口径见 CsCombatTuning），
-            // 再按**贴片天生宽度**换成 localScale 倍率（⛔ 同上的坑：直接写米会小 1/PPU 倍）。
+            // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 0.225 m、64 px -> 0.30 m；口径见 CsCombatTuning）。
             decal.Tr.localScale = Vector3.one * SpriteScaleForMeters(spr, CsCombatTuning.BloodDecalSize(px));
 
             _log.Info("blood.decal",
@@ -719,12 +706,11 @@ namespace Cs16.Module.Combat
             go.transform.SetParent(_root, false);
             go.SetActive(false);
 
-            // 片BV-R 实测（同一冻结帧、屏幕级 A/B，数字见 .ai-tmp/test/bvr-diff.txt）：
             // Unity 编辑器会在 Game view 之上给每个 **Light** 画一个「太阳」图标，而枪口点光就在
             // 相机正前方几厘米处 ⇒ 图标被投影成一大块（实测：只把这组宿主设成 HideInHierarchy 后，
             // 差集 26 101 像素整块消失 / 占比 3.48% / maxAbsDiff 219；把这组复原后画面与基线
             // **MD5 完全相同** ⇒ 因果干净）。
-            // HideInHierarchy 只改"编辑器叠加层画不画"：⛔ 不改渲染、⛔ 不动物理射线、⛔ 不影响池复用
+            // HideInHierarchy 只改"编辑器叠加层画不画"：不改渲染、不动物理射线、不影响池复用
             // （**不用** HideAndDontSave —— 那会让对象在切场景时不被销毁，池的语义就变了）。
             go.hideFlags = HideFlags.HideInHierarchy;
 

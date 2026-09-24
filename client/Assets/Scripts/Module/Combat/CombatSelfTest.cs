@@ -11,11 +11,8 @@ using UnityEngine;
 namespace Cs16.Module.Combat
 {
     /// <summary>
-    /// 第一人称操作 / 射击的自检探针（任务书 §5 要求的那份自证）。
     ///
     /// <para><b>为什么不放在 <c>Assets/Editor/</c></b>：agent-04 的产出路径只有
-    /// <c>Assets/Scripts/Module/{Player,CameraRig,Combat}</c>（任务书 §2），
-    /// 所以自检逻辑放在本文件的**运行时程序集**里（不依赖 <c>UnityEditor</c>），
     /// 由主 agent 用一个两行的 Editor 包装调起：</para>
     /// <code>
     /// using UnityEditor;
@@ -87,7 +84,7 @@ namespace Cs16.Module.Combat
 
         /// <summary>
         /// **只跑差异 #75 的数值判据**并返回报告 —— 供 <c>unity command eval_file</c> 调用。
-        /// <para>⛔ 刻意不走 <see cref="RunAll"/>：RunAll 有 6 组快进，整跑会撞 eval_file 的
+        /// <para>刻意不走 <see cref="RunAll"/>：RunAll 有 6 组快进，整跑会撞 eval_file 的
         /// 「主线程 5 s」上限（实测 <c>Main thread operation timed out after 5000ms</c>），
         /// 而本入口只跑一组、秒级返回。</para>
         /// </summary>
@@ -295,7 +292,6 @@ namespace Cs16.Module.Combat
 
                 if (hitCount == 0)
                 {
-                    // EditMode 下 Physics 查询可能没生效（与 agent-03 的自检同因），要点明而不是误判逻辑错。
                     Notes.Add("射线未命中任何受击体：若当前是 EditMode，请进 Play 模式重跑（编辑器的物理查询可能未生效）");
                     Fail("射线没有命中 CsHitboxProxy（见上一条说明：先排除 EditMode 物理环境问题）");
                     return;
@@ -501,7 +497,7 @@ namespace Cs16.Module.Combat
                 // ================= 差异 #68：attack2（右键）—— 切换型输入 =================
                 // 判据分三块：① 能力表（哪几把武器有出处的"可切状态"）；② **一次按下只切一次**（必须
                 // 判沿：电平型/黏住的输入不许每帧翻转）；③ 切枪期间照样可切、没出处的武器一律不动状态。
-                // ⛔ 数值影响（消音后的伤害/散布、连发的发数与节奏）**不在本段**：没有出处，见差异 #68 的
+                // 数值影响（消音后的伤害/散布、连发的发数与节奏）**不在本段**：没有出处，见差异 #68 的
                 //    「仍未证」段 —— 本段只判"状态可切换 + 可观测"。
                 Assert(CsWeapons.Get(CsWeapons.Usp).CanSilence, "USP 的 attack2 能力表没打上 CanSilence（差异 #68）");
                 Assert(CsWeapons.Get(CsWeapons.M4A1).CanSilence, "M4A1 的 attack2 能力表没打上 CanSilence（差异 #68）");
@@ -572,7 +568,7 @@ namespace Cs16.Module.Combat
                 TickFrames(1);
                 Notes.Add($"差异 #68：Glock18 attack2 ⇒ BurstMode={local.BurstMode}（Silenced 保持 false）");
 
-                // ---- ④ 切枪期间照样能切（⛔ 与 Reload 不同：原版的消音器拆装不受切枪影响）----
+                // ---- ④ 切枪期间照样能切（与 Reload 不同：原版的消音器拆装不受切枪影响）----
                 match.SwitchSlot(1);
                 Assert(local.SwitchEndTime > simTime,
                     "本段需要'正在切枪'的状态：SwitchSlot(1) 没有产生切枪计时，断言④前提不成立");
@@ -672,7 +668,7 @@ namespace Cs16.Module.Combat
                 // 先过冻结期：拾取只在 Live 判定。
                 var idle = default(CsInputState);
 
-                // ⛔ 必须把**非本地** actor 挪远：本用例的掉落点就在 CT 出生点旁 0.72 m，
+                // 必须把**非本地** actor 挪远：本用例的掉落点就在 CT 出生点旁 0.72 m，
                 //    而 CT 侧那个 bot 正出生在那里 ⇒ 它会在第一帧就把枪捡走（实测过）。
                 //    每帧 Tick 前重设一次（bot 每帧会自己走，所以不能只设一次）。
                 void KeepBotsAway()
@@ -800,7 +796,6 @@ namespace Cs16.Module.Combat
             }
         }
 
-        /// <summary>自检用假地图：不做碰撞、出生点在原点附近，只让模拟能跑起来（与 agent-03 的自检同做法）。</summary>
         private sealed class SelfTestMap : Cs16.Module.Map.ICsMap
         {
             private static readonly Vector3 SpawnT = new Vector3(0f, 0f, -8f);

@@ -208,7 +208,6 @@ namespace Cs16.EditorTools
                 EnsureFolder(MeshDir);
                 var meshPath = $"{MeshDir}/{a.Key}_{SkinName}{s}.asset";
                 // 幂等：网格内容完全由生成器决定，复用旧 .asset 会让"改了生成器却没生效"
-                // 变成静默失败；本轮所有预制体都会重建，换 GUID 不会留悬空引用。
                 if (File.Exists(meshPath)) AssetDatabase.DeleteAsset(meshPath);
                 AssetDatabase.CreateAsset(mesh, meshPath);
 
@@ -216,7 +215,6 @@ namespace Cs16.EditorTools
                 smr.sharedMesh = mesh;
                 smr.bones = bones;
                 smr.rootBone = bones.Length > 0 ? bones[0] : null;
-                // ★ 必须 true（本项目实测缺陷）：`mesh.bounds` 是**绑定/ref 姿态**的包围盒，而渲染姿态
                 //   由动画决定 —— 两者可以完全不重合。以 v_* 视模型为例（实测 `.cs16anim`）：
                 //     绑定姿态 bbox  x∈[-0.9087,-0.1160]  y∈[-0.0469,+0.1763]  z∈[-0.1272,+0.1374]
                 //     idle 姿态 bbox x∈[-0.0260,+0.2390]  y∈[-0.2860,-0.0620]  z∈[-0.0870,+0.7050]
@@ -320,7 +318,6 @@ namespace Cs16.EditorTools
             var controller = BuildController(a, root.transform);
             var animator = root.AddComponent<Animator>();
             animator.applyRootMotion = false;
-            // ★ `AlwaysAnimate`（本项目实测缺陷的根治）：Unity 的 Animator 默认是
             //   `CullUpdateTransforms` —— "看不见就不更新骨骼变换"。判"看得见"用的是渲染器**包围盒**，
             //   而 .cs16anim 的绑定姿态包围盒把相机原点夹在中间（见 AttachSkin 的注释，视模型尤其严重）：
             //   一旦被误判成不可见，骨骼就停在绑定姿态，而绑定姿态投影出来是巨大失真的手臂/枪。

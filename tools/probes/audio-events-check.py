@@ -115,7 +115,7 @@ for name, relfile, anchor, const, note in ROWS:
     if not ln_anchor:
         problems.append('事件锚点不存在：%s（%s）' % (anchor, relfile))
 
-    # ⛔ 必须找**锚点之后**的引用：预热表在文件开头也引用了同一个常量，
+    # 必须找**锚点之后**的引用：预热表在文件开头也引用了同一个常量，
     #    只判"文件里出现过"会把"只加了预热、没挂事件"误判成 PASS。
     ln_clip = lineno(path, r'CsAudioTuning\.%s\b' % const, ln_anchor) if ln_anchor else 0
     if not ln_clip:

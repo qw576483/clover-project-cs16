@@ -14,7 +14,6 @@ namespace Cs16.UI
     }
 
     /// <summary>
-    /// 无线电菜单（规格 G13，任务书 §4.7）：<c>Z</c>/<c>X</c>/<c>C</c> 三组，
     /// 数字键 1~5 选一句 → 发 <c>Events.RadioCommand</c>。
     ///
     /// <para><b>文本去哪了</b>：<c>MatchModule</c> 收到 <c>RadioCommand</c> 后会调

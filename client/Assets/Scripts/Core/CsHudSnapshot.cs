@@ -29,7 +29,6 @@ namespace Cs16.Core
     /// **UI 与业务之间的唯一数据契约**（只读快照）。
     ///
     /// <para>原因：`reference/architecture.md` 要求 UI 不许 `using` 任何 `Module.*`。
-    /// 因此由比赛模拟（agent-03）与战斗模块（agent-04）每帧把要显示的数值写进这里，
     /// HUD / 记分板 / 买枪菜单只读本类。</para>
     ///
     /// <para><b>写入方</b>：<see cref="Cs16.Module.Match"/>（血量/护甲/金钱/弹药/回合/比分/炸弹/买枪/观战/击杀信息/雷达）、

@@ -5,12 +5,11 @@ using UnityEngine;
 namespace Cs16.Module.Audio
 {
     /// <summary>
-    /// 音效播放的**薄转发**（⛔ 不做任何自己的计数 / 记账 / 缓存）。
+    /// 音效播放的**薄转发**（不做任何自己的计数 / 记账 / 缓存）。
     ///
     /// <para><b>为什么变薄</b>：本类原先是项目里的"音效发放闸门" —— 自带探测状态表、单帧计数、
     /// 同音效并发滑动窗口、缺失告警计数共四套记账；<c>Module/Combat/CombatAudio.cs</c> 另有一份
-    /// 更早的同款。同一份通用逻辑在项目里存在多份、引擎里却没有，违反 `结构规则.md` §4.4
-    /// （**已有能力不够用时优先扩展原实现，⛔ 不准平行再起一套**）。闸门已下沉进引擎
+    /// （**已有能力不够用时优先扩展原实现，不准平行再起一套**）。闸门已下沉进引擎
     /// <c>Game.Sound</c>（E-core-17）：
     /// <list type="bullet">
     /// <item>缺失只报一次 ⇒ 引擎 <c>LogThrottle.WarnOnce("Sound", "missing:&lt;path&gt;", …)</c>；</item>
@@ -84,7 +83,6 @@ namespace Cs16.Module.Audio
             res.Preload(paths, null);
         }
 
-        /// <summary>本片唯一的出口：问引擎"在不在" → 转发给 <c>Game.Sound</c>（闸门在引擎那一层）。</summary>
         private void Fire(string clip, Vector3 position, bool spatial)
         {
             if (string.IsNullOrEmpty(clip)) return;

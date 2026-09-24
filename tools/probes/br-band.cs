@@ -1,7 +1,6 @@
 // ============================================================================
 // slice BR -- 判据资产: the "cell centre" vs "whole cell" mismatch, measured on the LIVE geometry.
 //
-// Question (task book §2①): the walkability BITMAP is a whole-cell predicate
 //   (Assets/Editor/MapGen/Dust2GeoData.cs:213-247 BuildBlockedBitmap(): "cell column vs blocker AABB"),
 // while every runtime consumer samples the CELL CENTRE (Module/Bot/BotNavigator.cs CellCenter /
 // GroundYAbove, ICsMap.TrySampleGround). This script measures, in ONE Play session:

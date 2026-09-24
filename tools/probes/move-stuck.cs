@@ -1,5 +1,4 @@
 // ============================================================================
-// 判据资产 · 片FIX-4 线M：用户 #1「匪家斜坡扶手上面走概率卡死」/ #5「B 通台阶跳一下卡死」
 //          / #6「碰撞和模型不一样」的**逐帧**证据。
 //
 // 为什么必须是 C# + 真物理：被判的是 CsMap.CanStand / ResolveMove / TrySampleGround / TryStepUp
@@ -7,11 +6,9 @@
 //   Python 复刻公式只会得到"两份实现互相印证"的假证据。
 //
 // 为什么走 SetLocalInput + Tick（而不是直接调 ResolveMove）：
-//   ResolveMove 是**叶子**，用户的症状发生在**整条链**上（输入 → UpdateLocalPlayer → 重力 →
-//   ResolveMove → 陡坡闸门 → 台阶上抬探测 → 贴地/软地板 → Position）。
 //   SetLocalInput 正是 PlayerMotor.BuildInput 每帧下发的那个入口（cs16-play-driver.cs 同口径），
 //   Tick 正是 MatchModule.Update 每帧调的那个入口 ⇒ 本探针复刻的就是用户那条链。
-//   ⛔ 本探针**不在游戏代码里加任何钩子**、不反射、不改任何对象结构；只读 + 只写本文件自己的产物。
+//   本探针**不在游戏代码里加任何钩子**、不反射、不改任何对象结构；只读 + 只写本文件自己的产物。
 //
 // 用法（在 client/ 里跑，或每条都带 --project-path）：
 //   unity command run_script --file <本文件绝对路径> --entry MoveStuck.Geom
@@ -75,7 +72,7 @@ public static class MoveStuck
         var colNoMeshFilter = 0;      // MeshCollider 但没有 MeshFilter（几何来源不同）
         var meshColliderShared = 0;   // MeshCollider.sharedMesh == 同 GO 上 MeshFilter.sharedMesh
         var meshColliderDiff = 0;     // 两者不同（= 碰撞网格 ≠ 渲染网格，这条对上了就是 #6 的直接形态）
-        // ⛔ 判据自己出过事故（留档）：第一版用 `ReferenceEquals(mc.sharedMesh, mf.sharedMesh)` 比，
+        // 判据自己出过事故（留档）：第一版用 `ReferenceEquals(mc.sharedMesh, mf.sharedMesh)` 比，
         //    得到「相同=0 不同=33」—— 那是**假的**。`ReferenceEquals` 比的是**托管包装对象**，
         //    同一个原生 Mesh 在两处 `sharedMesh` 上会给出**两个不同的托管包装** ⇒ 恒 false。
         //    正确口径 = Unity 重载的 `==`（内部比 instanceID）或用 `GetInstanceID()` 比。
@@ -115,7 +112,7 @@ public static class MoveStuck
                     var ba = a != null ? a.bounds : new Bounds();
                     var bb = b != null ? b.bounds : new Bounds();
                     var sameB = (ba.center - bb.center).magnitude < 1e-4f && (ba.size - bb.size).magnitude < 1e-4f;
-                    // ⛔ `triangles` 只在 isReadable 时才给得到（不可读恒返回空数组 ⇒ 会把两份网格都算成 tri=0
+                    // `triangles` 只在 isReadable 时才给得到（不可读恒返回空数组 ⇒ 会把两份网格都算成 tri=0
                     //    而"看起来一样"）⇒ 这里显式分成"可读才比计数 / 不可读只比 bounds"两档，不许混。
                     var va = a != null && a.isReadable ? a.vertexCount : -1;
                     var vb = b != null && b.isReadable ? b.vertexCount : -1;
@@ -160,7 +157,7 @@ public static class MoveStuck
           "  （碰撞网格可读=" + mcMeshReadable + " 渲染网格可读=" + mfMeshReadable + "）");
         for (var i = 0; i < meshGeomDetail.Count; i++) L("      几何不同 " + meshGeomDetail[i]);
         L("  MeshRenderer 无 MeshFilter/mesh=" + rendNoMesh + "（其中不可读=" + rendNonReadable + "）");
-        // ⛔ 「不同实例」这条必须钉死到具体数字，否则一句话两种结论（场景 YAML 说同一份资产、
+        // 「不同实例」这条必须钉死到具体数字，否则一句话两种结论（场景 YAML 说同一份资产、
         //    运行期 `==` 说不同）—— 逐条打 GO 名 / 两个 mesh 的 instanceID / 名字 / 可读性 / 顶点数。
         L("    活动场景=" + UnityEngine.SceneManagement.SceneManager.GetActiveScene().name);
         var shown = 0;
@@ -395,16 +392,13 @@ public static class MoveStuck
     }
 
     // ==================================================================
-    //  入口 C：给定点的定向射线扫描（= Wall() 的入口；team-lead 2026-09-24 授权）
-    // ==================================================================
     /// <summary>
     /// <para>用途（片FIX-4 线M · #5「B 通台阶跳一下就卡死」）：把**停滞点**
     /// `(-18.887, 0.653, 36.948)`（<c>stairs05A</c> / <c>i5-str</c> 实测停住的那一格）到底是
-    /// 「被墙围住」（几何事实 ⇒ 停滞合理）还是「解算不了」（⇒ 才是缺陷）拆开；
     /// 并由膝高（0.45 m）通畅方向定**真折点**，供下一轮补一条**真折线**用例
     /// —— 本片 #5 尚不消号的直接原因就是"折点是我离线按地理常识拍的"，实测 reached=0/1。</para>
     ///
-    /// <para>⛔ 本入口**只打印读数、不下结论**：判词由 team-lead 定（判据不许自证）。
+    /// <para>本入口**只打印读数、不下结论**：判词由 team-lead 定（判据不许自证）。
     /// 参数读 <c>.ai-tmp/test/r5-args.txt</c>：<c>label</c> / <c>px</c> / <c>py</c> / <c>pz</c>。
     /// 产物：<c>.ai-tmp/test/move-wall-&lt;label&gt;.txt</c>。</para>
     /// </summary>
@@ -421,7 +415,6 @@ public static class MoveStuck
         }
         var a = LoadArgs();
         var label = Get(a, "label", "wall");
-        // 多点扫描（team-lead 2026-09-24 授权）：`pts=x,y,z;x,y,z;...`；不给则退回单点 px/py/pz。
         var ptsSpec = Get(a, "pts", "");
         var pts = new List<Vector3>();
         if (ptsSpec.Length > 0)
@@ -454,8 +447,8 @@ public static class MoveStuck
         return "OK wall[" + label + "] 点数=" + pts.Count;
 
         // ---- 机械可读汇总行（膝高那一圈）：膝高 = TryStepUp 的打射线高度 0.45 m ----
-        // ⛔ 只报读数（通畅方向数 + 位图/CanStand/地面），**不含任何结论文字**。
-        // ⛔ 单独重打一遍这 8 根射线（不复用 Wall 内部变量）：**不动 Wall() 一个字符** ⇒
+        // 只报读数（通畅方向数 + 位图/CanStand/地面），**不含任何结论文字**。
+        // 单独重打一遍这 8 根射线（不复用 Wall 内部变量）：**不动 Wall() 一个字符** ⇒
         //    既有 `move-geom.txt`（#6 证据）的产出路径逐字未变，避免"顺手改旧判据资产"。
     }
 
@@ -501,8 +494,7 @@ public static class MoveStuck
         var local = match.LocalPlayer;
         if (local == null) { L("ERROR 没有本地玩家"); Save("move-drive-" + label + ".txt"); return "ERROR no local"; }
 
-        // ⛔ 必须先进 Live：冻结期 `UpdateLocalPlayer` 在 Phase==Freeze 时**直接清零速度并 return**
-        //    ⇒ 那一段的"输入有、位移 0"是回合规则，不是缺陷（本探针第一轮就误判过一次，留档）。
+        // 必须先进 Live：冻结期 `UpdateLocalPlayer` 在 Phase==Freeze 时**直接清零速度并 return**
         var idle = default(CsInputState);
         var warm = 0;
         for (; warm < 600 && match.Phase != CsRoundPhase.Live; warm++)
@@ -512,7 +504,6 @@ public static class MoveStuck
         }
 
         // 清场：把别的角色挪到远处（与 CombatSelfTest.KeepBotsAway 同口径），
-        // 免得"角色间推开"混进判据（那不是本片要判的东西）。
         var actors = match.Actors;
         for (var i = 0; i < actors.Count; i++)
             if (!ReferenceEquals(actors[i], local)) actors[i].Position = new Vector3(100f, 0f, 100f);
@@ -561,7 +552,6 @@ public static class MoveStuck
             var traveled = 0f;
             var reached = false;
             var stepUpHits0 = CsMatch.StepUpProbeHits;
-            // ── 片FIX-4 线M：出口判别 + 阵亡判据所需的帧级状态（team-lead 2026-09-24 要求）──────
             // `prevVel` = **上一帧 tick 结束时**的速度。本帧 `StepActorPhysics`（CsMatch.cs:1950-1958）用
             //   `to = from + (v.x, v.y - Gravity*dt, v.z) * dt`（y 先钳到 [MaxFallSpeed, -TerminalFallSpeed]）
             // ⇒ 由此**精确重建**本帧的请求目标 `to`，才能把 `ResolveMove` 用同一条输入再跑一次。
@@ -601,12 +591,10 @@ public static class MoveStuck
                 // ── 出口判别（影子复核）────────────────────────────────────────────────────
                 // 为什么需要它：判据「`csFrom=0` ∧ 水平disp=0 ⇒ 只有这些行可能进那颗三元」**对 `? to` 是
                 // 结构性盲的** —— `? to` 一旦被走，返回的就是请求目标 ⇒ 位移 = 请求位移 ⇒ 那些行
-                // **`disp≠0`，根本不在集合里**（team-lead 2026-09-24 反证出来的）。
                 // 做法：用**精确重建**的 `to` 把 `ResolveMove` 再跑一次（纯函数、只读地图几何），
                 // 由 trace 回调看它返回的是哪个出口；并要求**影子返回值与真实结果逐位相同**才采信，
                 // 否则本列记 `?`（不可信）。
                 // 出口标签：`to` = 返回请求目标（= `:498` 的 `? to` 逃生口；也可能是扫掠干净地走到请求点，
-                //   两者**对玩家逐位等价**）；`falseY` = 水平钳回起点但 y 跟随目标（= 本片新加的那一支）；
                 //   `from` = 整点原样返回；`step` = 扫掠/分轴滑墙后的中间点；`none` = 没进 `!CanStand` 分支。
                 var vy0 = prevVel.y - CsConst.Gravity * dt;
                 if (vy0 < CsConst.MaxFallSpeed) vy0 = CsConst.MaxFallSpeed;
@@ -630,10 +618,8 @@ public static class MoveStuck
                 hitTally.TryGetValue(hit, out var hitN);
                 hitTally[hit] = hitN + 1;
 
-                // ── 阵亡判据（team-lead 2026-09-24 批准）──────────────────────────────────
                 // `CsMatch.cs:1868/1937` 两处 `!a.IsAlive` 早退都是**直接 return**（不清速度）⇒ 表现是
                 // "位置与速度双双冻结且 airborne"。这里把 alive/hp 逐帧落盘，并把首次死亡打一行标记，
-                // 免得"阵亡停摆"被当成"解算停滞"（本片 stairsjfA rep0 就这么污染过一次）。
                 if (!local.IsAlive && deathF < 0)
                 {
                     deathF = f;
@@ -651,17 +637,14 @@ public static class MoveStuck
                           "  hp=" + local.Health.ToString("F0").PadLeft(6) +
                           " alive=" + (local.IsAlive ? "1" : "0") + " hit=" + hit +
                           // `hitTo` = **本帧 `!CanStand(from)` 三元走了 `? to` 支路的直接读数**
-                          //   （`curAfter ≈ to` ⇒ 1）。team-lead 2026-09-24 批准加这一列的理由：
                           //   旧判据「`csFrom=0` ∧ 水平 disp=0 ⇒ 可达行集合」**结构性看不见 `? to`**
                           //   —— `? to` 返回整个 `to` ⇒ `disp≠0` ⇒ 那些行不在集合里（判据盲区，见
                           //   .ai-tmp/test/issue5-branch-coverage.md）。⇒ 覆盖判定**必须**靠这一列。
-                          // ⛔ 影子≠真实（`hit=="?"`）时记 0，不冒充"走过"也⛔ 不冒充"没走"。
+                          // 影子≠真实（`hit=="?"`）时记 0，不冒充"走过"也不冒充"没走"。
                           " hitTo=" + (hit == "to" ? "1" : "0") +
                           (stepUpLeak != 0 ? " LEAK=" + stepUpLeak : "");
                 L(row);
 
-                // 卡死定义（用户症状）：输入非零、水平位移 ≈ 0。
-                // ⛔ 口径 = **速度型 dt 不变式** `dxz/dt < 0.02`（m/s），team-lead 2026-09-24 裁决。
                 //    旧写法 `dxz < 0.001f` = "每帧 1 mm"：它随 dt 改变物理含义（dt=0.05 ⇒ 0.02 m/s，
                 //    dt=0.0074 ⇒ 0.135 m/s）⇒ 固定 frames 变 dt 时两侧**不可比**（实测：高帧率侧的
                 //    "0 卡死 / 32 帧"只是帧预算截断的假象）。逐帧 raw 行不变 ⇒ 旧产物仍可离线复算。
@@ -690,7 +673,6 @@ public static class MoveStuck
               " 抬台阶接住=" + (CsMatch.StepUpProbeHits - stepUpHits0) +
               " 卡死=" + isStuck + " 出口=" + Tally(hitTally) +
               (deathF >= 0 ? " 阵亡f=" + deathF + "(本 rep 的冻结含物理停摆，⛔ 不是解算停滞)" : "") +
-              // team-lead 2026-09-24 批准：**有阵亡的 rep 标 void** —— 本 rep 的 `最长停滞帧`
               // 把「阵亡后 `!IsAlive` 早退的物理停摆」和「真正顶墙的停滞」搅在一起（stairsjfA rep0
               // 实测 2335 = 阵亡冻结 676 + 真停滞 1659，拆分产物见
               // .ai-tmp/test/_lineM-stairsjfA-deathsplit.txt）⇒ 该 rep **不得当读数用**。

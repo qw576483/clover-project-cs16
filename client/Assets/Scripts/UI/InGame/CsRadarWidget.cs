@@ -10,10 +10,8 @@ namespace Cs16.UI
     /// <summary>
     /// 左上角雷达（规格 H6 / G14，策划案里叫 <c>RadarWidget</c>）。
     ///
-    /// <para><b>本片（cs16-收尾C）按用户"小地图雷达都不对"重做，四件事</b>：</para>
     /// <list type="number">
     /// <item><b>加上地图底图</b>：原版雷达不是"一个空框 + 几个点"，而是把地图**俯视图**半透明压在
-    /// 画面上。底图 = <see cref="ResPaths.RadarOverviewDust2"/>，**片AS 起就是原版那张
     /// <c>overviews/de_dust2.bmp</c> 的逐像素 PNG**（1024×768；由
     /// <c>tools/probes/import-original-overview.py</c> 从载体
     /// <c>原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp</c> 无损转换，绿键色 → alpha 0；
@@ -46,7 +44,7 @@ namespace Cs16.UI
     /// （X = 中心 ± 2048、Z = 中心 ± 2730.6667 GoldSrc 单位；公式真源
     /// <c>原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193</c>，ZOOM 见
     /// <c>原版资源/cs16src/cstrike/overviews/de_dust2.txt:5</c>），中心 = 原版 <c>ORIGIN</c> 经地标配准
-    /// 到本工程坐标系（推导见 <see cref="CsHudTheme.RadarWindowCenter"/>）。⛔ 不再取引擎位图包围盒
+    /// 到本工程坐标系（推导见 <see cref="CsHudTheme.RadarWindowCenter"/>）。不再取引擎位图包围盒
     /// （<c>Game.Map</c>）等比 —— 那是底图还是"几何栅格化"时代的旧口径。矩形由 <see cref="HudPanel"/>
     /// 按同一组常量换算成米后传进来；传来退化矩形时本件用同一组常量兜底，并且只报一次警告。</para>
     /// </summary>
@@ -95,10 +93,9 @@ namespace Cs16.UI
 
             // 地图底图（sprite 由 EnsureMapSprite 在运行期取，取不到就保持禁用 + Warn 一次）。
             //
-            // 尺寸口径（片AS 改）：底图是**原版那张 1024×768 的 overview**（片AS 从
             // `原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp` 逐像素转来），4:3 的图
             // ⇒ 必须按原比例画：**宽 = 内区宽 122、高 = 122 × 768/1024 = 91.5**，在内区里上下居中。
-            // ⛔ 不许 Stretch 成 122×122 —— 那会让底图水平/竖直的"米/像素"不同，而雷达点的映射是
+            // 不许 Stretch 成 122×122 —— 那会让底图水平/竖直的"米/像素"不同，而雷达点的映射是
             // 单一 scale（各向同性，出自原版公式 8/ZOOM）⇒ 点与底图立刻不再同尺度，"同尺度同原点"
             // 这条判据当场失效。
             var map = UIFactory.CreatePanel("RadarMap", inner.rectTransform, Color.white, false);
@@ -126,7 +123,6 @@ namespace Cs16.UI
 
             EnsureMapSprite();
 
-            // **这里不放说明文字**：原来那行 "阵营色点·黄=包点 红=炸弹" 被摆在雷达 Root 里、
             // 坐标 (4,-2)、字号 14 —— 正好压在雷达外框的上边线上，而且 14 个汉字在 200px 宽的
             // 雷达里会把右端挤出面板，实测截图上就是"文字互相重叠 + 显示不全"。
             // CS 1.6 原版雷达本来就没有这行说明（只有左上角一个雷达框 + 底图 + 点），
@@ -188,7 +184,7 @@ namespace Cs16.UI
         /// </summary>
         /// <param name="visible">比赛没跑 / HUD 整体隐藏时为 false。</param>
         /// <param name="minX">雷达窗口世界 X 最小值（米）——**原版 overview 窗口**，由 HudPanel 按
-        /// CsHudTheme 的窗口常量下发；⛔ 不是引擎位图包围盒。</param>
+        /// CsHudTheme 的窗口常量下发；不是引擎位图包围盒。</param>
         /// <param name="maxX">雷达窗口世界 X 最大值（米）。</param>
         /// <param name="minZ">雷达窗口世界 Z 最小值（米）。</param>
         /// <param name="maxZ">雷达窗口世界 Z 最大值（米）。</param>
@@ -230,7 +226,6 @@ namespace Cs16.UI
                         $"雷达拿不到地图范围（minX={minX:0.##} maxX={maxX:0.##} minZ={minZ:0.##} maxZ={maxZ:0.##}），" +
                         $"退化为以原点为中心的 {FallbackHalfExtent * 2f:0}m 视野（Game.Map 未加载？）");
                 }
-                // 片AS 起窗口是常量（原版 overview 口径），退化时用**同一组常量**兜底，
                 // 这样即使 HudPanel 传了空矩形，点与底图仍然同尺度同原点。
                 var fc = CsHudTheme.RadarWindowCenter;
                 var fx = CsHudTheme.RadarWindowHalfXUnits * CsHudTheme.GoldSrcUnitToMetre;
@@ -241,7 +236,6 @@ namespace Cs16.UI
                 h = maxZ - minZ;
             }
 
-            // ── 口径（片AS 改）：**原版 underlay 窗口**，不再是"引擎包围盒等比" ──────────────
             // 底图已换成原版那张 `overviews/de_dust2.bmp`（1024×768，逐像素转成
             // Resources/UI/Art/overview_de_dust2.png），所以"雷达显示哪块世界"必须照**原版
             // overview 的窗口**：
@@ -249,17 +243,15 @@ namespace Cs16.UI
             //   · 跨度出处 = 原版公式 世界 X 跨度 6144/ZOOM(=4096)、世界 Y 跨度 8192/ZOOM(=5461.3333)；
             //     ZOOM = 1.50 逐字取自 `原版资源/cs16src/cstrike/overviews/de_dust2.txt:5`；
             //     公式真源 `原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193`（Half-Life SDK，
-            //     文件头 SHA256 见 `原版资源/清单.md` 切片AR 节）。
             //   · 四个数值与窗口中心全部落在 `CsHudTheme.RadarWindowHalfXUnits /
             //     RadarWindowHalfZUnits / RadarWindowCenter`，由 `HudPanel.UpdateRadarBounds`
-            //     用**同一组常量**算成米后传进来（⛔ 本件不再自己读 Game.Map）。
+            //     用**同一组常量**算成米后传进来（本件不再自己读 Game.Map）。
             //
             // 缩放仍是**各向同性**（= 原版"每像素 8/ZOOM 单位"）：
             //   内区 122×122 ⇒ scale = min(122/h, 122/w) = 122/138.718 = 0.8795 px/m；
             //   底图按 4:3 画成 122 × 91.5 ⇒ 水平 122px ↔ Z 跨度、竖直 91.5px ↔ X 跨度，同一个 scale
             //   ⇒ 点必然落在底图对应像素上（这就是"同尺度同原点"）。
             //
-            // 轴对（cs16-AO 定下，本片不改）：**屏幕右 ← 世界 -Z、屏幕上 ← 世界 +X**。
             // 依据 = 原版底图自带的两处包点标记：图上向量 vs 世界向量的角度残差 **1.55°**
             // （旧轴对 88.45°），`tools/probes/locate-overview-letters.py` ⇒ 水平用 Z 跨度 h、
             // 竖直用 X 跨度 w。
@@ -329,7 +321,6 @@ namespace Cs16.UI
                 img.rectTransform.sizeDelta = new Vector2(size, size);
                 // 不随视角旋转（CS 1.6 默认即如此），但**不是正北朝上**：与原版底图同向 ⇒
                 // 屏幕右 ← 世界 -Z、屏幕上 ← 世界 +X（轴对依据见上面 scale 那段的注释与
-                // tools/probes/locate-overview-letters.py 的数字）。改前是 (+X, +Z)。
                 img.rectTransform.anchoredPosition = new Vector2(
                     -(dot.Z - cz) * scale,
                     (dot.X - cx) * scale);

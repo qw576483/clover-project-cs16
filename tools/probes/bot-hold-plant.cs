@@ -1,5 +1,4 @@
 // ============================================================================
-// 判据资产 · 切片BH：**AI 运行时证据**（守点分布 / 换位 / T 下包）—— 逐帧只读快照。
 //
 // 为什么必须进 Play：被判的三件事都只存在于**运行中的模拟**里 ——
 //   `CsBotBrain`（守位表 / 换位）与 `CsMatch`（下包结算）只在 Play 的 Tick 里跑；
@@ -9,15 +8,14 @@
 // 本探针**只读**（不写 state.txt、不下输入、不改任何 actor / 赛局状态）：
 //   ① 每帧快照（采样 20 Hz）每个 actor 的位置 / 阵营 / 是否持包 / 下包进度 / 到 A·B 包点标记的距离；
 //   ② **原样转发程序自己写的 L3 标记**（`Game.Logger.Info` 的 `守点换位：…` / `守位表就绪：…` / `[C4] …`）
-//      —— 证据分级见 skill §4.7：L3（被测程序运行时自己写的标记）> L2（脚本采集产物）> L1（文字）；
-//      日志行**由业务代码自己写**，本探针只负责把它连同 frame/t 记下来（⛔ 不重新解释、不加工）；
+//      日志行**由业务代码自己写**，本探针只负责把它连同 frame/t 记下来（不重新解释、不加工）；
 //   ③ 由 ① 派生的三个显式事件（都带秒数，离线断言直接读数字）：
 //      `E CTSITE`      某 CT 首次进入某包点判定区（= 守点分布的分母/分子）
 //      `E TARRIVE`     T 携 C4 首次进入包点判定区
 //      `E TPLANTSTART` 该持包者 `UseProgress` 首次 > 0（= 开始下包）
 //      `E TPLANTED`    全局 `BombPlanted` 翻真（= 回合内真的下了包）
 //
-// 包点判定区口径（⛔ 与产品同源，不另立定义）：到该包点**任一**标记点的水平距离
+// 包点判定区口径（与产品同源，不另立定义）：到该包点**任一**标记点的水平距离
 //   ≤ `CsMarkers.BombsiteRadius`（`Module/Map/ICsMap.cs:83`）—— 即 `CsBomb.IsInBombsite`
 //   （`Module/Match/CsBomb.cs`）与 `CsBotBrain.NearestBombsitePoint` 用的同一个判据。
 //
@@ -133,7 +131,7 @@ public sealed class BotHoldPlantTick : MonoBehaviour
         _log = null;
     }
 
-    /// <summary>外部 `BotHoldPlant.Stop` 调：写一条收尾行（⛔ 不删文件，产物留给人复核）。</summary>
+    /// <summary>外部 `BotHoldPlant.Stop` 调：写一条收尾行（不删文件，产物留给人复核）。</summary>
     public void FinishProbe()
     {
         Say("E\tPROBE\tSTOP\tframe=" + _frame + "\tt=" + F(Time.realtimeSinceStartup));

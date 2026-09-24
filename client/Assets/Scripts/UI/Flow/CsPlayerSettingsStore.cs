@@ -6,9 +6,8 @@ namespace Cs16.UI
 {
     /// <summary>
     /// <see cref="CsPlayerSettings"/> 的持久化读写（<c>Game.Setting</c> 的强类型包装）。
-    /// ⛔ 这里**没有「语言」设置键，是本工程有意为之**：A（CS 1.6）本体没有游戏内语言设置项
+    /// 这里**没有「语言」设置键，是本工程有意为之**：A（CS 1.6）本体没有游戏内语言设置项
     /// （原版 Options = 7 个子页 .res、**没有语言页**，依据见 <c>OptionsPanel</c> 的 <c>TabNames</c> 注释），
-    /// 语言由 Steam 客户端的语言设置 / 启动参数决定 ⇒ 不新增该 UI、不新增该键（skill §0 铁律 1）。
     ///
     /// <para>
     /// 为什么要有它：<c>Game.Setting</c> 只支持基础类型（string / int / float / bool），
@@ -18,16 +17,12 @@ namespace Cs16.UI
     ///
     /// <para>
     /// 放在 UI 层的理由：Core 下的文件是本工程的契约（由主 agent 写死、其它 agent 不许改），
-    /// 而依赖方向 <c>App → UI</c> 是允许的（见 <c>reference/architecture.md</c> §1），
-    /// 因此 Bootstrap（App）可以直接用本类。
     /// </para>
     /// </summary>
     public static class CsPlayerSettingsStore
     {
         private const string Tag = "UI";
 
-        // 键名不再在本文件维护：唯一真源 = Core/CsSettingsKeys（见该类的注释：
-        // 键面原先在 UI 与 Module 两处各写一套，漂移时不报错、只表现为"设置不生效"）。
 
         /// <summary>默认玩家名（用户没填也没存过时用）。</summary>
         public const string DefaultPlayerName = "Player";
@@ -122,7 +117,6 @@ namespace Cs16.UI
             sound.SetVolume(SoundGroup.Voice, s.SfxVolume * s.MasterVolume);
         }
 
-        /// <summary>越界值夹回合法范围（存档被手改 / 旧版本遗留都要兜住），并留日志说明改了什么。</summary>
         public static void Normalize(CsPlayerSettings s)
         {
             if (s == null) return;

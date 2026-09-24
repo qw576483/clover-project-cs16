@@ -1,9 +1,6 @@
-// 判据资产（tools/probes/）：S2「性能」维度的**只读**运行时读数（切片P）。
 //
 // 判据用途（对应 策划/实体清单.tsv 的 S2 行 帧时间 / 分辨率 / 内存）：
 //   * 帧时间 —— 必须与**渲染设备名**同时给：设备是 Microsoft Basic Render Driver / WARP 时，
-//     机器上任何帧时间数字都无效（skill §4 性能类 / experience/perf-triage.md）。
-//     所以本探针把 `SystemInfo.graphicsDeviceName` 与帧时间打在**同一行**上。
 //   * 分辨率 —— Screen.width/height + 主 Canvas 的 scaleFactor / referenceResolution（1:1 的判据）。
 //   * 内存 —— Profiler 的已分配 / 保留 / Mono 三档（同一时刻取，避免"三行三个时刻"）。
 //   * 帧时间同时给 FrameTimingManager 的 CPU/GPU 拆分（与 tools/probes/measure-play-frametime.cs 同口径）。

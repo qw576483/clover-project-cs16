@@ -22,7 +22,6 @@ namespace Cs16.Module.Match
         ///
         /// <para><b>为什么需要它</b>：本组件的挂载点是 <c>Bootstrap</c> 那个 <c>DontDestroyOnLoad</c> 的
         /// GameObject，而 <c>Bootstrap</c> 只存在于 <c>Scenes/Boot.unity</c>。任何"从外部按类型找它"的代码
-        /// （自检宿主 / 取证驱动）一旦写成 <c>FindObjectOfType</c>，在 Unity 6 里既是废弃 API，
         /// 又会在"没从 Boot 场景进 Play"时**静默返回 null** —— 实测代价：<c>.ai-tmp/drivers/cs16-play-driver.cs</c>
         /// 的 <c>Apply()</c> 因此无声早退，pause / godmode / cam / input 全部不生效，
         /// 整场驱动看起来"挂了"却没有任何日志说明原因。</para>
@@ -99,12 +98,12 @@ namespace Cs16.Module.Match
             _match?.Stop();
             _match = null;
 
-            // ★ 差异 #88 第②段：本模块是局域网客户端与远端视图的泵主 ⇒ 收尾时要一起停掉，
-            //   ⛔ 否则线程会成为"没人管的后台线程"、远端角色会跟着常驻对象活到下一次进图。
+            // 差异 #88 第②段：本模块是局域网客户端与远端视图的泵主 ⇒ 收尾时要一起停掉，
+            //   否则线程会成为"没人管的后台线程"、远端角色会跟着常驻对象活到下一次进图。
             StopLanClientAndViews("MatchModule 销毁");
         }
 
-        /// <summary>停局域网客户端 + 回收全部远端视图（幂等；两处调用点共用，⛔ 不各写一套）。</summary>
+        /// <summary>停局域网客户端 + 回收全部远端视图（幂等；两处调用点共用，不各写一套）。</summary>
         private void StopLanClientAndViews(string why)
         {
             if (Cs16.Module.Net.CsLanClient.IsRunning)
@@ -117,10 +116,10 @@ namespace Cs16.Module.Match
 
         private void Update()
         {
-            // ★ 时钟注入点（全工程**唯一**一处调 `CsClock.Drive`）：本组件是引擎帧循环与业务之间
+            // 时钟注入点（全工程**唯一**一处调 `CsClock.Drive`）：本组件是引擎帧循环与业务之间
             //   的那一层，把引擎 Tick 的 dt 交给 `Core/CsClock`，模拟 / 战斗 / 玩家三侧再从
             //   `CsClock.Delta` 取同一个值（理由见 CsClock 的类注释：三处各自读 Time.deltaTime /
-            //   Time.time 会把可复现性打死）。⛔ 别在这里改成别的时钟源 —— 换时钟请注入 CsClock。
+            //   Time.time 会把可复现性打死）。别在这里改成别的时钟源 —— 换时钟请注入 CsClock。
             CsClock.Drive();
             var dt = CsClock.Delta;
 
@@ -135,13 +134,12 @@ namespace Cs16.Module.Match
                 Cs16.Module.Net.CsLanGateway.Pump(_match, dt);
             }
 
-            // ★ 差异 #88「能开局」第②段（片LAN-D）：**客户端侧** —— 消费主机推来的快照，
-            //   并把远端角色画到场上。主线程这里只做两件轻活：
+            //   主线程这里只做两件轻活：
             //   ① CsLanClient.Pump()：吐后台日志 + 纠偏"线程死了状态还在跑"（socket 归它的读线程，
             //      主线程一次都不读 —— 见 CsLanClient 的线程模型注释）；
             //   ② CsLanRemoteView.SyncAll()：让场上的远端视图与最新一帧快照对齐（新建成 / 有的刷 /
             //      快照里没有的回收）。客户端没在跑时两者都是"廉价空转 + 一次回收"，不会每帧扫字典。
-            //   ⚠️ 这两行**不在** `IsRunning` 判断里：客户端停掉时也要靠 SyncAll 把远端角色收干净。
+            //   这两行**不在** `IsRunning` 判断里：客户端停掉时也要靠 SyncAll 把远端角色收干净。
             Cs16.Module.Net.CsLanClient.Pump();
             Cs16.Module.View.CsLanRemoteView.SyncAll();
         }
@@ -185,7 +183,6 @@ namespace Cs16.Module.Match
                 if (child[i] is ICsMap onChild) return onChild;
             }
 
-            // ② 契约约定的具体类型（agent-02 交付）：Cs16.Module.Map.CsMapModule.Map。
             var module = GetComponent<CsMapModule>();
             if (module != null && module.Map != null) return module.Map;
 
@@ -205,7 +202,7 @@ namespace Cs16.Module.Match
                 return;
             }
 
-            // ★ 开局权归 Flow 独占：Flow 在「场景 + 地图都就绪」后才调 MatchModule.Match.Start(cfg)。
+            // 开局权归 Flow 独占：Flow 在「场景 + 地图都就绪」后才调 MatchModule.Match.Start(cfg)。
             //   这里**不再**订阅 Events.LaunchMatch —— 否则地图还没加载完就会被提前 Start 一次（并打一条无谓的 Error）。
             bus.On<CsBotDifficulty>(Events.AddBot, OnAddBot);
             bus.On(Events.KickBot, OnKickBot);
@@ -293,8 +290,7 @@ namespace Cs16.Module.Match
             var ct = Match.PlayerCount(CsTeam.CT);
             var team = t <= ct ? CsTeam.T : CsTeam.CT;
 
-            // ★ 证据链的中间跳：UI（H 菜单 / 控制台）→ 事件总线 → 本方法 → CsMatch.AddBot → CsBotBrain。
-            //   以前只有首尾两跳留痕，中间这跳是黑的 —— 于是"加进来的机器人难度不对"根本判不出是哪一跳丢的。
+            // 证据链的中间跳：UI（H 菜单 / 控制台）→ 事件总线 → 本方法 → CsMatch.AddBot → CsBotBrain。
             //   这条日志（含事件里收到的难度 + 当前人数 + 判定出来的阵营）能把链条钉死。
             Game.Logger.Info(Tag, $"{Events.AddBot} 收到难度={diff}（当前人数 T={t} CT={ct}）→ 加到 {team}");
 
@@ -384,7 +380,7 @@ namespace Cs16.Module.Match
 
         private void OnDisconnect()
         {
-            // ★ 差异 #88 第②段：断开请求 = 退出这一局 ⇒ 局域网客户端也要停（⛔ 否则远端角色会留在场上，
+            // 差异 #88 第②段：断开请求 = 退出这一局 ⇒ 局域网客户端也要停（否则远端角色会留在场上，
             //   "我已经退出了却还看得见别人"）。
             StopLanClientAndViews("收到断开请求");
 

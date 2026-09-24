@@ -12,7 +12,7 @@
 //            入口），再扫描一次台账 ⇒ 判"这条路径到底生不生成可见像素"；成功即冻结 timeScale
 //            （让这一帧能截图；Time.deltaTime 归零 ⇒ CombatEffects.Tick 不会把 Life 减完）。
 //
-// ⛔ 只读：不点按钮、不改 state.txt、不改业务代码；唯一写是 timeScale（为了截图，收尾请调
+// 只读：不点按钮、不改 state.txt、不改业务代码；唯一写是 timeScale（为了截图，收尾请调
 //    `unity command eval --code 'UnityEngine.Time.timeScale = 1f;'` 复原）。
 //
 // 用法（编辑器必须已在 Play 且有一局在跑）：
@@ -131,7 +131,6 @@ if (vmRoot != null)
             lLo = UnityEngine.Vector3.Min(lLo, lp);
             lHi = UnityEngine.Vector3.Max(lHi, lp);
         }
-        // 旧落点（修复前 eye + dir*0.34 + right*0.13 + down*0.09）在不在这个包围盒里？
         // 在里面 = 火焰被放进枪身 ⇒ 透明队列 + 深度测试下被近端枪身几何盖掉 = 用户报的"没有效果"。
         var fwd = cam.transform.forward.normalized;
         var rgt = UnityEngine.Vector3.Cross(UnityEngine.Vector3.up, fwd).normalized;
@@ -170,7 +169,6 @@ var eye = cam.transform.position;
 var aim = cam.transform.forward.normalized;
 var right = UnityEngine.Vector3.Cross(UnityEngine.Vector3.up, aim).normalized;
 
-// 旧落点（差异 #89 修复前）：eye + dir*0.34 + right*0.13 + down*0.09 —— 留作对照，
 // 判据是"它落在视模型包围盒里面"（= 被枪身几何盖掉 ⇒ 用户看到"没有效果"）。
 var oldPos = eye + aim * 0.34f + right * 0.13f + UnityEngine.Vector3.down * 0.09f;
 var oldSp = cam.WorldToScreenPoint(oldPos);
@@ -179,9 +177,8 @@ sb.Append('\n').Append("[C] 旧落点 pos=").Append(V3(oldPos))
   .Append(" screenPoint=").Append(V3(oldSp))
   .Append(" dist=").Append(F2(UnityEngine.Vector3.Distance(eye, oldPos)));
 
-// 新落点（片 FX-MUZZLE）：读 CsCombatTuning 的三个相机局部系分量。
-// ⚠️ `CsCombatTuning` 是 **internal**，而 eval_file 编译出来的是**另一个程序集** ⇒ 直接写
-//    `CsCombatTuning.MuzzleOffsetForward` 编译不过；用反射读**同一个常量**（⛔ 不在探针里抄数字）。
+// `CsCombatTuning` 是 **internal**，而 eval_file 编译出来的是**另一个程序集** ⇒ 直接写
+//    `CsCombatTuning.MuzzleOffsetForward` 编译不过；用反射读**同一个常量**（不在探针里抄数字）。
 System.Type tune = null;
 var asms = System.AppDomain.CurrentDomain.GetAssemblies();
 for (var i = 0; i < asms.Length; i++)
@@ -238,7 +235,7 @@ if (mf == null)
     sb.Append('\n').Append("[C] MuzzleFlash 方法取不到");
     return sb.ToString();
 }
-// ⚠️ 第 3 参**刻意写死 `m249`**：贴图选择是"武器 id → 贴图"的**纯函数**
+// 第 3 参**刻意写死 `m249`**：贴图选择是"武器 id → 贴图"的**纯函数**
 //    （`CombatEffects.PickMuzzleFlash`），不需要玩家真的持 B51 —— 驱动侧走业务 `TryBuyFor`
 //    会撞 `mp_buytime`（15s）买枪窗，而 `unity` CLI 每次往返的耗时不可控（实测被窗口睡过去）。
 //    这里直接点验用户点名的那格（B51 = 十字形 fx_muzzleflash3）。

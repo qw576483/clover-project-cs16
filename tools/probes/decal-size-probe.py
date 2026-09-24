@@ -199,7 +199,7 @@ def part_b(src, tuning, paths_cs):
     def blood_meters(px):
         return px * mpp
 
-    # 贴图清单：从 ResPaths 的**字面量 key 表**里取（⛔ 不另抄一份名字）
+    # 贴图清单：从 ResPaths 的**字面量 key 表**里取（不另抄一份名字）
     keys = re.findall(r'"(UI/Art/fx_[A-Za-z0-9_]+)"', paths_cs)
     if not keys:
         fail('ResPaths 里没解析到 fx_* key')
@@ -307,8 +307,6 @@ def part_c(src):
     shot_hits = [m.group(0).strip() for m in re.finditer(p_shot, old_s)]
     blood_hits = [m.group(0).strip() for m in re.finditer(p_blood, old_s)]
 
-    # 血迹那条是**本片新增**的（HEAD 里还没有血迹实现），所以 HEAD 只可能命中弹痕那条。
-    # 判据只要求：HEAD 里**确实存在**弹痕那条（反例可复现），且它在修复后消失。
     if not shot_hits:
         fail('HEAD 里找不到弹痕"米当倍率"的写法 ⇒ 反例无法复现（HEAD 变了就要重看这条判据）')
     else:
@@ -481,8 +479,7 @@ def part_e(tuning, paths_cs):
         ok('%d 张贴图都有全透明背景 + 半/不透明墨迹（decal 不透明度口径生效）' % checked)
 
     # 工具侧：透明索引必须是**实测**出来的，不能是照搬来的猜测。
-    # ⛔ 自检项按**代码**断言（set(corners) / max(counts...) / idx not in (0, 255)），
-    #    不按注释里的措辞 —— 本片第一次就是拿中文关键词去匹英文注释，假红了一条。
+    # 自检项按**代码**断言（set(corners) / max(counts...) / idx not in (0, 255)），
     w3 = os.path.join(ROOT, 'tools', 'probes', 'wad3-extract.py')
     if not os.path.exists(w3):
         fail('找不到 tools/probes/wad3-extract.py')

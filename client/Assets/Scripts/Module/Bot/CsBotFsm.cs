@@ -7,20 +7,20 @@ namespace Cs16.Module.Bot
     /// <summary>
     /// 机器人战术层状态机 —— **每个 bot 一棵**，实例由引擎 <see cref="Game.NewFsm"/> 提供。
     ///
-    /// <para><b>引擎能力（本类只做壳，⛔ 不再复刻 <c>Fsm</c>）</b>：</para>
+    /// <para><b>引擎能力（本类只做壳，不再复刻 <c>Fsm</c>）</b>：</para>
     /// <list type="number">
     /// <item><c>Game.NewFsm()</c>（<c>Runtime/Core/Game.cs:194</c>）返回一棵**独立**的
     /// <see cref="IFsm"/>：它有自己的 <c>_states/_transitions/_current</c>，与**应用级单例**
     /// <see cref="Game.Fsm"/>（<c>Game.cs:172</c>，由 <c>Game.cs:910</c> 的 <c>Force("Launching")</c> 起步、
     /// 由 <c>Game.Tick</c> 驱动）完全不共享。所以"每个 bot 各自一份状态"结构上成立：
     /// 注册到单例上的做法会让 8 个脑共用同一个 <see cref="IFsm.Current"/> 并互相覆盖。</item>
-    /// <item>实现类 <c>Runtime/Core/Fsm.cs:100</c> 本轮已由 <c>internal</c> 提升为 <c>public</c> 并开放
+    /// <item>实现类 <c>Runtime/Core/Fsm.cs:100</c> 已由 <c>internal</c> 提升为 <c>public</c> 并开放
     /// <c>NewFsm()</c> 工厂 ⇒ 转换语义**只有一份实现**：自环忽略（<c>Fsm.cs:296</c> 的
     /// <c>SwitchTo</c> + <c>:304</c> 的守卫 —— <c>Trigger</c> / <c>Force</c> 也走这条路）、回调内再转换排队补执行（<c>Fsm.cs:306-312</c>）、连锁转换上限 8
     /// （<c>Fsm.cs:107</c> 的 <c>MaxChainedSwitches</c>，<c>Fsm.cs:327-334</c> 中止并报错）、
     /// 未注册状态报 Error（<c>Fsm.cs:298-302</c>）、未注册触发器告警并忽略（<c>Fsm.cs:178-185</c>）、
     /// OnTick / OnChange 异常隔离（<c>Fsm.cs:204-214</c> / <c>Fsm.cs:365-372</c>）。
-    /// ⛔ 本类不许再留第二份这五条语义。</item>
+    /// 本类不许再留第二份这五条语义。</item>
     /// <item><see cref="IFsm.Reset"/>（<c>Fsm.cs:276</c>）清状态表 / 触发器表 / <c>Current</c> 与
     /// "转换执行中 / 待补执行目标"标记（**不销毁实例**、**保留 OnChange 订阅**）—— 每回合复用同一棵树走它。</item>
     /// </list>
@@ -30,7 +30,6 @@ namespace Cs16.Module.Bot
     /// <item><b>初始状态</b>：引擎的 <see cref="IFsm"/> 注册完状态后 <see cref="IFsm.Current"/> 仍是
     /// <c>null</c>（引擎自身用法 = 注册完再 <c>Force</c> 首状态，见 <c>Game.cs:896-910</c> 的
     /// <c>InitFsm</c>）。本类把这步收进 <see cref="RegisterState"/>：首个注册的状态即为初始状态
-    /// （等价于旧实现那句 <c>if (_current == null) _current = state</c>，调用方 <c>CsBotBrain.InitFsm</c>
     /// 只注册不 Force —— 换成引擎实例后必须补上这一步，否则 <c>Current</c> 一直是 null）。</item>
     /// <item><b><see cref="TransitionCount"/></b>：引擎 <c>Fsm</c> **不提供**转换计数出口（只有
     /// <see cref="IFsm.Current"/> 与 <see cref="IFsm.OnChange"/>）—— 这是裁决：由业务自己数。
@@ -78,8 +77,7 @@ namespace Cs16.Module.Bot
         {
             _fsm.RegisterState(state, onEnter, onTick, onExit);
 
-            // 首个注册的状态即初始状态（等价旧实现；引擎侧需要显式 Force，见类注释与 Game.cs:896-910）。
-            // ⛔ 只做一次：Current 非 null 后不再 Force（重复 Force 会打日志/触发回调）。
+            // 只做一次：Current 非 null 后不再 Force（重复 Force 会打日志/触发回调）。
             if (_fsm.Current == null) _fsm.Force(state);
         }
 

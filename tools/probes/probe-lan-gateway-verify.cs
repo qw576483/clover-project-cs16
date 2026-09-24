@@ -3,12 +3,12 @@
 // 用法（须在跑过 probe-lan-gateway.cs、且 Python 客户端已连过之后）：
 //   unity command eval_file --file tools/probes/probe-lan-gateway-verify.cs
 //
-// 判定口径（⛔ 写死在探针里，不靠人眼看）：
+// 判定口径（写死在探针里，不靠人眼看）：
 //   PASS ⇔ ① Gateway.Connections ≥ 1（**另一个进程确实连上来了**，不是只有本进程）
 //          ② Gateway.Joins ≥ 1（收到过 JOIN 且回了 WELCOME）
 //          ③ Gateway.Snapshots ≥ 1（主机真的按帧把世界推出去了）
 //          ④ Gateway.Malformed == 0（线格式没谈崩）
-// ⛔ 不含"客户端已把远端角色画出来"这一条 —— 那是"能开局"的下一段（见 #88 登记）。
+// 不含"客户端已把远端角色画出来"这一条 —— 那是"能开局"的下一段（见 #88 登记）。
 var sb = new System.Text.StringBuilder();
 
 sb.Append("[A] ").Append(Cs16.Module.Net.CsLanGateway.Describe());
@@ -32,7 +32,7 @@ sb.Append("\n  口径：连接≥1（=").Append(conn).Append("）收到JOIN≥1�
   .Append("）推出快照≥1（=").Append(snaps).Append("）非法行=0（=").Append(bad).Append("）");
 sb.Append("\n⛔ 不含「客户端已把远端角色画出来」这一条 —— 那是下一段");
 
-// 收尾：停主机（幂等）。⛔ 不停的话下一轮扫描会一直有应答，负例测不出来。
+// 收尾：停主机（幂等）。不停的话下一轮扫描会一直有应答，负例测不出来。
 Cs16.Module.Net.CsLanHost.Stop();
 sb.Append("\n收尾：").Append(Cs16.Module.Net.CsLanGateway.Describe());
 return sb.ToString();

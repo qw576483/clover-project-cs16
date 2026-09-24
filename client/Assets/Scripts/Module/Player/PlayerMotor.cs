@@ -29,7 +29,6 @@ namespace Cs16.Module.Player
         // ---- 视角 ----
         // 鼠标位移 → yaw/pitch 的累加 = **引擎件** <see cref="LookAccumulator"/>（E-core-18 下沉）：
         // 符号方向 / 夹紧口径 / 灵敏度口径（"每 count 多少度"、不乘 dt）**逐字照搬**本组件原实现
-        // ⇒ 手感与改前逐位一致。俯仰限位从 <see cref="CsCombatTuning.PitchLimit"/> 传入。
         private readonly LookAccumulator _look = new LookAccumulator();
 
         // ---- 设置 ----
@@ -76,11 +75,9 @@ namespace Cs16.Module.Player
         /// <see cref="ForceLook"/> **完全一致**（出生 / 观战接管时模拟自己也在用它）。
         ///
         /// <para><b>为什么必须有它</b>：离线驱动没有鼠标层，只能靠它把"朝哪儿开枪"变成可复现的输入。
-        /// 旧做法是驱动侧<b>反射</b>调用 internal 的 <see cref="ForceLook"/> —— 脆弱、且是绕过类型系统的后门；
-        /// 按 clover-engine skill §0.6 第 3 条改成这个 public 类型化入口
         /// （与 <c>CombatModule.SetFireHeldForTest</c> 同一形状）。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// <para><b>不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
         /// 真实玩家路径仍只由 <see cref="ApplyMouseLook"/> 按鼠标位移累加。</para>
         /// </summary>
         public void ForceLookForTest(float yaw, float pitch)

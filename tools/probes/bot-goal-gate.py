@@ -1,11 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ============================================================================
-#  判据资产 - 切片 BU-R：**bot 目标决策的验收闸门**（同一批断言，修前 / 修后各跑一次）
 #
-#  为什么需要它（本片根因）：
-#    片BS 的分析脚本（analyze-bot-goal.py / analyze-hold-plant.py）只**报数字**，没有阈值 ——
-#    于是"修完了没有"要靠读报告的人自己拍板。本脚本把验收表里那几行写成**可机械判红的断言**：
 #       A1 每个 bot 的净位移 ≥ 阈值              （不许"站着不动 / 原地踱步"）
 #       A2 每个 bot 的 net/total ≥ 阈值          （推进要**有方向**，不是来回蹭）
 #       A3 换目标次数 ≤ 阈值（全体 + 单机）      （刹住"stuck-escalate 风暴"）
@@ -15,7 +11,7 @@
 #       A7 守点换位 ≥ 阈值                       （守位表建好了还必须**真的换位**）
 #       A8 三档难度参数逐字段对照规格             （Easy/Normal/Hard 的反应时间与瞄准误差）
 #
-#  输入（全部是**产品自己写的** L3 产物，⛔ 不读画面文本）：
+#  输入（全部是**产品自己写的** L3 产物，不读画面文本）：
 #    <项目根>/.ai-tmp/test/<产品>-hold-plant-log.tsv : frame TAB t TAB level TAB text
 #    <项目根>/.ai-tmp/test/<产品>-hold-plant.tsv     : A 行（每 3 帧一采样）
 #    <项目根>/client/Assets/Scripts/Module/Match/CsTypes.cs  : 三档参数真源（静态检查 A8）
@@ -24,7 +20,7 @@
 #    python tools/probes/bot-goal-gate.py                                  # 默认判 bu-r 产品
 #    python tools/probes/bot-goal-gate.py --log .. --rows ..               # 判别的 Play 产物
 #
-#  判据出处（⛔ 阈值不许"看起来合理"）：
+#  判据出处（阈值不许"看起来合理"）：
 #    * 净位移 / net-total 的口径 = tools/probes/analyze-bot-goal.py 第 4 节（同一份 A 行口径）。
 #    * SiteRadius / 包点判定 = Module/Map/ICsMap.cs:83 的 CsMarkers.BombsiteRadius = 7m
 #      （与 CsBomb.IsInBombsite 同口径）。
@@ -46,18 +42,16 @@ DWELL_SAMPLES = 5            # "驻留" = 连续 5 个采样点都在包点内�
 MIN_NET_METERS = 15.0        # A1：一个整回合里，bot 的净位移至少 15m（不到 = 没在推进）
 MIN_NET_OVER_TOTAL = 0.15    # A2：推进要有方向
 
-# ---- 片BU-R4：A1/A2 的**有条件**口径 + 新增 A9（⛔ 上面两个阈值一个字都没动）----
 # 为什么改：A1/A2 的原口径等于"所有 bot 都该推进"，对**守点/驻留**型 bot 是错的 ——
 #   守得对就该静止（A6/A7 已证明"CT 在包点内驻留 / 守点换位"是正确行为）。
-# 改法（只加"合格静止"这一个出口，且出口的证据与 A6 **同一列**、⛔ 不新增量法）：
+# 改法（只加"合格静止"这一个出口，且出口的证据与 A6 **同一列**、不新增量法）：
 #   一个 bot 的采样里，凡是属于"连续 >= DWELL_SAMPLES 个采样落在包点 BOMBSITE_RADIUS 内"的采样，
 #   记为**合格驻留采样**（判据列 = 产品自己写的 A 行 dA/dB）；
 #   当合格驻留采样 >= DWELL_SAMPLES 且占该 bot 存活采样 >= DWELL_QUAL_MIN_RATIO 时，
 #   A1/A2 对**这个 bot** 记通过（= 它的"不动"由合格驻留解释）。
-#   ⛔ 没有这份证据的静止（例如"持包 bot 全程 0 位移"）照旧判红 —— 由 A9 直接点名。
+#   没有这份证据的静止（例如"持包 bot 全程 0 位移"）照旧判红 —— 由 A9 直接点名。
 DWELL_QUAL_MIN_RATIO = 0.5
 # A9：持包 bot 在 Live 阶段连续静止 > PLANT_STILL_SECONDS 而全场一次都没下包 ⇒ FAIL。
-#     片BU-R4 的直接病灶：T 持包者 Move 恒 0（intent 按值传递丢失）⇒ 站整回合、永不下包。
 PLANT_STILL_SECONDS = 10.0
 STILL_EPS_METERS = 0.15
 
@@ -256,7 +250,6 @@ def main():
         net = ((s[-1][1] - s[0][1]) ** 2 + (s[-1][2] - s[0][2]) ** 2) ** 0.5
         ratio = (net / total) if total > 0 else -1.0
         ok_move = net >= MIN_NET_METERS and ratio >= MIN_NET_OVER_TOTAL
-        # 片BU-R4：合格驻留出口（证据 = A 行 dA/dB，与 A6 同一列；⛔ 两个阈值未动）
         dw, alive_n = qualified_dwell_samples(rows, nm)
         dw_ratio = (float(dw) / alive_n) if alive_n > 0 else 0.0
         ok_dwell = (dw >= DWELL_SAMPLES) and (dw_ratio >= DWELL_QUAL_MIN_RATIO)
@@ -298,17 +291,14 @@ def main():
           '%d（<=%d）；两类必须分开看：终点不可走=高度一致性层拒绝、无可达路径=真位图孤岛' % (pf, MAX_PATH_FAILS))
 
     # ---- A5 T 侧下包 ----
-    # ★ 片BU-R6 口径补全（⛔ 只补"产品自己写的下包行"，不放松任何阈值）：
     #   旧口径只认两种形态 ——
     #     ① `TPLANTED`：那是**探针写进 rows 流**（`<产品>-hold-plant.tsv` 的 `E TPLANTED`）的 token，
     #        而本项只扫 `log` 流（`<产品>-hold-plant-log.tsv`）⇒ **这一半永远不可能命中**；
     #     ② `在包点…下包决策`：AI 侧那条日志受 `CsBotConst.StateLogMinInterval` 速率限制，
     #        被前一条（`冲向包点`）吃掉时不会出现。
-    #   实测（片BU-R6）：round1 产品真的下了包（rows 里 `E TPLANTED round=1`、
-    #   log 里 `★ Gooseman 安放 C4 于 (-23.75, 0.00, 26.84)（35s 倒计时开始）`），而旧口径报 **0 条**。
-    #   补全的第三条形态 = 产品自己的下包 L3：`CsBomb` 的 `开始安放 C4` / `★ …安放 C4 于 …` /
+    #   补全的第三条形态 = 产品自己的下包 L3：`CsBomb` 的 `开始安放 C4` / `…安放 C4 于 …` /
     #   `成功安放 C4`（`Module/Match/CsBomb.cs`）。
-    #   ⛔ 两次自检：已知正确样本仍 PASS、已知错误样本（`br` / `bu-r4-prefix` 产物）仍 FAIL（它们 `安放 C4` = 0）。
+    #   两次自检：已知正确样本仍 PASS、已知错误样本（`br` / `bu-r4-prefix` 产物）仍 FAIL（它们 `安放 C4` = 0）。
     planted = (sum(1 for r in log if 'TPLANTED' in r[2])
                + sum(1 for r in log if '在包点' in r[2] and '下包决策' in r[2])
                + sum(1 for r in log if '安放 C4' in r[2]))
@@ -364,10 +354,8 @@ def main():
                  prof.get('Hard', {}).get('reaction'), prof.get('Hard', {}).get('aimerr'))
               + ('' if not bad else ' | ' + '; '.join(bad)))
 
-    # ---- A9 持包 bot 在 Plant 态"连续静止 > 10s 而没下包"（片BU-R4 新增）----
     # 判的是**过程**：整段日志里有没有一次真的下包（L3：TPLANTED / "安放 C4"）；没有的话，
-    # 任何"持包 bot 在 Live 连续静止 >= 10s"的段都点名 —— 这正是片BU-R4 的病灶形态
-    # （T 持包者 Move 恒 0 ⇒ 站整回合、永不下包）。⛔ 不是"看结果凑数"：下包一旦发生，本项自动过。
+    # （T 持包者 Move 恒 0 ⇒ 站整回合、永不下包）。不是"看结果凑数"：下包一旦发生，本项自动过。
     confirmed = sum(1 for r in log if 'TPLANTED' in r[2]) + sum(1 for r in log if '安放 C4' in r[2])
     still_bad = []
     for nm in order:

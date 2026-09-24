@@ -1,4 +1,3 @@
-// 小探针（tools/probes/）：确认「片 FX-MUZZLE」那三处 C# 改动**已真的编译进当前程序集**。
 // 为什么要它：本轮踩过坑 —— 编辑脚本时 Unity 正在 Play，编译被推迟，于是 eval 打到的还是
 // **旧签名**的 MuzzleFlash（报 "Number of parameters specified does not match the expected number"）。
 // 判据：CsCombatTuning 找到 + 三个偏移常量取得到值 + CombatEffects.MuzzleFlash 的参数个数 == 3。

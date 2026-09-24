@@ -89,7 +89,7 @@ namespace Cs16.UI
         /// 自己 <c>RemoveAllListeners()</c> 重绑的按钮（如 <c>OptionsPanel.WireCtrls</c>）
         /// 要显式再调一次本方法。</para>
         ///
-        /// <para>⛔ UI 层不许 using 任何 <c>Module</c> ⇒ 不能用 <c>Module/Audio</c> 的
+        /// <para>UI 层不许 using 任何 <c>Module</c> ⇒ 不能用 <c>Module/Audio</c> 的
         /// <c>SfxService</c>（那是给游戏内音效的转发层），这里直接走引擎 <c>Game.Sound</c>；
         /// 短名真源 = <see cref="ResPaths.SfxMenuClick"/>（Core 层，UI 可以引）。</para>
         /// </summary>

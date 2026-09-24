@@ -20,7 +20,6 @@ namespace Cs16.UI
     /// <para>
     /// <b>本类不含任何控件构造实现</b>：Slider / InputField / Selector / ToggleRow 与布局助手全部在
     /// 引擎 <c>UIFactory</c>（<c>Runtime/Presentation/UIWidgetControls.cs</c>），这里只把 CS 的
-    /// 配色 / 字号 / 文案打包成 <c>Widget*Style</c> 传进去 —— <c>结构规则.md</c> §4.4：同一种能力
     /// 只允许一个实现，不准平行再起一套。本文件只留 CS 业务取值（配色常量、字号档位、RowHeight）
     /// 与 <see cref="CreateButton"/>（悬浮橙色高亮是 CS 主菜单特有的）这两类。
     /// </para>
@@ -107,13 +106,11 @@ namespace Cs16.UI
         /// 贴底锚点、字号、颜色由引擎给。</para>
         ///
         /// <para><b>字体一律走本工程的原版字体链</b>（<see cref="OriginalFont"/> = 系统 Verdana + CJK 回退族，
-        /// 取不到时回退引擎内置字体并 <c>Warn</c> 一次）：⛔ **不传 null** —— 引擎在 <c>font == null</c> 时会
+        /// 取不到时回退引擎内置字体并 <c>Warn</c> 一次）：**不传 null** —— 引擎在 <c>font == null</c> 时会
         /// 报"未指定字体、已回落内置字体（像素字体可能把小写渲染成全大写）"的 Warn，那是给"真没字体"的项目看的，
         /// 本工程有原版字体链，传 null 只会把它变成假告警。</para>
         /// </summary>
         /// <param name="parent">宿主节点（面板根）。</param>
-        /// <param name="fontSize">字号（默认 22 = 改前两处用的值）。</param>
-        /// <param name="bottomOffset">离父节点底边的距离（默认 56 = 改前两处用的值）。</param>
         public static Text CreateCreditLabel(Transform parent, int fontSize = 22, float bottomOffset = 56f)
         {
             return UIFactory.CreateCreditLabel(parent, OriginalFont, fontSize, bottomOffset);
@@ -122,7 +119,6 @@ namespace Cs16.UI
         /// <summary>全屏纯色底（面板的第一层）。<paramref name="raycast"/> = true 时挡住下层点击。</summary>
         public static Image CreateFullScreen(string name, Transform parent, Color color, bool raycast = true)
         {
-            // 引擎的 CreatePanel 就是"铺满父节点的纯色 Image" ⇒ 直接转发，不另起一套（§4.4）。
             return UIFactory.CreatePanel(name, parent, color, raycast);
         }
 
@@ -197,7 +193,6 @@ namespace Cs16.UI
                 onPrev, onNext, style);
         }
 
-        /// <summary>把 0~1 的进度写进"按锚点宽度"的进度条（别用空 sprite 的 Filled Image，fillAmount 会静默失效）。</summary>
         public static void SetBarWidth(RectTransform fill, float progress01)
         {
             UIFactory.SetBarWidth(fill, progress01);
@@ -301,7 +296,7 @@ namespace Cs16.UI
         // ═══════════════════════ 原版 .res 重建用的取色 / 字体 / 控件工厂 ═══════════════════════
         //
         // 出处一律 = `原版资源/cs16src/cs16game/app/cstrike/resource/clientscheme.res`（下称 scheme）。
-        // ⛔ 这里**只做搬运**：每个常量后面的行号就是它的出处，不许"看起来接近"就改数。
+        // 这里**只做搬运**：每个常量后面的行号就是它的出处，不许"看起来接近"就改数。
 
         /// <summary>
         /// `.res` 的设计空间（640×480）→ 本项目画布（1920×1080）的换算比。
@@ -312,13 +307,13 @@ namespace Cs16.UI
         /// </para>
         ///
         /// <para>
-        /// ⚠️ <b>口径来源如实标注</b>：载体里**没有**任何一行写着"设计空间 = 640×480"。
+        /// <b>口径来源如实标注</b>：载体里**没有**任何一行写着"设计空间 = 640×480"。
         /// 这是**由数据自洽性推断**（`teammenu.res` 的 `xpos 76 + wide 552 = 628 ≤ 640`；设置各子页的
-        /// 控件也全部落在 640×480 内）+ 与实机图对照后定下的口径，⛔ 不是"原版写明的"。
+        /// 控件也全部落在 640×480 内）+ 与实机图对照后定下的口径，不是"原版写明的"。
         /// </para>
         ///
         /// <para>
-        /// ⛔ <b>字号不乘这个比值</b>：`scheme` 的 `Fonts` 块里 <c>tall</c> 给的是**实屏像素**
+        /// <b>字号不乘这个比值</b>：`scheme` 的 `Fonts` 块里 <c>tall</c> 给的是**实屏像素**
         /// （按 <c>yres</c> 分档，见 <see cref="OriginalFontSize"/>），换算成画布单位时是 1:1。
         /// </para>
         /// </summary>
@@ -329,7 +324,7 @@ namespace Cs16.UI
         ///
         /// <para>出处链：`BaseSettings` 的 `BgColor "ControlBG"`（scheme:101）是每个控件的默认底色，
         /// 所以 `Frame`（选阵营的 `TeamMenu`、各设置子页的框）**默认就是没有底板的**。
-        /// ⛔ 别拿 <see cref="WindowBg"/>（`WindowBG "0 0 0 200"`，scheme:41）当 Frame 底 ——
+        /// 别拿 <see cref="WindowBg"/>（`WindowBG "0 0 0 200"`，scheme:41）当 Frame 底 ——
         /// 那条是**文本编辑框 / 聊天窗**的底色（scheme:41 行尾注释即写明），不是 Frame 的。</para>
         /// </summary>
         public static readonly Color ControlBg = new Color32(0x00, 0x00, 0x00, 0x00);
@@ -366,7 +361,7 @@ namespace Cs16.UI
         /// 本工程画布高 1080 落在第 4 档 ⇒ **20**。
         /// </para>
         ///
-        /// <para>⛔ 这个数是**实屏像素**，不乘 <see cref="ResScale"/>（见该常量的说明）。</para>
+        /// <para>这个数是**实屏像素**，不乘 <see cref="ResScale"/>（见该常量的说明）。</para>
         /// </summary>
         public const int OriginalFontSize = 20;
 
@@ -383,7 +378,7 @@ namespace Cs16.UI
         /// <para>
         /// 用 <see cref="Font.CreateDynamicFontFromOSFont(string[], int)"/> 并带上 CJK 回退族 ——
         /// 原版 menu 全英文、没有中文，而本工程的面板里有中文（如"（本项目新增）"），
-        /// 只给 Verdana 会让中文变成方框。⛔ CJK 回退族是**本项目新增**（登记在验收表「允许的差异」）。
+        /// 只给 Verdana 会让中文变成方框。CJK 回退族是**本项目新增**（登记在验收表「允许的差异」）。
         /// </para>
         /// <para>取不到时回退引擎内置字体并只 <c>Warn</c> 一次（不许静默变成另一种字体）。</para>
         /// </summary>
@@ -461,15 +456,14 @@ namespace Cs16.UI
         /// 原版形态的按钮：**纯文本左对齐**（`.res` 的 `textAlignment west`）+ `ButtonBG` 半透明黑底
         /// + 文字 `ControlText` 橙；鼠标悬停换 `SelectionBG`（原版 `ButtonArmedBgColor`，scheme:184）。
         ///
-        /// <para>⛔ 与 <see cref="CreateButton"/>（强调=橙底深字）**不是同一个形态**：
+        /// <para>与 <see cref="CreateButton"/>（强调=橙底深字）**不是同一个形态**：
         /// `.res` 里的按钮一律是"黑底 + 橙字"，橙色在原版是**文字色**不是底色。</para>
         /// </summary>
         public static Button CreateOriginalButton(string name, Transform parent, string label, Vector2 pos,
             Vector2 size, Action onClick)
         {
-            // ⛔ **底板必须是纯白**，配色全交给下面的 `Button.colors`。
+            // **底板必须是纯白**，配色全交给下面的 `Button.colors`。
             //
-            // 为什么（实测根因，用户报的"鼠标划过没有反应"就是它）：
             // uGUI 的 `Selectable.Transition.ColorTint` **不是替换底色，而是乘上去** ——
             // 悬停时 `Graphic.CrossFadeColor` 只改 **CanvasRenderer 颜色**（见 uGUI `Graphic.cs`
             // 的 `CrossFadeColor`：`canvasRenderer.SetColor` 那一行），`Graphic.color` 不动，
@@ -549,7 +543,7 @@ namespace Cs16.UI
         public static Button CreateMenuItem(string name, Transform parent, string label, Vector2 pos,
             Vector2 size, Action onClick)
         {
-            // ⛔ 文字色必须是**原版正文橙**（ControlText 255 176 0，clientscheme.res:24-33）：
+            // 文字色必须是**原版正文橙**（ControlText 255 176 0，clientscheme.res:24-33）：
             // 下面的 Button.colors 只是**再乘一层 tint**（常态 MenuItemText = 200/255，trackerscheme.res:166）
             // ⇒ 最终显示 = 橙 × 200/255。若这里给白，tint 乘完就成了"灰白字"，与原版不符（实测踩过）。
             var text = UIFactory.CreateText(name, parent, label, OriginalFontSize,
@@ -642,10 +636,9 @@ namespace Cs16.UI
         // 渲成带 alpha 的 PNG = `ResPaths.MenuCheckGlyph`（`Resources/UI/Art/menu_check.png`，132×140）。
         // 判据数字（`--size 300`）：`ink=7523 / bbox=132x140 / ratio=0.943 / comps=1 / vx=0.352 / arm=0.264`。
         //
-        // ⛔ **为什么用 `Image` 而不是 `Text`**：① `ApplyOriginalFonts()` 会把整棵子树的 `Text.font`
+        // **为什么用 `Image` 而不是 `Text`**：① `ApplyOriginalFonts()` 会把整棵子树的 `Text.font`
         //    刷成 Verdana ⇒ 用 `Text` 画勾会被覆写；② 该载体是 Windows **符号字体**（`cmap` 只有
         //    (1,0) Mac-Roman + (3,0) MS-Symbol、**没有 (3,1) Unicode**）⇒ Unity 侧根本取不到它自己的
-        //    字形（切片AU 实测：`U+F061` 是空字形 ink=0，`U+0029` 拿到的是系统 fallback 的 ")"）；
         //    ③ 贴图自带原版勾色（`CheckButtonCheck` → `BrightControlText "255 176 0 255"`，
         //    `clientscheme.res:30/179`），`Image.color` 只做白 tint。
 
@@ -660,7 +653,7 @@ namespace Cs16.UI
         ///
         /// <para>预制体里**存不下**这张贴图（生成器建预制体时 <c>Game.Res</c> 还没起来）⇒ 运行期由
         /// <c>OptionsPanel</c> 走树时逐格调本方法；贴图只请求一次，到手后统一刷所有已登记的目标。
-        /// ⛔ 在手之前**不要**给勾标记留一个没有 sprite 的 `Image` —— uGUI 会把它画成**实心白块**
+        /// 在手之前**不要**给勾标记留一个没有 sprite 的 `Image` —— uGUI 会把它画成**实心白块**
         /// （`Graphic.OnPopulateMesh` 的实心分支）。所以建件时的底色仍是 <see cref="CheckMark"/>
         /// （万一贴图取不到，退化成的正是改造前那块**原色**小方块，而不是白块）。</para>
         /// </summary>
@@ -741,7 +734,7 @@ namespace Cs16.UI
         ///
         /// <para>勾选框里的"勾" = 原版 **Marlett** 字体字形（scheme:483-492）的**预渲染贴图**
         /// （<see cref="ResPaths.MenuCheckGlyph"/>，勾 = 该字体 gid 12 / 可达码位 `U+F061`；
-        /// 渲染器 = 判据资产 `tools/probes/make-check-glyph.py`）。⛔ 不再是一块纯色方块。</para>
+        /// 渲染器 = 判据资产 `tools/probes/make-check-glyph.py`）。不再是一块纯色方块。</para>
         ///
         /// <para>方框边长（<see cref="CheckBoxSize"/>）与文案起点（<see cref="CheckTextIndent"/>）仍是
         /// **本项目新增**的量（原版由 Marlett 字模决定，无像素值可引）。</para>
@@ -752,7 +745,7 @@ namespace Cs16.UI
             var holder = UIFactory.CreateNode(name, parent);
             AnchoredTopLeft(holder, pos, size);
 
-            // ⛔ 勾选框图形在**行内垂直居中**：AnchoredTopLeft 的口径是「y 为负 = 向下」，
+            // 勾选框图形在**行内垂直居中**：AnchoredTopLeft 的口径是「y 为负 = 向下」，
             // 所以"从行顶往下让出半个余量"必须**取负**。早先写成正数 ⇒ 框/边/勾整体跑到行容器**上方**
             // （与文字错位、越出本行），实测由全界面几何体检抓出。
             var boxTop = -(size.y - CheckBoxSize) * 0.5f;
@@ -770,7 +763,7 @@ namespace Cs16.UI
                 new Vector2(CheckBoxSize, 2f), BorderBright);
             // 勾 = 原版 Marlett gid 12 的**预渲染贴图**（`ResPaths.MenuCheckGlyph`，渲染器 =
             // 判据资产 `tools/probes/make-check-glyph.py`，出处见本类「勾字形」段）。
-            // ⛔ 位置 / 尺寸**沿用原值** `4f / boxTop-4f` + `CheckBoxSize-8f`：动它会波及 options
+            // 位置 / 尺寸**沿用原值** `4f / boxTop-4f` + `CheckBoxSize-8f`：动它会波及 options
             //    面板的全部几何证据（8×8 的画框，贴图按 preserveAspect 缩进去画）。
             var mark = CreateBoxRect("Mark", holder,
                 new Vector2(4f, boxTop - 4f),
@@ -806,7 +799,7 @@ namespace Cs16.UI
         /// <summary>
         /// 原版 `ComboBox` / `CLabeledCommandComboBox` 的复刻件：一块左对齐文本的按钮，**点击循环**档位。
         ///
-        /// <para>⚠️ 引擎没有下拉控件（VGUI `ComboBox` 的弹出列表在本工程没有对应实现）⇒ 本件用"点击循环"
+        /// <para>引擎没有下拉控件（VGUI `ComboBox` 的弹出列表在本工程没有对应实现）⇒ 本件用"点击循环"
         /// 代替，**登记为允许的差异**。位置 / 尺寸仍逐字取自 `.res`。</para>
         /// </summary>
         public static ComboRow CreateComboRow(string name, Transform parent, Vector2 pos, Vector2 size,

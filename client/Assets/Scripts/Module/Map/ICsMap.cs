@@ -47,7 +47,7 @@ namespace Cs16.Module.Map
         /// （原版 <c>PM_CatagorizePosition</c> 的 <c>// too steep</c> 分支），
         /// 详口径见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>。</para>
         ///
-        /// <para>⛔ 判断陡坡必须用**世界法线**，不要用 <c>Vector3.Angle</c> 反算角度再去比角度（多一次三角函数、
+        /// <para>判断陡坡必须用**世界法线**，不要用 <c>Vector3.Angle</c> 反算角度再去比角度（多一次三角函数、
         /// 还引入一个角度阈值）—— 原版就是直接比这个分量。</para>
         /// </summary>
         /// <param name="pos">探测起点（通常 = 角色位置）。</param>

@@ -298,7 +298,6 @@ class Ttf(object):
 
 
 # ---------------------------------------------------------------------------
-#  Symbol-font workaround: rebuild a (3,1) unicode cmap and point the directory at it
 # ---------------------------------------------------------------------------
 
 def build_cmap_format4(mapping):

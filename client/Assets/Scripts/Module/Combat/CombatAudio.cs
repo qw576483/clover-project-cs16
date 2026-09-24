@@ -28,7 +28,6 @@ namespace Cs16.Module.Combat
         }
 
         // SFX 根目录前缀真源 = ResPaths.SoundSfxPrefix（带尾斜杠的"前缀 + 短名"用法）——
-        // 原先本类与 Module/Audio/SfxService 各写了一份同值同名的 const，现收敛成一处。
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
         private readonly Dictionary<string, ClipState> _states = new Dictionary<string, ClipState>(32);

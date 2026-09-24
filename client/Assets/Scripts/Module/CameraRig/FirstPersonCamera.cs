@@ -16,11 +16,11 @@ namespace Cs16.Module.CameraRig
     /// （<c>Runtime/Presentation/CloverFirstPersonCamera.cs</c>；它的数学层是从本项目逐字搬过去的，
     /// 见其类注释的出处标注）：</para>
     /// <list type="bullet">
-    /// <item><b>yaw/pitch 累加与夹取</b>：引擎 <c>LookAccumulator</c> + <c>PitchLimit</c>，⛔ 本组件不再自己夹；</item>
+    /// <item><b>yaw/pitch 累加与夹取</b>：引擎 <c>LookAccumulator</c> + <c>PitchLimit</c>，本组件不再自己夹；</item>
     /// <item><b>后坐力表现跟随</b>：<c>SetRecoil(pitch, yaw)</c> —— 只喂**模拟的权威值**
-    /// （<c>CsActor.RecoilPitch/RecoilYaw</c>），上跳/回正两个时间常数在引擎里挑（⛔ 不再留第二份跟随）；</item>
+    /// （<c>CsActor.RecoilPitch/RecoilYaw</c>），上跳/回正两个时间常数在引擎里挑（不再留第二份跟随）；</item>
     /// <item><b>受击摇晃</b>：<c>AddShake(amp, dur)</c> + 注入的 <see cref="CloverEngine.Rng"/>
-    /// （<c>CsRng.Stream(CsRngStream.CameraShake)</c>）—— ⛔ 本组件不再用裸 <c>UnityEngine.Random</c>；
+    /// （<c>CsRng.Stream(CsRngStream.CameraShake)</c>）—— 本组件不再用裸 <c>UnityEngine.Random</c>；
     /// <b>视点晃动</b>：引擎件 <c>ViewBob</c> 的输出经 <c>ViewOffset</c>/<c>ViewRoll</c> 塞进去；</item>
     /// <item><b>水平 FOV + 宽高比换算</b>：<c>FovX</c>/<c>FovSmoothTau</c> 交给引擎
     /// （<see cref="CameraMath.FovYFromFovX"/> 在引擎里逐帧算垂直 <c>fieldOfView</c>）；</item>
@@ -32,14 +32,14 @@ namespace Cs16.Module.CameraRig
     /// <list type="number">
     /// <item><b>相机本体</b>：舞台场景不保证有相机，自建一台常驻相机（比赛未运行时关闭）
     /// 可以彻底消除"进图后黑屏 / 和菜单相机抢 <c>Camera.main</c>"这两类问题。rig 用
-    /// <c>Bind(camera)</c> 显式绑它（⛔ 不走 <c>Game.Camera.Main</c>：那台可能不是我们这台）。</item>
+    /// <c>Bind(camera)</c> 显式绑它（不走 <c>Game.Camera.Main</c>：那台可能不是我们这台）。</item>
     /// <item><b>眼位</b>：眼位来自**逻辑**（<c>CsActor.Position + 眼高</c>，没有 Transform），
     /// 故本组件维护一个隐藏的眼位锚点 Transform（<c>CsFpsEyeAnchor</c>）并只平滑**眼高**那一个标量
     /// （站↔蹲、上下台阶不跳变，瞬移直接吸附）；引擎 <c>EyeSmoothTau</c> 是**整点**平滑（会让机位
     /// 在水平方向落后于玩家）故置 0。</item>
     /// <item><b>输入映射</b>：视角输入由玩家模块采集（<c>PlayerMotor.Yaw/Pitch</c>），
     /// 本组件每帧 <c>SetView(motor.Yaw, motor.Pitch)</c> 喂给 rig；rig 自己的鼠标读取**关掉**
-    /// （<c>SetControlEnabled(false)</c>）—— ⛔ 两处读鼠标会把灵敏度算两遍。这是项目专有的输入映射。</item>
+    /// （<c>SetControlEnabled(false)</c>）—— 两处读鼠标会把灵敏度算两遍。这是项目专有的输入映射。</item>
     /// <item><b>第三人称观战机位</b>（<see cref="ResolveChaseDistance"/>，原版 <c>V_GetChaseOrigin</c>）、
     /// 模型显隐、外来主相机 / 音频监听器收编、FOV 与机位的自证日志。</item>
     /// </list>
@@ -74,7 +74,6 @@ namespace Cs16.Module.CameraRig
 
         private readonly CsModuleLog _log = new CsModuleLog(Tag);
 
-        /// <summary>已处置过的"别人的主相机"（按引用去重；Unity 6 里 <c>GetInstanceID</c> 已废弃）。</summary>
         private readonly HashSet<Camera> _handledForeignCameras = new HashSet<Camera>();
 
         /// <summary>
@@ -86,7 +85,6 @@ namespace Cs16.Module.CameraRig
 
         /// <summary>
         /// 本组件**亲手**关掉的渲染 —— 只装**当前这一个 actor** 的（去重，避免每秒重复关）。
-        /// 目标一变就整批还原并清空（旧实现是只增不减的 HashSet ⇒ 被看过的人的模型会一直隐形）。
         /// </summary>
         private readonly HashSet<Renderer> _hiddenBodyRenderers = new HashSet<Renderer>();
 
@@ -96,7 +94,7 @@ namespace Cs16.Module.CameraRig
 
         /// <summary>
         /// **视角数学的唯一实现**（引擎件）：yaw/pitch 累加与夹取、后坐力表现跟随、受击摇晃（注入 Rng）、
-        /// 水平 FOV 平滑 + 宽高比换算、位姿下发。⛔ 本组件不再自己算这些
+        /// 水平 FOV 平滑 + 宽高比换算、位姿下发。本组件不再自己算这些
         /// （见类注释与 <c>Runtime/Presentation/CloverFirstPersonCamera.cs</c>）。
         /// </summary>
         private CloverFirstPersonCamera _rig;
@@ -104,7 +102,6 @@ namespace Cs16.Module.CameraRig
         /// <summary>
         /// 眼位锚点（隐藏的空物体）：眼位来自**逻辑**（<c>CsActor.Position</c>，角色模拟没有 Transform），
         /// 所以每帧把本锚点搬到目标脚下位置，<c>EyeOffset</c> 再给"脚 → 眼"的高度
-        /// ⇒ 引擎 rig 的 <c>EyePosition = 锚点位置 + 眼高</c>，与原来的
         /// <c>target.Position + (0, _eyeHeight, 0)</c> 逐字等价。
         /// </summary>
         private Transform _eyeAnchor;
@@ -239,7 +236,7 @@ namespace Cs16.Module.CameraRig
                     FovX = _baseFov,
                 };
 
-                // ⛔ rig 不许自己读鼠标：视角输入由 PlayerMotor 采集（项目专有的输入映射，见类注释），
+                // rig 不许自己读鼠标：视角输入由 PlayerMotor 采集（项目专有的输入映射，见类注释），
                 //    两处读鼠标会把灵敏度算两遍。关掉输入后 rig 仍照常由 Tick 驱动机位。
                 _rig.SetControlEnabled(false);
             }
@@ -440,7 +437,7 @@ namespace Cs16.Module.CameraRig
             {
                 // ---- 第三人称观战 / 跟随（原版 view.cpp:617-635）----
                 // 机位 = 眼位沿**视线反方向**退 ofs[2]；roll 归零（view.cpp:627）；距离与防穿墙见 ResolveChaseDistance。
-                // 朝向 / 眼位 / 视线方向全部取 rig 算好的值（⛔ 这里不再自己拼 yaw/pitch）。
+                // 朝向 / 眼位 / 视线方向全部取 rig 算好的值（这里不再自己拼 yaw/pitch）。
                 var dist = ResolveChaseDistance(_eyePosition, _aimDirection);
                 _pendingRotation = Quaternion.Euler(-_rig.Pitch, _rig.Yaw, 0f);
                 _pendingPosition = _eyePosition - _aimDirection * dist;
@@ -455,7 +452,7 @@ namespace Cs16.Module.CameraRig
         /// Unity 的 <c>fieldOfView</c> 是垂直口径，引擎在 <c>ApplyToCamera</c> 里按 <c>cam.aspect</c> 用
         /// <see cref="CameraMath.FovYFromFovX"/> 换算）⇒ 那种情况下本方法是空操作。
         /// 这正是调用方 <c>PlayerModule</c> 的「① 相机 ② 射线 ③ 落位」三段顺序仍然成立的原因：
-        /// 第 ③ 步只对观战机位有意义，⛔ 本组件不再自己算垂直 FOV（那是第二份宽高比换算）。</para>
+        /// 第 ③ 步只对观战机位有意义，本组件不再自己算垂直 FOV（那是第二份宽高比换算）。</para>
         /// </summary>
         internal void ApplyToTransform()
         {
@@ -476,9 +473,9 @@ namespace Cs16.Module.CameraRig
 
             // 编辑器 Game 视图的「Gizmos」叠层会给 **Camera / AudioListener** 各画一个图标
             //（用户报的"喇叭"就在这台上：本对象同时挂 Camera 与 AudioListener）。
-            // HideInHierarchy 只改"编辑器叠加层画不画"：⛔ 不改渲染、⛔ 不动物理、⛔ 不影响 Camera.main
+            // HideInHierarchy 只改"编辑器叠加层画不画"：不改渲染、不动物理、不影响 Camera.main
             //（按 tag 查，与层级可见性无关）；本对象本就常驻，隐藏层级显示无副作用。
-            // ⛔ 不用 HideAndDontSave —— 那会改生命周期语义（它已经是 DontDestroyOnLoad 的）。
+            // 不用 HideAndDontSave —— 那会改生命周期语义（它已经是 DontDestroyOnLoad 的）。
             var go = new GameObject(CameraObjectName);
             go.hideFlags = HideFlags.HideInHierarchy;
             Object.DontDestroyOnLoad(go);
@@ -497,7 +494,6 @@ namespace Cs16.Module.CameraRig
         }
 
         /// <summary>
-        /// 保证场上**恰好有一个 AudioListener**：舞台场景由 agent-02 生成，可能完全没有相机/监听器，
         /// 没有监听器 = 全场静音（而且不报错，非常难查）。
         /// </summary>
         private void EnsureAudioListener()
@@ -598,7 +594,6 @@ namespace Cs16.Module.CameraRig
         }
 
         /// <summary>
-        /// 比赛运行时关掉场景里别的"主相机"（agent-02 生成舞台时可能带一台预览相机）。
         /// 引擎的 UI Canvas 是 <c>ScreenSpaceOverlay</c>，不依赖相机，因此关掉它们不会影响 HUD。
         ///
         /// <para><b>顺带把它的层级图标也压掉</b>：编辑器 Game view 的「Gizmos」叠层会给每台 Camera
@@ -606,7 +601,7 @@ namespace Cs16.Module.CameraRig
         /// 全场唯一的 <c>AudioListener</c> 在舞台的 <c>Main Camera</c>，而 <c>EnsureAudioListener</c>
         /// 因"场上已有监听器"提前返回、我们自己的相机上不会挂它 —— 见 :429-437）。
         /// 一台已经不参与画面的相机没有理由再画图标，因此这里连 <c>hideFlags</c> 一起设。
-        /// ⛔ 只设 <c>HideInHierarchy</c>：不改渲染、不动物理、不影响 <c>Camera.main</c>（按 tag 查）。</para>
+        /// 只设 <c>HideInHierarchy</c>：不改渲染、不动物理、不影响 <c>Camera.main</c>（按 tag 查）。</para>
         ///
         /// <para><b>与 VisualLeakGuard 的分工</b>（口径）：主防线是编辑器侧的
         /// <c>client/Assets/Editor/VisualLeakGuard.cs</c>（进 Play 自动把 Game view 的叠加层关掉）；
@@ -791,10 +786,10 @@ namespace Cs16.Module.CameraRig
         /// 再做一次**即时**的射线收缩防穿墙。
         ///
         /// <para><b>① 收敛</b>（出处 <c>HLSDK/cl_dll/in_camera.cpp:386-389</c>）：
-        /// <c>if( abs( camAngles[2] - cam_idealdist-&gt;value ) &lt; 2.0 ) camAngles[2] = cam_idealdist-&gt;value;
-        /// else camAngles[2] += ( cam_idealdist-&gt;value - camAngles[2] ) / 4.0;</c>
+        /// <c>if(abs(camAngles[2] - cam_idealdist-&gt;value ) &lt; 2.0 ) camAngles[2] = cam_idealdist-&gt;value;
+        /// else camAngles[2] += (cam_idealdist-&gt;value - camAngles[2] ) / 4.0;</c>
         /// ⇒ 差值 &lt; 2.0 unit（0.0508 m）直接吸附，否则每帧朝理想值移 1/4。
-        /// ⛔ 这不是"手感参数"，是原版的收敛公式（本工程不许凭空定平滑常数）。</para>
+        /// 这不是"手感参数"，是原版的收敛公式（本工程不许凭空定平滑常数）。</para>
         ///
         /// <para><b>② 防穿墙</b>（出处 <c>HLSDK/cl_dll/view.cpp:899-960</c> 的 <c>V_GetChaseOrigin</c>，
         /// 使用点 <c>:1282</c> 传的就是 <c>cl_chasedist-&gt;value</c>）：
@@ -833,14 +828,12 @@ namespace Cs16.Module.CameraRig
         // ==================================================================
         //  数学（已下沉为引擎件）
         // ==================================================================
-        // 本组件原先自带的三个纯函数已下沉为**引擎件** `CloverEngine.CameraMath`（E-core-18）：
         //   · `FovYFromFovX`：水平 → 垂直 FOV（原版 `CalcFov` 的等价式，出处
         //     `HLSDK/cl_dll/view.cpp:1737-1752`；越界回退 90、`aspect<=0` 原样返回）；
         //   · `AimDirection`：yaw/pitch（度）→ 单位方向向量（yaw 0 = +Z、pitch + = 抬头）；
         //   · `Follow`：指数平滑跟随。原 `FollowRecoil` 只是"按 `|target| > |current|` 在上升/回落
-        //     两个 tau 里挑一个"，属业务数值选择 ⇒ 按 `结构规则.md` §4.4「已有能力不准再起第二套」
         //     **合并成一条 `Follow`**，挑 tau 那一步内联在 `PrepareView` 的后坐力分支里。
-        // ⛔ 本组件不许再留同名 `private static` 副本 —— 判据：全项目搜
+        // 本组件不许再留同名 `private static` 副本 —— 判据：全项目搜
         //    `FovYFromFovX|ComputeAimDirection|FollowRecoil`，命中只应出现在 `CameraMath.Xxx(...)` 调用处。
     }
 }

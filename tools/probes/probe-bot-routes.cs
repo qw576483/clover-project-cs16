@@ -1,31 +1,28 @@
 // 判据资产（tools/probes/）：差异 #67 后半 ——「**路线**都是相同的 / 没有分工」的**实机载体**取证。
 //
-// 用户 2026-09-24 第三次投诉原话：「为什么每个机器人的操作，路线都是相同的。你这什么行为树，什么 ai 啊？？
 //   为什么没有分工？？？」。上一轮交付的是"角色名不同 + 守点秒数不同"（probe-bot-roles.cs PASS），
 //   而**路线与目标点**仍会撞车 ⇒ 本探针补的就是这一层。
 //
-// 判据（写死在这里，⛔ 不靠人眼看数）：
+// 判据（写死在这里，不靠人眼看数）：
 //   PASS ⇔ 场上机器人 >= 2，且**每个"有 >=2 只 bot 的阵营"**内部满足：
 //          ① 两两之间**路线标记**互不相同（0 对相同）
 //          ② 两两之间**整条路线序列**（BotNavigator.RouteSignature，有序路点串）互不相同（0 对相同）
 //          ③ 两两之间**目标点**互不相同（0 对相同）
 //          ④ BotModule 自己的审计（AuditRouteDistinctness）报告 0 对同队撞车
-//   ⚠️ 上述 ①~④ 的**强度**取决于每队有几只 bot：4 只 ⇒ 每队 6 对，2 只 ⇒ 每对只 1 对。
-//      main agent 2026-09-24 批准并入**独立**判据 ⑤（防"退化成 2v2 也 PASS"）：
+//   上述 ①~④ 的**强度**取决于每队有几只 bot：4 只 ⇒ 每队 6 对，2 只 ⇒ 每对只 1 对。
 //          ⑤ `RESULT-POPULATION`：**每个在场阵营的 bot 数 == 权威槽位数**
 //             期望值**不写字面 4**，取产品自己的常量 <c>CsBotPlans.Slots</c>
 //             （`CsBotPlans.cs:78` = `public const int Slots = 4`；同文件 `:304-308` 的
 //              `AliveSlotTable` 就是 `new bool[Slots]` ⇒ 它就是门禁的槽位表长度），
 //             并要求**两队都在场**（T/CT 的计划表是两套不同映射，缺一队该队的表根本没被测）。
-//   ⚠️ 判据原写法是"**首段**路点不同"，实测**在 T 队不可满足且与代码无关**：
+//   判据原写法是"**首段**路点不同"，实测**在 T 队不可满足且与代码无关**：
 //      `Resources/MapData/de_dust2_markers.bytes` 里 Route_T_To_A ∩ Route_T_Mid ∩ Route_T_To_B
 //      共用同一个岔口点 (-7.5, 3.251, -47.5)（离 T 出生点最近）⇒ 最近邻排序后三条路的第 0 段必然相同。
 //      ⇒ 本探针把"首段路点"降为**观测列**（照打），硬判据换成"整条序列不同"
 //      （两条路一旦分岔序列就不同；两条路完全相同则序列相同 —— 判据依然能失败）。
-//   ⛔ 只读：反射取 BotModule._brains，只读 public 的只读成员（PlanRoute / RouteSignature / PlanSlot /
+//   只读：反射取 BotModule._brains，只读 public 的只读成员（PlanRoute / RouteSignature / PlanSlot /
 //      TeamOrdinal / GoalPosition / FirstWaypoint / RoleText / Name / ActorId）。不改业务状态、不发包、不点按钮。
 //
-// 同时打印**旧规则反事实**（同一批活体数据按旧实现 `Id % 4` + 3 条路池重算）——
 //   它是本判据的**负控**：反事实那一栏必须出现 >0 的撞车对数，否则说明这批样本根本区分不出新旧
 //   （"负控打空"），本探针的 PASS 也就不足为凭。
 //
@@ -148,16 +145,15 @@ var dupGoal = dup(rows, 4);
 var lgRouteDup = dup(legacyRows, 1);
 var lgGoalDup = dup(legacyRows, 2);
 
-// ================= 负控B · 门禁失效（探针侧反事实 · ⛔ 零产品改动 · 与上面的正样本同源） =================
-// 判的是**门禁这一层**（main agent 2026-09-24 裁决：旧规则反事实只证"新表能差异化"，不证门禁）。
+// ================= 负控B · 门禁失效（探针侧反事实 · 零产品改动 · 与上面的正样本同源） =================
 // 门禁（CsBotBrain.TryRouteObjective:833-848）做的事：从自己的槽位起 `(from + k) % 4` 轮转，
 //   **跳过 `taken[]` 里被「活着的」队友占着的槽位**；`taken` 由 CsBotPlans.AliveSlotTable 产出。
 // 反事实 = 把那个世界换成"没有活人"：直接把 `actors = null` 喂给**产品自己的** AliveSlotTable ⇒ 它
 //   在 :309 立刻 `return` 全 false 的表 ⇒ 门禁失效 ⇒ 每一只 bot 的第一步 k=1 必被接受 ⇒ 拿 (from+1)%4。
-//   走哪条路**仍然问产品自己的表** `CsBotPlans.For(team, slot, round).RouteMarker`（⛔ 不另造第二套映射）。
+//   走哪条路**仍然问产品自己的表** `CsBotPlans.For(team, slot, round).RouteMarker`（不另造第二套映射）。
 // 撞车口径：某只**活** bot 的"无门禁下一格"正好落在**另一只活队友此刻正走的**路上 ⇒ 那就是门禁此刻在挡的撞车。
 //   （活人占用位一并打出来：喂 null 得到理应全 false，若不为 0 说明 pin 没生效。）
-// ★ main agent 的硬要求：反事实**取不到就 NEGCTL-UNAVAILABLE + 总判据 FAIL**，⛔ 不许把"跑不出来"读成"通过"。
+// main agent 的硬要求：反事实**取不到就 NEGCTL-UNAVAILABLE + 总判据 FAIL**，不许把"跑不出来"读成"通过"。
 var gateOffDup = new System.Collections.Generic.Dictionary<string, int>();
 var negCtlUnavailable = false;
 var negCtlSlots = -1;        // 槽位数（取不到 = -1）
@@ -238,7 +234,6 @@ for (var i = 0; i < rows.Count; i++)
 var multiTeams = 0;
 foreach (var kv in perTeamCount) if (kv.Value >= 2) multiTeams++;
 
-// ================= 独立判据 ⑤ · 人口（main agent 2026-09-24 批准并入） =================
 // 为什么必须**独立**：okA 只要求 ">=2 只 bot 且 >=1 个多 bot 阵营" ⇒ 退化成一队 4 只 + 一队 2 只、
 //   甚至 2v2 也照样 PASS，而"同队两两路线互异"的强度 = 每队对数 C(n,2) 完全由人口决定。
 // 期望值**不写死字面 4**，取产品自己的权威常量 CsBotPlans.Slots（CsBotPlans.cs:78 的
@@ -289,7 +284,7 @@ sb.Append("\n[负控A · 旧规则反事实（Id%4 + 3 条路池）· 旁证] �
   .Append(" 对 目标标记=").Append(lgGoalDup.Count).Append(" 对");
 foreach (var kv in lgRouteDup) sb.Append("\n   旧规则路线撞车: ").Append(kv.Key).Append(" ×").Append(kv.Value);
 
-// ================= 负控B 的打印与判定（★ 取不到 / 打空 ⇒ 一律红） =================
+// ================= 负控B 的打印与判定（取不到 / 打空 ⇒ 一律红） =================
 sb.Append("\n[负控B · 门禁失效（探针反事实 · 与上面正样本**同源**：同一次 Play / 同一批 bot / 同一时段）]")
   .Append(" 活 bot 样本=").Append(negCtlSample)
   .Append(" 沿用的槽位数=").Append(negCtlSlots)
@@ -315,13 +310,13 @@ sb.Append("\n  口径： 同队>=2只=").Append(okA).Append("(队数=").Append(m
 sb.Append("\nRESULT-NEGCTL-LEGACY: ").Append(negCtlEffective ? "PASS" : "FAIL")
   .Append("（旁证 · 旧规则反事实必须出现 >0 撞车，否则负控打空；实际 路线+目标 = ")
   .Append(lgRouteDup.Count + lgGoalDup.Count).Append("）");
-// ★ 本判据的负控 = 门禁这一层。取不到(NEGCTL-UNAVAILABLE) / pin 没生效 / 打空(0 对) ⇒ 一律 FAIL
+// 本判据的负控 = 门禁这一层。取不到(NEGCTL-UNAVAILABLE) / pin 没生效 / 打空(0 对) ⇒ 一律 FAIL
 sb.Append("\nRESULT-NEGCTL: ")
   .Append(negCtlUnavailable ? "FAIL（NEGCTL-UNAVAILABLE）" : (negCtlB ? "PASS" : "FAIL"))
   .Append("（门禁失效反事实必须 >0 撞车；实际 ").Append(gateOffDup.Count).Append(" 对")
   .Append("；pin 生效=").Append(negCtlPinOk)
   .Append("；取到=").Append(!negCtlUnavailable).Append("）");
-// ★ 独立判据 ⑤：人口。望值取自产品常量 CsBotPlans.Slots（CsBotPlans.cs:78），⛔ 不是字面 4。
+// 独立判据 ⑤：人口。望值取自产品常量 CsBotPlans.Slots（CsBotPlans.cs:78），不是字面 4。
 //   perTeam 这个 token 是给驱动 phase-6 的 GATE 行读的（`perTeam=CT:4,T:4`）—— 驱动不许自己编人口。
 sb.Append("\nRESULT-POPULATION: ").Append(okPop ? "PASS" : "FAIL")
   .Append("（perTeam=").Append(perTeamToken)
@@ -331,7 +326,6 @@ sb.Append("\nRESULT-POPULATION: ").Append(okPop ? "PASS" : "FAIL")
     + "两队必须都在场；任一队人数 != 期望 ⇒ 本行 FAIL");
 if (!okPopCount) sb.Append(" 人数不符队=").Append(string.Join(" ", popBad.ToArray()));
 sb.Append("）");
-// ★ 总判据：main agent 2026-09-24 明令 —— 反事实取不到 ⇒ **总判据 FAIL**，⛔ 不许把"跑不出来"读成"通过"
 sb.Append("\nRESULT-FIX4B: ").Append(passTotal ? "PASS" : "FAIL")
   .Append("\n  口径： 总判据 = RESULT-ROUTES && RESULT-NEGCTL && RESULT-POPULATION ⇒ 负控取不到 / pin 没生效 / 打空 / 每队人数不符 时本行一律 FAIL");
 return sb.ToString();

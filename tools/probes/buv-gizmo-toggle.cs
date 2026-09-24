@@ -1,4 +1,3 @@
-// 判据资产（tools/probes/，片BU-V 新建）：**按对象名**把图标宿主的 hideFlags 来回切，
 // 用来做"逐对象隔离"的同帧 A/B（bv-r 的 probe-hideflags-ab.cs 只能按组件类别批量切，
 // 所以它量不出"外来主相机 Main Camera 的图标"单独占多少像素）。
 //
@@ -9,7 +8,7 @@
 //
 // 三个 entry：
 //   State        只读点名：每个 hf_host 的 hideFlags / activeInHierarchy / 自身组件类型
-//   HideByName   把 hf_host 的 hideFlags 设成 HideInHierarchy，并回读（⛔ 不信"设了"）
+//   HideByName   把 hf_host 的 hideFlags 设成 HideInHierarchy，并回读（不信"设了"）
 //   RestoreHosts 把引擎/业务会画图标的那些宿主的 hideFlags 写回 None（口径与 bv-r 的 Restore 一致：
 //                AudioSource / Light / Camera / AudioListener / Canvas 所在的 GameObject）
 using System;
@@ -162,8 +161,7 @@ public static class Entry
         var canvases = UnityEngine.Object.FindObjectsByType<Canvas>(FindObjectsInactive.Include);
         for (var i = 0; i < canvases.Length; i++) if (canvases[i] != null) gos.Add(canvases[i].gameObject);
 
-        // ⛔ 不用 GetInstanceID()（Unity 6 已过时 ⇒ run_script 的 standalone 编译会把它当错误；
-        // 片BU-V 实测 CS0619）。HashSet<GameObject> 的对象相等性已够用。
+        // 不用 GetInstanceID()（Unity 6 已过时 ⇒ run_script 的 standalone 编译会把它当错误；
         var seen = new HashSet<GameObject>();
         var n = 0;
         for (var i = 0; i < gos.Count; i++)

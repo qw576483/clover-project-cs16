@@ -29,9 +29,9 @@
   python .ai-tmp\\test\\bwp-input-scan.py                # 用默认沙盒参数写 ledger + 自检
   python .ai-tmp\\test\\bwp-input-scan.py --real         # ⛔ 放行后：ledger 落 tools/probes/bwp-input-hits.tsv
   python .ai-tmp\\test\\bwp-input-scan.py --hits-out=<path>
-                                                        # L2.1 一级「对照重跑」：真 plan + 产物落别处（⛔ 不碰真产物）
-                                                        # ⚠️ <path> 的名字**不许含 `hits`**（否则它自己成了第二个 carrier）
-                                                        # ⛔ 该自拒只是【调用面自拒】（只覆盖这一条路径），
+                                                        # L2.1 一级「对照重跑」：真 plan + 产物落别处（不碰真产物）
+                                                        # <path> 的名字**不许含 `hits`**（否则它自己成了第二个 carrier）
+                                                        # 该自拒只是【调用面自拒】（只覆盖这一条路径），
                                                         #    **不是判据级防线**，不能替代"登记制"加固项（判据拥有者的活）
   python .ai-tmp\\test\\bwp-input-scan.py --selftest --demo-violation=<rowId>
                                                         # 自拒锁的**反样本入口**（去--demo才写盘）
@@ -118,18 +118,16 @@ def helper_tokens(lines, idx):
     return [], 'none'
 
 
-# ⛔ 落地时**不许**被写出的行（主 agent L3 判据）：`3372/3373/3376` 证据列无绑定点、`3377` 引用指错对象。
+# 落地时**不许**被写出的行（主 agent L3 判据）：`3372/3373/3376` 证据列无绑定点、`3377` 引用指错对象。
 #    出现即说明探针在放宽 / 在凑数 ⇒ 本脚本**自己拒发**（不是靠人事后检查）。
 FORBIDDEN_ROWS = {'3372', '3373', '3376', '3377'}
-# ⛔ 自拒这把锁也必须**双向可证**（同闸门 `window-ledger-check` 的纪律：该静默时静默、该出声时出声）：
+# 自拒这把锁也必须**双向可证**（同闸门 `window-ledger-check` 的纪律：该静默时静默、该出声时出声）：
 #    `--demo-violation=<一个真能解析出来的 rowId>` 把它临时算作禁用行 ⇒ **必须**打印 CONTRACT-VIOLATION 且不发该行。
-#    只用来自证"锁会响"，⛔ 不改变 24 行的正常输出。
+#    只用来自证"锁会响"，不改变 24 行的正常输出。
 #
-# ⚠️ **这个 seam 的性质（主 agent 2026-09-23 要求写清）**：
-#    `--demo-violation` 是**「自拒锁的反样本入口」，不是功能开关**，⛔ 不许为了"干净"删掉（删了锁就不可证）。
-#    它注入的反样本是**构造的、不是历史缺陷** —— 与"反样本优先取真实缺陷"（§4.3.4 第 2 条）的区别正在这里：
+#    `--demo-violation` 是**「自拒锁的反样本入口」，不是功能开关**，不许为了"干净"删掉（删了锁就不可证）。
 #    这类"拒绝/停手"防线**没有历史先例可引** ⇒ 构造反样本合法，但必须**标明是构造的**，让后人分得清两类反样本。
-# ⚠️ **演示产物自带毒 ⇒ 必须自报毒**（今晚已出过"沙盒 ledger 差点被收"）：
+# **演示产物自带毒 ⇒ 必须自报毒**（今晚已出过"沙盒 ledger 差点被收"）：
 #    ① 开头打 `!! DEMO MODE - this ledger is NOT a deliverable`；
 #    ② **演示模式一律不落盘**（`out_ledger = None`）—— 哪怕沙盒路径也不写，只写 stdout
 #       （比"禁止落真 ledger 路径"更强：脏产物天生不该有文件形态）。
@@ -140,10 +138,10 @@ def main():
     avr = load_avr()
     ts = '--selftest' in sys.argv
     hits_out = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--hits-out=')]
-    # ⛔ 只在放行后跑；写 tools/probes/（判据资产）
+    # 只在放行后跑；写 tools/probes/（判据资产）
     real = ('--real' in sys.argv) or bool(hits_out)
     if _DEMO:
-        # ⚠️ 自报毒（要求 ②）：演示模式的产物**只该存在于 stdout**，⛔ 不许有任何文件形态。
+        # 自报毒（要求 ②）：演示模式的产物**只该存在于 stdout**，不许有任何文件形态。
         print('!! DEMO MODE - this ledger is NOT a deliverable')
         print('!! (自拒锁的反样本入口；注入项是**构造的**，不是历史缺陷；本模式一律不落盘)')
     canon = os.path.join(ROOT, 'tools', 'probes', 'bwp-input-hits.tsv')
@@ -151,14 +149,12 @@ def main():
                   else SB_LEDGER if ts else os.path.join(HERE, 'bwp-input-sandbox-ledger.tsv'))
     if hits_out:
         # `--hits-out=<path>` = **L2.1 一级（对照重跑）** 的 seam：声明**真 plan**、但产物落到别处
-        #   ⇒ 与真产物比哈希即可证"确定性与新鲜度"（磁盘上那份 == 现在从源跑出来的那份），⛔ 不碰真产物。
-        # ⚠️ **本片实测出的单点风险（主 agent 已登记为收尾后加固项）**：carrier 三条件里
+        #   ⇒ 与真产物比哈希即可证"确定性与新鲜度"（磁盘上那份 == 现在从源跑出来的那份），不碰真产物。
         #   "**文件名含 `hits`**"是**唯一在承重**的一层（对照产物的首行 / plan 绑定**全是对的**）
         #   ⇒ 所以这里**自拒**：名字含 `hits` 的对照产物 = 立刻会被真判据收成第二个 carrier。
-        #   ⛔ 不改判据（那是 audit-gate 的活）；只在**我这份探针**里把命名约定变成**会响的锁**。
+        #   不改判据（那是 audit-gate 的活）；只在**我这份探针**里把命名约定变成**会响的锁**。
         #
-        # ⛔⛔ **这把锁的定位（主 agent 2026-09-23 要求写明，防后人误读）**：
-        #   这是「**调用面自拒**」—— 只覆盖 `--hits-out` 这**一条路径**，**⛔ 不是判据级防线**。
+        #   这是「**调用面自拒**」—— 只覆盖 `--hits-out` 这**一条路径**，**不是判据级防线**。
         #   ⇒ **它不能替代"登记制"加固项**（"只有被探针/生成器自己声明过的 carrier 名才会被收"
         #     仍留给**判据拥有者**，收尾后做，且必须配两次自检）。
         #   ⇒ 读到这把锁的人**不许**以为"命名单点已经被彻底修好" —— 那正是登记它的原因。
@@ -176,7 +172,7 @@ def main():
     plan_decl = PLAN if real else (SB_PLAN if ts else os.path.join(HERE, 'bwp-demo-plan-sandbox'))
     if real:
         # 唯一正解落点（主 agent 裁决）：ledger=判据资产，必须与 `coverage-hits.tsv` 同处 `tools/probes/`。
-        # ⛔ 不落 `.ai-tmp/**` —— 那里会随收尾清理 ⇒ 判据失去载体（`coverage-hit` 会莫名回红）。
+        # 不落 `.ai-tmp/**` —— 那里会随收尾清理 ⇒ 判据失去载体（`coverage-hit` 会莫名回红）。
         if os.path.normcase(os.path.abspath(out_ledger)) == os.path.normcase(os.path.abspath(canon)):
             print('REAL LANDING: ledger -> tools/probes/bwp-input-hits.tsv ; plan -> ' + plan_decl)
             print('REMINDER: 开窗（.ai-tmp/test/gate-selftest-window.tsv 追 start/end 两行，同一命令内相邻）')
@@ -233,7 +229,7 @@ def main():
                 print('  %-5s NO-TOKEN  %-34s %s:%d (+-3 + helper)' % (rid, ent[:34], rel, no))
             continue
         if forbidden:
-            # ⛔ 自拒（L3 判据落在工具里，不靠人事后看）：这一行本来就"写不出命中"
+            # 自拒（L3 判据落在工具里，不靠人事后看）：这一行本来就"写不出命中"
             #    （`3372/3373/3376` 无绑定点、`3377` 引用指错对象）⇒ 竟然抽出 token 才是问题。
             stat['violation'] += 1
             print('  %-5s !!CONTRACT-VIOLATION  %s 抽出 toks=%s ⇒ 停手查因（口径被放宽/凑数）'

@@ -17,7 +17,6 @@ namespace Cs16.EditorTools
     ///
     /// <para><b>本文件只做"贴图/材质/名牌 + 调度"</b>；骨骼层级、SkinnedMeshRenderer、
     /// AnimationClip、AnimatorController 由 <see cref="AnimSetup"/> 生成（那里有格式细节）。
-    /// 之前那套"静态分块 mesh（MeshFilter + MeshRenderer）"的生成器已被替换 ——
     /// 它的产物是"某个姿态冻住的一张网格"，无法播放原版动画（见资源欠缺清单第 13/14 项）。</para>
     ///
     /// <para><b>输出</b>（命名规范写死在 <see cref="CsViewTuning"/> 与生成脚本里，**替换素材 = 换文件**）：</para>
@@ -244,7 +243,6 @@ namespace Cs16.EditorTools
                     $"{AnimSetup.AnimDir}/{key}.controller");
             }
 
-            // 音效：agent-04 用到的枪声/换弹 + 本模块用到的那些
             var sfxDir = "Assets/Resources/Sound/SFX/sfx";
             var required = new List<string>
             {
@@ -296,12 +294,9 @@ namespace Cs16.EditorTools
                 }
                 else
                 {
-                    // 可平铺（GoldSrc 的 UV 常常超出 0..1）+ 不做有损压缩 + 不缩放（片W 定案，见 策划/对照表.md §W）
                     // 出处：GoldSrc 硬件渲染默认**双线性 + mip**（原版侧无出处文件 ⇒ 见 对照表 BLOCKED-W1，
                     //   按"最接近不做处理的硬件默认"取 Bilinear）；`textureCompression = Uncompressed` 与
-                    //   片W 已落盘的 242 张一致（BC1 有损编码实测 maxΔ ≈19%，见 W-03/W-04）；
                     //   `maxTextureSize = 2048 ≥ 源尺寸最大边 256` ⇒ 不缩放（W-01）。
-                    // ⚠️ 改本行 = 改生成器语义：⛔ 不许再写回 Point / 512（片W 之前就是被这里回退的）。
                     if (importer.filterMode != FilterMode.Bilinear) { importer.filterMode = FilterMode.Bilinear; dirty = true; }
                     if (!importer.mipmapEnabled) { importer.mipmapEnabled = true; dirty = true; }
                     if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; dirty = true; }
@@ -369,7 +364,6 @@ namespace Cs16.EditorTools
             }
 
             // **已存在也要重写一遍**（不能早退复用）：材质参数由本生成器决定，早退会让
-            // "改了生成器却没生效"变成静默失败（贴图 / 切图模式 / 高光都可能这么被漏掉）。
             var mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
             var created = mat == null;
             if (created) mat = new Material(shader) { name = texName };

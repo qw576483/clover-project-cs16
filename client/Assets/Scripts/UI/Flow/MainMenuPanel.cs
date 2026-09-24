@@ -31,8 +31,8 @@ namespace Cs16.UI
         /// <summary>菜单项高 = 原版 `InGameDesktop/MenuItemHeight "28"`（trackerscheme.res:171）× ResScale。</summary>
         private const float ItemHeight = 28f * CsUiStyle.ResScale;
 
-        /// <summary>菜单项步进 = 项高：原版各项**紧邻**排列，无额外间隙（间隙值无载体，⛔ 不编）。
-        /// <para>⛔ 符号：<see cref="CsUiStyle.AnchoredTopLeft"/> 的口径是「以左上角为原点、**y 为负 = 向下**」
+        /// <summary>菜单项步进 = 项高：原版各项**紧邻**排列，无额外间隙（间隙值无载体，不编）。
+        /// <para>符号：<see cref="CsUiStyle.AnchoredTopLeft"/> 的口径是「以左上角为原点、**y 为负 = 向下**」
         /// ⇒ 往下排必须**逐步减少** y，所以步进取负。</para></summary>
         private const float ItemStep = -ItemHeight;
 
@@ -96,7 +96,7 @@ namespace Cs16.UI
         public override void BuildLayout(RectTransform root)
         {
             // 第 0 层：纯色兜底（原版菜单底不是纯色 —— 它是下面那 12 块 TGA 拼图；
-            // 这一层只在拼图缺失时才有可见效果，⛔ 不许删掉它去换"静默黑屏"）。
+            // 这一层只在拼图缺失时才有可见效果，不许删掉它去换"静默黑屏"）。
             CsUiStyle.CreateFullScreen("Backdrop", root, CsUiStyle.Backdrop);
 
             // 第 1 层：原版背景拼图（`backgroundlayout.txt` 的 12 块 800×600 设计空间贴图）。
@@ -122,16 +122,14 @@ namespace Cs16.UI
             _quitButton = CsUiStyle.CreateMenuItem("Btn_Quit", root, "Quit",
                 new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
 
-            // 署名（skill §8 品牌硬规则：每个游戏的界面下方必须有这一行，**居底居中**、低调）。
             // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
             // 逐字 `by clover-engine`）：贴底锚点 / 字号 / 字体回退都在那一处，本面板不再自写文案与定位
-            // （原先自写"左上锚点 + 大负 y"曾让整行掉出屏幕，只有实机截图才发现）。
             CsUiStyle.CreateCreditLabel(root);
         }
 
         public override void OnOpen(object param)
         {
-            // ⛔ 必须在实例化之后再刷一次原版字体：Font.CreateDynamicFontFromOSFont 是**运行期对象**，
+            // 必须在实例化之后再刷一次原版字体：Font.CreateDynamicFontFromOSFont 是**运行期对象**，
             // 写不进 .prefab ⇒ 从预制体实例化出来的 Text.font 是 null（文字根本不显示）。
             // 见 CsUiStyle.ApplyOriginalFonts 的注释（同款做法见 TeamSelectPanel / OptionsPanel）。
             CsUiStyle.ApplyOriginalFonts(transform);

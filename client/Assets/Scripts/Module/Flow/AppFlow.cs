@@ -296,7 +296,7 @@ namespace Cs16.Module.Flow
         }
 
         /// <summary>
-        /// 停主菜单启动曲：进图（原版 = 开始连接地图）时停。⛔ 回主菜单**不重播**（<see cref="PlayStartupMusicOnce"/>
+        /// 停主菜单启动曲：进图（原版 = 开始连接地图）时停。回主菜单**不重播**（<see cref="PlayStartupMusicOnce"/>
         /// 只认首次），与原版一致。
         /// </summary>
         private void StopStartupMusic()

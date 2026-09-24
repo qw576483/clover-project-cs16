@@ -115,7 +115,6 @@ def main():
                 malformed += 1
                 print('[D] 未知报文 magic=%r' % (magic,))
 
-    # ---- ④ 发一条 INPUT（证明双向都通；本片主机只计数）----
     inp = json.dumps({'move': [0, 1], 'yaw': 180.0, 'jump': False}, separators=(',', ':'))
     try:
         sock.sendall((INPUT + '|' + inp + '\n').encode('utf-8'))

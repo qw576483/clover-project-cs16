@@ -34,7 +34,6 @@ namespace Cs16.Core
         // ---- 回合 ----
         /// <summary>
         /// 冻结时间 = <c>mp_freezetime 4</c>（秒）· 出处 <c>server.cfg:51</c>
-        /// （另一口径：<c>mp.dll</c> 出厂默认 <b>6</b> · <c>mp.dll:0x11b9c0</c>，登记在对照表 §5.2 N-26）。
         /// </summary>
         public const float FreezeTime = 4f;
 
@@ -93,7 +92,7 @@ namespace Cs16.Core
         public const float SpeedRifle = 4.4f;
         public const float SpeedAWP = 3.6f;
         // Shift 慢走 · 出处：**本项目新增**（原版慢走倍率的实现载体 —— GoldSrc 客户端与 `pm_shared` —— 现不在盘
-        // ⇒ 给不出 file:line；⛔ 对照表 N-17 是"**下蹲**速度倍率"、与本条无关，不许互相充数）。
+        // ⇒ 给不出 file:line；对照表 N-17 是"**下蹲**速度倍率"、与本条无关，不许互相充数）。
         public const float SpeedWalkMultiplier = 0.42f;
         public const float SpeedCrouchMultiplier = 0.34f;
         /// <summary>
@@ -128,7 +127,7 @@ namespace Cs16.Core
         /// <para><b>轴的口径</b>：原版那个 <c>normal[2]</c> 是"上轴"分量；本工程是 Unity 左手系、<b>y 向上</b>
         /// ⇒ 对应 <c>normal.y</c>（<c>Module/Map/CsMap.TrySampleGround</c> 返回的就是世界法线，取 <c>.y</c> 比较）。</para>
         ///
-        /// <para>⛔ 为什么必须有它：本工程的本地碰撞是"2D 位图（水平）+ 竖直射线（高度）"，位图**不带坡度信息**
+        /// <para>为什么必须有它：本工程的本地碰撞是"2D 位图（水平）+ 竖直射线（高度）"，位图**不带坡度信息**
         /// ⇒ 删掉这条阈值，玩家能直接沿任意陡坡（岩石面 / 楔形坡的侧面）"走上去"，脚贴坡面而身体与
         /// camera 陷进地形里 —— 用户报的"坡道会穿模"就是这个。</para>
         /// </summary>
@@ -146,8 +145,7 @@ namespace Cs16.Core
         /// <c>return a*360/π</c> ⇒ <c>fov_y = 2·atan((H/W)·tan(fov_x/2))</c> —— 即 <c>fov_x</c> 是**自变量（水平）**、
         /// <c>fov_y</c> 由视口宽高算出。</para>
         ///
-        /// <para>⛔ <b>不许把这个 90 直接赋给 Unity 的 <c>Camera.fieldOfView</c></b>：Unity 那个字段是**垂直** FOV。
-        /// 旧实现就是那么干的 ⇒ 16:9 下等效水平 = <c>2·atan(tan45°·16/9)</c> = <b>121.26°</b>（原版 90°），
+        /// <para><b>不许把这个 90 直接赋给 Unity 的 <c>Camera.fieldOfView</c></b>：Unity 那个字段是**垂直** FOV。
         /// 这就是用户报的"相机鱼泡眼 / 胳膊太长"。正确做法 = 逐帧按当前宽高比换算，
         /// 见 <see cref="CloverEngine.CameraMath.FovYFromFovX"/>（E-core-18 已下沉为引擎件）。</para>
         /// </summary>
@@ -156,10 +154,9 @@ namespace Cs16.Core
         /// <summary>
         /// 开镜（狙击镜）的 FOV，**同 <see cref="DefaultFov"/> 是水平口径**。
         ///
-        /// <para>⛔ <b>这个 40 仍是无出处值</b>：CS 的开镜 FOV 由 CS 自己的
+        /// <para><b>这个 40 仍是无出处值</b>：CS 的开镜 FOV 由 CS 自己的
         /// <c>cstrike/cl_dlls/client.dll</c> 在开镜时下发，HLSDK 里**没有** CS 的 HUD/开镜实现
         /// （<c>cl_dll/</c> 只有 HL 的 <c>hud_*</c>）⇒ 见 <c>策划/对照表.md</c> 的 A-05 [BLOCKED]。
-        /// 本片只把它的**口径**与 <see cref="DefaultFov"/> 统一（都当水平），数值本身不动、
         /// 仍按"无出处"登记在验收表的「允许的差异」里。</para>
         /// </summary>
         public const float ZoomFov = 40f;
@@ -198,13 +195,13 @@ namespace Cs16.Core
         /// 距离收敛速率：每帧朝理想距离移 <b>1/4</b>（<c>cam_snapto 0</c> 时的平滑分支）· 出处
         /// <c>HLSDK/cl_dll/in_camera.cpp:386-389</c>：
         /// <c>camAngles[2] += (cam_idealdist - camAngles[2]) / 4.0</c>。
-        /// ⛔ 这不是"手感参数"，是原版的收敛公式。
+        /// 这不是"手感参数"，是原版的收敛公式。
         /// </summary>
         public const float ChaseDistanceLerp = 0.25f;
 
         /// <summary>
         /// 距离与理想值之差小于它就**直接吸附**（不再逐帧收敛）= 原版那两行的 <c>2.0</c>（unit）· 出处
-        /// <c>HLSDK/cl_dll/in_camera.cpp:386</c>（<c>if( abs( camAngles[2] - cam_idealdist-&gt;value ) &lt; 2.0 )</c>）
+        /// <c>HLSDK/cl_dll/in_camera.cpp:386</c>（<c>if(abs(camAngles[2] - cam_idealdist-&gt;value ) &lt; 2.0 )</c>）
         /// ⇒ 2.0 × 0.0254 = <b>0.0508 m</b>。
         /// </summary>
         public const float ChaseDistanceSnap = 0.0508f;
@@ -241,16 +238,12 @@ namespace Cs16.Core
         // `CsDamageIndicatorWidget` 拿它做 alpha 归一（剩余时间/总时长 ⇒ 渐隐）。
         // 出处：**本项目新增**（原版这一排 HUD 的时长写在 `client.dll` 里、未解出 —— 见
         // `策划/对照表.md` 的 HUD BLOCKED 条目与 `策划/差异登记.tsv`）⇒ 取本工程自定值 0.8s，
-        // ⛔ 不给一个并不存在的 file:line。
-        // 切片N：本常量原名 `DamageNumberTime`（**一个名字两处用**：伤害数字飘字 + 受击方向指示器）。
-        // 伤害数字飘字**不是 A 的行为**（CS 1.6 的 HUD 没有伤害数字项）⇒ 已按 skill §0 铁律 1
+        // 不给一个并不存在的 file:line。
         // 「A 没有 ⇒ 不加」整链下架（`UI/InGame/HudPanel.cs` 的 ObserveLocalDamage/ShowDamageNumber），
         // 于是本常量只剩"受击方向指示器时长"这一个语义 ⇒ 随之改名（含全部引用点）。
         public const float DamageIndicatorTime = 0.8f;
 
         // ---- 地图 / 场景 ----
-        // 出处：原版地图文件名 `maps/de_dust2.bsp`（规格 §3 / §5；工程内的原版载体 =
-        // `client/Assets/ThirdParty/Dust2/de_dust2.bsp`）。
         public const string MapDust2 = "de_dust2";
         // 资源路径（Resources 相对）真源 = Core/ResPaths.cs：MapDust2（位图 + 命名标记点段，同一份 .bytes）。
     }

@@ -5,7 +5,7 @@ namespace Cs16.Module.Net
     /// <summary>
     /// 局域网**主机广播（应答端）**—— 差异 #88「必须支持局域网联机」的发现侧落地。
     ///
-    /// <para><b>实现方式：调引擎本轮的 LAN 应答端能力</b>（⛔ 本类不再复制协议、不再自己收发 UDP）。
+    /// <para><b>实现方式：调引擎的 LAN 应答端能力</b>（本类不再复制协议、不再自己收发 UDP）。
     /// 真源全在引擎侧，逐条给出处（<c>clover-client-unity-engine</c>）：</para>
     /// <list type="bullet">
     /// <item>工厂：<c>CloverLan.CreateResponder()</c>（<c>Runtime/Network/Lan/CloverLan.cs:113</c>）→
@@ -13,20 +13,19 @@ namespace Cs16.Module.Net
     /// <item>协议与线格式：<c>Runtime/Network/Lan/LanProtocol.cs</c>（<c>QueryMagic=CLOVER-LAN-QUERY/1</c>
     /// /<c>ReplyMagic=CLOVER-LAN-REPLY/1</c>/<c>DefaultPort=47777</c>/<c>MaxDatagramBytes=512</c>，
     /// 该校验口径 <c>:135-175</c>）；收发层 <c>LanResponder.cs</c>（复用 <c>LanSocket</c>）。
-    /// ⛔ 本类原先逐字复制了这套魔数/端口/校验 —— 现已全部删除，<b>协议只有一份实现</b>。</item>
+    /// <b>协议只有一份实现</b>。</item>
     /// <item>四条边界都不抛（调用方的"开主机"流程不该被环境差异打断，但必须留痕，
     /// 见 <c>LanContracts.cs:236-243</c>）：平台不支持 / 端口被占用 ⇒ <c>Start</c> 返回 false 且
     /// <see cref="ILanResponder.LastError"/> 给出原因；重复 <c>Start</c> ⇒ 幂等（只更新广播参数）；
     /// <c>Stop</c> 未启动 ⇒ 空操作。本类把这份 <c>bool</c>+<c>LastError</c> 原样转成
-    /// <see cref="Start"/> 的 <c>error</c> 出口（面板靠它显示失败原因，⛔ 不许静默当成功）。</item>
+    /// <see cref="Start"/> 的 <c>error</c> 出口（面板靠它显示失败原因，不许静默当成功）。</item>
     /// <item>地址解析：<c>LanHostInfo.Host</c> 留空 ⇒ 引擎取本机 IPv4（<c>LanResponder.cs:397</c> 的
-    /// <c>PickLocalIPv4</c>）—— 本类原来的 <c>PickLocalAddress</c> 随之删除（同一件事，两份必然漂移）。
     /// <paramref name="gatewayHost"/> 非空时按给定字面量广播（多网卡场景）。</item>
     /// <item>日志：收包线程的查询日志（限频）由引擎 <c>LanResponder</c> 负责；本类只在
     /// <b>第一条</b>查询时补一条工程级面包屑（见 <see cref="OnFirstQuery"/>），不重复刷屏。</item>
     /// </list>
     ///
-    /// <para>⚠️ <b>本类只管"能被发现"</b>：真正的对局同步仍要一台可连的网关
+    /// <para><b>本类只管"能被发现"</b>：真正的对局同步仍要一台可连的网关
     /// （<c>CloverNet.Init(host.Address, host.UdpAddress)</c> 的目标）。
     /// 广播出去的 <c>gateway</c> 端口就是那个目标 —— 它是**参数**，不是本类自己起的服务；
     /// 本工程把它真的开起来的动作在 <see cref="CsLanGateway"/>（差异 #88 的"能开局"侧）。</para>
@@ -35,7 +34,7 @@ namespace Cs16.Module.Net
     {
         private const string Tag = "LanHost";
 
-        /// <summary>寻服专用端口（= 引擎 <c>LanProtocol.DefaultPort</c>，⛔ 不再自己写 47777 字面量）。</summary>
+        /// <summary>寻服专用端口（= 引擎 <c>LanProtocol.DefaultPort</c>，不再自己写 47777 字面量）。</summary>
         public const int DiscoveryPort = LanProtocol.DefaultPort;
 
         /// <summary>默认主机名（客户端显示的就是它）。</summary>
@@ -75,7 +74,7 @@ namespace Cs16.Module.Net
         }
 
         /// <summary>广播出去的地址里用的**本机地址**（IPv4 字面量）；未启动时为空串。
-        /// ⚠️ 它是"网卡地址"，不是"来源 IP" —— 应答里必须带它（对方不信任来源 IP）。</summary>
+        /// 它是"网卡地址"，不是"来源 IP" —— 应答里必须带它（对方不信任来源 IP）。</summary>
         public static string AdvertisedHost
         {
             get { return _self != null ? _self.Host : string.Empty; }
@@ -180,7 +179,7 @@ namespace Cs16.Module.Net
                 string gwErr;
                 if (!CsLanGateway.Start(out gwErr, gatewayPort, _name, _maxPlayers))
                 {
-                    // ⛔ 不把 Start 整个判失败：**被发现**的能力仍然有效（应答端已在跑），
+                    // 不把 Start 整个判失败：**被发现**的能力仍然有效（应答端已在跑），
                     //    两个失败原因必须分开报，别让调用方以为"整个 LAN 主机都没起来"。
                     Game.Logger?.Warn(Tag,
                         $"局域网应答端已起来，但对局网关没起来（这台主机暂时**不能被加入**）：{gwErr}");
@@ -219,7 +218,6 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 惰性创建应答端（<c>CloverLan.CreateResponder()</c>）。实例由本类持有并**跨 Stop/Start 复用**
-        /// （引擎侧 <c>Dispose</c> 之后就不能再 Start，故进程内不 Dispose —— 与原来的静态 socket 同生命周期）。
         /// </summary>
         private static ILanResponder EnsureResponder()
         {

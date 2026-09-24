@@ -1,9 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 # ============================================================================
-#  判据资产 · 片BU-R5：把一次 Play 采集**按回合切片**，供 bot-goal-gate.py 逐回合判。
 #
-#  为什么需要它（片BU-R5 的口径问题）：
 #    bot-goal-gate.py 的 A1..A9 是**整份产物**的聚合（它自己把 A1/A2 标成 "one whole round"）。
 #    bu-r4 的驱动在第一个 RoundEnd 就停了采集（round 1 完整 + round 2 只 3.6s）；
 #    bu-r5 的驱动改成采满 round 2 ⇒ 产物里有两整回合。

@@ -1,7 +1,5 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
-# 片BU-R6 §5：把 BU-R5 的 console dump 用"原样文本"和"还原文本"两种形态各搜一遍。
-# 两种形态都搜（skill experience/verify-recipes.md §4：不许先做"编码修复"）。
 import io
 import os
 import sys
@@ -40,7 +38,6 @@ def main():
             n = txt.count(k)
             print('  %-12s %d' % (k, n))
 
-    # \uXXXX 转义形态：如果 dump 里把中文写成 \uXXXX
     import re
     print('')
     print('--- \\uXXXX escaped form ---')

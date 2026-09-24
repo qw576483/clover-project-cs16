@@ -18,18 +18,17 @@ namespace Cs16.Module.Net
     /// 本类就是把那个端口真正**开起来**：监听 TCP、接受加入、回开局信息、此后按固定频率把
     /// **主机权威的世界状态**推给每个已握手的客户端。</para>
     ///
-    /// <para><b>线格式（⛔ 不臆造，逐字定死在这里；两端必须同值）</b>：一律 UTF-8、
+    /// <para><b>线格式（不臆造，逐字定死在这里；两端必须同值）</b>：一律 UTF-8、
     /// **一行一条报文、以 <c>\n</c> 结束**，形如 <c>&lt;MAGIC&gt;|&lt;json&gt;</c>。
     /// <list type="bullet">
     /// <item>客户端 → 主机：<c>CS16-LAN-JOIN/1|{{"name":"…","proto":1}}</c></item>
     /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{"proto":1,"map":…,"host":…,"round":…,"phase":…,"players":…,"maxPlayers":…}}</c></item>
     /// <item>主机 → 客户端（每 <see cref="SnapInterval"/> 秒）：<c>CS16-LAN-SNAP/1|{{…"actors":[…]}}</c></item>
-    /// <item>客户端 → 主机：<c>CS16-LAN-INPUT/1|{{…}}</c>（**本片只计数、不驱动模拟** —— 见类末的限制声明）</item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{}}</c></item>
     /// </list>
-    /// 单行上限 <see cref="MaxLineBytes"/>，超了算非法行并丢弃（⛔ 不按它分配内存）。</para>
+    /// 单行上限 <see cref="MaxLineBytes"/>，超了算非法行并丢弃（不按它分配内存）。</para>
     ///
-    /// <para><b>线程模型（⛔ 关键：Unity 的东西只在主线程碰）</b>：
+    /// <para><b>线程模型（关键：Unity 的东西只在主线程碰）</b>：
     /// <list type="number">
     /// <item><b>主线程</b>：每帧调 <see cref="Pump"/> —— 攒够 <see cref="SnapInterval"/> 就把
     /// <see cref="ICsMatch"/> 读成一行 JSON 文本，**入队**到每个已握手客户端的发送队列。
@@ -37,14 +36,13 @@ namespace Cs16.Module.Net
     /// <item><b>每客户端一个后台线程</b>：既读（<c>DataAvailable</c> + 逐字节收行）又写
     /// （把队列里的行 <c>Write</c> 出去）。空转时 <c>Sleep(<see cref="PollSleepMs"/>)</c>，
     /// 所以既不会忙等、也能在 <see cref="Stop"/> 后 ≤ 一个轮询周期退出。</item>
-    /// <item>线程都是 <c>IsBackground = true</c> ⇒ ⛔ 不拦编辑器关闭。</item>
+    /// <item>线程都是 <c>IsBackground = true</c> ⇒ 不拦编辑器关闭。</item>
     /// </list></para>
     ///
-    /// <para><b>⚠️ 本类到哪一步为止（登记在差异 #88，别当它没发生）</b>：
-    /// ✅ 能连上 / 能握手 / 能拿到开局信息 / 能持续收到世界快照（主机权威）。
-    /// ✅ **客户端侧消费快照并画成远端角色**已落地（片LAN-D 2026-09-24）：<c>CsLanClient</c> 收快照、
-    /// <c>Module/View/CsLanRemoteView</c> 把 <c>actors[]</c> 画成场上的远端角色。⛔ **本类的线格式没动**。
-    /// ⛔ **仍未做**：把客户端的 <c>CS16-LAN-INPUT/1</c> 应用到主机模拟（回合与世界的**远端输入驱动**，
+    /// <para><b>本类到哪一步为止（登记在差异 #88，别当它没发生）</b>：
+    /// 能连上 / 能握手 / 能拿到开局信息 / 能持续收到世界快照（主机权威）。
+    /// <c>Module/View/CsLanRemoteView</c> 把 <c>actors[]</c> 画成场上的远端角色。**本类的线格式没动**。
+    /// **仍未做**：把客户端的 <c>CS16-LAN-INPUT/1</c> 应用到主机模拟（回合与世界的**远端输入驱动**，
     /// 见 :484-488 的"只计数"注释）—— 那是"能开局"剩下的那一环，另开片。</para>
     /// </summary>
     public static class CsLanGateway
@@ -66,7 +64,7 @@ namespace Cs16.Module.Net
         /// <summary>最大同时连接数（局域网小局，够用即可）。</summary>
         public const int MaxClients = 16;
 
-        /// <summary>快照间隔（秒）⇒ 10 Hz。⛔ 不用 <c>Time.deltaTime</c> 之外的时间源，便于驱动里控制。</summary>
+        /// <summary>快照间隔（秒）⇒ 10 Hz。不用 <c>Time.deltaTime</c> 之外的时间源，便于驱动里控制。</summary>
         public const float SnapInterval = 0.1f;
 
         /// <summary>客户端线程的空转睡眠（毫秒）：决定 <see cref="Stop"/> 后线程退出的最坏时延。</summary>
@@ -111,22 +109,20 @@ namespace Cs16.Module.Net
         private static long _rejected;
 
         // ---------------------------------------------------------------- 尽力而为路径的限频留痕
-        // [sink4-best-effort-begin] 片SINK4 限频留痕闸门（C3 控制流指纹以此为**登记边界**：
         //   `.ai-tmp/test/sink4-sink-net-catch-selfcheck.ps1` 会把本区间整段剔除后再比对 ⇒
-        //   ⛔ 本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
+        //   本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
 
         /// <summary>
-        /// 片SINK4：本类的「收尾 / 关连接 / 满员拒绝」都是**尽力而为**路径 —— 失败也不许把异常抛到
         /// 线程外（抛出去会改变行为：AcceptLoop / PeerLoop 会因此退出，客户端表现为"网关还在跑、
         /// 但这台机器永远连不上"）；但**吞掉必须留下现场**，否则只剩"连不上"这个现象、没有原因。
         ///
         /// <para>每处失败最多每 <see cref="BestEffortLogIntervalMs"/> ms 一条 —— 局域网应答端会被同网段
-        /// 无关流量打，⛔ 不许每包 / 每连接刷屏；判定走 <see cref="ShouldLogBestEffort"/>。</para>
+        /// 无关流量打，不许每包 / 每连接刷屏；判定走 <see cref="ShouldLogBestEffort"/>。</para>
         ///
         /// <para><b>为什么新留痕写 <c>Game.Logger.Warn</c>（不带 <c>?.</c>）</b>：<c>Game.Logger</c>
         /// 由引擎保证**永不为 null**（<c>Runtime/Core/Game.cs:143-149</c>），且落盘 <c>Logger</c> 走
         /// <c>ConcurrentQueue</c> + <c>ConsoleLogger</c> 自带 try/catch ⇒ 后台线程直呼安全。
-        /// <c>?.</c> 会把"日志打没打"变成不可判（本文件既有行的 <c>?.</c> 保持原样、⛔ 未动）。</para>
+        /// <c>?.</c> 会把"日志打没打"变成不可判（本文件既有行的 <c>?.</c> 保持原样、未动）。</para>
         /// </summary>
         private const int BestEffortLogIntervalMs = 5000;
 
@@ -141,7 +137,7 @@ namespace Cs16.Module.Net
         /// 尽力而为路径的**限频闸门**（**线程安全**）：返回 <c>true</c> = 这一条该报。
         /// AcceptLoop / PeerLoop 跑在后台线程、<see cref="Stop"/> 跑在主线程，靠
         /// <c>Interlocked.CompareExchange</c> 抢"上报资格"共用闸门。
-        /// <para>⛔ 刻意**不用**引擎 <c>LogThrottle</c>：它的语义约束写明"非线程安全：主线程使用"，
+        /// <para>刻意**不用**引擎 <c>LogThrottle</c>：它的语义约束写明"非线程安全：主线程使用"，
         /// 而本类大量调用点就在后台线程里（见类注释的线程模型）。</para>
         /// <para>时钟用 <see cref="Environment.TickCount"/>（int，约 24.8 天回绕）⇒ 判定一律走
         /// <c>unchecked(now - due) &lt; 0</c> 的**有符号差**（回绕当天既不会"永不到期"也不会"永远到期"）。</para>
@@ -218,13 +214,13 @@ namespace Cs16.Module.Net
                 return true;
             }
 
-            // ⛔ **静默共存是本类最危险的失败模式**（实测踩到过）：
+            // **静默共存是本类最危险的失败模式**（实测踩到过）：
             //    Windows 上 SO_REUSEADDR 会让"端口已被别人监听"时我们的 bind **照样成功**，
             //    但内核把新连接交给**绑定更具体**的那一方 —— 实测本机 `127.0.0.1:8002` 被另一个进程
             //    占着（netstat：LISTENING + UDP 8003，同一个 PID），我们绑 `0.0.0.0:8002` 成功、
             //    客户端 TCP **连得上**，可 accept 永不返回、`Connections` 恒为 0
             //    —— 从外面看就像"网关起来了但没人能进来"，极难查。
-            //    ⇒ 起之前先探一次：**能连上就说明有人在听** ⇒ 直接拒绝启动，⛔ 不静默共存。
+            //    ⇒ 起之前先探一次：**能连上就说明有人在听** ⇒ 直接拒绝启动，不静默共存。
             string who;
             if (ProbeForeignListener(port, out who))
             {
@@ -276,13 +272,13 @@ namespace Cs16.Module.Net
             return true;
         }
 
-        /// <summary>关网关（幂等）。后台线程在 ≤ 一个轮询周期内退出，⛔ 不 Join（可能从主线程调用）。</summary>
+        /// <summary>关网关（幂等）。后台线程在 ≤ 一个轮询周期内退出，不 Join（可能从主线程调用）。</summary>
         public static void Stop()
         {
             var wasRunning = _running;
             _running = false;
 
-            // 尽力而为：listener 已关 / 已被回收 ⇒ 收尾照旧（⛔ 语义不变：不抛、下面照旧置 null）。
+            // 尽力而为：listener 已关 / 已被回收 ⇒ 收尾照旧（语义不变：不抛、下面照旧置 null）。
             try { if (_listener != null) _listener.Stop(); }
             catch (Exception ex)
             {
@@ -313,7 +309,7 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 主线程每帧调一次。<paramref name="dt"/> 累计到 <see cref="SnapInterval"/> 才真正出快照。
-        /// <para>⛔ 主线程只做"读模拟 + 拼字符串 + 入队"，不碰 socket ⇒ 不会被慢客户端卡住渲染。</para>
+        /// <para>主线程只做"读模拟 + 拼字符串 + 入队"，不碰 socket ⇒ 不会被慢客户端卡住渲染。</para>
         /// </summary>
         public static void Pump(ICsMatch match, float dt)
         {
@@ -384,7 +380,7 @@ namespace Cs16.Module.Net
             }
             finally
             {
-                // 尽力而为：探测连接关不掉不影响结论（⛔ 语义不变：返回值已在上面定好）。
+                // 尽力而为：探测连接关不掉不影响结论（语义不变：返回值已在上面定好）。
                 try { if (probe != null) probe.Close(); }
                 catch (Exception ex)
                 {
@@ -439,7 +435,7 @@ namespace Cs16.Module.Net
                     }
                     catch (Exception ex)
                     {
-                        // 尽力而为：满员照样要把他挡在门外（⛔ 语义不变：下面仍然 continue，连接已被丢弃）。
+                        // 尽力而为：满员照样要把他挡在门外（语义不变：下面仍然 continue，连接已被丢弃）。
                         if (ShouldLogBestEffort(ref _nextRejectLogAt))
                         {
                             Game.Logger.Warn(Tag, "满员时回 " + ByeMagic + " / 关连接失败（尽力而为路径，不影响开局）：" +
@@ -533,7 +529,7 @@ namespace Cs16.Module.Net
             }
             catch (Exception ex)
             {
-                // 断线 / socket 被关：走 finally 收尾，⛔ 不把异常抛到线程外（抛出去会改变行为）。
+                // 断线 / socket 被关：走 finally 收尾，不把异常抛到线程外（抛出去会改变行为）。
                 // 但每个客户端线程只有这一处现场，且"某台机器一加入就断"最需要原因 ⇒ 限频留痕。
                 if (ShouldLogBestEffort(ref _nextPeerLoopLogAt))
                 {
@@ -573,7 +569,6 @@ namespace Cs16.Module.Net
 
             if (magic == InputMagic)
             {
-                // ⛔ 本片只计数：把远端输入接到主机模拟是"能开局"的下一段（见类注释末的声明）。
                 Interlocked.Increment(ref _inputs);
                 return;
             }
@@ -613,7 +608,7 @@ namespace Cs16.Module.Net
 
         /// <summary>
         /// 把主机权威的世界读成一行 JSON。字段一律**扁平 + 定序**，便于对端逐字段核对
-        /// （⛔ 不用 <c>JsonUtility</c>：它只认 <c>Serializable</c> 类，且对"逐帧拼一行"这件事更重）。
+        /// （不用 <c>JsonUtility</c>：它只认 <c>Serializable</c> 类，且对"逐帧拼一行"这件事更重）。
         /// </summary>
         private static string BuildSnapshot(ICsMatch m)
         {
@@ -710,7 +705,7 @@ namespace Cs16.Module.Net
             if (c == null) return;
             var already = c.Closed;
             c.Closed = true;
-            // 尽力而为：收尾关不掉也继续（⛔ 语义不变：不抛，下面照旧摘 Peers 表 + 打收尾 Info）。
+            // 尽力而为：收尾关不掉也继续（语义不变：不抛，下面照旧摘 Peers 表 + 打收尾 Info）。
             try { if (c.Stream != null) c.Stream.Close(); }
             catch (Exception ex)
             {

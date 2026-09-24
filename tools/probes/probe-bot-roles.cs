@@ -1,10 +1,9 @@
 // 判据资产（tools/probes/）：差异 #67「机器人 AI 没有分工 / 太笨」的**实机载体**取证。
 //
-// 为什么要有它：本行此前的证据只有 ① 结构断言（源码里有没有角色表）② 离线自检
 // （BotSelfTest.RunRoleTable，在编辑器里手点菜单跑纯函数）。缺的正是用户能感知的那一层：
 // **在跑着的这一局里，场上这 8 个 bot 各自真的分到了不同角色没有**。本探针补的即是它。
 //
-// 判据（写死在这里，⛔ 不靠人眼看数）：
+// 判据（写死在这里，不靠人眼看数）：
 //   PASS ⇔ ① 场上 bot 数 >= 2（否则谈不上分工）
 //          ② 每个"有 bot 的阵营"内部，RoleText() 的**不同取值数 >= 2**
 //             （⇒ 同一队里不是"同一个人被复制 4 份"）
@@ -13,7 +12,7 @@
 //          ⑤ 每个 bot 的 RoleText 首段 == CsBotRoles.Label(CsBotRoles.For(team, id))
 //             （⇒ 运行时给的角色 与 纯函数 是同一份口径，没有"两处各写一张表"）
 //
-// ⛔ 只读：反射取 BotModule._brains（Dictionary<long, CsBotBrain>），只调 public 的**只读**成员
+// 只读：反射取 BotModule._brains（Dictionary<long, CsBotBrain>），只调 public 的**只读**成员
 //    （Name / ActorId / RoleText / PlanRoute）。不改任何业务状态、不发包、不点按钮。
 //
 // 用法（编辑器须在 Play 且有一局在跑）：
@@ -56,10 +55,9 @@ foreach (System.Collections.DictionaryEntry kv in dict)
     var self = match.Find(id);
     var teamName = self != null ? self.Team.ToString() : "?（actor 找不到）";
     var teamEnum = self != null ? self.Team : default(Cs16.Core.CsTeam);
-    // 2026-09-24（片FIX-4 线B）：角色口径从「全局 Id % 4」改成「**队内序号** % 4」——
     //   全局 Id 会被"真人玩家在哪一队"整体位移（玩家 Id 恒最小），旧口径下 T 队恰好安全、
     //   CT 队会撞槽位。探针必须问**运行时实例自己**算出来的那个序号（brain.TeamOrdinal），
-    //   ⛔ 不在这里另算一遍（否则就是"判据与被判对象两套口径"）。
+    //   不在这里另算一遍（否则就是"判据与被判对象两套口径"）。
     var expect = Cs16.Module.Bot.CsBotRoles.Label(Cs16.Module.Bot.CsBotRoles.For(teamEnum, brain.TeamOrdinal));
 
     var roleText = brain.RoleText() ?? "-";

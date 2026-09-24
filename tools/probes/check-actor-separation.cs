@@ -21,8 +21,6 @@ using Cs16.Module.Map;
 
 public static class ActorSeparationCheck
 {
-    // 切片R：报告是**判据资产**（D9 行离线断言的证据，删了就不能复核同一件事）⇒ 落 tools/probes/，
-    // 不再放一次性目录 .ai-tmp/test/（skill §8）。读取方 tools/probes/geom-check.py 的口径同步。
     private const string OutPath =
         @"C:\Work\Server\f-v2\clover-project-cs16\tools\probes\actor-separation-check.txt";
 
@@ -50,7 +48,7 @@ public static class ActorSeparationCheck
         _pass = 0;
         _fail = 0;
 
-        // 半径/最小间距的口径来自工程常量（⛔ 不写死 0.72：常量改了断言要跟着改）
+        // 半径/最小间距的口径来自工程常量（不写死 0.72：常量改了断言要跟着改）
         var r = CsConst.PlayerRadius;
         var minSep = r * 2f;
         Sb.AppendLine("# CsActorSeparation 离线断言（半径口径 = CsConst.PlayerRadius = " + F(r) +
@@ -90,7 +88,6 @@ public static class ActorSeparationCheck
             CsActorSeparation.TryResolve(0f, 0f, r, others, 1, out var x, out var z);
             var d = Dist(x, z, 0.10f, 0f);
             // 判据 = 最终**间距**达标 且 人往 -x 侧（远离对方）挪，不是"x 必须超过最小间距"：
-            // 对方本来就在 0.10 处，只要推到"刚好相切 + 1mm"就够（推过头反而会让被推的人漂移过大）。
             Check(d >= minSep - 1e-3f && x < 0f, "③ 方向 = 远离对方",
                   "对方在 +x=0.10 ⇒ 推到 x=" + F(x) + "，最终间距 " + F(d) + " ≥ " + F(minSep));
         }
@@ -120,7 +117,7 @@ public static class ActorSeparationCheck
                   "两人都在原点 → (" + F(x) + "," + F(z) + ") 间距 " + F(d0) + "/" + F(d1));
         }
 
-        // ---- ⑥ 确定性：同一输入连跑两次结果逐位相同（⛔ 不许用随机方向）----
+        // ---- ⑥ 确定性：同一输入连跑两次结果逐位相同（不许用随机方向）----
         {
             var others = new[]
             {

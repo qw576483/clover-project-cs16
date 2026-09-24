@@ -429,11 +429,10 @@ def main():
           % ('TOTAL', rt_ok, rt_all, geo_ok, geo_all, rt_ok - geo_ok))
     print('')
 
-    # A6（切片BC 新增，⛔ 只加不降）：**运行时标记表的每个点**所在格必须可走。
     # 口径：生成侧 `Dust2Builder.SnapMarkerToWalkable` 的目标就是"表里不再有落阻挡格的点"；
     # 这一格可不可走的判据与运行时同源（这里用烘焙位图，生成侧用 geo 阻挡盒复算的位图 ——
     # 两者同语义，见 Dust2GeoData.BuildBlockedBitmap 的注释）。
-    # ⛔ geo.bin 对照行**不参与**本断言：它是吸附前的原始采样源，本来就允许有落阻挡格的点。
+    # geo.bin 对照行**不参与**本断言：它是吸附前的原始采样源，本来就允许有落阻挡格的点。
     a6_bad = [(n, i) for n in sorted(RT) for i, p in enumerate(RT[n])
               if not walkable(*cell_of(p[0], p[2]))]
     if a6_bad:

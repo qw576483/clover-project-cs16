@@ -20,11 +20,10 @@ namespace Cs16.UI
     /// </para>
     ///
     /// <para>
-    /// <b>⛔ 这里刻意 <c>不用</c> 任何 Unity/引擎的"游戏时间"，只用 BCL 的
+    /// <b>这里刻意 <c>不用</c> 任何 Unity/引擎的"游戏时间"，只用 BCL 的
     /// <see cref="System.Diagnostics.Stopwatch"/>（真实墙钟）</b>。两个都试过，都被同一个现象毁掉：
     /// </para>
     /// <para>
-    /// <b>现象（2026-09-21 实机实测，两条日志原文）</b>：进 Play 时 Unity 的帧时钟会在
     /// **第一帧之后**跳一大段 ——
     /// <c>[UI] 启动画面已开：本帧起停留 2s（基准 unscaledTime=0.000）</c>（12:16:46.467）
     /// → <c>[UI] 启动画面结束 → 主菜单（实际停留 8.225s）</c>（12:16:46.517）：
@@ -34,8 +33,8 @@ namespace Cs16.UI
     /// <item><b>旧实现</b>（<c>Game.Timer.AfterUnscaled(2f, …)</c>）挂在这里：引擎 Timer 的 unscaled 条目按
     /// <c>Time.unscaledDeltaTime</c> **累加**（引擎件 <c>Runtime/Core/Timer.cs</c> 的
     /// <c>Tick</c>：<c>e.Elapsed += e.Unscaled ? UnscaledDeltaTime() : dt</c>）⇒ 那一跳把刚排下的
-    /// 2 s 定时器**在第一次 Tick 就吃满**，启动画面只在屏上 33~37 ms（= 修前的实际表现）。</item>
-    /// <item><b>改成"<c>OnOpen</c> 记 <c>Time.unscaledTime</c> 基准 + 每帧比差值"也不成立</b>（本片第一版）：
+    /// 2 s 定时器**在第一次 Tick 就吃满**，启动画面只在屏上 33~37 ms。</item>
+    /// <item><b>改成"<c>OnOpen</c> 记 <c>Time.unscaledTime</c> 基准 + 每帧比差值"也不成立</b>：
     /// 那一跳落在**第一帧与第二帧之间** ⇒ 基准取在第一帧（0.000）、第二帧就跳到 8.225 ⇒ 同样在 ~50 ms 内推进。</item>
     /// </list>
     /// <para>
@@ -93,8 +92,7 @@ namespace Cs16.UI
         {
             if (_advanced) return;
 
-            // 非预期分支留痕（只报一次）：进 Play 的首帧把整段加载耗时算进了 unscaledDeltaTime，
-            // 这正是旧实现"2s 定时器被一帧吃满"的那一帧。用绝对时间差值计时后它不再有害，但要看得见。
+            // 非预期分支留痕（只报一次）：进 Play 的首帧把整段加载耗时算进了 unscaledDeltaTime。
             if (!_frameGapChecked)
             {
                 _frameGapChecked = true;

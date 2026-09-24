@@ -2,17 +2,14 @@
 //
 // 为什么拆：本沙箱的 Pipeline 对 eval_file 有 **5s 主线程上限**（实测报
 // "Main thread operation timed out after 5000ms"），而棋盘上 8 个 bot + 一整张 de_dust2 在跑时
-// 主线程很挤 ⇒ 原来那一个"台账 + 几何 + 真调用 + 冻结"的大探针会超时。拆成
 //   A（本文件）：相机 + 视模型动画后 AABB + 新老落点换算 —— 只读，最便宜；
 //   B（probe-muzzleflash-fire.cs）：反射真调 MuzzleFlash + 台账 + 冻 timeScale。
 // 两次都轻，才跑得动。
 //
-// 判据（写死在这里，⛔ 不靠人眼看数）：
+// 判据（写死在这里，不靠人眼看数）：
 //   PASS ⇔ ① 视模型 AABB 取得到（smr>0 且 z 跨度 > 0）
 //          ② 旧落点 (eye + dir*0.34 + right*0.13 + down*0.09) 落在 AABB **内部**
-//             （⇒ 修复前"贴在枪身里、被近端几何盖掉"这个根因成立）
 //          ③ 新落点 (eye + rot*(0.13, -0.12, 0.72)) 落在 AABB **之外且更靠前**
-//             （⇒ 修复后火焰在枪口之前，不会被盖）
 //          ④ 新落点在屏幕上（onScreen=true）—— 否则"位置对了但看不见"
 //
 // 用法（编辑器须在 Play 且有一局在跑）：unity command eval_file --file tools/probes/probe-muzzleflash-geom.cs
@@ -45,7 +42,7 @@ sb.Append("cam=").Append(cam.name)
   .Append(" eye=").Append(V3(cam.transform.position))
   .Append(" timeScale=").Append(F2(UnityEngine.Time.timeScale));
 
-// ---------- 视模型（只在相机子树里找，⛔ 不做全场景扫描） ----------
+// ---------- 视模型（只在相机子树里找，不做全场景扫描） ----------
 UnityEngine.Transform vmRoot = null;
 var kids = cam.transform.GetComponentsInChildren<UnityEngine.Transform>(true);
 for (var i = 0; i < kids.Length; i++)
@@ -101,7 +98,7 @@ var oldInside = oldLocal.x >= lLo.x && oldLocal.x <= lHi.x
              && oldLocal.y >= lLo.y && oldLocal.y <= lHi.y
              && oldLocal.z >= lLo.z && oldLocal.z <= lHi.z;
 
-// ---------- 新落点：读 CsCombatTuning 的三个常量（⛔ 探针里不抄数字） ----------
+// ---------- 新落点：读 CsCombatTuning 的三个常量（探针里不抄数字） ----------
 System.Type tune = null;
 var asms = System.AppDomain.CurrentDomain.GetAssemblies();
 for (var i = 0; i < asms.Length; i++)

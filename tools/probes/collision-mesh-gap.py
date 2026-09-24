@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 """判据资产：**碰撞-几何逐面一致性** —— 把"模型能穿 / 撞空气 / 可钻缝"穷举出来。
 
-## 为什么需要它（根因）
 
 `tools/probes/rebuild-blockers.py` 决定位图（可走性唯一事实），运行时 `CsMap.ResolveMove`
 的快速分支 = `BitmapClear && GroundWithinStep`（**不做八向几何射线**）⇒ **位图说可走的地方，
@@ -29,7 +28,7 @@
 | **b 撞空气** | 位图判**阻挡**的格，**没有任何渲染几何**落在它的 XZ 足迹里（且在图内、挨着可走格） | 撞到看不见的墙（模型与碰撞不符的另一种） |
 | **c 缝隙** | 两个**不同的**阻挡盒之间在 XZ 上的净间隙 `PlayerRadius < gap ≤ 1 格`，且间隙里存在**可走格** | 相邻阻挡盒之间的缝够身子钻过去 |
 
-## 口径来源（⛔ 不写死数字，全从盘上/工程常量取）
+## 口径来源（不写死数字，全从盘上/工程常量取）
 * **采样与规则**：直接 **import `tools/probes/rebuild-blockers.py`** 复用
   （`sample_geometry` / `STEP_UP` / `BAND_LOW` / `BAND_HIGH` / `FLOOR_MIN_NY`）——
   判据的两半**必须同源**，否则 diff 无意义（旧版是两份各写一遍，已经漂移过一次）。
@@ -200,7 +199,6 @@ def main():
                 else:
                     a_cells[key] = (prev[0], prev[1] + 1, prev[2])
                 continue
-            # 非基层（另一层）：单层 2D 位图的固有限制 ⇒ 只报数字，不算缺陷
             for f in fs:
                 if f <= f0 + STEP_UP:
                     continue
@@ -290,7 +288,6 @@ def main():
             wk = [(ix, iz) for (ix, iz) in cells if walkable(ix, iz)]
             if not wk:
                 continue
-            # **缺陷形**：缝里的可走格里，要么基层列被实心几何挡（= a 类），
             # 要么格内压根没有渲染几何（= b 类）。两者都不是"缝"，是位图与模型不符。
             defect = any(k in a_cells or k not in geom_cells for k in wk)
             c_rows.append((gap, i, j, cells[0][0], cells[0][1], len(cells), defect))

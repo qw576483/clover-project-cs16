@@ -162,7 +162,6 @@ namespace Cs16.Module.Match
                 _beepFastLogged = false;
             }
 
-            // 音频模块靠这个事件播蜂鸣（见任务书 §4.6「音效触发点」）。
             _m.RaiseBombStateChanged();
         }
 

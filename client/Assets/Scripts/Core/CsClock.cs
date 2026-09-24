@@ -2,18 +2,14 @@
 // Cs16 · Core/CsClock.cs
 // 本工程**唯一的时间入口**：绝对时间 <see cref="CsClock.Now"/> + 帧步长 <see cref="CsClock.Delta"/>。
 //
-// 为什么必须收敛（根因，不是洁癖）：
-//   同一个"现在几点"在工程里原来有三个口径 —— 引擎 Tick 的 dt、`Time.time`、以及自检里换掉的
-//   假时钟（`CsMatch.Clock`）。三者只要有一处不同步，后果不是"报错"而是**静默错位**：
 //     · `CsMatch.SetPaused` 用 `Time.time` 算暂停补偿，而 `CsActor.NextFireTime` 用的是模拟时钟
 //       ⇒ 换过时钟的自检/重放里"暂停一次白得一段冷却"（见 CsMatch.SetPaused 的注释）；
 //     · `CombatModule.CanFire` 拿 `Time.time` 跟模拟写下的 `ReloadEndTime` 比 ⇒ 时钟一换就是
 //       "准星能按但打不出"或"刚换完弹又能打"；
-//     · 上一片的复现口径（`Core/CsRng.cs` ④「绝不静默退到时间种子」）在这里同理：
 //       时间源可以换，但**换没换、换成谁，必须看得见**。
 //
 // 谁可以读 `UnityEngine.Time`：
-//   ⛔ 只有本文件（+ 宿主 `Module/Match/MatchModule.Update` 的那一次 <see cref="Drive()"/> 调用）。
+//   只有本文件（+ 宿主 `Module/Match/MatchModule.Update` 的那一次 <see cref="Drive()"/> 调用）。
 //   其余玩法代码一律 `CsClock.Now` / `CsClock.Delta`。判据见
 //   `.ai-tmp/test/sink4-sink-combat-clock-selfcheck.ps1` 的 `gameplay-no-wallclock`（可红可绿）。
 //
@@ -55,13 +51,12 @@ namespace Cs16.Core
     /// </summary>
     public static class CsClock
     {
-        /// <summary>日志标签（与 <c>CsRng</c> 同口径：注入 / 撤销都留痕，⛔ 不静默换时钟）。</summary>
+        /// <summary>日志标签（与 <c>CsRng</c> 同口径：注入 / 撤销都留痕，不静默换时钟）。</summary>
         public const string Tag = "CsClock";
 
         /// <summary>
         /// 未注入、且宿主未驱动时的帧步长来源。默认 = **引擎 Tick 的 dt**
         /// （`Runtime/Core/EngineRunner.cs:207` 的 <c>Game.Tick(Time.deltaTime)</c>）。
-        /// 离线驱动可换掉它（见 <see cref="DeltaSource"/>），但**默认值不许改成别的墙钟**：
         /// 换了默认值 = 换了语义，而不是换了名字。
         /// </summary>
         private static Func<float> _deltaSource = DefaultDelta;
@@ -100,7 +95,7 @@ namespace Cs16.Core
         /// 绝对时间源（读 = 当前生效的那个；写 = 注入/撤销，与 <see cref="Inject"/> 同义）。
         ///
         /// <para><c>CsMatch.Clock</c> 的默认值就是 <c>CsClock.Now</c>，所以这里换一次，
-        /// 模拟侧跟着一起换（⛔ 不要再单开第二个时钟钩子）。</para>
+        /// 模拟侧跟着一起换（不要再单开第二个时钟钩子）。</para>
         /// </summary>
         public static Func<float> NowSource
         {

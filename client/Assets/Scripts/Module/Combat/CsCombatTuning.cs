@@ -5,7 +5,6 @@ namespace Cs16.Module.Combat
     ///
     /// <para><b>为什么单独一个文件</b>：与 <c>Cs16.Core.CsConst</c> 同语义（"改一处即可调手感"的旋钮），
     /// 但它们是 <c>Module/Player</c>、<c>Module/CameraRig</c>、<c>Module/Combat</c> 三处共用的，
-    /// 且 <c>CsConst</c> 是**契约文件（不许改）** —— 与 agent-03 的 <c>CsMatchConst</c> 同一处置方式。
     /// 目的同样是：**业务脚本里不出现裸数字**。</para>
     ///
     /// <para><b>改这里必须同步回报</b>：这些值直接决定"像不像 CS 1.6"（后坐力表现、准星扩散、开镜、bob）。</para>
@@ -13,9 +12,6 @@ namespace Cs16.Module.Combat
     /// <para><b>出处口径（切片L 逐条补）</b>：本文件的量**绝大多数是「本项目新增」的操作 / 表现层旋钮** ——
     /// 它们对应的是 CS 1.6 **客户端**手感（后坐力 / 散布 / 准星扩散 / bob / 开镜 / 受击晃动 / 枪口火焰），
     /// 而原版把这些量写死在 <c>cstrike/cl_dlls/client.dll</c> 与 <c>mp.dll</c> 的逐武器代码里
-    /// （不是 cvar、也不是数据表 —— 见 <c>策划/对照表.md</c> §6 BLOCKED-1 / BLOCKED-2）
-    /// ⇒ 本机拿不到它们的 <c>文件:偏移</c> 级出处（载体 <c>原版资源/cs16src</c> 已空，见 <c>原版资源/清单.md</c>）。
-    /// 因此逐条只标「本项目新增」+ 该条与 A 的关系；⛔ 这些标注**不是**"已 1:1 对齐原版"的证据。
     /// 两条例外：<c>PitchLimit</c>（口径同 <c>CsActor.Pitch</c>）、<c>DegreesPerMouseCount</c>（原版 <c>m_yaw</c> 默认值）。</para>
     /// </summary>
     internal static class CsCombatTuning
@@ -161,7 +157,6 @@ namespace Cs16.Module.Combat
         //  表现（枪口火焰 / 弹道 / 手雷视觉）
         // ==================================================================
         /// <summary>枪口火焰持续时间（秒）。出处：**本项目新增**。
-        /// ⚠️ 2026-09-24 更正：旧注释写"原版 `sprites/muzzleflash*.spr` 载体不在盘" —— **已不成立**，
         /// 四张 `.spr` 现在都在盘（`原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash1..4.spr`），
         /// 但它们只给出"每张几帧"（`muzzleflash2/3` 各 3 帧），给不出**总时长**（引擎 `hw.dll` 不在盘）
         /// ⇒ 时长仍是本项目新增，缺口记在 `策划/差异登记.tsv` #89。</summary>
@@ -174,7 +169,7 @@ namespace Cs16.Module.Combat
         /// （四张 `.spr` 在盘：48×48 / 64×64 / 72×72 / 48×48），但**没有任何载体给出"火焰的世界尺寸"**
         /// —— 那是引擎的投影选择 ⇒ 仍按本项目新增记。</para>
         ///
-        /// <para>⛔ <b>单位是"米"，但必须经 <c>SpriteScaleForMeters</c> 换成倍率</b>：贴片导入 PPU=100，
+        /// <para><b>单位是"米"，但必须经 <c>SpriteScaleForMeters</c> 换成倍率</b>：贴片导入 PPU=100，
         /// 64 px 天生只有 0.64 世界单位宽，直接 `Vector3.one * 0.30f` 画出来只有 0.192 m
         /// （= 0.64 × 0.30，小 3.1 倍）—— 同族口径见 <see cref="DecalSize"/> 的注释与
         /// <c>CombatEffects.SpriteScaleForMeters</c>。</para>
@@ -182,13 +177,11 @@ namespace Cs16.Module.Combat
         public const float MuzzleFlashSize = 0.30f;
 
         // ------------------------------------------------------------------
-        //  枪口火焰的**落点**（片 FX-MUZZLE，2026-09-24；差异 #89）
         // ------------------------------------------------------------------
         /// <summary>
         /// 枪口火焰在**相机局部系**里的落点（米）：<c>x</c>=右、<c>y</c>=上、<c>z</c>=前。
         ///
         /// <para><b>为什么不是旧值"相机前方 0.34 m + 右 0.13 + 下 0.09"</b>：
-        /// 旧值把火焰放在 <c>z = +0.34</c>，而本工程**实测**的视模型动画后包围盒是
         /// <c>x∈[-0.026,+0.239] y∈[-0.286,-0.062] z∈[-0.087,+0.705]</c>
         /// （逐轴数字抄在 <c>ViewModelRig.EnsureAlwaysAnimate</c> 的注释里）——
         /// 枪管尖在 <c>z ≈ 0.70</c> ⇒ 火焰被放进**枪身内部**；SpriteRenderer 走透明队列且
@@ -197,7 +190,7 @@ namespace Cs16.Module.Combat
         ///
         /// <para><b>本值怎么来的</b>：取上面那条实测包围盒的**最前端**（<c>z=0.705</c>）再往外让
         /// 0.015 m（防 z-fighting）⇒ <c>Forward = 0.72</c>；<c>x / y</c> 取枪管轴在包围盒里的位置
-        /// （右偏 + 略低于视平线）。⛔ **这不是原版出处**：原版落点在引擎 <c>hw.dll</c>（不在盘）；
+        /// （右偏 + 略低于视平线）。**这不是原版出处**：原版落点在引擎 <c>hw.dll</c>（不在盘）；
         /// 它是**从本工程实测几何反推**的，缺口与判据记在 <c>策划/差异登记.tsv</c> #89。</para>
         /// </summary>
         public const float MuzzleOffsetRight = 0.13f;
@@ -214,7 +207,6 @@ namespace Cs16.Module.Combat
         /// 弹痕贴片**整块画布**的世界尺寸（米）= 0.128 m（= 16 px × <see cref="DecalMetersPerPixel"/>）。
         ///
         /// <para><b>2026-09-24 片FIX-4 线C 复核（用户第 4 次报「弹痕还是没有」）</b>——
-        /// 旧值 0.075 m 的**问题不在"有没有贴"**（日志一直显示贴了），而在**"看得见的那一块有多小"**。
         /// 实测（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，读的就是进工程的同一批 PNG）：
         /// <c>fx_shot1..5</c> 是 16×16、RGB **纯黑 (0,0,0)**、alpha = 不透明度掩码，其中
         /// <b><c>alpha≥32</c> 只有 13~16 px / 256、<c>alpha≥160</c> 只有 2~4 px</b>
@@ -222,15 +214,14 @@ namespace Cs16.Module.Combat
         ///
         /// <para>⇒ 旧值下<u>可见墨迹</u> = 0.075 × 5/16 = <b>2.34 cm</b>。按 1920 px / 水平 90° 的投影
         /// （<c>px = 1920 · w / (2d)</c>）：2 m 处只有 <b>约 11 px</b>、4.89 m 处约 4.6 px
-        /// （而**整块**画布在 4.89 m 处投影 ≈ 14.7 px —— 与上一轮实机差分测到的 19/16/22 px 同量级，
         /// 说明"贴了、但只有 19 px 的淡影、其中仅约 5 px 是有墨的"）。这就是用户看不到它的原因。</para>
         ///
-        /// <para><b>本值怎么定的</b>（可复算，⛔ 不是"随手放大"）：把判据写成"**可见墨迹**在
+        /// <para><b>本值怎么定的</b>（可复算，不是"随手放大"）：把判据写成"**可见墨迹**在
         /// 2 m 处 ≥ 15 px"（2 m = 贴脸打墙的典型距离），反解
         /// <c>墨迹 ≥ 15·2·2/1920 = 3.13 cm</c> ⇒ 整块 ≥ 3.13 × 16/5 = 10.0 cm ⇒ 取 <b>12.8 cm</b>。
         /// 于是墨迹 = 4.0 cm（2 m 处 <b>19.2 px</b>、4.89 m 处 7.8 px），实心核心 = 1.92 cm（2 m 处 9.2 px）。</para>
         ///
-        /// <para>⛔ <b>出处缺口如实登记</b>：原版"贴花世界尺寸"的映射在**引擎**（<c>hw.dll</c>，
+        /// <para><b>出处缺口如实登记</b>：原版"贴花世界尺寸"的映射在**引擎**（<c>hw.dll</c>，
         /// 不在盘 ⇒ <c>策划/对照表.md</c> 的 BLOCKED 口径），本值**没有** <c>文件:偏移</c> 级出处，
         /// 属**本项目新增**；缺口记在 <c>策划/差异登记.tsv</c> #69，判据 = 可见性阈值（见上）。
         /// 全工程**只有这一个旋钮**决定弹痕大小（血迹按 <see cref="DecalMetersPerPixel"/> 同比例联动），
@@ -275,7 +266,6 @@ namespace Cs16.Module.Combat
         public const int MaxDecals = 64;
 
         // ------------------------------------------------------------------
-        //  弹痕 / 血迹：**像素 → 世界**的换算（片 FX-ALL，2026-09-23）
         // ------------------------------------------------------------------
         /// <summary>
         /// 弹痕的"米/像素"。口径：弹痕载体 `{shot1..5` 是 **16×16**（`decals.wad` 实测），
@@ -284,7 +274,7 @@ namespace Cs16.Module.Combat
         /// <para><b>这是什么、不是什么</b>：原版"贴花世界尺寸"的映射在**引擎**里（`hw.dll` 不在盘）
         /// ⇒ 拿不到。这里用的是**同族比例推演**：同一套 decal 载体、同一个换算，
         /// 让 48×48 的血迹 = 弹痕的 3 倍宽、64×64 的 `{blood5` = 4 倍宽。
-        /// ⛔ 这不是出处，出处缺口仍在 <c>策划/差异登记.tsv</c> #69 里；换掉 DecalSize 一处即可全改。</para>
+        /// 这不是出处，出处缺口仍在 <c>策划/差异登记.tsv</c> #69 里；换掉 DecalSize 一处即可全改。</para>
         /// </summary>
         public const float DecalMetersPerPixel = DecalSize / 16f;
 
@@ -294,7 +284,7 @@ namespace Cs16.Module.Combat
         /// </summary>
         public static float BloodDecalSize(int pixels)
         {
-            // ⛔ 本文件刻意不 `using UnityEngine`（只放常量，与 CsConst 同处置）⇒ 不用 Mathf。
+            // 本文件刻意不 `using UnityEngine`（只放常量，与 CsConst 同处置）⇒ 不用 Mathf。
             return pixels <= 0 ? 0.001f : pixels * DecalMetersPerPixel;
         }
 
@@ -336,8 +326,6 @@ namespace Cs16.Module.Combat
         /// <summary>单帧最多消费的"待表现射击"条数（与模拟的 MaxPendingShots 同量级）。</summary>
         public const int MaxShotsConsumedPerFrame = 16;
 
-        // ==================================================================
-        //  音效名（**必须与 agent-07 的 Resources/Sound/SFX 一致**）
         // ==================================================================
         /// <summary>命中标记音（普通）。</summary>
         public const string HitMarkerSfx = "sfx/hitmarker";

@@ -91,7 +91,6 @@ def main(argv):
         return 2
     gid = cm[cp]
 
-    # ⛔ 补丁字体是**一次性临时产物**，只许落 <项目根>/.ai-tmp/test/（skill §1.8）——
     #    绝不能落在输出目录（`Assets/` 下一张 .ttf 会被 Unity 当字体资产导入）。
     ROOT = os.path.dirname(os.path.dirname(HERE))
     rf_path = args.render_font or os.path.join(ROOT, ".ai-tmp", "test", "menu_check-render.ttf")

@@ -49,11 +49,10 @@ namespace Cs16.App
 
         private void Awake()
         {
-            // 宿主级开关交给引擎门面（改前是自己写 Application.runInBackground）：
             // 编辑器窗口失焦时也要跑帧（否则第一次点 Play 后切出去就会"卡住不动"）。
-            // ⛔ 必须在 Game.Launch 之前（本方法早于 Start），否则 DuplicateInstanceGuard / OwnAudioListener
+            // 必须在 Game.Launch 之前（本方法早于 Start），否则 DuplicateInstanceGuard / OwnAudioListener
             // 这两项"创建宿主时执行一次"的动作会记 Warn 且不生效（见 EngineRunner.Configure）。
-            // ⛔ 刻意**不开** OwnAudioListener：那会让 3D 空间音效按宿主位置（原点）算距离衰减 ——
+            // 刻意**不开** OwnAudioListener：那会让 3D 空间音效按宿主位置（原点）算距离衰减 ——
             // CS 1.6 的脚步 / 枪声远近衰减是玩法判据（EngineRunner.cs 该选项的注释明说这类项目不要开），
             // 监听器归属仍由跟随机位的相机自己管（Module/CameraRig）。
             Game.ConfigureHost(new EngineHostOptions { RunInBackground = true });
@@ -145,7 +144,6 @@ namespace Cs16.App
         /// </summary>
         private void OnSceneLoaded(string sceneName)
         {
-            // 显式归属（改前是场景级 `FindObjectsByType<EventSystem>` 全场景搜索）：
             // ① 常驻实例不再靠"所在场景名"猜，而是**引擎持有的那一个** —— CloverInput.Init 建的
             //    DontDestroyOnLoad 对象就是 uGUI 的 `EventSystem.current`（引擎自己维护，见
             //    IInputManager.EnsureEventSystem 的注释：避免业务各自 new 出重复 InputModule）；

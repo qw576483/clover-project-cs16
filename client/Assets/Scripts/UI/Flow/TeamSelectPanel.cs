@@ -22,7 +22,6 @@ namespace Cs16.UI
     /// <para>
     /// <b>文案</b>：原版逐字取自 `cstrike/resource/cstrike_english.txt`（行号见各常量注释）；
     /// `&amp;N` 是 VGUI 的热键前缀，**显示时去掉 `&amp;`、保留数字/字母**（VGUI 惯例；字母会被画上角标下划线）。
-    /// ⚠️ <b>2026-09-24 起显示改为中文</b>（用户本轮第 5 条「选角色的界面变成中文」）—— 英文原文仍逐条
     /// 保留在 <see cref="ButtonTexts"/> 的注释里，中译与本项目新增的登记见该常量。
     /// </para>
     ///
@@ -32,12 +31,10 @@ namespace Cs16.UI
     /// </para>
     ///
     /// <para>
-    /// ⛔ <b>`MapInfo` 那一块整块删掉（2026-09-20，用户要求）</b>：它原先复刻的是原版
     /// <c>maps/de_dust2.txt</c> 的正文，里面带三行**外部站点署名**
     /// （`*** GameHelper.com exclusive ***` / `by DaveJ (http://www.johnsto.co.uk/)` /
     /// `textures by MacMan (MacManInfi@aol.com)`）—— 用户看到后明确要求"内容全部去掉，
     /// 只保留一个 by clover-engine"。⇒ 本面板现在只留：标题 + 6 个原版按钮 + 底部居中
-    /// <c>by clover-engine</c>（skill §8 的品牌行）。⛔ 不要再把那段正文加回来。
     /// </para>
     /// </summary>
     public class TeamSelectPanel : CsPanelBase
@@ -60,14 +57,13 @@ namespace Cs16.UI
         };
 
         /// <summary>
-        /// 显示文案 —— **2026-09-24 按用户要求改为中文**（用户本轮第 5 条：「选角色的界面变成中文」）。
         ///
         /// <para><b>原版出处仍在，只是不再直接显示</b>：原版文案取自 `cstrike_english.txt` 的 token
         /// （去 `&amp;` 后显示）：`Cstrike_Terrorist_Forces` :85 / `Cstrike_CT_Forces` :86 /
         /// `Cstrike_VIP_Team` :87 / `Cstrike_Team_AutoAssign` :88 / `Cstrike_Menu_Spectate` :89 /
         /// `Cstrike_Cancel` :79（英文原文逐字见下方注释）。中文译法取 CS 中文版的通行译名。</para>
         ///
-        /// <para>⛔ 这是**本项目新增**的可见差异（登记在 `策划/差异登记.tsv` #70）：中文字面在原版载体里
+        /// <para>这是**本项目新增**的可见差异（登记在 `策划/差异登记.tsv` #70）：中文字面在原版载体里
         /// **不存在**。之所以做：① 用户明确要求；② 本面板本来就已经带一条**非原版**的底部署名
         /// `by clover-engine`（同一次用户要求）；③ 工程字体链已内置 CJK 回退族
         /// （`CsUiStyle.OriginalFont` = Verdana → Microsoft YaHei → PingFang SC → Noto Sans CJK SC），
@@ -109,7 +105,6 @@ namespace Cs16.UI
             //
             // `TeamMenu` 是 VGUI `Frame`，它的底色取 scheme 默认的 `BgColor` → `ControlBG "0 0 0 0"`
             // （`clientscheme.res:38` + `:101`）⇒ **Frame 本身完全透明，没有黑板**。
-            // ⛔ 这里原先铺的是 `WindowBG "0 0 0 200"`（scheme:41）—— 那是"文本编辑框 / 聊天"的底色，
             //    不是 Frame 的；用户看到的"凭空多出一整块黑板"就是它。**不要**再补任何自创底板/边框。
             // 这个节点仍要存在：它是 6 个按钮 / 标题的**坐标空间**（`.res` 的子控件坐标都相对它）。
             var frame = CsUiStyle.CreateBoxRect("TeamMenu", root,
@@ -128,10 +123,6 @@ namespace Cs16.UI
                     ButtonTexts[i], ResPos(BtnX, ButtonY[i]), ResSize(BtnW, BtnH), null);
             }
 
-            // ── 署名（skill §8 品牌硬约定）──
-            // ⛔ 这一块**原先**是原版 `MapInfo`（HTML 控件）的复刻：一块列表底 + 原版 `maps/de_dust2.txt`
-            //    的正文。用户 2026-09-20 明确要求把那段正文（含 GameHelper.com / johnsto.co.uk / aol.com
-            //    三行外部站点署名）**整块去掉**，只留 `by clover-engine` ⇒ 现在这里就是那一行。
             // 必须用底部锚点：左上锚点 + 大负 y 会随画布高度变化掉出屏幕（MainMenuPanel 实测踩过）。
             // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
             // 逐字 `by clover-engine`）：本面板不再自持文案常量、不再自写贴底定位与尺寸。
@@ -240,7 +231,7 @@ namespace Cs16.UI
 
         /// <summary>
         /// 原版设计空间坐标 → 本工程画布坐标（唯一换算处，见 <see cref="CsUiStyle.ResScale"/>）。
-        /// ⚠️ `.res` 的 `ypos` 向下为正，而 <see cref="CsUiStyle.AnchoredTopLeft"/> 的 y 向上为正 ⇒ **y 取负**。
+        /// `.res` 的 `ypos` 向下为正，而 <see cref="CsUiStyle.AnchoredTopLeft"/> 的 y 向上为正 ⇒ **y 取负**。
         /// </summary>
         private static Vector2 ResPos(float x, float y)
         {

@@ -10,7 +10,6 @@
 # prefixed "[YYYY-MM-DD HH:MM:SS.mmm]" by the client logger, so the window is
 # exact to the millisecond.
 #
-# Patterns are written as \uXXXX escapes so this file stays pure ASCII (the repo
 # rule for scripts; a BOM-less non-ASCII .ps1/.py trips sampler-selfcheck).
 #
 # Read-only, rerunnable, ASCII-only output.
@@ -38,7 +37,6 @@ PATTERNS = [
 
 
 def ts_of(line):
-    # "[2026-09-22 18:28:32.169] ..." -> "2026-09-22 18:28:32.169"
     if not line.startswith("["):
         return None
     end = line.find("]")

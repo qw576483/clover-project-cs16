@@ -13,11 +13,9 @@ namespace Cs16.Module.Match
     ///
     /// <para><b>拾取口径</b>：与原版一致 = **走到 1.2 m 内自动拾取**（<see cref="CsMatchConst.PickupRadius"/>，
     /// 与 <c>CsBomb.TryPickupDropped</c> 的 C4 走**同一条口径、同一个常量** —— 见 <c>CsMatch</c> 里
-    /// 「原版口径 = 走到 1.2m 内自动拾取」那行注释）。⛔ 不额外要求按键 / 瞄准。</para>
+    /// 「原版口径 = 走到 1.2m 内自动拾取」那行注释）。不额外要求按键 / 瞄准。</para>
     ///
     /// <para><b>刻意不做的两件</b>：① **不自转** —— 差异 #75 的「何时消除」列写了「绕 Y 轴微转」，
-    /// 但那是**目标描述、不是原版出处**，而 CS 1.6 掉落武器是否自转本片**未取证**
-    /// ⇒ 按 skill §0 铁律 3「写不出出处的量不许进工程」，本片**不加自转**（要加 ⇒ 先补出处，另开片）。
     /// ② **C4 不走这里** —— C4 的世界掉落由 <c>CsBomb</c> 链（<c>OnCarrierLost</c> +
     /// <c>TryPickupDropped</c>）负责，本类只承载武器。</para>
     /// </summary>

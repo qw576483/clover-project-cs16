@@ -16,7 +16,6 @@ namespace Cs16.Module.Bot
     }
 
     /// <summary>
-    /// 听觉线索池：机器人 AI 的"耳朵"（任务书 §4.2 听觉）。
     ///
     /// <para><b>为什么不做成"射击事件订阅"</b>：契约里没有"某人开了一枪"的事件
     /// （<see cref="Events"/> 里只有炸弹/回合/击杀类事件，<c>ICsMatch.ConsumeShotFired</c> 是给表现层消费的

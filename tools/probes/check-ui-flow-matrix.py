@@ -72,7 +72,6 @@ PREFERRED = {
 }
 
 # 这些态是 FSM 站点：采样那一帧的 fsm 必须**正好等于**态名，否则说明窗口没赶上
-# （实测：片BV-R 第一次采 Boot 时那帧 fsm=MainMenu ⇒ 整段判"未采到"，⛔ 不许当成 UI 缺陷）
 FSM_STATES = {'Boot', 'MainMenu', 'ServerList', 'NewGame', 'Options', 'Loading',
               'TeamSelect', 'Stage', 'Pause'}
 

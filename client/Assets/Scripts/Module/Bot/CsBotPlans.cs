@@ -96,7 +96,7 @@ namespace Cs16.Module.Bot
         /// <para>"主攻包点"按回合奇偶统一（与旧实现的 <c>siteIsA</c> 同一口径）：<b>全队同一回合打同一个点</b>，
         /// 像一支队伍而不是散兵；四个槽位的区别在于**从哪条路过去、到点位上的哪个位置**。</para>
         /// </summary>
-        /// <param name="team">阵营（观战 / 未定 ⇒ 退化为 T 主攻路的"支援"计划，⛔ 不抛异常）。</param>
+        /// <param name="team">阵营（观战 / 未定 ⇒ 退化为 T 主攻路的"支援"计划，不抛异常）。</param>
         /// <param name="slot">槽位号（会被规整到 0..3）。</param>
         /// <param name="roundNumber">回合号（决定主攻 A 还是 B，与旧 <c>siteIsA</c> 同式）。</param>
         public static CsBotPlan For(CsTeam team, int slot, int roundNumber)
@@ -123,7 +123,6 @@ namespace Cs16.Module.Bot
                             plan.GoalIsSite = true;
                             break;
                         case 2:
-                            // 侦察：游走巡逻线（旧实现里"侦察"只在守点时长上不同，路线仍是主攻路 ⇒ 用户看不出区别）。
                             plan.Role = CsBotRole.Scout;
                             plan.RouteMarker = CsMarkers.Patrol;
                             plan.GoalMarker = CsMarkers.Patrol;
@@ -161,7 +160,6 @@ namespace Cs16.Module.Bot
                             plan.GoalIsSite = true;
                             break;
                         case 2:
-                            // 侦察：中路（旧实现槽位 2 已经是中路，保留）。
                             plan.Role = CsBotRole.Scout;
                             plan.RouteMarker = CsMarkers.CTMid;
                             plan.GoalMarker = CsMarkers.CTMid;
@@ -188,7 +186,7 @@ namespace Cs16.Module.Bot
                     break;
 
                 default:
-                    // 观战 / 未定：给最保守的"跟主攻路支援"（⛔ 不抛异常、不返回空计划）。
+                    // 观战 / 未定：给最保守的"跟主攻路支援"（不抛异常、不返回空计划）。
                     plan.Role = CsBotRole.Support;
                     plan.RouteMarker = mainRoute;
                     plan.GoalMarker = mainSite;
@@ -205,12 +203,11 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 队内序号：同阵营 actor 里按 <c>Id</c> 升序的名次（0 起）。
         /// <para>为什么不用全局 <c>Id % 4</c>：真人玩家的 Id 恒为最小（<c>CsMatch._nextActorId</c> 从 0 起递增），
-        /// 玩家在哪一队会让那一队的 bot 序号整体位移 —— 旧实现正是"全局取模"，才会出现
         /// "T 队槽位 0 与槽位 1 撞车"。取队内序号后，**每队的 bot 序号恒为连续 0..n-1** ⇒ 取模必得互不相同的槽位。</para>
         /// <para>口径与 <c>CsMatch.FindSpawnPoint</c> 一样只用 <c>Id</c> 排序（不依赖遍历顺序），所以同一份 actor 集合
         /// 在每台机器、每一帧都得到同一个序号。</para>
         /// </summary>
-        /// <returns>找不到 <paramref name="actorId"/> 时返回 0（调用方继续跑，⛔ 不抛异常）。</returns>
+        /// <returns>找不到 <paramref name="actorId"/> 时返回 0（调用方继续跑，不抛异常）。</returns>
         public static int TeamLocalOrdinal(IReadOnlyList<CsActor> actors, CsTeam team, long actorId)
         {
             if (actors == null) return 0;
@@ -245,8 +242,6 @@ namespace Cs16.Module.Bot
         }
 
         // ==================================================================
-        //  回合内**唯一**的平移量（★ 2026-09-24 实机审计抓到的真实缺陷的修复）
-        // ==================================================================
         /// <summary>已缓存平移量对应的回合号（<see cref="int.MinValue"/> = 还没有）。</summary>
         private static int _cachedRound = int.MinValue;
 
@@ -276,7 +271,7 @@ namespace Cs16.Module.Bot
             return ord;
         }
 
-        /// <summary>仅供自检/探针：清掉回合平移量缓存（⛔ 运行时不调，避免把"回合内唯一"这条性质破坏掉）。</summary>
+        /// <summary>仅供自检/探针：清掉回合平移量缓存（运行时不调，避免把"回合内唯一"这条性质破坏掉）。</summary>
         public static void ResetRoundCacheForTest()
         {
             _cachedRound = int.MinValue;
@@ -284,14 +279,11 @@ namespace Cs16.Module.Bot
         }
 
         // ==================================================================
-        //  换目标时的**互斥依据**（★ 2026-09-24 实机审计抓到的**第二个**真实缺陷的修复）
-        // ==================================================================
         /// <summary>
         /// **存活**同队 bot 占用的名义槽位表（<c>true</c> = 该槽位的路线家族已被一只活着的队友占着）。
         ///
         /// <para><b>为什么需要它</b>（实机证据，2026-09-24 11:39 线M 的实机对局，本工程自己的审计打出）：
         /// <c>同队路线撞车：Cliffe(T/槽位3) 与 ZBot(T/槽位3) 都走 'Route_T_To_A'</c> —— 两只**都活着**的
-        /// T 在同一秒里走同一条路、去同一个点，正是用户投诉的现象。根因不在计划表（表是双射），
         /// 而在**换目标**：<c>TryRouteObjective</c> 按 <c>(本槽位 + k) % 4</c> 轮转，**不问那只槽位的主人是否还活着**
         /// ⇒ 一只卡住的 bot 会轮转进队友正走着的路。计划表管"开局分工"，轮转管"中途改分工"，
         /// 后者必须同样遵守互斥 —— 这个函数就是判据。</para>
@@ -352,7 +344,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         /// <param name="fromOrdinal">自己当前的序号（从它的**下一个**开始找）。</param>
         /// <param name="candidateCount">该标记上实际可用的点数（调用方给：CanStand 过滤后的个数）。</param>
-        /// <returns>可用的序号；全被占/参数非法时返回 -1（调用方保留自己原来的序号）。</returns>
         public static int NextFreeGoalOrdinal(IReadOnlyList<CsActor> actors, CsTeam team, int carrierOrdinal,
                                               int roundNumber, long selfId, string goalMarker,
                                               int fromOrdinal, int candidateCount)
@@ -381,7 +372,7 @@ namespace Cs16.Module.Bot
             return -1;
         }
 
-        /// <summary>路线标记 → 中文名（日志与探针共用同一份，⛔ 不在两处各写一张表）。</summary>
+        /// <summary>路线标记 → 中文名（日志与探针共用同一份，不在两处各写一张表）。</summary>
         public static string RouteLabel(string marker)
         {
             if (marker == CsMarkers.TAttackA) return "T_A路";
@@ -410,15 +401,13 @@ namespace Cs16.Module.Bot
         /// **离线段言**（判据资产 = <c>tools/probes/probe-bot-routes.cs</c> 的离线半 + <c>BotSelfTest</c> 菜单）：
         /// 对每一队、每一个可能的持包序号，断言 4 个槽位的 (路线, 目标标记, 目标序号) **两两不同**；
         /// 并断言"路线标记只有 4 个、且恰好来自 4 条不同的路"。
-        /// <para>⛔ 这里判的是**构造性质**（"任意两只同队 bot 不可能同路同点"），不是某一局的抽样结果 ——
+        /// <para>这里判的是**构造性质**（"任意两只同队 bot 不可能同路同点"），不是某一局的抽样结果 ——
         /// 抽样只能证明"这一局没撞"，构造性质才是用户说的"路线都是相同的"被根治的凭据。</para>
         /// <para>负控（判据必须能失败）：<paramref name="corrupt"/> = true 时把槽位 3 的路由与目标点改成与槽位 0
-        /// 一模一样（= 逐字复现旧实现的撞车缺陷），本函数必须返回 FAIL。⛔ 负控用**显式形参**而不是环境变量：
         /// 编辑器进程已经在跑，外部改环境变量影响不到它（会得到一个"永远正控"的假判据）。</para>
         /// </summary>
         /// <summary>
         /// 离线段言 + **负控**（判据必须能失败）一条命令跑完：
-        /// 正控（未注入）必须 <c>RESULT-PLAN: PASS</c>；负控（注入"槽位 3 与槽位 0 同路同点"= 旧实现的撞车）
         /// 必须 <c>RESULT-PLAN: FAIL</c>。两条都对才输出 <c>RESULT-PLAN-NEGCTL: PASS</c>。
         /// <para>为什么必须成对：只跑正控时，"判据永远不会红"和"判据真的在判"无法区分
         /// （见 skill 的「判据自己也会出事故」）。</para>
@@ -466,7 +455,6 @@ namespace Cs16.Module.Bot
                         var p = For(team, slot, 2);            // 回合 2 = 偶数 ⇒ 本轮主攻 A
                         if (corrupt && p.Slot == 3)
                         {
-                            // 负控：把槽位 3 改成与槽位 0 一模一样的路 + 点（= 旧实现的实际行为）
                             var p0 = For(team, 0, 2);
                             p.RouteMarker = p0.RouteMarker;
                             p.GoalMarker = p0.GoalMarker;
@@ -496,7 +484,6 @@ namespace Cs16.Module.Bot
 
                         // 机器可读行（给 tools/probes/bot-route-sequence-check.py 用：它拿这些**标记名**
                         // 去 resources/MapData/de_dust2_markers.bytes 上算"整条路线序列"，做素材层的离线判据）。
-                        // ⛔ 表只在 C# 里写一份，python 侧**不复制**这张表（否则判据与被判对象会漂移）。
                         sb.Append("\nPLANROW team=").Append(team)
                           .Append(" slot=").Append(p.Slot)
                           .Append(" route=").Append(p.RouteMarker)
@@ -524,7 +511,6 @@ namespace Cs16.Module.Bot
             }
 
             // ------------------------------------------------------------------
-            //  ★ 互斥判据的离线断言（2026-09-24 实机抓到的**第二个**缺陷：两只活着的 T 同走 Route_T_To_A）
             //  ① 全队活着 ⇒ 4 个家族恰好被占满 ⇒ **换目标没有空家族可去**（必须走"留在本槽位只换目标点"）
             //  ② 死一只 ⇒ 恰好空出 1 格（否则卡住的 bot 永远换不到路）
             //  ③ 目标序号互斥：同一条目标标记上，换目标不许落到队友占着的序号上

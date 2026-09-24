@@ -57,7 +57,7 @@ PLAN = os.path.join(ROOT, '\u7b56\u5212')                              # 策划
 DEFAULT_PRODUCT = os.path.join(PLAN, '\u9a8c\u6536\u8868.md')          # 验收表.md
 DEFAULT_FRAGMENT = os.path.join(PLAN, '\u8986\u76d6\u77e9\u9635\u5224\u5b9a.fragment.md')
 
-# 标记：⛔ 只用**纯名字**（不带 `<!-- -->`），见 HEADER_WARNING 的说明。
+# 标记：只用**纯名字**（不带 `<!-- -->`），见 HEADER_WARNING 的说明。
 MK_B = 'COVERAGE-BEGIN'
 MK_E = 'COVERAGE-END'
 
@@ -211,7 +211,7 @@ def main():
     if not (do_list or do_check):
         do_list = do_check = True
 
-    # --- --rebuild：判据的输入换成"当下重算的产物"（⛔ 不读 策划/*.fragment.md）----------
+    # --- --rebuild：判据的输入换成"当下重算的产物"（不读 策划/*.fragment.md）----------
     pre_fails = []
     do_rebuild = '--rebuild' in argv
     gen_ok = True
@@ -306,8 +306,6 @@ def main():
 
     print('')
     print('--- check 2b: 「允许的差异」段 == 同一次重建的 DIF 渲染（段内判定行属生成器）---')
-    #  为什么（片BW-S-R）：该段 2026-09-23 起由 `DIF` 同源渲染、`--inject-diffs` 逐行原地替换
-    #  ⇒ 「段内某行被手改 / 生成器输出不可复现」必须当场测红。⛔ 比的是**刚重建**的片段，
     #  不是盘上那份（读盘上那份 = "相信生成器刚跑过"，片段陈旧时两边一起错 ⇒ 假绿）。
     if not do_rebuild:
         print('  SKIP check 2b: needs --rebuild (a fresh DIF render)')

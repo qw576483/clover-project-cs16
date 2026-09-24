@@ -4,7 +4,6 @@
 本片（cs16-切片F）用它出「修前 / 修后同口径数字」。它同时是一个**可导入模块**
 （`tools/probes/enumerate-entities.py` 直接 import 它取实测），所以口径只有一份。
 
-## 它判什么（每条都对应验收表 §G 的若干行）
 
 | 断言 | 判据 | 为什么 |
 |---|---|---|
@@ -15,7 +14,7 @@
 | A5 矮障碍可跳过 | 地图上所有"顶面高差 ∈ (一步台阶, 跳跃可达高度]"且位图判挡的格：**地面高度挡住**、**跳起高度可通过** | 用户报"匪家楼梯扶手跳不过去"。位图一格一位表达不了高度 ⇒ 矮障碍变成隐形高墙 |
 | A6 角色间不重合 | `tools/probes/check-actor-separation.cs` 的离线断言全过（读它写的报告） | 用户报"人物和人物能重合" |
 
-## 口径来源（⛔ 不写死数字，全部从工程常量/盘上数据取）
+## 口径来源（不写死数字，全部从工程常量/盘上数据取）
 * `CsConst.PlayerRadius` / `StandHeight` / `StepUpHeight` / `GroundCheckDistance` / `JumpSpeed` / `Gravity`
   —— 本脚本按**正则从 `Core/CsConst.cs` 读回**，与运行时同一份声明（常量改了断言跟着改）。
 * `BodyHeightClearAt` 的纯几何复刻：从头顶上方往下打一根射线，**只看第一个朝上的交点**
@@ -44,7 +43,6 @@ BYTES_FILES = [
 ]
 BITMAP = BYTES_FILES[1]                       # 运行期真正读的那份
 CSCONST = os.path.join(ASSETS, 'Scripts', 'Core', 'CsConst.cs')
-# 切片R：报告已从一次性目录 .ai-tmp/test/ 提升为**判据资产** tools/probes/（D9 行的离线断言证据）。
 SEPARATION_REPORT = os.path.join(HERE, 'actor-separation-check.txt')
 
 # ---- 采样口径：与 tools/probes/rebuild-blockers.py 一致（同一份判据的两半必须同采样）----
@@ -54,7 +52,7 @@ FLOOR_MIN_NY = 0.70
 CRATE_GROUPS = ('box.png', 'box_x.png')
 
 # ============================================================================
-#  0. 工程常量（从 CsConst.cs 读回，⛔ 不写死）
+#  0. 工程常量（从 CsConst.cs 读回，不写死）
 # ============================================================================
 
 
@@ -263,7 +261,7 @@ def cell_center(geo, ix, iz):
 
 
 # ============================================================================
-#  3. 运行时闸门的纯几何复刻（⛔ 与 CsMap.BodyHeightClearAt / BodyHeightClear 同口径）
+#  3. 运行时闸门的纯几何复刻（与 CsMap.BodyHeightClearAt / BodyHeightClear 同口径）
 # ============================================================================
 class Gate:
     def __init__(self, const, geom):
@@ -510,8 +508,7 @@ def low_obstacle_cells(geo, bm, gate, geom_world, const):
                 continue
             real = real_all.get((ix, iz))
             if real is not None and real - g > apex + 1e-6:
-                # ⛔ 只**记录**、不剔除：判据保持原样严格（不许为了让数字变绿而放宽候选集）。
-                #    这一列数字交给主 agent 裁决"候选分类口径"要不要收紧（见 策划/差异登记.tsv 的本片条目）。
+                # 只**记录**、不剔除：判据保持原样严格（不许为了让数字变绿而放宽候选集）。
                 suspicious.append((ix, iz, round(cx, 2), round(cz, 2), round(g, 2), round(top, 2),
                                    round(real, 2), round(real - g, 2)))
             out.append((ix, iz, cx, cz, g, top, h, grp))
@@ -542,7 +539,6 @@ def low_obstacle_stats(geo, bm, gate, geom_world, const):
     low, suspicious = low_obstacle_cells(geo, bm, gate, geom_world, const)
     blocked = [c for c in low if not gate.clear_9(c[2], c[3], c[4])]
     cleared = [c for c in low if gate.clear_9(c[2], c[3], c[5] + 0.02)]
-    # ── 跳起高度站不住的那批，按"为什么"分开（切片AB）──────────────────────────
     #    'solid' = 身高带里真有实体 ⇒ **原版也上不去**（不该算成差异，是候选分类问题）；
     #    'void'  = 有探针点所在子区域没有任何世界几何 ⇒ 运行时**保守口径**判挡（登记为差异）。
     kinds = {c[:2]: probe_kind_9(geom_world, const, c[2], c[3], c[5] + 0.02) for c in low}
@@ -565,9 +561,8 @@ def low_obstacle_stats(geo, bm, gate, geom_world, const):
                 suspicious=suspicious, standable=standable,
                 solid_blocked=solid_blocked, void_blocked=void_blocked,
                 h_max=max([c[6] for c in low]) if low else 0.0,
-                # ⛔ 判定公式**保持原样严格**（切片AB 未放宽任何一条）：
                 #    候选必须① 在来路高度真被挡、② 全都跳起来站得住、③ 都能一次跳过去。
-                #    残留不达标的那几格走 `策划/差异登记.tsv` 登记，⛔ 不在这里放行。
+                #    残留不达标的那几格走 `策划/差异登记.tsv` 登记，不在这里放行。
                 ok=(len(low) > 0 and len(blocked) == len(low) and len(cleared) == len(low)
                     and jump_ok))
 
@@ -650,7 +645,6 @@ def main():
                                 v['old_allowed'], len(v['bad']))
                              for g, v in sorted(a4.items()))))
 
-    # ⛔ 顶面与可站性必须用**同一套几何**（切片AB 口径修正）：见 low_obstacle_cells 的 docstring。
     a5 = low_obstacle_stats(geo, bm, gate, geom_all, const)
     w = a5['worst']
     results.append((a5['ok'], 'A5 矮障碍（顶面高差 ∈ (台阶, 跳跃可达]）地面挡 / 跳起通 / 起跳落点可达',

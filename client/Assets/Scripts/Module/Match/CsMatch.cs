@@ -28,7 +28,6 @@ namespace Cs16.Module.Match
         /// 高频路径日志：首次 + 每 N 次。见 skill「日志约束」。
         /// **N 必须按"调用频率"选**：视线查询这类**每个 bot 每帧都可能调**的路径，50 会被打爆
         /// （实测：一场比赛刷出上千条，把 Console 冲掉、真正要看的信息全被埋了）—— 取 1000。
-        /// 出处：日志口径 = skill <c>clover-engine</c> §8「日志」（非预期分支必须留痕 / 高频回调只报一次）；
         /// **N = 1000 这个具体值本项目新增**（按调用频率自定）。
         /// </summary>
         public const int LogRateEvery = 1000;
@@ -43,7 +42,6 @@ namespace Cs16.Module.Match
 
         /// <summary>
         /// 出生点向上抬起的探测起点高度（米）。
-        /// ⛔ **不许放大**：agent-30 实测，从 <c>+100m</c> 往下探时命中的是**出生点头顶的横板/墙顶**
         /// （BSP 真值 CT 脚底 <c>-3.15</c>，运行时却复活在 y=<c>2.44</c>/<c>3.47</c>）—— 那正是"出生点被抬高"的成因。
         /// </summary>
         public const float SpawnGroundProbeUp = 2f;
@@ -57,7 +55,6 @@ namespace Cs16.Module.Match
         /// <summary>低于这个 Y 视为"掉出地图/掉进夹层"，拉回一个**轮换过的**出生点。
         /// 依据：合法地面最低实测 ≈ <c>-3.25</c>（CT 出生点/买枪区一带 —— 日志
         /// <c>Cliffe 掉出地图（y=-15.0 &lt; -15），已拉回出生点 (16.50, -3.25, 34.50)</c>），
-        /// 取 <c>-6</c> 留 ~2.7m 余量：既不会把合法低处误判成掉图，又比原来的 <c>-15</c> 早 ~9m 触发
         /// （原值要再掉 ~12m 才被救，且救回的是同一个坏点 ⇒ "掉→拉回横板→再掉"循环）。</summary>
         public const float FallRecoverY = -6f;
 
@@ -69,8 +66,6 @@ namespace Cs16.Module.Match
         /// = <b>88.9 m/s</b>（与 <c>CsConst.Gravity</c> / <c>JumpSpeed</c> 同一套 units→m 换算）。</para>
         ///
         /// <para><b>口径说明（重要）</b>：任务书 §1.2 指出的出处是 <c>原版资源/解包产物/原版数值表.md</c>
-        /// 的 <c>sv_maxvelocity</c> 条目 —— **该条目不存在**（全项目检索只命中任务书自己；该表 §2 只反解了
-        /// <c>sv_gravity/sv_maxspeed/sv_friction/sv_accelerate/sv_airaccelerate</c> 五个 cvar）。
         /// 故按"参考物已有的一律解析搬运"取**随包 server.cfg**，与 `策划/对照表.md` N-10~N-13 的口径一致。</para>
         ///
         /// <para>注意它比既有的 <see cref="CsConst.MaxFallSpeed"/>（-30 m/s）**宽松**，所以实际生效的上限
@@ -84,7 +79,6 @@ namespace Cs16.Module.Match
         /// （探测成功 / 正踩着它 ⇒ 立即清零）。
         ///
         /// <para><b>为什么必须按帧计</b>：冻结期与"无输入"时不步进角色，按秒计的老化会在这些空窗里白白走完。
-        /// 实测症状（agent-30 第 3 次 Play）：本地玩家复活后被冻结 9s（&gt; 2s 保鲜期）⇒ 进 Live 的第一帧赶上大 dt，
         /// 一步跨过薄楼板（楼板下方是空的 ⇒ 向下射线再也找不到它）⇒ 掉到 y=-8 才被 fall.recover 救回。</para>
         ///
         /// <para><b>为什么取 600 帧</b>（60fps ≈ 10s）：口径 = "连续 600 个被步进的帧都探不到地面才算真掉进空洞"。
@@ -246,7 +240,6 @@ namespace Cs16.Module.Match
         private readonly RaycastHit[] _hitBuffer = new RaycastHit[CsMatchConst.BotHitBufferSize];
         private readonly List<CsActor> _aliveScratch = new List<CsActor>(CsMatchConst.MaxTeamSize * 2);
 
-        // ---- 软地板（§1.2）：最近一次**成功探测到**的地面 Y（按 actor）。----
         // 为什么需要：竖直方向只有一根向下的射线（ResolveMove 的 Y 是原样透传的），
         // 一旦某列下方 GroundProbeDrop 内没有世界面 ⇒ 常规贴地判定失效 ⇒ 每帧继续加速、穿过一切。
         // 地面丢失时**不立即清零**，先保留 SoftFloorKeepFrames 个"被步进的帧"，用它把角色接住。
@@ -256,7 +249,6 @@ namespace Cs16.Module.Match
 
         /// <summary>
         /// 差异 #66 的取证计数：**常规贴地探测落空、改用"抬一个台阶再探"**（见 <see cref="StepActorPhysics"/>）
-        /// 并成功接住地面的次数。判据资产 `tools/probes/real-walk-ledge.cs` 靠它把"修法真的被走到"与
         /// "只是没触发"分开 —— 只报 walk 通过率的话，一个不触发的分支也会显得"修好了"。
         /// </summary>
         public static int StepUpProbeHits;
@@ -343,7 +335,7 @@ namespace Cs16.Module.Match
         }
 
         // ==================================================================
-        //  测试入口（类型化；**只给离线取证驱动用**，⛔ 不在真实玩家链路上）
+        //  测试入口（类型化；**只给离线取证驱动用**，不在真实玩家链路上）
         // ==================================================================
         /// <summary>
         /// **测试入口，供离线取证驱动使用**：在 <paramref name="center"/> 处引爆 C4 —— 语义与
@@ -351,11 +343,9 @@ namespace Cs16.Module.Match
         /// （同一条业务伤害落地：会经 <c>OnKilled</c> ⇒ 本地玩家阵亡进观战）。
         ///
         /// <para><b>为什么必须有它</b>：<c>Damage</c> 是 internal 字段，离线驱动（编进独立程序集）拿不到它，
-        /// 旧做法是在驱动侧<b>反射</b>取字段再调 —— 脆弱、且是绕过类型系统的后门。
-        /// 按 clover-engine skill §0.6 第 3 条改成这个 public 类型化入口
         /// （与 <c>CombatModule.SetFireHeldForTest</c> 同一形状）。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// <para><b>不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
         /// 真实爆炸仍只由 <c>CsBomb</c> 的 35s 倒计时触发。</para>
         /// </summary>
         public void ApplyBombExplosionForTest(Vector3 center)
@@ -374,16 +364,15 @@ namespace Cs16.Module.Match
         /// + 贴血迹）。若驱动侧直接反射调 <c>CombatEffects.BloodImpact</c>，验的只是"这个特效函数能出图"，
         /// **绕过了 <c>CsDamage.ApplyHit</c> 这一段**（<c>RaiseBulletHit</c> 到底发没发、发的方向对不对、
         /// 爆头位判断对不对，全都验不到）。<c>Damage</c> 是 internal 字段、驱动编在独立程序集拿不到，
-        /// 故按 clover-engine skill §0.6 第 3 条补这个 public 类型化入口
         /// （与 <see cref="ApplyBombExplosionForTest"/> 同一形状）。</para>
         ///
         /// <para><b>返回值语义</b>：<c>true</c> = 参数齐备、<see cref="CsDamage.ApplyHit"/> 确实被调用；
         /// <c>false</c> = 武器 id 不存在 / victim 为空或已阵亡（此时**不**调用，避免误判成"链没通"）。
-        /// ⚠️ 注意 <see cref="CsDamage.ApplyHit"/> 本身返回 <c>void</c>，且"是否真出血"取决于
+        /// 注意 <see cref="CsDamage.ApplyHit"/> 本身返回 <c>void</c>，且"是否真出血"取决于
         /// 表现层能不能在弹道 2.5 m 内找到可贴面 —— 所以本入口的 <c>true</c> **只代表"链走到了"**，
         /// 不代表"血迹已落"；后者由驱动侧数 FX 根下的 active 血迹物件来判。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// <para><b>不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
         /// 真实伤害仍只由射击模块的射线命中触发。</para>
         /// </summary>
         public bool ApplyBulletHitForTest(CsActor shooter, CsActor victim, string weaponId, CsHitbox box,
@@ -418,8 +407,8 @@ namespace Cs16.Module.Match
         /// 这条取证只能采到 <c>Draw!</c>，采不到"赢方 + 比分"的非平局结算。
         /// 关掉换边后，把 16 胜阈值安排在第 30 回合达成即可采到非平局。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
-        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；⛔ 不改 <c>ICsMatch</c> 签名 ——
+        /// <para><b>不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
+        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；不改 <c>ICsMatch</c> 签名 ——
         /// 驱动侧经具体类型 <see cref="CsMatch"/> 取用。</para>
         /// </summary>
         public void SetHalfTimeSwapForTest(bool enabled)
@@ -449,8 +438,8 @@ namespace Cs16.Module.Match
         /// ⇒ 比分被互换后再结算可能掩盖既定胜方。故本入口把本局换边一并关掉，
         /// 使"先赢 2 回合的一方"就是最终胜方。</para>
         ///
-        /// <para><b>⛔ 不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
-        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；⛔ 不改 <c>ICsMatch</c> 签名 ——
+        /// <para><b>不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
+        /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；不改 <c>ICsMatch</c> 签名 ——
         /// 驱动侧经具体类型 <see cref="CsMatch"/> 取用。</para>
         /// </summary>
         public void SetShortMatchForTest(int roundsPerHalf, bool halfTimeSwap)
@@ -480,7 +469,6 @@ namespace Cs16.Module.Match
         /// <para><b>与 <see cref="CsClock"/> 的关系（重要）</b>：默认值 <c>() =&gt; CsClock.Now</c> 是
         /// **代理**、不是第二份时钟 —— 写一次 <c>CsClock.Inject(() =&gt; simTime, dt)</c>，
         /// 模拟与表现（<c>CombatModule</c> 读 <c>CsClock.Now</c>）就同时被换掉，不会再出现
-        /// "模拟用假时钟、表现读墙钟"的静默错位。反过来，只写 <c>CsMatch.Clock = ...</c>
         /// **只影响模拟侧**；需要两侧一起受控时请注入 <c>CsClock</c>。</para>
         ///
         /// <para><b>注意</b>：本成员不是 <see cref="ICsMatch"/> 契约的一部分，只为自检/回归存在。</para>
@@ -527,7 +515,6 @@ namespace Cs16.Module.Match
 
             if (_running) Stop();
 
-            // 本局随机源（片 sink4-cs16-random）：**一处定种子**，清空全部子流。
             // 为什么必须在最前面：下面 CreateLocalPlayer/CreateConfiguredBots/BalanceTeams
             // 以及 Round.BeginMatch → RespawnAllForRound 都会立刻取 SpawnYaw 等流，
             // 先定种子才能保证"这一局的随机序列"从第 1 次抽取起就受控。
@@ -782,8 +769,6 @@ namespace Cs16.Module.Match
 
             if (pts == null || pts.Length == 0)
             {
-                // agent-02 可能未生成买枪区标记 → 用本队出生点兜底（半径统一取 CsMarkers.BombsiteRadius；
-                // 不引裸数字：CsConst 未定义买枪区半径，且这里是"区域半径"复用）。
                 RateWarn("buyzone.marker.missing",
                     $"地图缺少买枪区标记 {marker}，回退到出生点判定买枪区");
                 pts = _map.Points(team == CsTeam.T ? CsMarkers.SpawnT : CsMarkers.SpawnCT);
@@ -1664,7 +1649,7 @@ namespace Cs16.Module.Match
             a.Position = SnapSpawnToGround(a, FindSpawnPoint(a));
             // 复活换了列 ⇒ 软地板换成**新落点这一列的地面**（= a.Position.y：SnapSpawnToGround 的返回值
             // 要么是探到的地面、要么是标记 Y，都是这一列的可信高度）。
-            // ⛔ 不许"清掉不设"：清掉之后第一帧若因大 dt 一步跨过薄楼板（dust2 的楼板是薄刷子，
+            // 不许"清掉不设"：清掉之后第一帧若因大 dt 一步跨过薄楼板（dust2 的楼板是薄刷子，
             // 其下方是空的 ⇒ 向下射线再也找不到它），角色就会一路穿出去 —— 实测 100s 内 1923 次掉图。
             SetSoftFloor(a.Id, a.Position.y);
             // 出生朝向：**玩法**（开局看向哪 / 有没有被背后的人看到）。
@@ -1899,7 +1884,6 @@ namespace Cs16.Module.Match
 
             // 差异 #68：右键 → 切换消音器（USP·M4A1）/ 连发模式（Glock18·FAMAS）。
             // 为什么放在"冻结期/阶段早退"之前：原版在买枪时间也能按右键拆装消音器（只禁移动），
-            // 而切换本身不改位置、不推进任何计时器 ⇒ 放在早退之前是安全的。
             // 为什么在**模拟侧**判沿：见 `_preAttack2` 的字段注释（`_localInput` 是黏的，按住型驱动
             // 会每帧翻转一次）。`inp.Attack2 && !_preAttack2` 对「沿」和「电平」两种调用方都等价于一次。
             if (inp.Attack2 && !_preAttack2) Inventory.ToggleWeaponMode(a, now);
@@ -1969,7 +1953,6 @@ namespace Cs16.Module.Match
             a.Velocity.y -= CsConst.Gravity * dt;
             if (a.Velocity.y < CsConst.MaxFallSpeed) a.Velocity.y = CsConst.MaxFallSpeed;
             // 原版口径的硬上限（`sv_maxvelocity`，出处见 CsMatchConst.TerminalFallSpeed）：
-            // 下落速度**必须有上界**（"无限加速下坠"是本次要修的三个症状之一）。
             // 既有的 CsConst.MaxFallSpeed(-30) 更严格 ⇒ 实际生效的仍是它 —— 这里不放宽既有钳制。
             a.Velocity.y = Mathf.Max(a.Velocity.y, -CsMatchConst.TerminalFallSpeed);
 
@@ -1984,14 +1967,14 @@ namespace Cs16.Module.Match
             if (Mathf.Abs(want.x) > 0.0001f && Mathf.Abs(got.x) < Mathf.Abs(want.x) * ratio) a.Velocity.x = 0f;
             if (Mathf.Abs(want.z) > 0.0001f && Mathf.Abs(got.z) < Mathf.Abs(want.z) * ratio) a.Velocity.z = 0f;
 
-            // ── ★ 角色间水平推开（修「人物和人物能重合」）──────────────────────────────
+            // ── 角色间水平推开（修「人物和人物能重合」）──────────────────────────────
             // 世界几何的位移已经算完（上面那次 ResolveMove），这里再补**角色对角色**那一层：
             // 两个角色的水平间距必须 ≥ 2×PlayerRadius（原版玩家包围盒口径，见 CsActorSeparation）。
             // 必须放在"贴地/陡坡闸门"**之前** —— 下面那两段会按 resolved 重新探地面并可能回退水平位移，
             // 推开的结果得先进入 resolved，才不会出现"推开了但地面判定又按旧点算"的错位。
             resolved = SeparateFromOtherActors(a, resolved);
 
-            // ── ★ 陡坡闸门（原版口径，见 CsConst.MaxStandableSlopeNormalZ）──────────────────────
+            // ── 陡坡闸门（原版口径，见 CsConst.MaxStandableSlopeNormalZ）──────────────────────
             // 落点地面比脚下高出一个台阶、而且那片地面是**陡坡**（法线 y < 0.7 ≈ 45.573°）⇒ 这一帧的水平
             // 位移不算数：原版在 `PM_WalkMove` 里就是这么退回去的（`if (trace.plane.normal[2] < 0.7) goto usedown;`）。
             // 少了这一条，玩家会顺着任何陡面"走上去"（岩石坡 / 楔形坡的侧面），脚贴坡面而身体与 camera
@@ -2010,7 +1993,7 @@ namespace Cs16.Module.Match
                                                  CsMatchConst.GroundProbeDrop);
             }
 
-            // ── ★ 台阶上抬探测（原版 `PM_WalkMove` 的"贴地走一遍 + 抬 STEPSIZE 再走一遍、取走得更远的那个"）──
+            // ── 台阶上抬探测（原版 `PM_WalkMove` 的"贴地走一遍 + 抬 STEPSIZE 再走一遍、取走得更远的那个"）──
             // 【为什么必须有】常规贴地探测（`CsMap.TrySampleGround`）的射线起点只抬
             // `CsConst.GroundCheckDistance`（0.12 m）**且只朝下** ⇒ 它**看不见比自己脚面高出 0.12 m 以上的地面**。
             // 这个 0.12 m 在原版里是 `PM_CatagorizePosition` 判"算不算踩着地面"的容差，**不是**爬升窗口；
@@ -2019,13 +2002,12 @@ namespace Cs16.Module.Match
             // ⇒ 每帧都能被抬上去；低帧率（dt≈0.05，实测每帧 0.24~0.32 m）时 rise > 0.12 ⇒ 探测落空 ⇒ 被当成
             // **悬空** ⇒ 不贴地、不爬升，人贴着坡面以起始平台高度滑过去（= 差异 #66"匪家扶手斜坡概率卡住"，
             // 且"概率"与帧率强相关 —— 受控实验：dt≈0.0074 → walk 5/5；dt≈0.05 → 0/5、2/5、0/5）。
-            // 【修法】把探测起点整体抬高一个台阶（`CsConst.StepUpHeight` = 0.45 m）再探一次；探到的地面若落在
             // `[脚面, 脚面 + StepUpHeight]` 且是**可站立**的地面（法线 y ≥ `MaxStandableSlopeNormalZ`），就承认它。
             // 之后走的是**既有**的贴地/陡坡闸门，本分支不新增任何逻辑。
-            // ⛔ 只改"能不能探到"，不改任何可站高度语义：抬升上限就是 `CsConst.StepUpHeight`，与 `CanStand` 的
+            // 只改"能不能探到"，不改任何可站高度语义：抬升上限就是 `CsConst.StepUpHeight`，与 `CanStand` 的
             //    水平准入闸门 `GroundWithinStep`（`point.y - pos.y <= StepUpHeight`）**同一个常量**，
             //    ⇒ 不会开出"能走进、却站不上"的新几何口子，也不会让人爬上高过 0.45 m 的台沿。
-            // ⛔ 只在"上一帧还站在地上、且竖直速度不朝上"时用 ⇒ 跳跃上升段、走下断崖（探到的地面在脚面以下）都不受影响。
+            // 只在"上一帧还站在地上、且竖直速度不朝上"时用 ⇒ 跳跃上升段、走下断崖（探到的地面在脚面以下）都不受影响。
             if (!hasGround && a.Velocity.y <= 0f && a.OnGround)
             {
                 var lifted = resolved + Vector3.up * CsConst.StepUpHeight;
@@ -2066,7 +2048,7 @@ namespace Cs16.Module.Match
                         // 陡坡：**不算站立**（原版 `PM_CatagorizePosition` 的 too steep ⇒ `onground = -1`：
                         // 没有地面摩擦、也不能起跳），但位置**贴住坡面**（绝不穿进坡体），
                         // 并按"竖直落速沿坡面分解"的水平分量往下滑（≈ 原版 AirMove + ClipVelocity 的沿坡滑落）。
-                        // ⛔ 这里**不清** `Velocity.y`：落速要留着当下一帧的下滑速度（越滑越快，与"站不住"一致）。
+                        // 这里**不清** `Velocity.y`：落速要留着当下一帧的下滑速度（越滑越快，与"站不住"一致）。
                         a.OnGround = false;
                         resolved = SlideOnSteepSlope(resolved, groundNormal, Mathf.Abs(a.Velocity.y), dt);
                     }
@@ -2078,7 +2060,7 @@ namespace Cs16.Module.Match
             }
             else
             {
-                // ★ 本帧向下 GroundProbeDrop(15m) 内**没有任何世界面** ⇒ 常规贴地判定失效。
+                // 本帧向下 GroundProbeDrop(15m) 内**没有任何世界面** ⇒ 常规贴地判定失效。
                 // 原版 bug：这种情况直接置 OnGround=false ⇒ 每帧继续加速、穿过一切、y 一路到 -2000
                 //（用户实测的"往下掉的时候穿透所有障碍掉出地图外"）。
                 // 用"最近一次成功探测到的地面 Y"（软地板）接住它 —— 只有真的下穿到那条线时才接。
@@ -2125,13 +2107,12 @@ namespace Cs16.Module.Match
                 RateWarn("fall.recover",
                     $"{a.Name} 掉出地图（y={fellFrom:F1} < {CsMatchConst.FallRecoverY:F0}），已拉回 {back}" +
                     (verified ? "（落点已校验）" : "（⚠️ 无校验通过的候选点，沿用标记点）"));
-                // §1.3 要求：拉回必须留一条 Info 说明"从哪个 y 拉回到哪个点"（RateWarn 只打第 1 次 + 每 1000 次）。
                 Game.Logger.Info(Tag,
                     $"{a.Name} 掉图恢复：从 y={fellFrom:F1} 拉回到 ({back.x:F2},{back.y:F2},{back.z:F2})（{a.Team}）");
                 a.Position = back;
                 a.Velocity = Vector3.zero;
                 a.OnGround = false;
-                // 落点换了 ⇒ 软地板换成**新落点的高度**（⛔ 不许清掉不设：清掉后第一帧若因大 dt
+                // 落点换了 ⇒ 软地板换成**新落点的高度**（不许清掉不设：清掉后第一帧若因大 dt
                 // 一步跨过薄楼板，就再也探不到地面，直接又掉一次 —— 那就是"掉→拉回→再掉"的循环）。
                 SetSoftFloor(a.Id, back.y);
             }
@@ -2248,9 +2229,8 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
-        /// 出生点吸附：**相信标记 Y**，只做小幅校正（§1.1 两段式，判据见 <see cref="TrySampleSpawnGround"/>）。
         /// 探不到 / 差太远 ⇒ **就用标记 Y**（标记 Y = BSP 实体脚底，是可信真值），
-        /// ⛔ 绝不返回 -Inf 或"凭空抬高"的坏值（那正是"一进游戏就从天上掉"的成因）。
+        /// 绝不返回 -Inf 或"凭空抬高"的坏值（那正是"一进游戏就从天上掉"的成因）。
         /// </summary>
         private Vector3 SnapSpawnToGround(CsActor a, Vector3 spawn)
         {
@@ -2268,14 +2248,13 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
-        /// §1.1 的两段式出生点判据：**从标记点上方 <see cref="CsMatchConst.SpawnGroundProbeUp"/>m
         /// 向下探 <see cref="CsMatchConst.SpawnGroundProbeDrop"/>m**，命中且与标记 Y 相差
         /// ≤ <see cref="CsMatchConst.SpawnGroundSnapTolerance"/> ⇒ 认为是"可信地面"。
         /// 返回 false = 标记点附近没有可信地面（调用方**沿用标记 Y**）。
         ///
         /// <para>为什么是"小幅校正"：标记 Y 就是 BSP 实体的脚底
         /// （`原版资源/解包产物/dust2_build.py:657-665` 的 <c>origin.z − 36</c> 再 <c>to_u</c>），
-        /// 是可信真值。⛔ **不许**改回"从 +100m 往下取第一个命中面" —— 那会抓到出生点头顶的
+        /// 是可信真值。**不许**改回"从 +100m 往下取第一个命中面" —— 那会抓到出生点头顶的
         /// 横板/墙顶（实测：BSP 真值 CT 脚底 <c>-3.15</c>，运行时却复活在 y=<c>2.44</c>/<c>3.47</c>）。</para>
         /// </summary>
         private bool TrySampleSpawnGround(Vector3 spawn, out float groundY)
@@ -2293,7 +2272,6 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
-        /// 掉图后的落点（§1.3）：**轮换候选出生点**（从 <c>a.Id % 点数</c> 起依次 +1），
         /// 并且**先校验**该点探针命中的面与标记 Y 一致（<see cref="TrySampleSpawnGround"/>）才用它。
         ///
         /// <para>为什么必须轮换 + 校验：原来的写法是 <c>SnapSpawnToGround(a, FindSpawnPoint(a))</c> ——
@@ -2522,11 +2500,8 @@ namespace Cs16.Module.Match
                 // ---- 下包 / 拆包 ----
                 Bomb.SetUseState(a, intent.Use && Round.Phase == CsRoundPhase.Live, now);
 
-                // ★ 片BU-R6（差异 #80 的消除动作）：拾取掉落的 C4 —— **口径与玩家侧完全同一处**。
                 //   原版口径 = "走到 1.2m 内自动拾取"（`CsMatch.PickupRadius`），玩家侧早就有这一行
-                //   （`CsMatch.cs:1758` 的 `UpdateLocalPlayer`），bot 侧每帧的 `UpdateBots` 此前漏了它
-                //   ⇒ 片BU-R5 实测：round-1 里 Minh 站到掉落点 0.44m 处 30.25s，日志 0 条 `拾起了掉落的 C4`。
-                //   ⛔ 不是新增拾取规则：同一 API、同一判定半径，只补"bot 也要走这个判定"。
+                //   不是新增拾取规则：同一 API、同一判定半径，只补"bot 也要走这个判定"。
                 Bomb.TryPickupDropped(a);
 
                 // ---- 开火 ----
@@ -2592,12 +2567,12 @@ namespace Cs16.Module.Match
 
             // 扣弹药成功 = 真的打出了这一发（射速/弹匣/换弹都在 TryDischarge 里校验）。
             //
-            // ★ `localPlayer: true` 的**真实语义是"这一发的射线由调用方负责"**（见 CsInventory.TryDischarge
+            // `localPlayer: true` 的**真实语义是"这一发的射线由调用方负责"**（见 CsInventory.TryDischarge
             //   的注释：真人由 Module/Combat/Firearm 打射线，模拟只做扣弹/限速/后坐力）。机器人的"调用方射线"
             //   就是紧随其后的 BotResolveShot —— 所以这里必须传 true，否则 TryDischarge 内部的 FireGun
             //   会**再打一条射线**，一次扣扳机产生两条射线 = 双份伤害 + 双份命中（本地玩家那条路早就防住了
             //   这件事，见 CombatModule 的"射线发数 == 扣弹数"注释）。
-            //   ⛔ 不能改成 false：机器人给 intent.AimPoint 的朝向是模拟的 AimBotAt 按 AimSpeedDegrees 追出来的，
+            //   不能改成 false：机器人给 intent.AimPoint 的朝向是模拟的 AimBotAt 按 AimSpeedDegrees 追出来的，
             //      实测会长期落后 40°+（Play 日志：`朝向差=42.9° vs 门限=17.0°`），沿那个朝向打出去的子弹
             //      打的是**队友**（实测日志：`Gooseman 命中队友 Minh，友好伤害关闭 → 伤害被忽略`）⇒ hits 恒 0。
             if (!Inventory.TryDischarge(a, now, out var weaponId, localPlayer: true)) return;
@@ -2672,7 +2647,7 @@ namespace Cs16.Module.Match
 
                 _botShotRays++;
 
-                // ⛔ 必须用**全部命中**再挑最近的"非自己"那一发，不能只取第一个：
+                // 必须用**全部命中**再挑最近的"非自己"那一发，不能只取第一个：
                 //    射线起点就在射手脚底+EyeHeight，正好在自己胸/腹受击体内部 ⇒ 单发 Raycast 的第一个命中
                 //    一定是**自己**；只取第一个会把这一发直接丢弃 ⇒ 机器人永远打不中人（实测 hits 恒 0）。
                 //    本地玩家那条路（Module/Combat/Firearm）本来就是遍历全部命中再跳过自己的，这里对齐同一口径。

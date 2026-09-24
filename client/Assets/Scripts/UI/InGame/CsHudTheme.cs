@@ -9,7 +9,6 @@ namespace Cs16.UI
     /// 游戏内 HUD 的配色与控件工厂（**薄**封装 <see cref="UIFactory"/> / <see cref="CsUiStyle"/>）。
     ///
     /// <para>
-    /// 为什么单开一层而不直接用 <see cref="CsUiStyle"/>：菜单（agent-01 的 Flow 面板）是"深色底 + 橙色强调"的
     /// 静态界面，而 HUD 是"压在 3D 画面上、必须一眼可读"的动态界面 —— 它要的是
     /// 描边/阴影、按阵营取色、按血量取色、贴边定位这几件事。两套取色混在一起，
     /// 迟早出现"某个数字在两种底色下都看不清"。
@@ -35,12 +34,9 @@ namespace Cs16.UI
         ///
         /// <para><b>出处</b>：① 原版 1920×1080 实机截图逐像素实测 —— 掩膜 = 精确色 <c>(255,176,0)±2</c>，
         /// <c>原版资源/cs16-maps/screenshots_to_conv/*.bmp</c> 31/31 张一致（量测口径与原样可跑的脚本见
-        /// <c>原版资源/解包产物/原版HUD布局.md</c> §0.4/§0.5；本片按同一口径重跑复核，原始输出在 agent-11 回报里）；② 与该包
         /// <c>原版资源/cs16src/cs16game/app/cstrike/resource/clientscheme.res:24</c>
         /// 的 <c>BaseText "255 176 0 255"</c> 逐通道一致。</para>
         ///
-        /// <para>⛔ 旧值 <c>#ECECE0</c>（注释自称"米白"）**没有出处**，已在 agent-11 改掉
-        /// （对照表 U-21：差 R−20 / G−47 / B+224）。</para>
         /// </summary>
         public static readonly Color TextHud = new Color32(0xFF, 0xB0, 0x00, 0xFF);
 
@@ -76,9 +72,7 @@ namespace Cs16.UI
         /// 准星色 = <c>cl_crosshair_color</c> 的默认值 <c>50 250 50</c>（R/G/B 十进制）。
         ///
         /// <para><b>出处</b>：<c>原版资源/cs16src/cs16game/app/cstrike/cl_dlls/client.dll:0x0e6e3c</c>
-        /// （默认值串；名串 <c>client.dll:0x0e6e28</c>、注册点 <c>client.dll:0x041174</c>；
-        /// 读法与原始输出见 <c>原版资源/解包产物/原版HUD布局.md</c> §0.3/§0.6）。
-        /// ⛔ 旧值 <c>G=0xFF</c> 是估的 —— 实测是 <c>0xFA</c>=250（对照表 U-08：差 G+5）。</para>
+        /// （默认值串；名串 <c>client.dll:0x0e6e28</c>、注册点 <c>client.dll:0x041174</c>）。</para>
         /// </summary>
         public static readonly Color Crosshair = new Color32(0x32, 0xFA, 0x32, 0xFF);
 
@@ -93,7 +87,6 @@ namespace Cs16.UI
         // 落到 `Resources/UI/Art/hud_{cross,suit_full,suithelmet_full}.png`（24×24 RGBA）。
         // 编码与秒表图标同一套（**RGB = 白 + alpha = 精灵索引**；☑ 理由见 StopwatchTint 的注释：
         // 这些精灵是 GoldSrc 的加性灰阶遮罩，索引即亮度 ⇒ 屏上像素 = (索引/255) × 着色）。
-        // ⛔ 旧实现用字体字形（`♥` / 🛡 / `+`）—— 那是"没有位图素材"时期的替代品，本片已删掉。
         //
         // 三张图标的**加载路径真源在 `Core/ResPaths.cs`**（本类只留尺寸 / 间距，不再放路径字面量）：
         //   ResPaths.HudHealthIcon / ResPaths.HudArmorIcon / ResPaths.HudArmorHelmetIcon。
@@ -106,9 +99,9 @@ namespace Cs16.UI
         /// <summary>
         /// 图标与它右侧数字之间的间距（px）。
         ///
-        /// <para>⚠️ <b>本项目新增</b>：原版这个间距在 <c>cstrike/cl_dlls/client.dll</c> 里
+        /// <para><b>本项目新增</b>：原版这个间距在 <c>cstrike/cl_dlls/client.dll</c> 里
         /// （那一排 HUD 的绝对坐标尚未解出，见对照表 F-04 / 验收表差异 #16）⇒ 它**不是**原版值，
-        /// 只负责"图标在数字左边、两者不重叠"。⛔ 不要把它当成原版对齐的依据。</para>
+        /// 只负责"图标在数字左边、两者不重叠"。不要把它当成原版对齐的依据。</para>
         /// </summary>
         public const float HudIconNumberGapPx = 6f;
 
@@ -120,7 +113,7 @@ namespace Cs16.UI
         /// —— 原版 HUD 那一排的坐标与颜色都写死在 <c>cstrike/cl_dlls/client.dll</c>，
         /// 且项目内 31 张原版 1920×1080 截图全是旁观机位（没有这排图标）
         /// ⇒ 见对照表 F-04 / 验收表差异 #16。故这里**不编**一个颜色，取"无调制"（白）。
-        /// ⛔ 等拿到一张第一人称、HUD 打开的原版截图后再定色。</para>
+        /// 等拿到一张第一人称、HUD 打开的原版截图后再定色。</para>
         /// </summary>
         public static readonly Color HudIconTint = Color.white;
 
@@ -133,9 +126,7 @@ namespace Cs16.UI
         /// 系统消息 / 击杀条在屏幕上停留的秒数 = <c>hud_deathnotice_time</c> 默认 <b><c>6</c></b> 秒。
         ///
         /// <para><b>出处</b>：<c>原版资源/cs16src/cs16game/app/cstrike/cl_dlls/client.dll:0x0e77f8</c>
-        /// （默认值串 "6"；名串 <c>client.dll:0x0e77e0</c>、注册点 <c>client.dll:0x045d46</c>；
-        /// 读法见 <c>原版资源/解包产物/原版HUD布局.md</c> §1）。
-        /// ⛔ 旧值 <c>4f</c> 没有出处（对照表 U-36：差 −2 s）。</para>
+        /// （默认值串 "6"；名串 <c>client.dll:0x0e77e0</c>、注册点 <c>client.dll:0x045d46</c>）。</para>
         /// </summary>
         public const float MessageLifetime = 6f;
 
@@ -160,7 +151,7 @@ namespace Cs16.UI
         /// <para>因此雷达边长 = <b>128</b>（原版源矩形的原生像素，不换算）。
         /// 对照表 U-06 的"差 +72"、验收表差异 #14 随之消除。</para>
         ///
-        /// <para>⚠️ **仍无载体可证的两项**（登记在验收表「允许的差异」）：① 雷达**在屏幕上的落点**
+        /// <para>**仍无载体可证的两项**（登记在验收表「允许的差异」）：① 雷达**在屏幕上的落点**
         /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）；② 原版 <c>radar640.spr</c> 与
         /// <c>overviews/de_dust2.bmp</c> **本机不在盘** ⇒ 底图由原版几何离线生成
         /// （<c>tools/probes/render-overview.py</c> → <c>Resources/UI/Art/overview_de_dust2.png</c>），
@@ -189,7 +180,6 @@ namespace Cs16.UI
         ///
         /// <para>出处（不是估的）：<c>原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193</c>
         /// （Half-Life SDK <c>CHudSpectator::DrawOverviewLayer()</c>，文件头 SHA256 见 <c>原版资源/清单.md</c>
-        /// 切片AR 节）—— <c>xStep = -(2*4096/zoom)/xTiles</c>、<c>xTiles=8</c>、X 方向走 **6** 步
         /// ⇒ 世界 X 跨度 = 6 × 2×4096/1.5/8 = <b>6144/ZOOM = 4096</b> 单位，对应原图**竖直** 768px。</para>
         /// </summary>
         public const float RadarWindowHalfXUnits = 6144f / (2f * RadarOverviewZoom);
@@ -206,7 +196,7 @@ namespace Cs16.UI
 
         /// <summary>
         /// 原版 overview 底图的像素比例（1024×768 = 4:3）—— 底图必须按这个比例绘制，
-        /// ⛔ 不许拉成正方形（否则点与底图在水平/竖直上尺度不同，"同尺度同原点"这条判据直接不成立）。
+        /// 不许拉成正方形（否则点与底图在水平/竖直上尺度不同，"同尺度同原点"这条判据直接不成立）。
         /// 出处：载体 <c>cstrike__overviews__de_dust2.bmp</c> 的 DIB 头 = 1024×768。
         /// </summary>
         public const float RadarMapPixelAspect = 1024f / 768f;
@@ -226,10 +216,9 @@ namespace Cs16.UI
         /// 中心 = (X 187.5, Z 2.2) 单位 = (4.7625, 0.05588) m。</item>
         /// </list>
         ///
-        /// <para>⚠️ <b>已登记的不确定度</b>：两处锚点各自反推的中心互差约 80 单位（≈2.0 m），
+        /// <para><b>已登记的不确定度</b>：两处锚点各自反推的中心互差约 80 单位（≈2.0 m），
         /// 来源是地标向量的 <b>1.55°</b> 旋转残差（同一探针；它是"两点定标"能给出的全部信息）。
-        /// 本片按两锚点平均落值；该残差在雷达尺度上约等于 <b>15 px @ 5.3333 单位/px</b>，
-        /// 已如实登记进 <c>策划/差异登记.tsv</c>，⛔ 没有把它伪装成 0。</para>
+        /// 已如实登记进 <c>策划/差异登记.tsv</c>，没有把它伪装成 0。</para>
         /// </summary>
         public static readonly Vector2 RadarWindowCenter =
             new Vector2(187.5f * GoldSrcUnitToMetre, 2.2f * GoldSrcUnitToMetre);
@@ -237,9 +226,9 @@ namespace Cs16.UI
         /// <summary>
         /// 雷达框左上角距屏幕左/上边缘的偏移（px）。
         ///
-        /// <para>⚠️ <b>本项目取值</b>：原版雷达在屏幕上的绝对落点写在 <c>cstrike/cl_dlls/client.dll</c>
+        /// <para><b>本项目取值</b>：原版雷达在屏幕上的绝对落点写在 <c>cstrike/cl_dlls/client.dll</c>
         /// 里（与 HUD 那一排同样未反汇编，见对照表 F-04 / BLOCKED-1），且项目内原版截图全是
-        /// 旁观机位、画面里没有雷达 ⇒ 无像素可量。本值只保证"在左上角、不贴边"，⛔ 不是原版值。</para>
+        /// 旁观机位、画面里没有雷达 ⇒ 无像素可量。本值只保证"在左上角、不贴边"，不是原版值。</para>
         /// </summary>
         public static readonly Vector2 RadarTopLeftOffset = new Vector2(24f, -14f);
 
@@ -247,31 +236,26 @@ namespace Cs16.UI
         /// 雷达**底图**的着色（含整体透明度）。
         ///
         /// <para>原版雷达是把俯视图**半透明**压在 3D 画面上（点/图都能透出后面的世界）；
-        /// 具体 alpha 无载体可证 ⇒ 取 0.75，只调"能看清地图"这一件事。⛔ 不谎称原版值。</para>
+        /// 具体 alpha 无载体可证 ⇒ 取 0.75，只调"能看清地图"这一件事。不谎称原版值。</para>
         /// </summary>
         public static readonly Color RadarMapTint = new Color(1f, 1f, 1f, 0.75f);
 
-        // ─────────────── 雷达点色（任务书 A 侧判据：玩家 = 绿点，队友 = 黄 / 绿点，北向固定）───────────────
         //
-        // 出处 = 本片任务书 §3① 的 A 侧原版判据原文「玩家 = 绿点，队友 = 黄/蓝点，**北向固定不旋转**」。
         // 绿这一支还有第二个旁证：原版 `radar640.spr` 的调色板是 `(0, G, 0)`（纯绿族，
         // G 取值 1..228，见上面 RadarSize 注释）⇒ 绿是原版雷达自己的颜色。
-        // ⚠️ **逐通道 RGB 本机不可证**（原版点色写在 `client.dll` 里，未反汇编；项目内原版截图没有雷达）
+        // **逐通道 RGB 本机不可证**（原版点色写在 `client.dll` 里，未反汇编；项目内原版截图没有雷达）
         // ⇒ 这三支色按上面那句判据取"绿/黄/蓝"三色，登记在验收表「允许的差异」。
 
-        /// <summary>自己 = 绿点（任务书 A 侧判据；原版雷达精灵调色板同为纯绿族）。</summary>
         public static readonly Color RadarSelf = new Color32(0x28, 0xE6, 0x28, 0xFF);
 
-        /// <summary>同队队友 = 黄点（任务书 A 侧判据「队友 = 黄点」；黄取原版 HUD 文字色 <c>#FFB000</c>，出处同 <see cref="TextHud"/>）。</summary>
         public static readonly Color RadarMate = new Color32(0xFF, 0xB0, 0x00, 0xFF);
 
-        /// <summary>**异队**（雷达可见的敌人）= 蓝点（任务书 A 侧判据「队友 = 黄/蓝点」的另一支；快照只上报视线可见的敌人）。</summary>
         public static readonly Color RadarOther = new Color32(0x50, 0x9B, 0xFF, 0xFF);
 
         /// <summary>已安放的炸弹 = 红点（原版雷达上炸弹会闪；闪烁周期见 <c>CsRadarWidget.BombBlinkPeriod</c>）。</summary>
         public static readonly Color RadarBomb = new Color32(0xFF, 0x38, 0x28, 0xFF);
 
-        // 点尺寸（px）。⚠️ **本项目取值**（原版点尺寸写在 client.dll / overview bmp 里，本机不可证）；
+        // 点尺寸（px）。**本项目取值**（原版点尺寸写在 client.dll / overview bmp 里，本机不可证）；
         // 按 128 px 雷达的可读性给，比例与原实现一致（自己 &gt; 队友 &gt; 观察者）。
         /// <summary>自己那一颗的边长（px）。</summary>
         public const float RadarSelfDotPx = 7f;
@@ -289,13 +273,10 @@ namespace Cs16.UI
         // 引擎 UIManager 的层级节点铺满它）⇒ **同一基准，直接写原版像素、不换算**。
         //
         // 出处：`原版资源/cs16-maps/screenshots_to_conv/*.bmp`（31 张 1920×1080）；
-        // 本片（agent-11）按 `原版资源/解包产物/原版HUD布局.md` §0.4/§0.5 的量测口径（掩膜 = (255,176,0)±2）
-        // 重跑复核，原始输出在 agent-11 回报里；下面是逐项实测值：
         //   比分行 1（Counter-Terrorists : 0） ink y[38..49] x[1543..1750]（31/31 一致）
         //   比分行 2（Terrorists : 0）         ink y[65..76] x[1626..1750]
         //   回合计时（4:42）                   ink y[65..76] x[1827..1869]（右边缘随数字宽度在 1868~1870 变 ⇒ 右对齐）
         //   竖分隔线                           x[1776..1777] y[27..93] = 2×67 px，暗背景下实测色 ≈ (96,58,2)
-        //   秒表图标                           x[1795..1817] y[58..82] ≈ 23×25 px —— **本片未实现**（缺 sprite，见回报未决）
         // 两行的数字右边缘都落在 x=1750 ⇒ 两行都用**右对齐**文本；行内 "标签 : 数字" 是**一整串**文本
         // （token 分段实测：标签右边缘 1715 / 冒号 1727..1729 / 数字 1741..1750，两行这三段都对齐）。
 
@@ -325,7 +306,7 @@ namespace Cs16.UI
         /// 而拉丁字体数字/大写高度约为字号的 0.7 倍 ⇒ 12 ÷ 0.7 ≈ 16.5，取 <b>16</b>：
         /// 文本框高 = 12 px 且文本垂直居中 ⇒ 渲染出的 ink 落在盒中心，与原版 bbox 的偏差 ≤ 1 px。
         ///
-        /// <para>⛔ 原版这两行的**字体族**仍不可证（<c>clientscheme.res:381-394</c> 写的是 Verdana，
+        /// <para>原版这两行的**字体族**仍不可证（<c>clientscheme.res:381-394</c> 写的是 Verdana，
         /// 而 HUD 数字在别处走位图字形）⇒ 见对照表 U-24：本行只对齐"位置 + 颜色 + 字号量级"，
         /// 字形本身不是 1:1。</para>
         /// </summary>
@@ -341,7 +322,6 @@ namespace Cs16.UI
         /// <summary>
         /// 竖分隔线颜色：原版截图暗背景图（<c>fy_quake_night0000.bmp</c> / <c>cs_paintball0000.bmp</c> /
         /// <c>de_okna0000.bmp</c>）上该线同色像素实测 RGB ≈ 95~97 / 57~59 / 0~2（取中值 <c>(96,58,2)</c>）。
-        /// ⚠️ 该线在亮背景上是否半透明（是否带 alpha）本片未解出 ⇒ 按实测值写死不透明色。
         /// </summary>
         public static readonly Color ScoreDivider = new Color32(0x60, 0x3A, 0x02, 0xFF);
 
@@ -357,19 +337,14 @@ namespace Cs16.UI
         //
         // **屏幕落点来自原版 1920×1080 实机截图的像素量化**：
         //   ink bbox = `x[1795..1817] y[58..82]`，同一批里 5/5 暗背景图逐张一致
-        //   （cs_paintball / de_okna / fy_quake_night / cs_prospeedball / gg_33_texture；
-        //    量测口径 = `原版资源/解包产物/原版HUD布局.md` §0.4 的"与局部底色差异"通行做法）。
         //
-        // ⚠️ **两张载体不是同一版贴图，此处如实登记（不许当成一致）**：
+        // **两张载体不是同一版贴图，此处如实登记（不许当成一致）**：
         //   ① 墨迹尺寸：本体精灵（亮度阈值 ≥128）ink = 17×22 px，截图 ink = 23×25 px（≈1.2~1.35 倍）；
         //   ② 圆盘内部：截图那一只在图标中心行是**空心**的（y=70 那行内圈像素 ≈ 背景 2），
         //      而本体精灵同一行内圈索引 ≈ 146（实心玻璃盘）⇒ 逐像素比对**不可能**一致。
-        //   根因：那 31 张截图来自社区包 `cs16-maps`，该仓库里**没有** `sprites/`
         //   （全盘搜过 `640hud7.spr`：只有本体 `cstrike/sprites/` 那一份）⇒ 拿不到"同一版"的精灵表。
-        //   本工程按任务书取"**形状/像素取自本体精灵、绝对像素取自截图**"：
         //   把 24×24 的精灵框**中心对齐**到截图 ink 的中心 (1806, 70) ⇒ 框 = x[1794..1817] y[58..81]，
         //   其中**右边缘 1817 与上边缘 58 与实测 ink 逐像素相同**（其余两边 ≤1 px）。
-        //   离线并排预演图（原版截图那一块 vs 我方合成）见 agent-13 回报；**要消掉这条差异，
         //   需要社区包自己那份 `640hud7.spr`，或由人确认以本体精灵为准**。
 
         // ═══════════════════════ `Map: <地图名>` 行（F-01）═══════════════════════
@@ -379,18 +354,16 @@ namespace Cs16.UI
         //   比分行 1 ink y[35..50] · 比分行 2 ink y[62..73] · 竖分隔线 x[1047..1049]（跨两行）
         //   `Map: de_dust2` ink x[1113..1252] y[35..50]   ← 与比分行 1 **同一行高**
         //   秒表 + `4:50`   ink x[1060..1184] y[62..73]   ← 与比分行 2 同一行高
-        // （本片用黄字掩膜 `R>140 ∧ G>90 ∧ B<150 ∧ R−B>50` 量的；见回报里的原始输出。
-        //   ⚠️ 项目内另一张同族载体 `hud_1920x1080_gg_dust2_aim_trainning.bmp`（1920×1080）**没有**这一行
+        //   项目内另一张同族载体 `hud_1920x1080_gg_dust2_aim_trainning.bmp`（1920×1080）**没有**这一行
         //   —— 两张载体的 HUD 比例并不一致，见下面对 x 的说明。）
         //
         // **y = 与比分行 1 同高**（[硬]）：直接用 <see cref="ScoreCTTopPx"/>（38）。
         // **字号 = 与比分同一号**（[硬]）：freecam 里 `Map:` 的 ink 高 16 px = 比分行 ink 高 16 px
         //   ⇒ 取 <see cref="ScoreFontSize"/>（我们这边 ink 高 12 px，比例一致）。
         //
-        // ⚠️ **x 只能给到"结构位置"（分隔线右侧），具体右缘是推导值、不是 1080p 实测**：
+        // **x 只能给到"结构位置"（分隔线右侧），具体右缘是推导值、不是 1080p 实测**：
         //   · 唯一带这一行的载体是 1280×1024 的 freecam，而它与 1920×1080 载体的 HUD
         //     **比例/锚定都不一致**（比分行 ink 高 16 vs 12，分隔线却 56 高 vs 67 高 ⇒ 不是同一尺度），
-        //     ⇒ 把 freecam 的像素直接换算过来是**没有依据的**，本片不这么干。
         //   · 能站得住的推导只有"**同图内两个右缘缩进之比**"（比例无量纲、与尺度无关）：
         //     freecam 里 `Map:` 行右缘距屏右 1280−1252 = 28 px、计时行右缘距屏右 1280−1184 = 96 px，
         //     比值 28/96 = 0.2917；套到我们已经实测的 <see cref="ClockRightInsetPx"/>（51 px）
@@ -435,7 +408,7 @@ namespace Cs16.UI
         /// <c>Image</c> 算出的屏上像素 = <c>(索引/255) × 本颜色</c> ——
         /// 与原版"加法混合叠在场景上"的**贡献值线性相等**。</para>
         ///
-        /// <para>⛔ <b>不许把 alpha 写成二值</b>（索引&gt;0 就不透明）：那会把图标圆盘内部的
+        /// <para><b>不许把 alpha 写成二值</b>（索引&gt;0 就不透明）：那会把图标圆盘内部的
         /// 低索引像素画成一块**实心暗块**，而原版那些像素几乎不加任何颜色 ⇒ 肉眼一眼就不一样
         /// （本片离线并排图实测过，见回报）。</para>
         ///
@@ -445,10 +418,10 @@ namespace Cs16.UI
         /// ② 通道比 <b>R : G : B = 1.000 : 1.000 : 0.274</b>（线性拟合 <c>G = 1.003·R</c>，n≈308~312）；
         /// ③ 用它做离线合成后，我方 ink **均值 103 / 峰值 175**，原版 ink **均值 99.7 / 峰值 175**
         /// （均值差 3%、峰值相同）—— 复核方式见回报里的并排图。
-        /// ⛔ 它**不是** HUD 文字色 <c>#FFB000</c>（那支 R/G = 1.449，实测 R/G = 1.000），
-        /// 也⛔ 不是"我挑的一个好看的黄"。</para>
+        /// 它**不是** HUD 文字色 <c>#FFB000</c>（那支 R/G = 1.449，实测 R/G = 1.000），
+        /// 也不是"我挑的一个好看的黄"。</para>
         ///
-        /// <para>⚠️ <b>残差（已知，登记于此）</b>：① 原版是加法混合（叠在场景上做加法），
+        /// <para><b>残差（已知，登记于此）</b>：① 原版是加法混合（叠在场景上做加法），
         /// 我方是常规 alpha 混合 ⇒ **亮背景**下原版会把图标"加亮"、我方会把它压回原色，亮处观感有差；
         /// ② 两张载体的图标墨迹尺寸本身不同（本体精灵 17×22 vs 截图 23×25，见上面的登记）⇒
         /// 落点按中心对齐后，四边仍有 ≤3 px 差。这两条想消掉都需要**同一份载体的精灵表**
@@ -513,7 +486,6 @@ namespace Cs16.UI
 
         /// <summary>
         /// 进度条（底 + 已填）。已填部分用**锚点宽度**驱动（引擎 <see cref="UIFactory.SetBarWidth"/>），
-        /// 不用空 sprite 的 <c>Image.Type.Filled</c> —— 后者在没有 sprite 时 <c>fillAmount</c> 会静默失效
         /// （skill 明确点出的坑；世界空间的同类陷阱见引擎 <c>WorldHpBar</c>）。
         ///
         /// <para>本方法只是"CS HUD 的组装"：底色 <see cref="BarBack"/> + <see cref="CsHudBar"/> 句柄，
@@ -594,7 +566,7 @@ namespace Cs16.UI
         /// 底色用菜单同一支 <see cref="CsUiStyle.Field"/>（HUD 输入框压在暗底上，与菜单同色才不跳），
         /// 文本用 HUD 主体色 <see cref="TextHud"/>、20 号；占位 18 号、60% 灰。</para>
         ///
-        /// <para>⛔ <b>旧注释勘误</b>：本文件曾写"<c>CsUiStyle.CreateInputField</c> 当前编译不过"——
+        /// <para><b>旧注释勘误</b>：本文件曾写"<c>CsUiStyle.CreateInputField</c> 当前编译不过"——
         /// 该结论**不成立**。真实原因是 uGUI <c>InputField.placeholder</c> 的声明类型为 <c>Graphic</c>
         /// （<c>com.unity.ugui .../Runtime/UGUI/UI/Core/InputField.cs</c> 的 <c>public Graphic placeholder</c>），
         /// 对它直接取 <c>.font / .fontSize / .text</c> 会 **CS1061**，必须先 <c>as Text</c>；

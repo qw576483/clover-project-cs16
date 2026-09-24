@@ -1,5 +1,4 @@
 // ============================================================================
-// 判据资产 · 切片U：CsMap「身体高度带」的洞 + 类型化走线的**数值验证**。
 //
 // 为什么是 C# 而不是 Python：被判的是**真代码 + 真物理**
 //   （CsMap.BodyHeightClearAt / BodyVolumeBlocked / ResolveMove 走 Unity Physics）。
@@ -113,7 +112,6 @@ public static class BodyHeightWalkline
 
         map.WalkLineForTest(from, dir, 4.0f, 0.5f);      // 游戏侧类型化批量入口（同一张表）
 
-        // ② 沿走线逐点判据 —— 把"洞"暴露成对照表（改前 vs 改后）
         Line("   ---- 沿走线逐点：bitmap / rayClear / volBlocked / canStandBefore(改前) / canStand(改后) ----");
         for (float d = 0.25f; d <= 4.0f + 1e-4f; d += 0.25f)
         {
@@ -133,9 +131,8 @@ public static class BodyHeightWalkline
     }
 
     /// <summary>
-    /// 改前的 <see cref="CsMap.CanStand"/> = **位图路径 ∨ 改前几何分支**
     /// （<see cref="CsMap.CanStand"/> 的 OR 结构逐字照搬，几何分支取 `out legacy` 那一份）。
-    /// ⛔ 两条判据本身都由产品代码给，探针只做 OR —— 不复制任何公式。
+    /// 两条判据本身都由产品代码给，探针只做 OR —— 不复制任何公式。
     /// </summary>
     private static bool CanStandBefore(CsMap map, Vector3 p)
     {
@@ -171,7 +168,7 @@ public static class BodyHeightWalkline
 
     /// <summary>
     /// 「箱顶 / 台阶面」扫描：0.5 m 网格上向下取地面，取**最高且有平台**的面
-    /// （⛔ 单点最高往往是薄墙的墙头），断言它仍可站，并量"身侧净空"（8 向 2m 内最近的墙）
+    /// （单点最高往往是薄墙的墙头），断言它仍可站，并量"身侧净空"（8 向 2m 内最近的墙）
     /// —— 净空 &lt; PlayerRadius 的点本来就站不下，被体积判据挡住是**对的**。
     /// </summary>
     private static void LedgeSweep(CsMap map, string tag, float cx, float cz, float half)
@@ -217,7 +214,6 @@ public static class BodyHeightWalkline
              "）；最高台面 y=" + F(bestY) + " @ " + V(best) +
              "（同高邻点 " + bestPlateau + "/24，身侧净空 " + F(clear) + " m，头顶净空 " + F(head) + " m，" +
              "canStandBefore=" + before + " canStand=" + stand + "）");
-        // ⛔ 判据 = **不许把改前可站的地方改判成不能站**（这才是"站在箱顶/台阶上仍可站"的可验证形式）
         Check(!before || stand, "ledge[" + tag + "] 改前可站的台面改后仍可站",
               "top=" + V(best) + " before=" + before + " now=" + stand + " clearance=" + F(clear) +
               " headroom=" + F(head) + " | " + map.BodyHeightDiagnoseForTest(best));
@@ -236,7 +232,7 @@ public static class BodyHeightWalkline
     /// 身体带内的最小水平净空：在 <c>y+0.3 / y+0.9 / y+1.5</c>（下段 / 中段 / 上段）
     /// **三个高度**各打 **16 向**（22.5° 间隔）2 m 射线取最小。
     /// <list type="bullet">
-    /// <item>⛔ 只量一个高度会漏掉"贴着台沿/箱沿"那种只占身高带**某一段**的实体
+    /// <item>只量一个高度会漏掉"贴着台沿/箱沿"那种只占身高带**某一段**的实体
     /// （那正是体积判据要抓的一类）；</item>
     /// <item>⛔ 45° 间隔（8 向）会**假报大净空** —— 切片V 实测：点 (-42.000,0.813,4.000)
     /// 的箱侧面 <c>SandCrtLrgSd.png</c> 在 <b>deg 157.5°</b> 处只有 <b>0.287 m</b>（&lt; PlayerRadius 0.36），
@@ -264,8 +260,6 @@ public static class BodyHeightWalkline
     }
 
     /// <summary>
-    /// 全图立足面抽样：2 m 网格，向下取地面，对每个面算**改前 / 改后的 CanStand**，
-    /// 报"判据翻转"的数量与样本 —— 这是本片改动的**影响域**。
     /// </summary>
     private static void VerdictDiff(CsMap map)
     {

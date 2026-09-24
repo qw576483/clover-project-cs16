@@ -13,9 +13,8 @@
 // 输出：逐条 PASS/FAIL + `SUMMARY PASS=n FAIL=m`，并落盘到
 //   <项目根>/tools/probes/bot-profile-check.txt（验收表 B2/B3 行的 anchor 指向它）。
 //
-// 期望区间出处：策划/策划案/CS1.6单机参考规格.md:117-121（§2.4 三档表）
 //   Easy  0.5~0.8s / ±6°    Normal 0.25~0.4s / ±3°    Hard 0.1~0.2s / ±1.2°
-// ⛔ 本探针只读；不改任何业务状态。
+// 本探针只读；不改任何业务状态。
 // ============================================================================
 using System;
 using System.Globalization;
@@ -67,7 +66,7 @@ public static class BotProfileCheck
         Tier(CsBotDifficulty.Hard, 0.1f, 0.2f, 1.2f);
 
         // ---- ② 过程判据：难度单调（Hard 反应更快、瞄得更准 <- Normal <- Easy）----
-        //      ⛔ 只判"数据在区间内"不够 —— 三档若同值也能过区间断言；这一条堵住那个假绿。
+        //      只判"数据在区间内"不够 —— 三档若同值也能过区间断言；这一条堵住那个假绿。
         var easy = CsBotProfile.For(CsBotDifficulty.Easy);
         var normal = CsBotProfile.For(CsBotDifficulty.Normal);
         var hard = CsBotProfile.For(CsBotDifficulty.Hard);
