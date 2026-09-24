@@ -11,26 +11,23 @@ namespace Cs16.UI
     /// 局域网服务器列表（对应 CS 1.6 主菜单的 "Find Servers"）：真实调 <see cref="ILanBrowser"/>。
     ///
     /// <para>
-    /// 差异 #88）：
     /// <list type="number">
-    /// <item><b>问的一端</b>：引擎 <c>Game.LanBrowser</c> 一直可用（扫描/收应答/出列表）—— 这部分没动过；</item>
-    /// <item><b>答的一端</b>：旧实现**根本没有**（引擎里只有测试用的回环应答器，Go 服务端 <c>CLOVER-LAN</c> 零命中）
-    /// <see cref="Cs16.Module.Net.CsLanHost"/>，并给了面板上一个 <c>Host LAN Game</c> 开关；</item>
-    /// <item><b>点主机</b>：旧实现明确"单机版不去连"（只 Warn + Toast）；现在改为**真的**走
-    /// <c>CloverNet.Init(host.Address, host.UdpAddress)</c>（非阻塞，连接结果由网络模块回调反馈），
-    /// 并保留一条 Info 日志 + 面板状态行，不留"点了没反应"。</item>
+    /// <item><b>问的一端</b>：引擎 <c>Game.LanBrowser</c>（扫描 / 收应答 / 出列表）；</item>
+    /// <item><b>答的一端</b>：由本工程 <see cref="Cs16.Module.Net.CsLanHost"/> 应答
+    /// （引擎里只有测试用的回环应答器），并给了面板上一个 <c>Host LAN Game</c> 开关；</item>
+    /// <item><b>点主机</b>：走 <c>CloverNet.Init(host.Address, host.UdpAddress)</c>
+    /// （非阻塞，连接结果由网络模块回调反馈），并留一条 Info 日志 + 面板状态行，不留"点了没反应"。</item>
     /// </list>
     /// </para>
     ///
-    /// <para><b>2026-09-24 第②段（片LAN-D）</b>：点主机时除了 <c>CloverNet.Init</c>，**另外**起本工程自己的
-    /// <see cref="CsLanClient"/> —— 它消费主机推来的 <c>CS16-LAN-SNAP/1</c> 世界快照，
-    /// 由 <c>Module/View/CsLanRemoteView</c> 把远端角色画到场上（"收到数据 ≠ 看得见人"那一半）。
-    /// 启动失败会 <c>Game.Logger.Error</c> 留痕并把原因写到状态行（不留"点了没反应"）。</para>
+    /// <para>点主机时除了 <c>CloverNet.Init</c>，**另外**起本工程自己的 <see cref="CsLanClient"/> ——
+    /// 它消费主机推来的 <c>CS16-LAN-SNAP/1</c> 世界快照，由 <c>Module/View/CsLanRemoteView</c>
+    /// 把远端角色画到场上（"收到数据 ≠ 看得见人"那一半）。启动失败会 <c>Game.Logger.Error</c>
+    /// 留痕并把原因写到状态行。</para>
     ///
-    /// <para><b>仍未消除</b>（如实标注，不吹）：<b>远端输入还没驱动主机模拟</b> ——
-    /// 本机自己的走位/开枪还没有经 <c>CS16-LAN-INPUT/1</c> 交给主机（那是"能开局"的第③段，另开片）；
-    /// 远端角色在本机**只到"看得见"这一层**（不参与碰撞 / 命中 / 音频，见 <c>CsLanRemoteView</c> 的类注释）。
-    /// 所以现在能证明的是"能连上 + 能看见主机的世界在动"，不是"两个人已经能对打"。</para>
+    /// <para><b>当前边界</b>：本机自己的走位 / 开枪还没有经 <c>CS16-LAN-INPUT/1</c> 交给主机 ——
+    /// **远端输入还没驱动主机模拟**；远端角色在本机**只到"看得见"这一层**
+    /// （不参与碰撞 / 命中 / 音频，见 <c>CsLanRemoteView</c> 的类注释）。</para>
     ///
     /// <para>平台不支持时（WebGL 无 BSD socket）显示 <see cref="ILanBrowser.UnsupportedReason"/>。</para>
     /// </summary>

@@ -20,7 +20,7 @@ namespace Cs16.Module.Player
     /// <para>放反了会得到两种典型故障：输入慢一帧（开火"点了没反应"）、以及"射线打的是上一帧的眼睛位置"。</para>
     ///
     /// <para><b>不碰契约</b>：本模块只通过 <see cref="ICsMatch"/> 读写状态；
-    /// 不写 <c>CsActor.Position</c>（移动归模拟）、不做伤害结算（归 agent-03）、不画 HUD（归 agent-06）。</para>
+    /// 不写 <c>CsActor.Position</c>（移动归模拟）、不做伤害结算（归比赛模拟）、不画 HUD（归 UI 层）。</para>
     ///
     /// <para><b>鼠标光标</b>：引擎没有光标 API，且 <c>Game.Input.Lock()</c> 的语义是"**让所有按键读取失效**"
     /// （<c>InputManager.GetKey</c> 在 <c>IsLocked</c> 时恒返回 false），拿它当"锁定光标"会让游戏完全失去操作。
@@ -131,8 +131,8 @@ namespace Cs16.Module.Player
         }
 
         /// <summary>
-        /// 视点晃动的**数值口径**：7 个数值**逐字沿用**原 <c>Module/CameraRig/ViewBob.cs</c> 里写死的常量
-        /// （下沉到引擎后改为"业务传配置" —— 数值一个都没动）：
+        /// 视点晃动的**数值口径**：7 个数值沿用 <c>Module/CameraRig/ViewBob.cs</c> 里写死的常量
+        /// （引擎件只吃配置，数值一个都没动）：
         /// 满幅基准速度 = <see cref="CsConst.SpeedRifle"/>（4.4 m/s，拿"步枪速度"当满幅基准）、
         /// 幅度 = <see cref="CsConst.ViewBobAmount"/>、频率 = <see cref="CsConst.ViewBobSpeed"/>、
         /// 振幅平滑 / 横滚角 / 落地沉降两组四个来自 <see cref="CsCombatTuning"/>。

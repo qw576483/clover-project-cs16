@@ -11,7 +11,7 @@
 // 谁可以读 `UnityEngine.Time`：
 //   只有本文件（+ 宿主 `Module/Match/MatchModule.Update` 的那一次 <see cref="Drive()"/> 调用）。
 //   其余玩法代码一律 `CsClock.Now` / `CsClock.Delta`。判据见
-//   `.ai-tmp/test/sink4-sink-combat-clock-selfcheck.ps1` 的 `gameplay-no-wallclock`（可红可绿）。
+//   自检项 `gameplay-no-wallclock`（可红可绿）。
 //
 // 默认值 = 引擎 Tick 的 dt（出处）：
 //   引擎驱动器每帧 `Game.Tick(Time.deltaTime)`

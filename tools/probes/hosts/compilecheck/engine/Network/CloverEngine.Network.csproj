@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 引擎 `CloverEngine.Network` 程序集（映射 Runtime/Network/CloverEngine.Network.asmdef；references: Core）。
+       ⚠️ 这一支必须与 Core 分属不同程序集：Core 的 `internal class CloverEngine.Timer` 在 Unity 里
+       跨程序集不可见，合并成一个编译单元会让 NetworkManager.cs 的裸 `Timer` 错误地绑到它。 -->
+
+  <PropertyGroup>
+    <AssemblyName>CloverEngine.Network</AssemblyName>
+    <RootNamespace>CloverEngine</RootNamespace>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(EngineRoot)Runtime\Network\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Core\CloverEngine.Core.csproj" />
+  </ItemGroup>
+
+</Project>

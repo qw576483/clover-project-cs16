@@ -401,7 +401,7 @@ namespace Cs16.EditorTools
                 }
                 else
                 {
-                    // 从 Cutout 改回不透明时也要**显式复位**，否则会留着上一版的关键字/队列
+                    // 从 Cutout 改回不透明时也要**显式复位**，否则会留着上一次设置的关键字/队列
                     mat.SetFloat("_Mode", 0f);   // Opaque
                     mat.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.One);
                     mat.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.Zero);

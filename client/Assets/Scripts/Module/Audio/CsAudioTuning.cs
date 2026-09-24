@@ -2,7 +2,7 @@ namespace Cs16.Module.Audio
 {
     /// <summary>
     ///
-    /// <para><b>命名口径（必须与 agent-04 对齐）</b>：引擎的 <c>Game.Sound.PlaySFX(name)</c> 会加载
+    /// <para><b>命名口径（必须与 <c>Module/Combat</c> 对齐）</b>：引擎的 <c>Game.Sound.PlaySFX(name)</c> 会加载
     /// <c>Resources/Sound/SFX/{name}</c>；本工程约定 <c>name = "sfx/&lt;短名&gt;"</c>
     /// 由 <c>tools</c> 侧的 <c>cs16_build.py</c> 从 CS 1.6 原始 wav 生成。**改短名 = 同时改这里和生成脚本**。</para>
     ///
@@ -11,7 +11,7 @@ namespace Cs16.Module.Audio
     /// ② **数值**（间隔 / 并发上限 / 距离）：出处 = 本项目音频层的实现参数（原版无对应量），
     /// 或本工程另有定义处的那个文件。查不到出处的**不许编**，一律登记 <c>策划/差异登记.tsv</c>。</para>
     ///
-    /// <para><b>为什么不重复播枪声</b>：枪声（含机器人枪声）由 agent-04 的 <c>CombatModule</c> 统一发放
+    /// <para><b>为什么不重复播枪声</b>：枪声（含机器人枪声）由 <c>CombatModule</c> 统一发放
     /// （它是射击队列的唯一消费者）。本模块只补它没做的：脚步 / 落地 / 换弹 / 命中反馈 / 死亡 /
     /// 回合开始结束 / 炸弹蜂鸣与爆炸。</para>
     /// </summary>
@@ -51,9 +51,9 @@ namespace Cs16.Module.Audio
         //
         //  原版是**时间制**：`PM_ReduceTimers` 每帧 `flTimeStepSound -= cmd.msec`，
         //  `PM_UpdateStepSound` 在冷却归零后重新装填冷却并放音 ⇒ 跑得越快步幅越大。
-        //  同一速度下两者步频差约 1.8 倍 ⇒ 已按原版整组换成时间制（下面三条即新口径）。
-        //  实测（`tools/probes/step-sound-probe.py` 的 S1，v=SpeedRifle 4.4 m/s）：旧 6.00 Hz、
-        //  新 3.40 Hz，比 1.76 x —— 旧口径的步幅被钉在 0.62 m、又被 0.16 s 地面限流。
+        //  同一速度下两者步频差约 1.8 倍 ⇒ 本工程按原版取时间制（下面三条即口径）。
+        //  实测（`tools/probes/step-sound-probe.py` 的 S1，v=SpeedRifle 4.4 m/s）：3.40 Hz；
+        //  步幅制口径下同速是 6.00 Hz（比 1.76 x —— 步幅被钉在 0.62 m、又被 0.16 s 地面限流）。
         //  出处：`原版资源/hlsdk/pm_shared/pm_shared.c:500-639`（PM_UpdateStepSound）、
         //  `:2400-2410`（PM_ReduceTimers，递减在 `:2404`）、调用点 `:2493`（PM_PlayerMove 内、PM_Duck 之后）。
         //  单位换算：1 unit = 0.0254 m，见 `client/Assets/Scripts/Core/CsConst.cs:11-12`。

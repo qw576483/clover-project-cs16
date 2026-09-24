@@ -11,7 +11,7 @@ namespace Cs16.Module.Audio
     /// **音效模块**（由 <c>Bootstrap</c> 挂在常驻对象上）：脚下/落地、换弹、命中反馈、死亡、
     /// 回合开始与结束、炸弹蜂鸣与爆炸。
     ///
-    /// <para><b>与 agent-04（<c>Module/Combat</c>）的分工，一句话</b>：
+    /// <para><b>与 <c>Module/Combat</c> 的分工，一句话</b>：
     /// **枪声不归我**。射击队列（含机器人枪声）由 <c>CombatModule</c> 独占消费并播放
     /// <c>sfx/&lt;武器&gt;_fire</c>；本模块只补它没做的那几类，且命中标记（<c>sfx/hitmarker</c>）
     /// 也是它播 —— 所以这里绝不重复放。</para>
@@ -22,7 +22,7 @@ namespace Cs16.Module.Audio
     /// <c>BombTimeLeft</c>。一个字段都不写回。</para>
     ///
     /// <para><b>执行顺序</b>：<c>Update</c> 即可（脚步/蜂鸣是"事后表现"，
-    /// 与 agent-04 的相机/射线链无耦合；放在默认 order 上让它在模拟 Tick 之后读到本帧状态）。</para>
+    /// 与视图的相机/射线链无耦合；放在默认 order 上让它在模拟 Tick 之后读到本帧状态）。</para>
     /// </summary>
     public sealed class AudioModule : MonoBehaviour
     {
@@ -520,7 +520,7 @@ namespace Cs16.Module.Audio
         }
 
         // ==================================================================
-        //  播放闸门（E-core-17：阈值留在本项目，执行口径在引擎 Game.Sound）
+        //  播放闸门（阈值留在本项目，执行口径在引擎 Game.Sound）
         // ==================================================================
         /// <summary>
         /// 把本项目的两个高频防护阈值下发给引擎的播放闸门。

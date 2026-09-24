@@ -27,7 +27,7 @@ namespace Cs16.Module.Net
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{…}}</c></item>
     /// </list>
     /// 单行上限 <see cref="MaxLineBytes"/>（与主机同值 4096；超了算非法行、丢弃，不按它分配内存）。
-    /// 本片**不发** <c>CS16-LAN-INPUT/1</c>：把远端输入接到主机模拟是"能开局"的下一段（见类末声明）。</para>
+    /// 本类**不发** <c>CS16-LAN-INPUT/1</c>：把远端输入接到主机模拟是"能开局"的下一段（见类末声明）。</para>
     ///
     /// <para><b>线程模型（关键：主线程不碰 socket）</b>：
     /// <list type="number">
@@ -41,10 +41,10 @@ namespace Cs16.Module.Net
     /// 不再自建第二套线程队列。</item>
     /// </list></para>
     ///
-    /// <para><b>本类到哪一步为止（登记在差异 #88，别当它没发生）</b>：
+    /// <para><b>本类到哪一步为止</b>：
     /// 能连上 / 能握手 / 能持续消费快照 / 能把最新一帧交给视图层。
     /// **未做**：把客户端的输入（<c>CS16-LAN-INPUT/1</c>）发给主机、驱动主机侧模拟；
-    /// 以及"远端角色的预测/插值"（本片快照直接落到位置上，见 <c>CsLanRemoteView</c>）。</para>
+    /// 以及"远端角色的预测/插值"（快照直接落到位置上，见 <c>CsLanRemoteView</c>）。</para>
     /// </summary>
     public static class CsLanClient
     {
@@ -92,7 +92,7 @@ namespace Cs16.Module.Net
         private static int _droppedLogs;
 
         // ---------------------------------------------------------------- 尽力而为路径的限频留痕
-        //   `.ai-tmp/test/sink4-sink-net-catch-selfcheck.ps1` 会把本区间整段剔除后再比对 ⇒
+        //   自检脚本会把本区间整段剔除后再比对 ⇒
         //   本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
 
         /// <summary>
@@ -105,7 +105,7 @@ namespace Cs16.Module.Net
         /// （丢的那条只在下一帧才被报出来）。引擎侧两条都满足：<c>Game.Logger</c> **永不为 null**
         /// （<c>Runtime/Core/Game.cs:143-149</c>）且落盘 <c>Logger</c> 走 <c>ConcurrentQueue</c> +
         /// <c>ConsoleLogger</c> 自带 try/catch（<c>Logger.cs:120</c> / <c>ConsoleLogger.cs:91-124</c>）
-        /// ⇒ **后台线程直呼是安全的**（<c>LogThrottle</c> 则明确"主线程使用、不加锁"，本片刻意不用它）。</para>
+        /// ⇒ **后台线程直呼是安全的**（<c>LogThrottle</c> 则明确"主线程使用、不加锁"，本类不用它）。</para>
         /// </summary>
         private const int BestEffortLogIntervalMs = 5000;
 

@@ -36,7 +36,7 @@ namespace Cs16.Module.Combat
     ///
     /// <para><b>归谁</b>：引擎**不提供**射线 API（明确属业务自写），所以这里用 Unity 的
     /// <c>Physics.RaycastNonAlloc</c>。伤害结算不在这里 —— 命中结果由
-    /// <see cref="CombatModule"/> 通过 <c>ICsMatch.ReportHit</c> 交回比赛模拟（agent-03）。</para>
+    /// <see cref="CombatModule"/> 通过 <c>ICsMatch.ReportHit</c> 交回比赛模拟。</para>
     ///
     /// <para><b>为什么用 NonAlloc + 手动排序</b>：全自动武器每秒 10+ 发、霰弹一发 9 个弹丸，
     /// 每发都 <c>RaycastAll</c> 会持续产生垃圾；这里复用一块 <see cref="RaycastHit"/> 缓冲，

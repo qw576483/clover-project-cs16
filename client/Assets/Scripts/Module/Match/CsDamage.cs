@@ -9,7 +9,7 @@ namespace Cs16.Module.Match
     /// <summary>
     /// 伤害模型与击杀结算。
     ///
-    /// <para>公式（任务书 §4.4）：<c>base = def.Damage</c> → × 部位倍率 → × 距离衰减
+    /// <para>公式：<c>base = def.Damage</c> → × 部位倍率 → × 距离衰减
     /// <c>(1 - def.FalloffPerMeter * dist)</c> → × 穿墙保留 → 护甲吸收
     /// <c>(1 - ArmorAbsorbRatio * (1 - def.ArmorPenetration))</c>，护甲损耗 <c>damage * ArmorDamageRatio</c>。
     /// 头盔只减免头部。</para>

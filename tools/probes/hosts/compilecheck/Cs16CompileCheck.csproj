@@ -1,0 +1,38 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ───────────────────────────────────────────────────────────────────────
+       业务**运行时**程序集闸门（映射 `client/Assets/Scripts/Cs16.asmdef`）
+       —— **非 Unity 工程、不参与打包、不跑任何代码**。
+
+       用法 / 前置 restore / 判据（只取「0 个错误」）：见同目录 `Directory.Build.props` 的「宿主说明」。
+
+       编译文件集（通配，⛔ 无静默排除项）：
+         · client\Assets\Scripts\**\*.cs                     —— 业务运行时源码（94 个 .cs）
+         · engine\*\CloverEngine.*.csproj 里各自的引擎源码    —— Runtime/** 按 asmdef 拆成 5 个程序集
+
+       本工程**不含**业务编辑器程序集（`client\Assets\Editor\**`）：它是独立的一个编译单元，
+       全量入口是 `editor\Cs16EditorCheck.csproj`（那一条命令会把本工程也一起构建）。
+       ─────────────────────────────────────────────────────────────────────── -->
+
+  <PropertyGroup>
+    <AssemblyName>Cs16CompileCheck</AssemblyName>
+    <RootNamespace>Cs16</RootNamespace>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 引擎源码按 asmdef 一比一拆成独立程序集 —— 程序集边界决定 internal 可见性，
+         合并成一个编译单元会凭空造假红、并放过跨程序集的内部访问假绿
+         （详见 compilecheck\Directory.Build.props 的说明）。 -->
+    <ProjectReference Include="engine\Core\CloverEngine.Core.csproj" />
+    <ProjectReference Include="engine\Data\CloverEngine.Data.csproj" />
+    <ProjectReference Include="engine\Network\CloverEngine.Network.csproj" />
+    <ProjectReference Include="engine\Resource\CloverEngine.Resource.csproj" />
+    <ProjectReference Include="engine\Presentation\CloverEngine.Presentation.csproj" />
+  </ItemGroup>
+
+</Project>

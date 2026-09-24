@@ -14,11 +14,11 @@ namespace Cs16.Module.Bot
     ///
     /// <para><b>不自建寻路</b>：格子 A* 是引擎能力（<c>clover-client-unity-engine/Runtime/Core/AStar.cs</c>，
     /// 8 邻接 / 对角要求两侧可走 / octile 启发 / 视线拉直 <c>FindSmoothed</c> / <c>DefaultMaxNodes</c>），
-    /// 绕不开整片墙；本片起改为"求路径再沿路径走"，**局部避障 <see cref="Avoid"/> 原样保留、两者叠加**。</para>
+    /// 只走直线绕不开整片墙 ⇒ 用法是"先求路径、再沿路径走"，**局部避障 <see cref="Avoid"/> 保留、两者叠加**。</para>
     ///
     /// <para><b>职责边界</b>：本类只输出"这一帧往哪个世界方向走"（已归一化、y=0）。
     /// 真正的位置解算（分轴滑墙 / 台阶 / 重力）由比赛模拟内部的 <c>ICsMap.ResolveMove</c> 负责 ——
-    /// 机器人 AI 不执行移动（任务书 §2）。</para>
+    /// 机器人 AI 不执行移动。</para>
     ///
     /// <para><b>卡住自恢复（本类自己解决"这一帧怎么走"，"接下来去哪"交给上层）</b>：</para>
     /// <list type="number">
@@ -26,7 +26,7 @@ namespace Cs16.Module.Bot
     /// 不再每 0.5s × 每个 bot 刷屏）；</item>
     /// <item>换向**真的换**：从期望方向向两侧按 <see cref="CsBotConst.EscapeSweepStepDegrees"/> 扫描，
     /// 取"前方跑道最长"的方向，并保持 <see cref="CsBotConst.EscapeHoldSeconds"/> 秒沿它走
-    /// —— 旧写法只把探针偏角设成 90°、且路线走完后 <c>_index++</c> 是空操作，表现就是"原地反复换向"；</item>
+    /// （只把探针偏角设成 90°、或靠路线游标自增换向，都会退化成"原地反复换向"）；</item>
     /// <item>连续卡住达到 <see cref="CsBotConst.StuckReplanStreak"/> 次 → 置 <see cref="ConsumeStuck"/> 的
     /// <c>escalate</c> 标志，由 <see cref="CsBotBrain"/> **重新选目标**（巡逻点 / 换一条路线 / 出生点）。
     /// 这是"路线走完后不许停在原地空转"的落地点：路线走完时本类自己也换不出目标来。</item>
@@ -258,7 +258,7 @@ namespace Cs16.Module.Bot
         /// 最近邻排序对"乱序"和"已排序"两种情况都成立（已排序时结果一致），且不会来回震荡。</para>
         ///
         /// <para>标记缺失（空数组）→ 打 Error 并退化：<see cref="ComputeMove"/> 会直接朝目标点直线走，
-        /// **不许站着不动**（任务书 §4.2）。</para>
+        /// **不许站着不动**。</para>
         /// </summary>
         public void SetRoute(ICsMap map, string marker, Vector3 fromPosition)
         {
@@ -356,8 +356,8 @@ namespace Cs16.Module.Bot
         /// 都只判"这一点**站得住 / 可走**"，**不判"走得到"**；而引擎 <see cref="AStar"/> 是**格子连通性**查询。
         /// 该位图 **46 个连通分量**，主分量（含 CT/T 出生点、A/B 包点）4393 格，其余 45 个分量共 919 格；
         /// **11/117 个标记点、10/35 条相邻路点对**落在这些孤岛里。路点一旦落在孤岛里，
-        /// <see cref="EnsurePath"/> 就**永远**返回 false ⇒ 旧行为是"朝它直线走" ⇒ 每 0.5s 判一次卡住 ⇒
-        /// 无限循环（切片BI 实测 373s 里 CT 进点 0、除真人外无 actor 位移 &gt; 5.8m）。</para>
+        /// <see cref="EnsurePath"/> 就**永远**返回 false ⇒ 退化成"朝它直线走" ⇒ 每 0.5s 判一次卡住 ⇒
+        /// 无限循环（实测 373s 里 CT 进点 0、除真人外无 actor 位移 &gt; 5.8m）。</para>
         ///
         /// <para><b>判据与运行时同源</b>：直接调引擎 <see cref="AStar.Find"/> + 本类同一个 <see cref="WalkableCell"/>
         /// 推进顺序 = 上面刚排好的顺序（从机器人当前位置逐个走）。</para>
@@ -424,14 +424,11 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// **原地重新求路径**：只作废 A* 路径与卡住/逃逸状态，**路线顺序与游标一字不动**。
         ///
-        /// <para><b>片BU-R2 为什么要它（根因③）</b>：上层 <c>CsBotBrain.MaybeRepath</c> 的意图逐字写在
-        /// 它自己的注释里 —— "把已经走顺的路线反复重排成'回头找最近路点'，看起来就是来回蹭"，
-        /// 所以它只想"用当前位置重求一次路径"。但它调的是 <see cref="SetRoute"/>：那会
-        /// ① 按"离**当前位置**最近优先"**重排整条路线**、② `_index = 0` **把游标归零**。
-        /// 机器人一旦因为绕箱子/上坡在 2 个 1s 窗口内没有靠近**最终目标**（`RepathProgressEpsilon`），
-        /// 就被"重排 + 归零"一次 ⇒ 最近的（可能是刚走过的）路点排到最前 ⇒ 掉头。
-        /// 实测（`bu-r-console.json`）：单次 Play 里 Cliffe 一条 `Route_CT_Mid` 重排了 **32 次**，
-        /// 8 个 bot 的"剩余路点"列在 3→2→3 之间反复（`bu-r-bot-phys.tsv` 第 29 列）。</para>
+        /// <para><b>为什么要它</b>：上层 <c>CsBotBrain.MaybeRepath</c> 只想"用当前位置重求一次路径"。
+        /// 若改走 <see cref="SetRoute"/>，它会 ① 按"离**当前位置**最近优先"**重排整条路线**、
+        /// ② `_index = 0` **把游标归零** ⇒ 机器人一旦因为绕箱子/上坡在 2 个 1s 窗口内没有靠近
+        /// **最终目标**（`RepathProgressEpsilon`），就被"重排 + 归零"一次 ⇒ 最近的（可能是刚走过的）
+        /// 路点排到最前 ⇒ 掉头（实测单次 Play 里一条路线可重排几十次、剩余路点列在 3→2→3 之间反复）。</para>
         ///
         /// <para>不重排顺序 = 保持既有推进方向；不丢连通性兜底：下一个 <see cref="EnsurePath"/>
         /// 仍会走同一套 <see cref="SnapToWalkable"/> + <see cref="WalkableCellHeightAware"/> + 引擎 A*。</para>
@@ -455,7 +452,7 @@ namespace Cs16.Module.Bot
             ClearEscape();
             ClearStuckState();
             InvalidatePath();
-            InvalidateUnreachable();   // 切片BJ：路线没了 ⇒ 上一条的"哪一格不可达"结论作废
+            InvalidateUnreachable();   // 路线没了 ⇒ 上一条的"哪一格不可达"结论作废
         }
 
         /// <summary>
@@ -582,9 +579,9 @@ namespace Cs16.Module.Bot
         /// 这一帧追哪个点：先按既有口径推进"路线点"（<see cref="ICsMap.Points"/> 的标记点），
         /// 再在**可走位图**上用引擎 <see cref="AStar"/> 求一条路径，返回路径上的下一个拐点。
         ///
-        /// <para><b>为什么改成求路径</b>：旧实现是"把标记点按最近邻排序成一条路线，然后逐点走**直线**"——
-        /// 直线不看几何，机器人于是贴着墙角磨、绕不开整片墙（差异 #77：业务零使用引擎 A*，
-        /// 而引擎 <c>Runtime/Core/AStar.cs</c> 早就有 A* + 视线拉直）。现在"绕开墙"由 A* 负责。</para>
+        /// <para><b>为什么要用 A*</b>：只按最近邻排出一条路线、再逐点走**直线**的话，直线不看几何 ——
+        /// 机器人会贴着墙角磨、绕不开整片墙。"绕开墙"交给引擎 <c>Runtime/Core/AStar.cs</c>
+        /// （A* + 视线拉直）。</para>
         ///
         /// <para><b>与 <see cref="Avoid"/> 的分工（两者叠加，缺一不可，不是二选一）</b>：
         /// ① **全局** = 本方法 + <see cref="EnsurePath"/>：用 <see cref="AStar.FindSmoothed"/> 在可走位图上
@@ -599,8 +596,8 @@ namespace Cs16.Module.Bot
         ///
         /// <list type="number">
         /// <item>被追的路点若已被判为**不连通**（见 <see cref="NotePathFail"/> / <see cref="_unreachableCell"/>）
-        /// ⇒ **跳过它**推进到下一个走得到的路点（与既有的"跳过不可走路点"同一形状）。这是"CT 进点 0"的直接前提：
-        /// 旧行为会永远追着孤岛里的那个路点原地打转，路线根本没机会往下走。</item>
+        /// ⇒ **跳过它**推进到下一个走得到的路点（与"跳过不可走路点"同一形状）。这是"CT 进点 0"的直接前提：
+        /// 一直追着孤岛里的那个路点只会原地打转，路线根本没机会往下走。</item>
         /// <item>**最终目标**(goal) 落在孤岛里（不是路点，跳不掉）⇒ 立刻上报"卡住 + 必须换目标"
         /// （<see cref="ConsumeStuck"/> 的 escalate），不再等 2×0.5s 的位移判卡 —— 终点走不到时，
         /// "换个方向/换条路点"都无解，只有换目标能走出去。</item>
@@ -636,7 +633,7 @@ namespace Cs16.Module.Bot
 
                 //   "可走"（`WalkableAt` 说这一格能站）与"走得到"（A* 求得出路径）是两件事：
                 //   实测 `Route_CT_Mid[1]`=(80,93) 世界 (17.5,21.5) 落在 **19 格的孤立分量**里（主分量 4393 格）
-                //   —— 这一点可走，却永远走不到。旧行为是"朝它直线走"⇒ 每 0.5s 判一次卡住（位移 0.00m）⇒
+                //   —— 这一点可走，却永远走不到。朝它直线走 ⇒ 每 0.5s 判一次卡住（位移 0.00m）⇒
                 //   换目标 ⇒ 换到的路线里又有同样落在孤岛里的路点 ⇒ 无限循环。跳过它，机器人才能继续沿
                 //   路线推进到下一个**走得到**的路点（这正是"CT 进点 0 → >0"的前提）。
                 if (_hasUnreachableCell && Game.Map != null && CellOf(Game.Map, wp) == _unreachableCell)
@@ -659,7 +656,7 @@ namespace Cs16.Module.Bot
 
             var target = _index < _route.Count ? _route[_index] : goal;
 
-            // 全局路径可用 → 追路径上的下一个拐点；不可用 → 追目标本身（旧行为，已留 Warn）。
+            // 全局路径可用 → 追路径上的下一个拐点；不可用 → 追目标本身（并留 Warn，见 WarnPathFailed）。
             if (EnsurePath(selfPosition, target)) return AdvancePath(selfPosition, target);
 
             return target;
@@ -751,7 +748,7 @@ namespace Cs16.Module.Bot
             // 钉在第 0 个节点上 ⇒ 机器人一直在追"自己脚下的格心"：朝格心走 → 越过格心 2cm（`ComputeMove`
             // 的 0.0004 = 0.02m 死区）→ 方向翻 180° → 回头 → 再越过。
             //
-            // 实测（`.ai-tmp/test/bu-r-bot-phys.tsv` + `bu-r-hold-plant.tsv`，8 bot 全中、与 bot 无关）：
+            // 实测（8 bot 全中、与 bot 无关）：
             // Move 方向**每 ~30 帧精确翻转 180.0°**（318 个同向段里 295 个相邻段夹角 = 180.0°），
             // 往返幅度 ±0.5m、速度 3.7m/s ⇒ 总路径 90m / 净位移 6m、rev% 78%、
             // 且 15 帧采样的 A/B 两行都出现"位移恒为 0.00"（频闪锁定）。去掉起点节点，游标从**真正的第一个拐点**开始。
@@ -768,12 +765,11 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// **这个目标点走得到吗**——给上层选目标用的纯查询（不推进、不改 <c>_path</c>）。
         ///
-        /// <para><b>为什么要这一问（片BU-R 根因）</b>：片BR 的 L3 证据里 bot 换目标 70 次全是
-        /// （`ICsMap.WalkableAt` / `CanStand`），没判"走得到"**。实测日志（
-        /// <c>.ai-tmp/test/br-hold-plant-log.tsv</c>）里两种失败互不相同却都被上层记成"位图不连通"：
-        /// ① <c>[AStar] Find: 终点不可走 to=(45, 15)</c> —— 该格在**高度一致性层**里不存在（13 次）；
-        /// ② <c>[AStar] Find: 无可达路径 from=(107,85) to=(116,52)</c> —— 真·位图孤立分量（18 次）。
-        /// 只判了"可走"就选它 ⇒ `EnsurePath` 必然失败 ⇒ 退化成"朝目标直线走" ⇒ 顶着墙被反复判卡住。</para>
+        /// <para><b>为什么要这一问</b>：上层选目标只能问"这一点可走吗"（<c>ICsMap.WalkableAt</c> /
+        /// <c>CanStand</c>），而"可走"与"走得到"是两件事。两类失败都会被上层记成"位图不连通"：
+        /// ① <c>[AStar] Find: 终点不可走 to=(45, 15)</c> —— 该格在**高度一致性层**里不存在；
+        /// ② <c>[AStar] Find: 无可达路径 from=(107,85) to=(116,52)</c> —— 位图孤立分量。
+        /// 只判了"可走"就选它 ⇒ <see cref="EnsurePath"/> 必然失败 ⇒ 退化成"朝目标直线走" ⇒ 顶着墙被反复判卡住。</para>
         ///
         /// <para><b>口径与 <see cref="EnsurePath"/> 逐字同源</b>（不另立一套判据）：同一份
         /// <see cref="SnapToWalkable"/>（半径 <see cref="CsBotConst.PathSnapRadiusCells"/>）、同一份
@@ -899,12 +895,12 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 建立"抬起腿 ≤ <see cref="CsConst.StepUpHeight"/> 逐格走得到"的格集合（高度一致性层的**全部**内容）。
         ///
-        /// <para><b>为什么需要它</b>（切片BM 定案，两个独立仪器同一结论）：可走位图是**单层 2D**，
+        /// <para><b>为什么需要它</b>（两个独立仪器同一结论）：可走位图是**单层 2D**，
         /// 它把一个 0.8~3.2 m 的**抬升面**（台阶/台沿）标成了"可走落脚格" ⇒ A* 求出的路径直接指过那个面
         /// ⇒ 机器人贴面磨：运行时探针 1592 行 / 离线射线 754 行，全部是"落脚面高于脚底"，
         /// 其中 `wantTopDy`（命中面 y − 脚底 y）min 0.823 / p50 2.297 / max 3.193，
-        /// 而 `CsConst.StepUpHeight` = 0.45 —— **100% 超过一个台阶**。实证见
-        /// <c>.ai-tmp/test/bm-want-top.tsv</c> 与派生脚本 <c>tools/probes/height-consistent-predict.py</c>。</para>
+        /// 而 `CsConst.StepUpHeight` = 0.45 —— **100% 超过一个台阶**。复算脚本见
+        /// <c>tools/probes/height-consistent-predict.py</c>。</para>
         ///
         /// <para><b>判据出处（不另立定义、不新增阈值）</b>：与产品自己的台阶判据同源同式 ——
         /// <c>Module/Map/CsMap.cs:514-523</c> 的 <c>TryStepUp</c>：
@@ -961,7 +957,7 @@ namespace Cs16.Module.Bot
                 return null;
             }
 
-            _mpCenterFail = 0; _mpSaved = 0; _mpDead = 0;   // 本片证据计数（只在**重算**时清，命中缓存不改）
+            _mpCenterFail = 0; _mpSaved = 0; _mpDead = 0;   // 取样统计计数（只在**重算**时清，命中缓存不改）
 
             var reach = new HashSet<Vector2Int> { from };
             var height = new Dictionary<Vector2Int, float> { { from, baseY } };
@@ -989,9 +985,8 @@ namespace Cs16.Module.Bot
 
                     var hN = GroundYAbove(n, hCur);                  // 层②：落脚高度
                     // 判"探不到"只能用 **NaN**，不许用 `hN < 0f`：GroundYAbove 返回的是**命中点的 y**，
-                    // oracle 实测：旧写法把 -3.251（真实命中、dy = 0.000 的平地）判成"探不到地面"
-                    // ⇒ 从格 (80,104) 起扩张的可达集 = **1 格**（L3 日志 `可达 1 格，被高度判死 8 格`），
-                    // 而 CT 半个地图的脚底都在 y < 0 ⇒ 整层形同把 CT 侧封死。
+                    // 用 `hN < 0f` 会把 -3.251（真实命中、dy = 0.000 的平地）判成"探不到地面"
+                    // ⇒ 可达集塌成 **1 格**，而 CT 半个地图的脚底都在 y < 0 ⇒ 整层形同把 CT 侧封死。
                     // 出处：Module/Map/CsMap.cs:534-535（SampleGround 返回 point.y、找不到返回 -inf）
                     // 与 CsMap.cs:542-557（TrySampleGround 用 bool 区分"有没有命中"）。
                     if (float.IsNaN(hN))
@@ -1043,7 +1038,7 @@ namespace Cs16.Module.Bot
         /// <para>起点抬 <see cref="CsConst.StepUpHeight"/>：高于它的面**不构成落脚面**（那正是"抬升面"的形状：
         /// 从脚底起射会落在实体内部 ⇒ 不收"内部起步"的命中 ⇒ 探不到 ⇒ 判不通，与实证 0/754 一致）。</para>
         ///
-        /// <para><b>切片BR：格心失败 ⇒ 退到「整格」口径</b>（见 <see cref="InCellFrac"/> 里那段"与生成侧口径的差异"）。
+        /// <para><b>格心失败 ⇒ 退到「整格」口径</b>（见 <see cref="InCellFrac"/> 里那段"与生成侧口径的差异"）。
         /// 先按**格心**取样；格心探不到 / 命中的面落在带外（高于脚底一个台阶、或深过探测深度）⇒ 再按
         /// <see cref="CellLandingFace"/> 在**格内 5×5** 找带内合法落脚面。判据一个字没放宽：
         /// 仍然是"带内（<c>[脚底 − GroundProbeDepth, 脚底 + StepUpHeight]</c>）存在**可站立**的合法面"，
@@ -1250,7 +1245,7 @@ namespace Cs16.Module.Bot
             // ① 上一次选定的偏角还有效 → 先沿用（带惯性，防止贴着障碍物左右抖）。
             //
             //      （`if (!WalkableAhead(cached)) _probeAngle = 0f;`）每帧都能把保持清掉 ⇒ 实测
-            //      `ProbeHoldSeconds` 形同不存在：方向以 ~10 次/秒 翻（`.ai-tmp/test/bu-r2-hold-plant-log.tsv`
+            //      `ProbeHoldSeconds` 形同不存在：方向以 ~10 次/秒 翻（实测日志
             //      的 296 条 [BOTFLIP] 行里 `probeLeft=0.50` 恒成立 = 每条都是"刚重掷"），
             //      Darrell/Scuzzy 于是绕圈：总路径 384/376m、净位移 17/22m。
             //    只有两种证据能让它失效（顺序 = 证据强度）：
@@ -1311,7 +1306,7 @@ namespace Cs16.Module.Bot
             }
 
             // 一圈都不通（或都在"走不动"的方向上）→ 取"跑道最长"且**不是失败方向**的那条。
-            // **不再返回一条没验证过的方向**（旧写法直接 `Rotate(dir, 180)`）：没验证的反向在贴墙时
+            // **只返回验证过的方向**（直接 `Rotate(dir, 180)` 的反向没验证过）：没验证的反向在贴墙时
             // 会连着几十帧位移 0，这正是"卡住日志里换向却原地不动"的另一半成因。
             _probeAngle = 0f;
             _probeUntil = 0f;
@@ -1328,7 +1323,7 @@ namespace Cs16.Module.Bot
         /// 正在沿用的偏角；为 0 时退化为**表原序**，因为此时"离期望方向最近"就是表序本身）。
         /// 候选**全部**不可走时才考虑换到另一侧的大偏角。原写法固定按表序取第一个通过者 ⇒
         /// 实测 ±100° 两侧同时可走时，机器人在两个相隔 180° 的方向之间以 ~10 次/秒 翻
-        /// （<c>.ai-tmp/test/bu-r2-hold-plant-log.tsv</c>：`probe=-100 … probe=100` 交替，51~55% 恰 180°）。</para>
+        /// （实测：`probe=-100 … probe=100` 交替，51~55% 恰 180°）。</para>
         ///
         /// <para>代价不变：还是一圈最多 <see cref="CsBotConst.AvoidAngles"/>.Length 次
         /// <see cref="WalkableAhead"/>（每帧 ≤ 24 次位图查询），没有引入新的寻路 / 物理调用。</para>
@@ -1381,7 +1376,7 @@ namespace Cs16.Module.Bot
         /// 面前一堵 1 格厚（1m）的墙时，<see cref="CsBotConst.ProbeDistance"/>（1.4m）处的格子落在
         /// **墙的另一侧**，那格是可走的 ⇒ 只看远端会判定"前方畅通"，机器人就会一直顶着墙推：
         /// 每帧位移 0 → 被判卡住 → 日志刷屏，而且避障的偏角候选**一次都不会被尝试**。
-        /// 这是主 agent 实测那条"卡住：0.00m，原地反复换向"的头号成因。</para>
+        /// 这是实测那条"卡住：0.00m，原地反复换向"的头号成因。</para>
         /// </summary>
         private bool WalkableAhead(Vector3 position, Vector3 dir)
         {
@@ -1427,7 +1422,7 @@ namespace Cs16.Module.Bot
                 run = d;
             }
 
-            //   实测（.ai-tmp/test/bk-bot-phys.tsv，14888/14888 行）：卡住的 bot 用
+            //   实测（14888/14888 行）：卡住的 bot 用
             //   ICsMap.ResolveMove 朝目标迈 1m 的实际位移是 **1.000m**、8 个方向**全部迈得动**，
             //   而 ICsMap.WalkableAt 说这一带不可走（日志 101 条"跳过不可走的路点 (17.50, 0.68, 14.50)"）。
             //   位图是**单层 2D**（de_dust2.bytes 46 个连通分量 / 919 格非主分量），多层几何上下重叠处
@@ -1633,7 +1628,7 @@ namespace Cs16.Module.Bot
             _lastDir = Vector3.zero;
             _diagLastDir = Vector3.zero;
             _diagFlips = 0;
-            _probeAngle = 0f;          // 片BU-R3：迟滞状态随"卡住状态"一起归零（换路线/重开时不许带着旧锚点）
+            _probeAngle = 0f;          // 迟滞状态随"卡住状态"一起归零（换路线/重开时不许带着旧锚点）
             _probeUntil = 0f;
             _probeBadSince = 0f;
         }

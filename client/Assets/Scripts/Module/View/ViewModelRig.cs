@@ -24,7 +24,7 @@ namespace Cs16.Module.View
     /// （<c>HLSDK/cl_dll/view.cpp:665</c> <c>view-&gt;origin[2] -= 1;</c>）⇒
     /// <see cref="CsViewTuning.ViewModelLocalPosition"/> 的 y = −0.0254 m。原因见那里的注释。</para>
     ///
-    /// <para><b>开火/换弹怎么感知（只读）</b>：不去抢 agent-04 的射击队列（那是它独占消费的），
+    /// <para><b>开火/换弹怎么感知（只读）</b>：不去抢 <c>CombatModule</c> 的射击队列（那是它独占消费的），
     /// 而是观察权威状态的变化：<c>CsActor.NextFireTime</c> 前推 = 打出了一发；
     /// <c>ReloadEndTime</c> 前推 = 开始换弹；<c>ActiveWeapon</c> 变化 = 切枪（播 <c>draw</c>）。
     /// 这样"表现"与"模拟"永远一致，也不会多打一发子弹。</para>
@@ -123,7 +123,7 @@ namespace Cs16.Module.View
             _overrideState = null;
             _lastState = null;
             _haveSnapshot = false;
-            _preLocal = null;              // 片FIX-4：换相机后本地玩家基线一并作废
+            _preLocal = null;              // 换相机后本地玩家基线一并作废
             _preReloadSeq = 0;
             _reloadAnimActive = false;
             _reloadProbeAt = 0f;
@@ -209,9 +209,9 @@ namespace Cs16.Module.View
         }
 
         /// <summary>
+        /// 换弹诊断心跳（无条件逐帧）：把每一道闸门的实测值打进日志。
         ///
-        /// <para><b>为什么要它</b>：本片实测（`probe-fix4c-verdict.py` 的 J-R1）显示
-        /// 9 次真实换弹只播了 1 次（`seq=1`），而且**三条已有的闸门留痕一条都没打** ——
+        /// <para><b>为什么要它</b>：实测 9 次真实换弹只播了 1 次（`seq=1`），而且**三条已有的闸门留痕一条都没打** ——
         /// 说明"边沿根本没走到判它的那一行"。⇒ 缺的是一个**无条件**的逐帧心跳：
         /// 只要"当前正在换弹"（<c>ReloadEndTime</c> 未到），就把**每一个闸门的实测值**打出来，
         /// 这样"卡在哪一道门"从推断变成一个**读得出来的字段**。</para>
@@ -490,8 +490,9 @@ namespace Cs16.Module.View
         }
 
         /// <summary>
+        /// 为什么必须把 <c>updateWhenOffscreen</c> / <c>cullingMode</c> 设成"恒更新"。
         ///
-        /// <para>根因：<c>.cs16anim</c> 网格的顶点是**绑定姿态**坐标，而渲染姿态由动画决定 ——
+        /// <para>机制：<c>.cs16anim</c> 网格的顶点是**绑定姿态**坐标，而渲染姿态由动画决定 ——
         /// 以 v_* 视模型为例（实测）：绑定姿态 bbox = x∈[-0.9087,-0.1160]、y∈[-0.0469,+0.1763]、
         /// z∈[-0.1272,+0.1374]（**把相机原点夹在里面**）；而 idle 姿态 = x∈[-0.0260,+0.2390]、
         /// y∈[-0.2860,-0.0620]、z∈[-0.0870,+0.7050]。两者**完全不重合**。</para>

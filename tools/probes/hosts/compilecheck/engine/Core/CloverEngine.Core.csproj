@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 引擎 `CloverEngine.Core` 程序集（映射 clover-client-unity-engine/Runtime/Core/CloverEngine.Core.asmdef）
+       —— 无程序集依赖。编进本工程而不是引用预编译 DLL：目的就是让引擎源码参与编译，
+       接线改动若调了不存在的引擎 API，这里立刻报。 -->
+
+  <PropertyGroup>
+    <AssemblyName>CloverEngine.Core</AssemblyName>
+    <RootNamespace>CloverEngine</RootNamespace>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(EngineRoot)Runtime\Core\**\*.cs" />
+  </ItemGroup>
+
+</Project>

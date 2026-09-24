@@ -7,10 +7,9 @@ namespace Cs16.Module.Audio
     /// <summary>
     /// 音效播放的**薄转发**（不做任何自己的计数 / 记账 / 缓存）。
     ///
-    /// <para><b>为什么变薄</b>：本类原先是项目里的"音效发放闸门" —— 自带探测状态表、单帧计数、
-    /// 同音效并发滑动窗口、缺失告警计数共四套记账；<c>Module/Combat/CombatAudio.cs</c> 另有一份
-    /// （**已有能力不够用时优先扩展原实现，不准平行再起一套**）。闸门已下沉进引擎
-    /// <c>Game.Sound</c>（E-core-17）：
+    /// <para><b>为什么这么薄</b>：记账（探测状态表、单帧计数、同音效并发滑动窗口、缺失告警计数）
+    /// 全部归引擎 <c>Game.Sound</c>；<c>Module/Combat/CombatAudio.cs</c> 另有一份
+    /// （**已有能力不够用时优先扩展既有实现，不准平行再起一套**）：
     /// <list type="bullet">
     /// <item>缺失只报一次 ⇒ 引擎 <c>LogThrottle.WarnOnce("Sound", "missing:&lt;path&gt;", …)</c>；</item>
     /// <item>单帧起播上限 / 同 clip 并发上限 ⇒ 引擎 <c>ISoundManager.MaxPlaysPerFrame</c> /
@@ -23,12 +22,12 @@ namespace Cs16.Module.Audio
     /// <b>每次调用</b>一条 <c>Error("Resource", "加载失败：{path}")</c>（在
     /// <c>ResourceManager.CompletePending</c>，不在 <c>Sound</c> 里）—— 而脚步 / 命中 / 蜂鸣都是
     /// 每秒多次的高频路径，只要某个音效没落地，日志就会被它刷爆。这里问的 <c>Exists</c> 正是
-    /// **引擎自己的按路径缓存**（E-core-09：只回答"在不在"，不占缓存、不动引用计数、同一路径只探一次）
+    /// **引擎自己的按路径缓存**（只回答"在不在"，不占缓存、不动引用计数、同一路径只探一次）
     /// ⇒ "缺失"这件事的唯一真相仍**在引擎**，本类不记账，只在"引擎说没有"时把这件事实经引擎
     /// <c>LogThrottle.WarnOnce</c> 说一次然后静音。</para>
     ///
-    /// <para><b>与 <c>CombatAudio</c> 的分工不变</b>：枪声归 <c>Module/Combat</c>（它那份探测缓存
-    /// 不在本片允许改动的文件里，未动）；同一个模式应当也收敛到本类这条路径上。</para>
+    /// <para><b>与 <c>CombatAudio</c> 的分工</b>：枪声归 <c>Module/Combat</c>（它自带一份探测缓存）；
+    /// 同一个模式应当也收敛到本类这条路径上。</para>
     /// </summary>
     internal sealed class SfxService
     {
@@ -96,7 +95,7 @@ namespace Cs16.Module.Audio
 
             var path = ResPaths.SoundSfxPrefix + clip;
 
-            // "在不在"问引擎（E-core-09 的按路径缓存）：不在 ⇒ 静音 + 只报一次。
+            // "在不在"问引擎：不在 ⇒ 静音 + 只报一次。
             // 必须问的原因见类注释（资源层对加载失败是"每次一条 Error"）。key 与引擎 Sound 的缺失
             // 告警同口径（"missing:<path>"），因此同一条路径在本进程内只会有一条告警。
             if (!res.Exists(path))

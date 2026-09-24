@@ -16,7 +16,7 @@ namespace Cs16.UI
     /// </para>
     ///
     /// <para>
-    /// 放在 UI 层的理由：Core 下的文件是本工程的契约（由主 agent 写死、其它 agent 不许改），
+    /// 放在 UI 层的理由：Core 下的文件是本工程的契约（只由契约维护者改动）。
     /// </para>
     /// </summary>
     public static class CsPlayerSettingsStore

@@ -6,7 +6,7 @@ namespace Cs16.EditorTools
     /// <summary>
     /// 进 Play 时把 <b>Game view 的图标叠加层（Gizmos / 组件图标）无条件关掉</b>。
     ///
-    /// <para><b>为什么必须有这个脚本（用户报的缺陷，实测根因）</b>：用户原话
+    /// <para><b>为什么必须有这个脚本（用户报的缺陷）</b>：用户原话
     /// 「现在开一枪竟然能看到 unity 组件的喇叭和太阳的图标，选择阵营看地图时候，还有 ui 控件！！！」。
     /// 这些**不是游戏渲染出来的东西**，而是 Unity 编辑器在 Game view 之上叠加绘制的：
     /// <list type="bullet">
@@ -30,7 +30,7 @@ namespace Cs16.EditorTools
     ///
     /// <para><b>出处</b>：Game view 的开关成员名来自运行时反射枚举（<c>tools/probes/probe-gameview-gizmos.cs</c>：
     /// <c>field m_Gizmos</c>、<c>prop drawGizmos</c>、<c>prop showGizmos</c>）；
-    /// A/B 数字见 <c>.ai-tmp/test/bv-diff-*.png</c> 与 <c>策划/差异登记.tsv</c> 的对应行。</para>
+    /// A/B 数字见 <c>策划/差异登记.tsv</c> 的对应行。</para>
     /// </summary>
     [InitializeOnLoad]
     public static class VisualLeakGuard

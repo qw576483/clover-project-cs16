@@ -8,8 +8,9 @@ using UnityEngine.UI;
 namespace Cs16.UI
 {
     /// <summary>
+    /// 控制台面板：命令输入与回显（<c>bot_add</c> / <c>bot_kick</c> / <c>bot_difficulty</c>）。
     ///
-    /// <para><b>开关键</b>：<c>GameKey</c> 枚举里**没有 BackQuote（`）**（这是契约缺口，主 agent 已知），
+    /// <para><b>开关键</b>：<c>GameKey</c> 枚举里**没有 BackQuote（`）**（契约缺口：引擎键盘枚举未提供该键），
     /// 因此这里与 <see cref="HudPanel"/> 一致：<c>/</c>（<see cref="GameKey.Slash"/>）或
     /// <c>0</c>（<see cref="GameKey.Num0"/>）都能开关控制台。</para>
     ///

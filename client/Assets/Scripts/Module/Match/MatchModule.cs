@@ -22,8 +22,8 @@ namespace Cs16.Module.Match
         ///
         /// <para><b>为什么需要它</b>：本组件的挂载点是 <c>Bootstrap</c> 那个 <c>DontDestroyOnLoad</c> 的
         /// GameObject，而 <c>Bootstrap</c> 只存在于 <c>Scenes/Boot.unity</c>。任何"从外部按类型找它"的代码
-        /// 又会在"没从 Boot 场景进 Play"时**静默返回 null** —— 实测代价：<c>.ai-tmp/drivers/cs16-play-driver.cs</c>
-        /// 的 <c>Apply()</c> 因此无声早退，pause / godmode / cam / input 全部不生效，
+        /// 又会在"没从 Boot 场景进 Play"时**静默返回 null** —— 实测代价：外部驱动的 <c>Apply()</c>
+        /// 因此无声早退，pause / godmode / cam / input 全部不生效，
         /// 整场驱动看起来"挂了"却没有任何日志说明原因。</para>
         ///
         /// <para>所以对外只暴露这一个入口（与 <c>Bootstrap</c> 的单实例守卫同一套做法）：

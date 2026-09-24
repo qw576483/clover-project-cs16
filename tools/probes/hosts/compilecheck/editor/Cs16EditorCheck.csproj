@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ───────────────────────────────────────────────────────────────────────
+       业务**编辑器**程序集闸门（映射 Unity 的 `Assembly-CSharp-Editor`）
+       —— 这是本族闸门的**全量入口**：`dotnet build` 本工程会连带构建
+       引擎 6 件 + 业务运行时（`..\Cs16CompileCheck.csproj`）+ 本工程，一条命令全覆盖。
+
+       用法 / 前置 restore / 判据（只取「0 个错误」）：见 ..\Directory.Build.props 的「宿主说明」。
+
+       为什么单独一个程序集：`client/Assets/Editor/**` 在 Unity 里不是 Cs16 的一部分，而是
+       另一个程序集（Assembly-CSharp-Editor，定义了 UNITY_EDITOR、引用 Cs16.dll + 引擎各域）。
+       混进运行时那个编译单元会让“编辑器脚本能看到的成员”变宽（同一个程序集里 internal 也可见）
+       ⇒ 编得过 ≠ Unity 编得过。
+
+       依赖方向照 Unity：本工程 → 业务运行时（Cs16）+ 引擎 Editor（CloverEngine.Editor，
+       后者再带出引擎 5 个运行时域）。
+       ─────────────────────────────────────────────────────────────────────── -->
+
+  <PropertyGroup>
+    <AssemblyName>Cs16EditorCheck</AssemblyName>
+    <RootNamespace>Cs16</RootNamespace>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(Cs16ClientDir)Assets\Editor\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Cs16CompileCheck.csproj" />
+    <ProjectReference Include="..\engine\Editor\CloverEngine.Editor.csproj" />
+  </ItemGroup>
+
+</Project>

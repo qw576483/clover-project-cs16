@@ -53,7 +53,7 @@ namespace Cs16.Module.Bot
 
         /// <summary>本方阵营的**第 <paramref name="ordinal"/> 号**机器人担任什么角色（确定性）。
         /// <para>形参语义 = **队内序号 / 计划槽位**（0..3，周期 4），<b>不是</b>全局 actor Id ——
-        /// 全局 Id 会被"真人玩家在哪一队"整体位移（旧实现对 T 队恰好安全、对 CT 队会撞车）。</para>
+        /// 全局 Id 会被"真人玩家在哪一队"整体位移（对 T 队恰好安全、对 CT 队会撞车）。</para>
         /// <para>形参用 <c>long</c>：调用方可能直接传 Id（如探针按序号枚举），这里不许先 <c>(int)</c> 截断。</para>
         /// </summary>
         public static CsBotRole For(CsTeam team, long ordinal)

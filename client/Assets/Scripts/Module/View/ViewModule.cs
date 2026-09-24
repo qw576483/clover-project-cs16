@@ -20,7 +20,7 @@ namespace Cs16.Module.View
     /// <para><b>两个硬约束</b>：</para>
     /// <list type="number">
     /// <item>每个角色视图必须有**恰好 4 个** <see cref="CsHitboxProxy"/>（头/胸/腹/腿），
-    /// 层用 <c>PhysicsLayers.Bot</c>/<c>Player</c> —— 少了 agent-04 的射线就打不中；</item>
+    /// 层用 <c>PhysicsLayers.Bot</c>/<c>Player</c> —— 少了视图侧的射线就打不中；</item>
     /// <item>本地玩家自己的第三人称模型要**隐藏渲染但保留碰撞体**（否则自己被自己的模型挡屏）。</item>
     /// </list>
     /// </summary>
@@ -585,7 +585,7 @@ namespace Cs16.Module.View
         // ==================================================================
         /// <summary>
         ///
-        /// <para>为什么运行期绑定而不是 Bootstrap 里挂：那台相机是 agent-04 在自己 Start 里创建/启停的，
+        /// <para>为什么运行期绑定而不是 Bootstrap 里挂：那台相机是视图层在自己 Start 里创建/启停的，
         /// 装配期还不存在；而且主菜单相机也带 <c>MainCamera</c> 标签，必须"比赛运行中"才绑，
         /// 否则武器会挂到菜单相机上。这里只在 <c>IsRunning</c> 时绑，停局即解绑。</para>
         /// </summary>

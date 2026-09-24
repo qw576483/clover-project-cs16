@@ -25,7 +25,7 @@ namespace Cs16.Module.View
     /// （按 <see cref="CsHitboxProxy"/> 反查子 Renderer）也天然生效，两条路不会互相打架。</para>
     ///
     /// <para><b>只读契约</b>：本类只读 <see cref="CsActor"/>，一个字段都不写
-    /// （写它 = 和 agent-03 的模拟抢权威）。</para>
+    /// （写它 = 和比赛模拟抢权威）。</para>
     /// </summary>
     public sealed class ActorView : MonoBehaviour
     {
@@ -69,10 +69,9 @@ namespace Cs16.Module.View
         /// <summary>
         /// 尸体是否已经"落地留场"（倒地序列播完 → 冻住姿态、关掉碰撞体、但**不隐藏**）。
         ///
-        /// <para><b>差异 #73（片 FX-ALL 2026-09-23）</b>：用户原话"死亡动画没有，尸体怎么不在地上？"。
-        /// 旧行为是 <c>OnClipFinished → _hideAfterDeath = true → SetShown(false)</c>，
-        /// 即**倒地序列播完立刻整具身体消失**（连"倒地"这一下都看不完）。
-        /// 原版是尸体躺到本局结束、回合重开（复活）时才消失 ⇒ 现在改为"冻在倒地序列最后一帧"。</para>
+        /// <para>原版是尸体躺到本局结束、回合重开（复活）时才消失，所以这里**冻在倒地序列最后一帧**、
+        /// 不隐藏；若走 <c>OnClipFinished → _hideAfterDeath = true → SetShown(false)</c>，
+        /// 倒地序列播完整具身体就没了（连"倒地"这一下都看不完）。</para>
         /// </summary>
         private bool _corpseHeld;
 
@@ -549,7 +548,7 @@ namespace Cs16.Module.View
                     _haveAnimSnapshot = false;
                 }
                 // 死亡**不立刻隐藏**：先播原版倒地序列，播完（OnComplete）**冻住留场**。
-                // 没有动画时（预制体是旧的静态网格）退回旧行为：立即隐藏。
+                // 没有动画时（预制体里是静态网格）走兜底：立即隐藏。
                 else if (_anim == null) SetShown(false);
             }
 
@@ -628,13 +627,12 @@ namespace Cs16.Module.View
         }
 
         // ==================================================================
-        //  尸体留场（差异 #73）
+        //  尸体留场
         // ==================================================================
         /// <summary>
         /// 尸体留场：**确保可见 + 名牌关掉 + 姿态冻住 + 碰撞体全关**（每具尸体只做一次收尾）。
         ///
-        /// <para><b>为什么要关碰撞体</b>：旧行为靠 <c>SetShown(false)</c> 把整个 GameObject 关掉，
-        /// 尸体因此天然不可被打中、也不挡人。改成"留场"以后必须显式关 —— 否则尸体既会被子弹打中
+        /// <para><b>为什么要关碰撞体</b>：尸体留场后 GameObject 仍活着，不显式关碰撞体就会被子弹打中
         /// （射线会命中 <c>CsHitboxProxy</c> ⇒ 死人反复"中弹"），又会**挡住活人走路**。</para>
         ///
         /// <para><b>为什么冻 <c>Animator.speed</c> 而不是 <c>SetShown(false)</c></b>：倒地序列是一次性 clip，

@@ -770,7 +770,7 @@ namespace Cs16.UI
                 new Vector2(CheckBoxSize - 8f, CheckBoxSize - 8f), CheckMark);
             mark.gameObject.SetActive(initial);
             // 生成期 `Game.Res` 通常还没起来 ⇒ 这里往往落空；运行期由 `OptionsPanel` 走树时
-            // 再调一次（`ApplyCheckMarkSprite`），贴图到手前保持旧行为 = 一块**原色**小方块。
+            // 再调一次（`ApplyCheckMarkSprite`）；引擎 `Game.Res` 未就绪时先画一块**原色**小方块。
             ApplyCheckMarkSprite(mark);
 
             var text = CreateLabel("Label", holder, label, OriginalFontSize,

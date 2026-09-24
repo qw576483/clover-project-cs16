@@ -119,7 +119,7 @@ namespace Cs16.EditorTools
         [MenuItem("Clover/CS16/地图连通性自证（de_dust2）", false, 22)]
         public static void RunProbe() => Run(false);
 
-        /// <summary>命令行入口：失败时以非零码退出，CI/主 agent 能看见。</summary>
+        /// <summary>命令行入口：失败时以非零码退出，CI 能看见。</summary>
         public static void RunProbeFromCommandLine() => Run(true);
 
         private static void Run(bool exitWithCode)

@@ -16,7 +16,8 @@ namespace Cs16.UI
     /// <para>
     /// <b>注意</b>：本件只负责"显示切换提示"，不处理空格键 —— 切观战目标是
     /// <c>ICsMatch.SpectateNext(dir)</c>，而 <c>Core/Events.cs</c> 里没有对应的 UI→比赛 事件常量，
-    /// 按分层铁律 UI 不许直接调 Module，因此这一步留给操作模块（Module/Player 读键）或主 agent 补事件常量。
+    /// 按分层铁律 UI 不许直接调 Module，因此这一步留给操作模块（Module/Player 读键），
+    /// 或由引擎补一个切观战目标的事件常量。
     /// 见本文件的交付说明。
     /// </para>
     /// </summary>

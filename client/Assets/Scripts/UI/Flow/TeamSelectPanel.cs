@@ -27,7 +27,7 @@ namespace Cs16.UI
     ///
     /// <para>
     /// <b>按钮形态</b>：原版是"黑底 + 橙字 + 左对齐"的纯文本按钮（`.res` 里 6 个按钮全是
-    /// `textAlignment west`），**不是**橙色大按钮网格（本面板上一版那样）。
+    /// `textAlignment west`），**不是**橙色大按钮网格。
     /// </para>
     ///
     /// <para>

@@ -28,7 +28,7 @@ namespace Cs16.UI
     /// （没有"每个玩家一行：名字/阵营/击杀/死亡/存活/金钱"的结构），UI 又按分层铁律不许
     /// 引用 <c>Cs16.Module.Match</c> 去拿 <c>ICsMatch.Actors</c>。
     /// 因此这里用快照里**确实有的**唯一逐人数据 —— <see cref="CsHudSnapshot.KillFeed"/>
-    /// 得到与实际比赛一致的击杀/死亡数（与 agent-03 的 <c>CsActor.Kills/Deaths</c> 同源同口径）。</para>
+    /// 得到与实际比赛一致的击杀/死亡数（与 <c>CsActor.Kills/Deaths</c> 同源同口径）。</para>
     ///
     /// <para><b>能力的边界（不掩饰）</b>：</para>
     /// <list type="bullet">
@@ -37,7 +37,7 @@ namespace Cs16.UI
     /// <item>存活状态：本回合内被击杀过 = 死亡（<see cref="BeginRound"/> 复位），本地玩家以快照为准。</item>
     /// </list>
     /// <para>
-    /// 若主 agent 后续在 <see cref="CsHudSnapshot"/> 上加一份花名册（建议
+    /// 若 <see cref="CsHudSnapshot"/> 将来提供一份花名册（字段未定），
     /// 只需把 <see cref="Build"/> 换成读它即可，面板本身不用改。
     /// </para>
     /// </summary>

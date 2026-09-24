@@ -35,6 +35,12 @@ client/Assets/Screenshots/
 #   删掉这个链接 = 回到「按 manifest 从 GitHub 拉取引擎」，外人 clone 后的行为不受影响。
 client/Packages/com.clover.unity-engine/
 
+# ★ 离线自检宿主（tools/probes/hosts/**）：构建缓存不进库，工程文件必须进库
+#   —— 上面的 `*.csproj` 是拦 Unity 生成物的，会把宿主的 .csproj 一并吃掉 ⇒ 这里逐条放行（口径同 d2）。
+tools/probes/hosts/**/obj/
+tools/probes/hosts/**/bin/
+!tools/probes/hosts/**/*.csproj
+
 # ★ Python 字节码缓存与本地 .bak 备份（不该进版本库；探针跑一次就会生成 __pycache__）
 __pycache__/
 *.pyc

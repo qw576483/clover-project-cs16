@@ -13,9 +13,8 @@ namespace Cs16.Module.Bot
     /// <summary>
     /// 机器人 AI 自检探针（**Editor-only**；用 <c>#if UNITY_EDITOR</c> 包住，构建时不会进包）。
     ///
-    /// <para><b>为什么放在 <c>Module/Bot/**</c> 而不是 <c>Assets/Editor/</c></b>：任务书 §2+§6 的硬约束是
-    /// "本 agent 只能写 <c>Assets/Scripts/Module/Bot/**</c>"，所以探针落在本目录、靠 <c>#if UNITY_EDITOR</c> 隔离。
-    /// （任务书 §5 写的是 <c>Assets/Editor/BotSelfTest.cs</c>，路径冲突已在交付回报里说明。）</para>
+    /// <para><b>为什么放在 <c>Module/Bot/**</c> 而不是 <c>Assets/Editor/</c></b>：模块私有代码只能写
+    /// <c>Assets/Scripts/Module/Bot/**</c>，所以探针落在本目录、靠 <c>#if UNITY_EDITOR</c> 隔离。</para>
     ///
     /// <para><b>两个入口</b>：</para>
     /// <list type="number">

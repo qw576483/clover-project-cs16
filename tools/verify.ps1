@@ -244,14 +244,18 @@ function Invoke-Checks {
   # Unity stays on "Scripts still have compile errors" and Play never starts.
   # NOTE on the trap: tools/probes/compile-check.ps1 in its DEFAULT mode compiles the Runtime
   # assembly and does NOT cover Assets/Editor/** as Unity's Editor assembly; this item runs
-  # `-Editor`, which sets UNITY_EDITOR and compiles ONLY Assets/Editor/**.
+  # `-Editor -Engine`, which sets UNITY_EDITOR, compiles Assets/Editor/** as its own assembly
+  # and compiles the engine SOURCE in (the prebuilt CloverEngine.*.dll under
+  # Library\ScriptAssemblies is machine-local and can lag the source it is meant to provide --
+  # e.g. it lacks MapBakeOptions.MarkerRootName while Editor\MapBake\MapBakeOptions.cs:119
+  # declares it public).  A red here therefore means the current sources disagree.
   $ccScript = Join-Path $root 'tools\probes\compile-check.ps1'
   if (-not (Test-Path $ccScript)) {
     $script:fail++
     Say 'FAIL' 'editor-assembly-compiles' ('missing ' + $ccScript + ' -- the Editor assembly is unverifiable offline')
   } else {
     $ccTmp = Join-Path $tmpRoot 'verify-editor-compile.txt'
-    $ccOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ccScript -Editor 1 -Quiet 1 2>&1 | ForEach-Object { [string]$_ })
+    $ccOut = @(& powershell -NoProfile -ExecutionPolicy Bypass -File $ccScript -Editor 1 -Engine 1 -Quiet 1 2>&1 | ForEach-Object { [string]$_ })
     $ccRc = $LASTEXITCODE
     $ccOut | Set-Content -Encoding UTF8 $ccTmp
     $ccErrs = @($ccOut | Where-Object { $_ -match ': error CS\d+' })

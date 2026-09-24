@@ -21,20 +21,19 @@ namespace Cs16.UI
     ///
     /// <para>
     /// <b>这里刻意 <c>不用</c> 任何 Unity/引擎的"游戏时间"，只用 BCL 的
-    /// <see cref="System.Diagnostics.Stopwatch"/>（真实墙钟）</b>。两个都试过，都被同一个现象毁掉：
+    /// <see cref="System.Diagnostics.Stopwatch"/>（真实墙钟）</b>。那一跳会毁掉下面两种取基准的方式：
     /// </para>
     /// <para>
-    /// **第一帧之后**跳一大段 ——
-    /// <c>[UI] 启动画面已开：本帧起停留 2s（基准 unscaledTime=0.000）</c>（12:16:46.467）
-    /// → <c>[UI] 启动画面结束 → 主菜单（实际停留 8.225s）</c>（12:16:46.517）：
-    /// **墙钟只过了 50 ms，而 <c>Time.unscaledTime</c> 跳了 8.225 s**。
+    /// 实测：<c>[UI] 启动画面已开：本帧起停留 2s（基准 unscaledTime=0.000）</c> 与
+    /// <c>[UI] 启动画面结束 → 主菜单（实际停留 8.225s）</c> 两条日志的墙钟只差 50 ms，
+    /// 而 <c>Time.unscaledTime</c> 跳了 8.225 s。
     /// </para>
     /// <list type="number">
-    /// <item><b>旧实现</b>（<c>Game.Timer.AfterUnscaled(2f, …)</c>）挂在这里：引擎 Timer 的 unscaled 条目按
+    /// <item><c>Game.Timer.AfterUnscaled(2f, …)</c> 不可用：引擎 Timer 的 unscaled 条目按
     /// <c>Time.unscaledDeltaTime</c> **累加**（引擎件 <c>Runtime/Core/Timer.cs</c> 的
     /// <c>Tick</c>：<c>e.Elapsed += e.Unscaled ? UnscaledDeltaTime() : dt</c>）⇒ 那一跳把刚排下的
     /// 2 s 定时器**在第一次 Tick 就吃满**，启动画面只在屏上 33~37 ms。</item>
-    /// <item><b>改成"<c>OnOpen</c> 记 <c>Time.unscaledTime</c> 基准 + 每帧比差值"也不成立</b>：
+    /// <item>"<c>OnOpen</c> 记 <c>Time.unscaledTime</c> 基准 + 每帧比差值"也成立不了：
     /// 那一跳落在**第一帧与第二帧之间** ⇒ 基准取在第一帧（0.000）、第二帧就跳到 8.225 ⇒ 同样在 ~50 ms 内推进。</item>
     /// </list>
     /// <para>
@@ -44,7 +43,6 @@ namespace Cs16.UI
     /// 那就该量**墙钟**。⇒ 用 <c>Stopwatch</c>：<c>OnOpen</c> 重启、每帧读 <c>Elapsed</c>。
     /// 它不受 timeScale、不受首帧跳变、不受帧率影响。
     /// </para>
-    /// </summary>
     /// </summary>
     public class BootPanel : CsPanelBase
     {

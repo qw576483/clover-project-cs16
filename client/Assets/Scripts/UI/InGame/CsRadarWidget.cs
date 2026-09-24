@@ -23,8 +23,7 @@ namespace Cs16.UI
     /// <item><b>点色按原版判据</b>：自己 = 绿（<see cref="CsHudTheme.RadarSelf"/>）、同队 = 黄
     /// （<see cref="CsHudTheme.RadarMate"/>）、异队（雷达可见的敌人）= 蓝
     /// （<see cref="CsHudTheme.RadarOther"/>）、已安放炸弹 = 红闪
-    /// （<see cref="CsHudTheme.RadarBomb"/>）。上一版把"自己"画成白的、队友画成阵营色，
-    /// 与判据不符，本片改掉。</item>
+    /// （<see cref="CsHudTheme.RadarBomb"/>）。"自己画白、队友画阵营色"与上面的判据不符 ⇒ 取值以判据为准。</item>
     /// <item><b>朝向</b>：**不随视角旋转**（CS 1.6 默认即如此），且与原版底图同向 ——
     /// 屏幕右 ← 世界 <c>-Z</c>、屏幕上 ← 世界 <c>+X</c>（cs16-AO 由包点地标判据定下，见
     /// <see cref="Refresh"/> 里 scale 那段的注释）；世界 → 雷达的映射与底图**同一套窗口**（各向同性
@@ -40,12 +39,12 @@ namespace Cs16.UI
     /// A/B 画在图上的），再叠两个方块会互相压住。快照里的 <c>IsBombsite</c> 条目仍然存在
     /// （G14 的数值验收看的是快照），只是本件不画。</para>
     ///
-    /// <para><b>世界范围（口径，片AS 改）</b>：雷达覆盖哪块世界，由**原版 overview 的窗口**决定
+    /// <para><b>世界范围（口径）</b>：雷达覆盖哪块世界，由**原版 overview 的窗口**决定
     /// （X = 中心 ± 2048、Z = 中心 ± 2730.6667 GoldSrc 单位；公式真源
     /// <c>原版资源/hlsdk/cl_dll/hud_spectator.cpp:1069-1193</c>，ZOOM 见
     /// <c>原版资源/cs16src/cstrike/overviews/de_dust2.txt:5</c>），中心 = 原版 <c>ORIGIN</c> 经地标配准
-    /// 到本工程坐标系（推导见 <see cref="CsHudTheme.RadarWindowCenter"/>）。不再取引擎位图包围盒
-    /// （<c>Game.Map</c>）等比 —— 那是底图还是"几何栅格化"时代的旧口径。矩形由 <see cref="HudPanel"/>
+    /// 到本工程坐标系（推导见 <see cref="CsHudTheme.RadarWindowCenter"/>）。不取引擎位图包围盒
+    /// （<c>Game.Map</c>）等比 —— 位图包围盒与底图不是同一套窗口。矩形由 <see cref="HudPanel"/>
     /// 按同一组常量换算成米后传进来；传来退化矩形时本件用同一组常量兜底，并且只报一次警告。</para>
     /// </summary>
     [System.Serializable]

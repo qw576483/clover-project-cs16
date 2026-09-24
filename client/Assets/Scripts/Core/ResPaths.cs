@@ -254,7 +254,7 @@ namespace Cs16.Core
         // 大口径弹痕（原版 `decals.wad` 的 `{bigshot1` … `{bigshot5`，mp.dll 名表索引 28..32）
         //    本工程**刻意不落盘、不接**：原版"哪种武器用大口径弹痕"的选择逻辑在**引擎**里
         //    （`hw.dll` 不在盘）⇒ 映射无出处。落盘 = 立刻变成"文件在盘上但无人读"的 T0 不一致
-        //    `.ai-tmp/test/fx-decal-variants.tsv` 里，等拿到出处再落。
+        //    ⇒ 不落，等拿到出处再落。
 
         /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
         public const string FxSpark = "UI/Art/fx_spark";
@@ -279,7 +279,7 @@ namespace Cs16.Core
         /// 只把**被引用的那一个文件**复制进工程。</para>
         ///
         /// <para><b>码位出处</b>：判据资产 <c>tools/probes/marlett-glyphs.py</c>（<c>--size 300</c>）
-        /// 与决定性读图 <c>.ai-tmp/test/marlett-check-ascii.png</c>（勾 = <c>U+F061</c>，gid12）。</para>
+        /// 与决定性读图（勾 = <c>U+F061</c>，gid12）。</para>
         ///
         /// <para>本常量保留为登记（字体文件仍在 <c>Resources/UI/Fonts/marlett.ttf</c>，是那份 PNG 的载体出处）—— 不要删它。</para>
         ///

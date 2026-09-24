@@ -109,7 +109,7 @@ namespace Cs16.Module.Net
         private static long _rejected;
 
         // ---------------------------------------------------------------- 尽力而为路径的限频留痕
-        //   `.ai-tmp/test/sink4-sink-net-catch-selfcheck.ps1` 会把本区间整段剔除后再比对 ⇒
+        //   自检脚本会把本区间整段剔除后再比对 ⇒
         //   本区间内只许放"闸门本身"，任何控制流改动都必须挪到区间外，否则自检会失去意义。
 
         /// <summary>

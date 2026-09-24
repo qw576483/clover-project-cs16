@@ -1,0 +1,78 @@
+<!-- ─────────────────────────────────────────────────────────────────────────────
+     tools/probes/hosts/compilecheck/Directory.Build.props
+     离线编译闸门族（**主闸门**）共用的「宿主说明」+ 编译口径 + 路径。
+
+     ── 用法 ─────────────────────────────────────────────────────────────────────
+     0) 前置 restore：本族工程**无任何 NuGet 包依赖**（引用只有 Unity 托管 DLL 与工作区里的
+        引擎源码），`dotnet restore <入口 csproj>` 可离线完成；`dotnet build` 自己也会隐式
+        restore —— 只在 obj\ 被清掉 / 新 clone 时第一次会稍慢，不需要联网。
+     1) 全量闸门（引擎 6 件 + 业务运行时 + 业务编辑器，一条命令覆盖全部）：
+          dotnet build tools\probes\hosts\compilecheck\editor\Cs16EditorCheck.csproj -v q -nologo
+     2) 只判运行时程序集（秒级快循环）：
+          dotnet build tools\probes\hosts\compilecheck\Cs16CompileCheck.csproj -v q -nologo
+
+     ── 判据：只取「0 个错误」────────────────────────────────────────────────────
+     挂载输出的 `N 个错误` 那一行：`0 个错误` ⇒ exit 0 ⇒ 过。**警告不参与判定**（含引擎/第三方
+     既有 warning）—— 警告照实报出来，⛔ 不用 <NoWarn> 把可能藏错的东西压掉。
+
+     ── 角色 ────────────────────────────────────────────────────────────────────
+     **本族 = 忠实判据（逐 asmdef）**：引擎 Runtime 按 asmdef 拆成 5 个程序集、引擎 Editor 再一件，
+     业务运行时与业务编辑器各一件 ⇒ 8 个程序集落盘，`internal` 可见性与 Unity 一致
+     （既堵假红、也堵假绿）。
+     另一入口 `tools/probes/compile-check.ps1 -Engine` 是 `verify.ps1` 调用的**轻量口径**（Unity 自带
+     Roslyn、单进程多遍 csc、产物只留 %TEMP% 且不可复用；它同样逐 asmdef 编，只是不产出可分发的
+     程序集）—— 要全量/可复跑判据时用本族。
+
+     ── 为什么是「多工程」而不是一个 csproj 把所有源码 <Compile Include> 进来 ──────────
+     引擎 Runtime/ 下按 asmdef 分成 5 个程序集（Core/Data/Network/Resource/Presentation），
+     程序集边界决定 `internal` 可见性，两个方向的错都是真的：
+       · 假红：`Runtime/Core/Timer.cs` 是 `internal class CloverEngine.Timer`，Network 层裸写的
+         `Timer` 指的是 `System.Threading.Timer` ⇒ 合并成一个编译单元后同命名空间的类型胜出，
+         凭空 9 条 CS1061/CS1729（实测）。
+       · **假绿（更糟）**：跨程序集访问 `internal` 类型/成员，Unity 会拒、合并单元会放过
+         ⇒ 闸门绿而真实编译红。
+     所以按 asmdef 一比一拆成独立工程。同理，引擎 `Editor/**` 编成名为 `CloverEngine.Editor` 的
+     工程：Network/Presentation/Resource 的 `AssemblyInfo.cs` 里有
+     `InternalsVisibleTo("CloverEngine.Editor")`，只有程序集**名**对上，引擎编辑器工具才能看到那几个
+     internal —— Unity 里就是这个契约（`Editor/MapBake/MapBaker.cs` 用的是运行时域 internal 的
+     `CloverMapMarker`）。
+     ───────────────────────────────────────────────────────────────────────────── -->
+<Project>
+
+  <!-- Unity 编辑器托管 DLL 的路径解析（UNITY_EDITOR_ROOT / -p:UnityEditorVersion= / 默认值） -->
+  <Import Project="$(MSBuildThisFileDirectory)..\Directory.Build.props" />
+
+  <PropertyGroup>
+    <Cs16ProjectRoot>$(MSBuildThisFileDirectory)..\..\..\..\</Cs16ProjectRoot>
+    <Cs16ClientDir>$(Cs16ProjectRoot)client\</Cs16ClientDir>
+    <EngineRoot>$(MSBuildThisFileDirectory)..\..\..\..\..\clover-client-unity-engine\</EngineRoot>
+
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <InvariantGlobalization>true</InvariantGlobalization>
+
+    <!-- 只压掉“未使用的私有字段 / 未使用的事件”这四类**永不是错误**的告警。
+         ⛔ 不用它掩盖真错：CS02xx/CS01xx/CS10xx 等照常报出来。 -->
+    <NoWarn>CS0649;CS0169;CS0414;CS0067</NoWarn>
+
+    <!-- 与 Unity 编 Cs16 时的宏口径一致（源自 client/Cs16.csproj 的 DefineConstants）：
+         Windows 独立平台 + 编辑器脚本。`#if UNITY_EDITOR` 段与 Assets/Editor/** 只有定义了
+         UNITY_EDITOR 才参与编译，不定义 = 那部分源码静默不编 = 假绿。 -->
+    <DefineConstants>DEBUG;TRACE;UNITY_EDITOR;UNITY_EDITOR_64;UNITY_EDITOR_WIN;UNITY_64;PLATFORM_ARCH_64;UNITY_STANDALONE;UNITY_STANDALONE_WIN;PLATFORM_STANDALONE;PLATFORM_STANDALONE_WIN;UNITY_5_3_OR_NEWER;UNITY_6000_0_OR_NEWER;UNITY_6000_6;UNITY_6000_6_0</DefineConstants>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Unity 托管模块：`Data\Managed\UnityEngine\` 下同时有 UnityEngine.*Module.dll 与
+         UnityEditor.*Module.dll（未拆分前的 UnityEditor.dll 也在该目录）⇒ 一条通配覆盖
+         UnityEngine / UnityEngine.UI 的 EventSystems / UnityEditor 三方。 -->
+    <Reference Include="$(UnityEditorRoot)\Data\Managed\UnityEngine\*.dll" />
+    <!-- 包程序集不在 Managed 下，取 Unity 已编译出来的产物（与 d2 buildcheck / uicheck 同口径） -->
+    <Reference Include="$(Cs16ClientDir)Library\ScriptAssemblies\UnityEngine.UI.dll" />
+  </ItemGroup>
+
+</Project>

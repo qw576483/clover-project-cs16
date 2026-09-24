@@ -6,7 +6,7 @@ namespace Cs16.Core
     /// 武器定义（数值真源）。只读数据，运行时不得修改；
     /// 查询一律走 <see cref="CsWeapons.Get"/> / <see cref="CsWeapons.ByClass"/>。
     ///
-    /// <para><b>数值出处（逐条核对过 · agent-11）</b>：<see cref="Price"/> / <see cref="Magazine"/> /
+    /// <para><b>数值出处（逐条核对过）</b>：<see cref="Price"/> / <see cref="Magazine"/> /
     /// <see cref="ReserveAmmo"/> 三项全部来自原版 <c>mp.dll</c> 的 <c>WeaponInfo[]</c> ——
     /// 数组基址 <c>mp.dll:0x10f708</c>、步长 <c>0x20</c>，字段偏移 <c>iCost=+0x04</c>、
     /// <c>iMaxClip=+0x10</c>、<c>iMaxAmmo=+0x14</c>、<c>pszName=+0x1c</c>

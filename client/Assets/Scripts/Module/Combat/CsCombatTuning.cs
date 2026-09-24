@@ -19,7 +19,7 @@ namespace Cs16.Module.Combat
         // ==================================================================
         //  视角 / 鼠标
         // ==================================================================
-        /// <summary>俯仰角上限（度）。与 <c>CsActor.Pitch</c> 的 -89~89 约定、agent-03 的钳制口径一致。
+        /// <summary>俯仰角上限（度）。与 <c>CsActor.Pitch</c> 的 -89~89 约定、模拟侧的钳制口径一致。
         /// 出处：**本项目新增**（钳制值 ±89° 与 <c>CsActor.Pitch</c> / <c>CsMatchConst.PitchLimit</c> 同约定；
         /// 原版同一钳制在 GoldSrc 客户端视角侧，载体不在盘 ⇒ 不给 file:line）。</summary>
         public const float PitchLimit = 89f;
@@ -206,7 +206,7 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 弹痕贴片**整块画布**的世界尺寸（米）= 0.128 m（= 16 px × <see cref="DecalMetersPerPixel"/>）。
         ///
-        /// <para><b>2026-09-24 片FIX-4 线C 复核（用户第 4 次报「弹痕还是没有」）</b>——
+        /// <para><b>复核（用户报「弹痕还是没有」）</b>——
         /// 实测（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，读的就是进工程的同一批 PNG）：
         /// <c>fx_shot1..5</c> 是 16×16、RGB **纯黑 (0,0,0)**、alpha = 不透明度掩码，其中
         /// <b><c>alpha≥32</c> 只有 13~16 px / 256、<c>alpha≥160</c> 只有 2~4 px</b>

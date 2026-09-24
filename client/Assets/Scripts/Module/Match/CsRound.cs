@@ -120,11 +120,11 @@ namespace Cs16.Module.Match
         /// <summary>
         /// 开一个新的买枪窗口（每个回合开始时调用一次）。
         ///
-        /// <para><b>原版规则（本项目此前的实现缺失的那一半）</b>：买枪期与冻结期是**两个独立计时器** ——
+        /// <para><b>原版规则</b>：买枪期与冻结期是**两个独立计时器** ——
         /// 回合开始后 <c>mp_buytime</c> = <b>15 s</b> 内（出处 <c>server.cfg:42</c>；出厂默认 90 s ·
         /// <c>mp.dll:0x11b9a8</c>）、且身处 <c>func_buyzone</c>（T/CT 各一块）、且活着，才能买；
         /// 15 s 用尽即不能买。冻结期 <c>mp_freezetime</c> = 4 s（<c>server.cfg:51</c>）只是这 15 s 的前 4 秒。
-        /// 两者都不对：旧实现没有 15 s 上限）。</para>
+        /// 买枪窗口的判据是"15 s 内 + 在买枪区 + 活着"，与冻结期是否结束无关。</para>
         /// </summary>
         private void BeginBuyWindow()
         {

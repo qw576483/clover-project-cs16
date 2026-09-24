@@ -10,7 +10,7 @@ namespace Cs16.Module.Bot
     /// <summary>
     /// 一个机器人的大脑：<c>Idle → Patrol → Engage → (Plant | Defuse | Camp)</c>。
     ///
-    /// <para><b>职责边界（任务书 §2）</b>：本类**只决策**，产出 <see cref="CsBotIntent"/>；
+    /// <para><b>职责边界</b>：本类**只决策**，产出 <see cref="CsBotIntent"/>；
     /// 所以这里不调 <c>ICsMatch.SwitchWeapon</c>（那只作用于本地玩家），换枪走 <c>intent.SwitchTo</c>。</para>
     ///
     /// <para><b>意图契约（以 <c>CsTypes.cs</c> 注释为准）</b>：</para>
@@ -485,10 +485,9 @@ namespace Cs16.Module.Bot
             _planRoute = routeMarker;
             _nav.SetRoute(_map, routeMarker, self.Position);
 
-            //   旧行为 = `TryPickPoint(siteMarker)` 取**裸标记点**（只判"地图上有这个标记"），
-            //   而实测（.ai-tmp/test/br-hold-plant-log.tsv）该点可能落在"位图说可走、但从出生点
+            //   目标点**不能只判"地图上有这个标记"**：该点可能落在"位图说可走、但从出生点
             //   按抬腿 ≤ 0.45m 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
-            //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束（Minh 全程位移 0.00m）。
+            //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束（实测全程位移 0.00m）。
             //   口径与运行时同一份：BotNavigator.CanReach = SnapToWalkable + WalkableCellHeightAware + AStar。
             if (!string.IsNullOrEmpty(siteMarker) && TryPickGoalPoint(self, siteMarker, plan.GoalOrdinal, out var site))
             {
@@ -507,7 +506,7 @@ namespace Cs16.Module.Bot
             }
             else if (_nav.HasRoute)
             {
-                // 兜底：连可达终点都取不到 ⇒ 退回旧的"路线最后一点"（不许比旧行为更差），并留下数字
+                // 兜底：连可达终点都取不到 ⇒ 退回"路线最后一点"（不许比既有实现更差），并把数字打进日志
                 _goalPos = _nav.RouteEnd;
                 _goalValid = true;
                 Game.Logger.Warn(Tag,
@@ -533,6 +532,7 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
+        /// 在标记 <paramref name="marker"/> 的点里按槽位序号挑一个**走得到**的目标点。
         ///
         /// <para><b>为什么要"按序号"而不是"取最近"</b>：一个包点标记里有 6~9 个点，两个槽位（T 槽位 0 与 1）
         /// 都去同一个包点 —— 若各自"取离自己最近的点"，两只 bot 从相邻出生点出发会**取到同一个点**
@@ -543,7 +543,7 @@ namespace Cs16.Module.Bot
         /// <para><b>确定性序列</b> = 该标记的全部点先过滤 <c>CanStand</c>（与移动解算同口径），再按 (x, z) 排序
         /// —— 排序键与 <see cref="CsBotHoldSpots.Build"/> 完全一致（同一份口径，不另写一套）。
         /// 然后从第 <c>ordinal % count</c> 个起**向后找第一个走得到**的点（<see cref="BotNavigator.CanReach"/>）；
-        /// 一个都走不到时退化为旧的"最近的走得到的点"并打 Warn（不许比旧行为更差）。</para>
+        /// 一个都走不到时退化为"最近的走得到的点"并打 Warn（不许比既有实现更差）。</para>
         /// </summary>
         /// <returns>true = 目标点已落进 <paramref name="point"/>。</returns>
         private bool TryPickGoalPoint(CsActor self, string marker, int ordinal, out Vector3 point)
@@ -722,8 +722,8 @@ namespace Cs16.Module.Bot
 
         /// <summary>
         /// 消费导航报上来的"卡住"事件。连续卡住达到 <see cref="CsBotConst.StuckReplanStreak"/> 次就
-        /// **重新选目标** —— 旧行为只是"跳过当前路点 + 换向"，而路线走完后这两步都是空操作，
-        /// 于是机器人停在原地被反复判卡住（主 agent 实测日志：剩余路点 0，每 0.5s 一条）。
+        /// **重新选目标** —— 只"跳过当前路点 + 换向"在路线走完后这两步都是空操作，
+        /// 于是机器人停在原地被反复判卡住（实测日志：剩余路点 0，每 0.5s 一条）。
         /// </summary>
         private void HandleStuck(CsActor self, float now)
         {
@@ -759,7 +759,7 @@ namespace Cs16.Module.Bot
         /// <item><b>换一条路线</b>：同阵营的另一条路（T: A 路 / B 路 / 中路；CT: A 守 / B 守 / 中），
         /// 目标是该路配套的包点（拿不到包点标记时退化为该路终点）；</item>
         /// <item><b>去巡逻</b>：<see cref="CsMarkers.Patrol"/> 整条巡点路线（最近邻排序后逐个走）——
-        /// 对应任务书 §4.2 的"无敌人时在 Route_Patrol 里随机巡点"；</item>
+        /// 对应"无敌人时在 Route_Patrol 里随机巡点"；</item>
         /// <item><b>回本方出生点</b>：最坏情况也能回到有队友的地方，绝不原地空转。</item>
         /// </list>
         ///
@@ -807,24 +807,22 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// <c>(self.Id + _replanCount) % 3</c>。
+        /// 换目标：从**自己的槽位**起按 <c>(_planSlot + k) % 4</c> 轮转（k = 1,2,3）挑下一条路。
         ///
-        /// <para><b>旧行为的病灶</b>：只有 3 条路可选、且起点取 <c>(Id + replanCount) % 3</c> —— 4 只 bot
-        /// 必然有两只落在同一条路上（换目标之后同样"路线都是相同的"，正是用户看到的现象）。</para>
+        /// <para><b>为什么按槽位轮转</b>：若按 <c>(Id + replanCount) % 3</c> 之类取起点、且路只有 3 条，
+        /// 4 只 bot 必然有两只落在同一条路上（换目标之后"路线都一样"，正是用户看到的现象）。</para>
         ///
-        /// <para><b>新规则</b>：从**自己的槽位**起按 <c>(_planSlot + k) % 4</c> 轮转（k = 1,2,3）。
-        /// 因为每只 bot 的 <c>_planSlot</c> 互不相同，取 <c>k</c> 相同的两只 bot 得到的槽位也互不相同
-        /// ⇒ **每次换目标后，同队 4 只 bot 仍走 4 条不同的路、去 4 个不同的目标点**
-        /// （旧实现只保证"3 条路里挑一条"，撞车是必然；现在撞车需要两只 bot 的槽位相同，而那已被构造性排除）。</para>
+        /// <para>从槽位起轮转 ⇒ 每只 bot 的 <c>_planSlot</c> 互不相同，取 <c>k</c> 相同的两只 bot
+        /// 得到的槽位也互不相同 ⇒ **每次换目标后，同队 4 只 bot 仍走 4 条不同的路、去 4 个不同的目标点**
+        /// （撞车需要两只 bot 的槽位相同，而那已被构造性排除）。</para>
         ///
         /// <para>轮转时跳过**刚走完的那条路**（<c>_planRoute</c>）：槽位差 1 的平移天然换路，所以 k 从 1 起即可。</para>
         /// </summary>
         private bool TryRouteObjective(CsActor self, string reason, float now)
         {
             // 「路线家族」是同队的**共享资源**：计划表保证开局 4 只各占一格，轮转也必须遵守同一条互斥，
-            // 否则一只卡住的 bot 会轮转进队友正走着的路 —— 实机证据（本工程审计自己打出来的）：
-            //   11:39:30 [Warn] [Bot] 同队路线撞车：Cliffe(T/槽位3) 与 ZBot(T/槽位3) 都走 'Route_T_To_A'
-            // 两只当时**都活着**（Cliffe 同秒还在命中对手），即用户看到的"路线都一样"。
+            // 否则一只卡住的 bot 会轮转进队友正走着的路（日志形态：两只**都活着**的 bot 同时走同一条
+            // 'Route_T_*'，即用户看到的"路线都一样"）。
             var carrier = CsBotPlans.RoundCarrierOrdinal(_match.Actors, _match, self.Team, _match.RoundNumber);
             var taken = CsBotPlans.AliveSlotTable(_match.Actors, self.Team, carrier, _match.RoundNumber, null);
             var from = _planSlot >= 0 ? _planSlot : CsBotPlans.SlotOf(_ordinal, carrier);
@@ -850,7 +848,7 @@ namespace Cs16.Module.Bot
                     continue;
                 }
 
-                //   旧行为直接 `_nav.RouteEnd` / 裸包点标记点，实测这两者都可能是"可走但走不到"的格。
+                //   不直接用 `_nav.RouteEnd` / 裸包点标记点：这两者都可能是"可走但走不到"的格。
                 var goal = Vector3.zero;
                 var isSite = false;
 
@@ -965,8 +963,8 @@ namespace Cs16.Module.Bot
                 return false;
             }
 
-            //   旧行为里"换目标"可以直接跳进巡逻线 —— 于是槽位 2 的主人（本来就该走巡逻）与这只 bot
-            //   同时走 `Route_Patrol`，实机审计当场打出"同队路线撞车"（用户看到的就是这个）。
+            //   "换目标"不许直接跳进巡逻线：那会让槽位 2 的主人（本来就该走巡逻）与这只 bot
+            //   同时走 `Route_Patrol`（同队路线撞车，用户看到的就是这个）。
             //   活着的队友在走 ⇒ 不抢；死人的家族算空出来的（可以被接手）。
             if (_planRoute != CsMarkers.Patrol)
             {
@@ -987,7 +985,7 @@ namespace Cs16.Module.Bot
             // 近的优先（不再"专挑最远"）：门口那个走得到的巡点，比 80m 外走不到的那个有用。
             if (!TryPickReachable(self, pts, CsBotConst.MinPatrolDistance, false, out var goal))
             {
-                // 退化一层：去掉最小距离限制（回到旧口径）再问一次，并把"为什么退化"写进日志
+                // 退化一层：去掉最小距离限制再问一次（"最近的走得到的点"口径），并把"为什么退化"写进日志
                 if (!TryPickReachable(self, pts, 0f, false, out goal))
                 {
                     RateWarn("replan.patrol.unreachable",
@@ -1037,17 +1035,19 @@ namespace Cs16.Module.Bot
                 $"守点时长={ObjectiveHoldSeconds():F1}s（第 {_replanCount} 次换目标）");
         }
 
-        //   它把 3 条路按 `slot` 0/1/2 映射（slot 2 = 中路、其余 = 两个包点），是"每队必有一对 bot 同路同点"
-        //   的直接来源（T: 槽位 0 与 1 都落主攻路；CT 由 `idx % 3` 使槽位 0 与 3 同路）。
-        //   现在路线/目标一律由 `CsBotPlans.For(team, slot, round)` 这张**4 槽位表**给（含巡逻线，4 条路互不相同），
-        //   换目标走 `TryRouteObjective` 的槽位轮转。需要改路线选择时改 `CsBotPlans`，不要在这里复活三分支映射。
+        //   路线/目标一律由 `CsBotPlans.For(team, slot, round)` 这张**4 槽位表**给（含巡逻线，4 条路互不相同），
+        //   换目标走 `TryRouteObjective` 的槽位轮转。按 `slot` 0/1/2 映射到 3 条路（slot 2 = 中路、
+        //   其余 = 两个包点）就是"每队必有一对 bot 同路同点"的直接来源（T: 槽位 0 与 1 都落主攻路；
+        //   CT 由 `idx % 3` 使槽位 0 与 3 同路）。
+        //   需要改路线选择时改 `CsBotPlans`，不要在这里复活三分支映射。
 
         /// <summary>
+        /// 在候选点里挑第一个**走得到**的点（判据见下）。
         ///
-        /// <para><b>为什么必须有这一层（本片根因①②③的统一修复）</b>：旧口径只有"可走"两档
-        /// （<see cref="ICsMap.WalkableAt"/> / <see cref="ICsMap.CanStand"/>），而"可走"与"走得到"是两件事 ——
-        /// 就等于"挑了一个求不出路径的点去追"，而 <c>EnsurePath</c> 失败后只会退化成直线走 ⇒ 顶着墙卡死
-        /// （Minh 全程 net 位移 0.00m、换目标 70 次全由 stuck-escalate 触发）。</para>
+        /// <para><b>为什么必须有这一层</b>：只判"可走"（<see cref="ICsMap.WalkableAt"/> /
+        /// <see cref="ICsMap.CanStand"/>）不够 —— "可走"与"走得到"是两件事，只判前者就等于"挑了一个
+        /// 求不出路径的点去追"，而 <c>EnsurePath</c> 失败后只会退化成直线走 ⇒ 顶着墙卡死
+        /// （实测：全程 net 位移 0.00m、换目标 70 次全由 stuck-escalate 触发）。</para>
         ///
         /// <para><b>判据同源</b>：可达性只走 <see cref="BotNavigator.CanReach"/>（= 同一份
         /// <c>SnapToWalkable</c> + <c>WalkableCellHeightAware</c> + 引擎 <c>AStar.Find</c>），
@@ -1108,7 +1108,7 @@ namespace Cs16.Module.Bot
                 0f, true, out point);
 
         /// <summary>取"离 <paramref name="from"/> 最远且可走"的一个标记点（<paramref name="minDistance"/> 以内的不要）。
-        /// 为什么要可走：目标点本身在墙里 = 永远走不到 —— 旧行为会顶着墙把卡住日志刷到天荒地老。
+        /// 为什么要可走：目标点本身在墙里 = 永远走不到 —— 顶着墙只会把卡住日志刷到天荒地老。
         /// </summary>
         private bool TryPickFarthestWalkable(Vector3[] pts, Vector3 from, float minDistance, out Vector3 point)
         {
@@ -1820,8 +1820,8 @@ namespace Cs16.Module.Bot
             if (self.HasBomb)
             {
                 //   （与 CsBomb.IsInBombsite 同口径，见 NearestBombsitePoint 注释）。
-                //   旧行为用"到本轮计划目标点"的距离 + 用 SiteRadius 当**停步半径** ⇒
-                //      机器人正好停在判定球面上，CanPlant 的 IsInBombsite 随浮点误差真假 ⇒ 表现为"到了又走了"。
+                //   停步半径不能取 SiteRadius（= 判定半径）：那会让机器人正好停在判定球面上，
+                //      CanPlant 的 IsInBombsite 随浮点误差真假 ⇒ 表现为"到了又走了"。
                 var near = NearestBombsitePoint(self.Position, out var zoneDist, out var zoneName);
 
                 if (zoneDist <= CsBotConst.SiteRadius)
@@ -1987,10 +1987,9 @@ namespace Cs16.Module.Bot
 
             var radius = _goalIsSite ? CsBotConst.SiteRadius : CsBotConst.DefaultObjectiveRadius;
 
-            //   旧行为：`Arrived(self, _goalPos, SiteRadius)` 不成立就永远走不到 `Camp`，
-            //   耦合在一起：目标点是包点里的**一个标记点**，站不到它 ≠ 没进包点。
-            //   `CsBomb.IsInBombsite` 同口径）；"到了没有"只作用于**当前守位**（在 Camp 里按
-            //   CampSpotArriveRadius 判，且不阻塞换位计时）。
+            //   不要把"到没到包点"与"站没站上那个标记点"耦合在一起：目标点是包点里的**一个标记点**，
+            //   站不到它 ≠ 没进包点（判据用 `CsBomb.IsInBombsite` 同口径）；
+            //   "到了没有"只作用于**当前守位**（在 Camp 里按 CampSpotArriveRadius 判，且不阻塞换位计时）。
             if (_goalIsSite && self.Team == CsTeam.CT && _holdSpots.Count >= 2 &&
                 InsideHoldSite(self, out var siteNow) && siteNow == _holdSiteMarker)
             {
@@ -2034,9 +2033,9 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            //   关键差别：这里**不会**走下面的 ③"守够时间就换目标" ——
-            //   守卫整回合留在自己这个包点，只是在包点内的 2~3 个守位之间轮换。
-            //   （旧行为 = 守 ObjectiveHoldSeconds（2.5~4.8s）就换路线/去巡逻/回出生点 ⇒ 用户报的"原地踱步、警不去守点"。）
+            //   这里**不会**走下面的 ③"守够时间就换目标" ——
+            //   守卫整回合留在自己这个包点，只是在包点内的 2~3 个守位之间轮换
+            //   （守 ObjectiveHoldSeconds（2.5~4.8s）就换路线/去巡逻/回出生点会退化成"原地踱步、警不去守点"）。
             if (HoldSiteActive(self))
             {
                 if (_holdSwapAt <= 0f) _holdSwapAt = now + CsBotConst.HoldSwapSeconds;   // 到达才起算换位计时

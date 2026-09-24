@@ -13,7 +13,7 @@ namespace Cs16.UI
     ///
     /// <para><b>数值回显的诚实边界</b>：<c>CsHudSnapshot</c> 里没有机器人数量 / 当前难度
     /// （看它的字段清单），所以本面板**不编数字**：显示的是本面板刚发出的操作回执，
-    /// 并把"真实数量要看控制台日志；需要主 agent 在快照里补 BotCount / BotDifficulty"直接写在界面上。
+    /// 并把"真实数量要看控制台日志；快照里还没有 BotCount / BotDifficulty"直接写在界面上。
     /// 快照补上之后，只需改 <see cref="RefreshEcho"/> 那两行。</para>
     ///
     /// <para><b>换图</b>：本工程只有 de_dust2。点箭头**不发 <c>Events.SwitchMap</c>** ——

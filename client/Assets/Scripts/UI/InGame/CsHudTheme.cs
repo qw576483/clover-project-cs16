@@ -133,20 +133,19 @@ namespace Cs16.UI
         /// <summary>
         /// 雷达边长 = <b>128 px</b>（参考分辨率 1920×1080，1:1 绘制）。
         ///
-        /// <para><b>取值与出处（本片定案，替换旧值 200）</b>：原版 <c>sprites/hud.txt:183</c>
+        /// <para><b>取值与出处</b>：原版 <c>sprites/hud.txt:183</c>
         /// 的行是 <c>radar 640 radar640 0 0 128 128</c> —— 名字 <c>radar</c>、**分辨率档 `640`**、
         /// 精灵 <c>radar640</c>、源矩形 <c>0 0 128 128</c>。<c>hud.txt</c> 的"分辨率档"列就是
         /// GoldSrc 选精灵表的判据（屏幕宽 &gt; 640 就用 `640` 那一档），所以 1920×1080 下用的仍是
         /// <c>radar640.spr</c> 的 <b>原始 128×128</b> 像素。</para>
         ///
-        /// <para><b>"要不要按分辨率放大"= 有实测判据（本片复核）</b>：同一批原版 1920×1080 截图里
+        /// <para><b>"要不要按分辨率放大"= 有实测判据</b>：同一批原版 1920×1080 截图里
         /// 秒表元素的 ink 实测 <b>23×25</b>（<c>策划/验收表.md</c> H15 / 对照表 U-34；
         /// 载体重测口径见 <c>CsHudTheme</c> 秒表一节），而 <c>hud.txt:127</c> 给它的源矩形是
-        /// <b>24×24</b> ⇒ **640 档精灵在 1080p 上就是 1:1、不按屏幕缩放**。旧注释说
-        /// "divider(2×40→实测2×67) 与 stopwatch 互相矛盾、反推不出比率" —— 那条 <c>divider</c>
-        /// 指的不是 <c>hud.txt</c> 的 <c>divider</c>（那把是血量/护甲之间的分隔符，不在右上角），
-        /// 右上角那条 <b>2×67</b> 竖线是另一个元素（对照表 U-35，色 <c>(96,58,2)</c>，
-        /// 与 hud.txt 的 <c>divider</c> 无关）⇒ 矛盾是拿错元素比出来的，1:1 这条主张成立。</para>
+        /// <b>24×24</b> ⇒ **640 档精灵在 1080p 上就是 1:1、不按屏幕缩放**。
+        /// 右上角那条 <b>2×67</b> 竖线**不是** <c>hud.txt</c> 的 <c>divider</c>
+        /// （那把是血量/护甲之间的分隔符，不在右上角），而是另一个元素（对照表 U-35，色 <c>(96,58,2)</c>）
+        /// —— 拿它去反推缩放比率会得出与 stopwatch 矛盾的结果。</para>
         ///
         /// <para>因此雷达边长 = <b>128</b>（原版源矩形的原生像素，不换算）。
         /// 对照表 U-06 的"差 +72"、验收表差异 #14 随之消除。</para>
@@ -256,7 +255,7 @@ namespace Cs16.UI
         public static readonly Color RadarBomb = new Color32(0xFF, 0x38, 0x28, 0xFF);
 
         // 点尺寸（px）。**本项目取值**（原版点尺寸写在 client.dll / overview bmp 里，本机不可证）；
-        // 按 128 px 雷达的可读性给，比例与原实现一致（自己 &gt; 队友 &gt; 观察者）。
+        // 按 128 px 雷达的可读性给，比例 = 自己 &gt; 队友 &gt; 观察者。
         /// <summary>自己那一颗的边长（px）。</summary>
         public const float RadarSelfDotPx = 7f;
         /// <summary>队友/敌人那一颗的边长（px）。</summary>
@@ -409,8 +408,7 @@ namespace Cs16.UI
         /// 与原版"加法混合叠在场景上"的**贡献值线性相等**。</para>
         ///
         /// <para><b>不许把 alpha 写成二值</b>（索引&gt;0 就不透明）：那会把图标圆盘内部的
-        /// 低索引像素画成一块**实心暗块**，而原版那些像素几乎不加任何颜色 ⇒ 肉眼一眼就不一样
-        /// （本片离线并排图实测过，见回报）。</para>
+        /// 低索引像素画成一块**实心暗块**，而原版那些像素几乎不加任何颜色 ⇒ 肉眼一眼就不一样。</para>
         ///
         /// <para><b>出处（5 张暗背景截图实测，逐张一致）</b>：
         /// ① 峰值像素在 5 张里都是 <c>(175,175,48)</c>（cs_paintball / de_okna / fy_quake_night /
@@ -560,18 +558,16 @@ namespace Cs16.UI
         /// <summary>
         /// HUD 输入框（控制台用）的外观 = 引擎 <see cref="UIFactory.CreateInputField"/> 的**最后一个参数**。
         ///
-        /// <para><b>本文件不再自建输入框</b>：构造全部在引擎（`Runtime/Presentation/UIWidgetControls.cs`）
-        /// —— 含"用 <c>DefaultControls.CreateInputField</c>"与"<c>placeholder</c> 是 <c>Graphic</c>、
-        /// 必须 <c>as Text</c> 才能设字体 / 字号 / 文案"这两条实测坑的说明。这里只留 HUD 的取值：
+        /// <para><b>输入框的构造全在引擎</b>（`Runtime/Presentation/UIWidgetControls.cs`）——
+        /// 含"用 <c>DefaultControls.CreateInputField</c>"与"<c>placeholder</c> 是 <c>Graphic</c>、
+        /// 必须 <c>as Text</c> 才能设字体 / 字号 / 文案"这两条说明。这里只留 HUD 的取值：
         /// 底色用菜单同一支 <see cref="CsUiStyle.Field"/>（HUD 输入框压在暗底上，与菜单同色才不跳），
         /// 文本用 HUD 主体色 <see cref="TextHud"/>、20 号；占位 18 号、60% 灰。</para>
         ///
-        /// <para><b>旧注释勘误</b>：本文件曾写"<c>CsUiStyle.CreateInputField</c> 当前编译不过"——
-        /// 该结论**不成立**。真实原因是 uGUI <c>InputField.placeholder</c> 的声明类型为 <c>Graphic</c>
-        /// （<c>com.unity.ugui .../Runtime/UGUI/UI/Core/InputField.cs</c> 的 <c>public Graphic placeholder</c>），
-        /// 对它直接取 <c>.font / .fontSize / .text</c> 会 **CS1061**，必须先 <c>as Text</c>；
-        /// 而 <c>CsUiStyle.CreateInputField</c> 里早就有那一行（`CsUiStyle.cs` 的 placeholder 段），
-        /// 现按 78 个源文件整体离线编译通过（EXITCODE=0）可证。两处"互指对方有坑"的注释本片已一并订正。</para>
+        /// <para><b><c>placeholder</c> 必须先 <c>as Text</c></b>：uGUI <c>InputField.placeholder</c> 的
+        /// 声明类型是 <c>Graphic</c>（<c>com.unity.ugui .../Runtime/UGUI/UI/Core/InputField.cs</c> 的
+        /// <c>public Graphic placeholder</c>），对它直接取 <c>.font / .fontSize / .text</c> 会 **CS1061**；
+        /// <c>CsUiStyle.CreateInputField</c> 的 placeholder 段已有那一行。</para>
         /// </summary>
         public static WidgetInputFieldStyle InputFieldStyle => new WidgetInputFieldStyle
         {

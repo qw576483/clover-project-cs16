@@ -21,7 +21,7 @@ namespace Cs16.EditorTools
     /// 名字写错的表现是"面板打不开且只有一行 Error 日志"，所以这里的名字全部用
     /// <c>nameof</c> 取，不写字符串字面量。</para>
     ///
-    /// <para><b>与 agent-01 的 FlowSetup 的关系</b>：两者互不重叠（他做 Boot/MainMenu/...8 个流程面板，
+    /// <para><b>与 <c>FlowSetup</c> 的关系</b>：两者互不重叠（它做 Boot/MainMenu/...8 个流程面板，
     /// 本脚本只做游戏内 8 个），都往同一个 <c>Assets/Resources/UI/</c> 目录写，但各自只碰自己的文件。</para>
     ///
     /// <para>菜单：<b>Clover/CS16/生成游戏内面板</b>；只读自检：<b>Clover/CS16/校验游戏内面板（只读）</b>。</para>

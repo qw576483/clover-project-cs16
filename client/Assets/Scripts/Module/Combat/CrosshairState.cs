@@ -8,7 +8,7 @@ namespace Cs16.Module.Combat
     /// 准星扩散状态（0~1），由"移动 / 离地 / 连射"驱动，**扩张快、回缩慢**。
     ///
     /// <para>数值由 <see cref="CombatModule"/> 每帧写进 <c>CsHudSnapshot.CrosshairSpread</c>
-    /// （契约规定该字段归 Module/Combat 写），HUD（agent-06）只读。</para>
+    /// （契约规定该字段归 Module/Combat 写），HUD 只读。</para>
     ///
     /// <para><b>为什么不用真实射线夹角</b>：HUD 上的准星是 2D 的，"两线间距"只要单调、跟手、可读即可；
     /// 真正的散布角由 <see cref="Firearm.ComputeSpread"/> 按度算（两者量纲不同、都在各自的地方用）。</para>

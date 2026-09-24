@@ -65,7 +65,7 @@ namespace Cs16.Module.Match
         /// 为 <c>sv_maxvelocity 3500</c>（<c>listenserver.cfg:27</c> 同值）⇒ <c>3500 units/s × 0.0254</c>
         /// = <b>88.9 m/s</b>（与 <c>CsConst.Gravity</c> / <c>JumpSpeed</c> 同一套 units→m 换算）。</para>
         ///
-        /// <para><b>口径说明（重要）</b>：任务书 §1.2 指出的出处是 <c>原版资源/解包产物/原版数值表.md</c>
+        /// <para><b>口径说明（重要）</b>：出处是 <c>原版资源/解包产物/原版数值表.md</c>
         /// 故按"参考物已有的一律解析搬运"取**随包 server.cfg**，与 `策划/对照表.md` N-10~N-13 的口径一致。</para>
         ///
         /// <para>注意它比既有的 <see cref="CsConst.MaxFallSpeed"/>（-30 m/s）**宽松**，所以实际生效的上限

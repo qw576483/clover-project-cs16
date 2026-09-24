@@ -13,7 +13,7 @@ namespace Cs16.UI
     /// 它只负责 <c>Game.UI.Open&lt;T&gt;()</c>，具体面板自己处理自己的按键与关闭 ——
     /// 常驻面板做路由、临时面板管自己，避免"每个面板都去猜别人开没开"。</para>
     ///
-    /// <para><b>数据来源</b>：全部来自 <see cref="CsHudSnapshot"/>（agent-03/04 每帧写）+
+    /// <para><b>数据来源</b>：全部来自 <see cref="CsHudSnapshot"/>（模拟侧每帧写）+
     /// <c>Game.Event</c> 事件。**本目录下没有任何对 Module 层的 using** —— 这是分层铁律
     /// （验收自检命令就是拿 Module 的命名空间去 grep 本目录，注释里也不留该字面量，免得自检出现假命中）。</para>
     ///
@@ -275,7 +275,7 @@ namespace Cs16.UI
         /// <para><b>为什么单独抽出来、并在 <see cref="OnOpen"/> 里再调一次</b>：HudPanel 的运行期布局来自
         /// **序列化的预制体**（<c>Resources/UI/HudPanel.prefab</c>，由 <c>Assets/Editor/UiGenInGame/UiBuilder</c>
         /// 调 <see cref="BuildLayout"/> 生成；<c>CsPanelBase.Awake</c> 见预制体已有子节点就跳过 BuildLayout）。
-        /// 没重跑时实机也已经是本片对齐后的结果。</para>
+        /// 即使没重跑生成器，实机布局也已经是这里对齐后的结果。</para>
         /// </summary>
         private void ApplyScoreBlock()
         {
@@ -977,7 +977,7 @@ namespace Cs16.UI
 
             if (input.GetKeyDown(GameKey.Slash) || input.GetKeyDown(GameKey.Num0))
             {
-                // GameKey 里没有 BackQuote（`）—— 契约缺口，主 agent 已知。
+                // GameKey 里没有 BackQuote（`）—— 契约缺口（引擎键盘枚举未提供该键）。
                 // 这里同时接受 `/` 与 `0`：前者是 CS 里的控制台键位习惯，后者在没有 `/` 的键盘上是兜底。
                 if (!Game.UI.IsOpen<ConsolePanel>())
                 {

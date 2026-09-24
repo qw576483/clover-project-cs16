@@ -11,9 +11,9 @@ using UnityEngine;
 namespace Cs16.Module.Combat
 {
     /// <summary>
+    /// 第一人称操作与射击的自检（由 Editor 菜单调起）。
     ///
-    /// <para><b>为什么不放在 <c>Assets/Editor/</c></b>：agent-04 的产出路径只有
-    /// 由主 agent 用一个两行的 Editor 包装调起：</para>
+    /// <para><b>为什么不放在 <c>Assets/Editor/</c></b>：本类由一段两行的 Editor 包装调起：</para>
     /// <code>
     /// using UnityEditor;
     /// namespace Cs16.EditorTools
@@ -194,7 +194,7 @@ namespace Cs16.Module.Combat
                 var yaw = cases[i].x;
                 var pitch = cases[i].y;
 
-                var aim = CameraMath.AimDirection(yaw, pitch);   // 引擎件（E-core-18 下沉；口径与原实现逐字一致）
+                var aim = CameraMath.AimDirection(yaw, pitch);   // 引擎件（口径与既有实现同口径）
                 // 相机实际用的是 Quaternion.Euler(-pitch, yaw, 0)（Unity 的 X 轴正方向与"抬头"相反）
                 var camForward = Quaternion.Euler(-pitch, yaw, 0f) * Vector3.forward;
                 var diff = Vector3.Angle(aim, camForward);
@@ -421,8 +421,8 @@ namespace Cs16.Module.Combat
                 var reloadEnd = local.ReloadEndTime;
                 Assert(reloadEnd > simTime, $"RequestReload 没有进入换弹状态（ReloadEndTime={reloadEnd:F2}）");
 
-                // ---- 差异 #72：换弹边沿 = 单调序号 ReloadSeq，不是「ReloadEndTime 前推」 ----
-                // 为什么在同一段里断言：旧口径（比截止时间戳）只能在**换弹进行中那个时间窗**里被看见，
+                // ---- 换弹边沿 = 单调序号 ReloadSeq，不是「ReloadEndTime 前推」 ----
+                // 为什么在同一段里断言：比截止时间戳只能在**换弹进行中那个时间窗**里被看见，
                 // 视图一旦漏采样（掉帧 / 切局 / 视图模块暂停）就**永久丢**这一次；序号是**黏的** ——
                 // 迟到的采样照样看得到。所以"每次成功换弹 ⇒ 序号 +1"必须是硬不变式。
                 var seqAfterRequest = local.ReloadSeq;

@@ -8,7 +8,7 @@ namespace Cs16.Module.Combat
     /// <summary>
     /// 手雷投掷的**视觉飞行体**。
     ///
-    /// <para><b>分工</b>（这是与 agent-03 的关键约定）：手雷的飞行、引信、爆炸伤害**全部在比赛模拟里**
+    /// <para><b>分工</b>（这是与比赛模拟的关键约定）：手雷的飞行、引信、爆炸伤害**全部在比赛模拟里**
     /// （<c>CsInventory.ThrowGrenade / TickProjectiles / Detonate</c> 已实现），本类**不做任何伤害结算**，
     /// 只按**同一套常量**（<see cref="CsConst.GrenadeThrowForce"/> / <see cref="CsConst.Gravity"/> /
     /// <see cref="CsConst.GrenadeFuse"/>）积分出一个"看得见的手雷"，让玩家能看见它飞、落在哪。</para>

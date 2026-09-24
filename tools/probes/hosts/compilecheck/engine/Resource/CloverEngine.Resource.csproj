@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- 引擎 `CloverEngine.Resource` 程序集（映射 Runtime/Resource/CloverEngine.Resource.asmdef；references: Core） -->
+
+  <PropertyGroup>
+    <AssemblyName>CloverEngine.Resource</AssemblyName>
+    <RootNamespace>CloverEngine</RootNamespace>
+    <OutputType>Library</OutputType>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="$(EngineRoot)Runtime\Resource\**\*.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Core\CloverEngine.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,35 @@
+<!-- ─────────────────────────────────────────────────────────────────────────────
+     tools/probes/hosts/Directory.Build.props
+     本目录下所有离线自检宿主共用：解析「Unity 编辑器 → 托管 DLL」的位置。
+
+     为什么要它：把
+       C:\Program Files\Unity\Hub\Editor\<版本>\Editor\Data\Managed\UnityEngine\*.dll
+     写死在每个 *.csproj 的 <HintPath> 里 ⇒ 换机器 / 换盘 / 换编辑器小版本，
+     `dotnet build` 直接找不到 DLL。
+
+     覆盖方式（按优先级）：
+       1) 环境变量  UNITY_EDITOR_ROOT  = <你的编辑器目录>，例如 <盘符>:\Unity\Hub\Editor\<版本>\Editor
+       2) 命令行    -p:UnityEditorVersion=<版本>  或  -p:UnityHubRoot=<Hub\Editor 目录>
+       3) 默认      $(ProgramFiles)\Unity\Hub\Editor\6000.6.0f1\Editor
+     ───────────────────────────────────────────────────────────────────────────── -->
+<Project>
+
+  <PropertyGroup>
+    <UnityEditorVersion Condition="'$(UnityEditorVersion)' == ''">6000.6.0f1</UnityEditorVersion>
+
+    <UnityHubRoot Condition="'$(UnityHubRoot)' == '' and '$(UNITY_HUB_ROOT)' != ''">$(UNITY_HUB_ROOT)</UnityHubRoot>
+    <UnityHubRoot Condition="'$(UnityHubRoot)' == ''">$(ProgramFiles)\Unity\Hub\Editor</UnityHubRoot>
+
+    <UnityEditorRoot Condition="'$(UnityEditorRoot)' == '' and '$(UNITY_EDITOR_ROOT)' != ''">$(UNITY_EDITOR_ROOT)</UnityEditorRoot>
+    <UnityEditorRoot Condition="'$(UnityEditorRoot)' == ''">$(UnityHubRoot)\$(UnityEditorVersion)\Editor</UnityEditorRoot>
+
+    <UnityManagedDir>$(UnityEditorRoot)\Data\Managed</UnityManagedDir>
+  </PropertyGroup>
+
+  <!-- 路径不对时给一句人话，而不是让 MSBuild 报一堆 "could not be resolved" -->
+  <Target Name="CloverCheckUnityEditorRoot" BeforeTargets="ResolveAssemblyReferences"
+          Condition="!Exists('$(UnityManagedDir)\UnityEngine\UnityEngine.CoreModule.dll')">
+    <Error Text="找不到 Unity 托管 DLL：$(UnityManagedDir)\UnityEngine\UnityEngine.CoreModule.dll。请设环境变量 UNITY_EDITOR_ROOT 指向你的 Unity 编辑器目录（例 [盘符]:\Unity\Hub\Editor\[版本]\Editor），或加 -p:UnityEditorVersion=[版本]。" />
+  </Target>
+
+</Project>

@@ -3,7 +3,7 @@ namespace Cs16.Core
     /// <summary>
     /// 全局玩法常量（数值真源）。改数值一律改这里，禁止在业务脚本里写裸数字。
     ///
-    /// <para><b>口径（主 agent 已定，见 <c>策划/对照表.md</c> §5.2）</b>：一律取
+    /// <para><b>口径（见 <c>策划/对照表.md</c> §5.2）</b>：一律取
     /// **随包 <c>server.cfg</c> 的覆盖值**（= 玩家实际生效值，出处
     /// <c>原版资源/cs16src/cs16game/app/cstrike/server.cfg</c>）；<c>mp.dll</c> 里的**出厂默认**作为第二口径
     /// 同时登记在对照表里、**不混用**。</para>
@@ -147,7 +147,7 @@ namespace Cs16.Core
         ///
         /// <para><b>不许把这个 90 直接赋给 Unity 的 <c>Camera.fieldOfView</c></b>：Unity 那个字段是**垂直** FOV。
         /// 这就是用户报的"相机鱼泡眼 / 胳膊太长"。正确做法 = 逐帧按当前宽高比换算，
-        /// 见 <see cref="CloverEngine.CameraMath.FovYFromFovX"/>（E-core-18 已下沉为引擎件）。</para>
+        /// 见 <see cref="CloverEngine.CameraMath.FovYFromFovX"/>（引擎件）。</para>
         /// </summary>
         public const float DefaultFov = 90f;
 

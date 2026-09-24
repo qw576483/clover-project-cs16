@@ -133,9 +133,8 @@ namespace Cs16.Module.Map
         /// 失败**不阻断**地图加载（地图仍可玩），但一定打 Error：
         /// 标记缺失的表现是"机器人不动、下包无效"，不打日志就永远查不出来。
         ///
-        /// <para>本类**不再自己解析**任何标记表：旧实现读
-        /// <c>Resources/MapData/de_dust2_markers.bytes</c> 文本旁路（每行 <c>标记名 x y z</c>，
-        /// 标记点与位图同行装在同一份 <c>.bytes</c> 里（同一份空间事实只有一份载体）。</para>
+        /// <para>本类不自己解析标记表：引擎侧 <c>Map.cs</c> 已把标记解析好，标记点与位图装在同一份
+        /// <c>.bytes</c> 里（同一份空间事实只有一份载体）。</para>
         ///
         /// <para>本方法只做两件事：① 把引擎的 <c>IReadOnlyList&lt;MapPoint&gt;</c> 按名字拷进本地数组索引
         /// （<see cref="Points"/> 在 bot 决策热路径上，避免每次 <c>ToArray</c> 分配）；
@@ -368,7 +367,7 @@ namespace Cs16.Module.Map
         /// 以 <see cref="CsConst.PlayerRadius"/> 为半径的胶囊，覆盖身高带
         /// <c>[pos.y + GroundCheckDistance, pos.y + StandHeight]</c>；与任何世界几何重叠 ⇒ 判**挡**。
         ///
-        /// <para><b>为什么单根向下射线挡不住这种形态</b>（= 本片修的洞）：
+        /// <para><b>为什么单根向下射线挡不住这种形态</b>：
         /// <see cref="BodyHeightClearAt"/> 的射线起点固定在 <c>feetY + StandHeight + BodyProbeLift</c>，
         /// 人**站在实心块柱的足迹内**（脚面低于块顶）时，起点落在块**内部**；而 PhysX 默认
         /// <c>Physics.queriesHitBackfaces = false</c> ⇒ "从实体内部朝外"的射线不给交点 ⇒
@@ -430,24 +429,22 @@ namespace Cs16.Module.Map
                 return to;
             }
 
-            // 旧写法 = `if (!CanStand(from)) return WalkableAt(to) ? to : from;`
-            // 【实测后果（逐帧 dump：tools/probes/move-stuck.cs 的 `.ai-tmp/test/move-drive-*`）】
-            //   B 通台阶（中门 → B，底 (-10.500,-2.824,31.500) 走向顶）走到
-            //   (-10.979,-2.021,36.646) 之后：`canStand(from)=false` 而 `WalkableAt(to)=false`
-            //   ⇒ 每帧都返回 `from`；`StepActorPhysics` 见"要的位移没拿到"就把该轴速度清 0
-            //   ⇒ **位移恒 0、速度恒 0、按什么键都不动**（实测 f=51..399 连续 349 帧，跳一下也一样）。
-            //   同一形态在匪家扶手车道 x=-41.5 上 dt=0.05 时复现（停滞 67..399 / 241..399）。
+            // `if (!CanStand(from)) return WalkableAt(to) ? to : from;` 这种早退在
+            //   "canStand(from)=false 且 WalkableAt(to)=false"时会每帧都返回 `from`，
+            //   而 `StepActorPhysics` 见"要的位移没拿到"就把该轴速度清 0
+            //   ⇒ **位移恒 0、速度恒 0、按什么键都不动**（逐帧 dump 实测：f=51..399 连续 349 帧，
+            //   跳一下也一样；匪家扶手车道 x=-41.5 上 dt=0.05 时同样停 67..399 / 241..399）。
             // 【为什么 `CanStand(from)` 会是 false 而人明明站在地面上】
             //   `CanStand` 是**半径采样**（中心 + 8 向，`PlayerRadius`=0.36m）：
             //   `BitmapClear`（位图 9 点）或几何分支只要有一个偏移点被拒就整点判 false。
             //   站在台阶/扶手**旁边**时，偏移点落在"顶面比脚面高 0.12~0.45 m"的那一列上 ⇒
-            //   位图那一列判挡（单层 2D 位图，差异 #64/#76），几何分支的 `BodyHeightClearAt`
+            //   位图那一列判挡（单层 2D 位图），几何分支的 `BodyHeightClearAt`
             //   又用 `GroundCheckDistance`(0.12) 当"算不算脚面"的容差 ⇒ 把它读成"身高带里有实体"。
-            //   ⇒ 人**站得好好的却"这一格不能站"**，于是走进旧的那句"原地不动"。
+            //   ⇒ 人**站得好好的却"这一格不能站"**，于是走进"原地不动"那条路。
             //   —— 这正是原版 `PM_WalkMove` 的行为：站位不完美时照走，靠滑墙/台阶把身体解出来。
-            //   不再"能直接到目标就跳过去"之前的那种**无几何复核**放行：目标格仍必须过
-            //     `CanStand` 或 `TryStepUp`（后者带台阶高差 / 陡坡 / 膝盖射线 / 体积四道闸门）。
-            //   只有"一步都挪不动"时才退回旧口径（且只在目标格位图可走时直接过去）——
+            //   所以放行必须带几何复核：目标格仍必须过 `CanStand` 或 `TryStepUp`
+            //     （后者带台阶高差 / 陡坡 / 膝盖射线 / 体积四道闸门）。
+            //   只有"一步都挪不动"时才退回这句早退（且只在目标格位图可走时直接过去）——
             //     那是真的被墙夹住，此时**不许**凭空穿墙。
             if (!CanStand(from, radius))
             {
@@ -537,15 +534,16 @@ namespace Cs16.Module.Map
             if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ) return false;
             if (hasGround && point.y - from.y > CsConst.StepUpHeight) return false;
 
-            // 旧写法第一行是 `if (!WalkableAt(target.x, target.z)) return false;` ——
-            // 而位图是**单层 2D**（一格一位、没有高度，差异 #64/#76）：楼梯踏步 / 扶手 / 台沿
+            // 位图是**单层 2D**（一格一位、没有高度）：楼梯踏步 / 扶手 / 台沿
             // 这些"侧面挡人、顶面能站"的几何在位图里**只有"挡"一个答案**。
-            // ⇒ 旧写法把"迈上台阶 / 走上扶手顶面"整条路掐掉，而调用方 `AxisPassable` 只有
+            // 所以 `WalkableAt(target)` 为 false 时**不能直接判 false** —— 那会把
+            //   "迈上台阶 / 走上扶手顶面"整条路掐掉，而调用方 `AxisPassable` 只有
             //   `CanStand || TryStepUp` 两条路 ⇒ 两条都假 ⇒ 该轴被钳住、速度被清 0 ⇒ 卡死。
+            // 下面这些全部满足才放行：
             //   ① 该列必须探得到地面（`hasGround`）—— 没地面（虚空/墙外）一律不许进；
             //   ② 落点地面必须**不比脚下低**（低了就交给位图管：位图说挡就是挡，不许从边沿掉下去）；
             //   ③ 高差 ≤ `CsConst.StepUpHeight`、法线 ≥ `MaxStandableSlopeNormalZ`（上面两条已判）；
-            //   ⑤ 膝盖高度朝落点的射线通畅（下面一行，原口径不变）。
+            //   ⑤ 膝盖高度朝落点的射线通畅（下面一行）。
             //   ⇒ 0.9 m 台沿 / 高墙照旧过不去（②③⑤ 挡），0.3 m 台阶、0.3 m 扶手能迈上去。
             if (!WalkableAt(target.x, target.z))
             {
@@ -603,11 +601,10 @@ namespace Cs16.Module.Map
         /// 落进 <c>TagManager</c>、由 <c>Dust2Builder</c> 标到 <c>Level/**</c>、由 <c>ActorView</c> 把角色标到
         /// <c>CsPlayer</c>/<c>CsBot</c>。
         ///
-        /// <para><b>层名解析失败 ⇒ 一定报 Error，绝不静默</b>：这条路径曾经的实测后果是
-        /// <c>NameToLayer("CsWorld") = -1</c> ⇒ 掩码退化成全层 ⇒ 贴地射线命中**角色自己的命中盒** ⇒
-        /// 命中点跟着角色一起上移 ⇒ actor 的 y 每 0.05s 被抬一次（实测 -3 → 500+）。
-        /// 现在即便退化也把层名与 <c>NameToLayer</c> 的返回值打进 Error，
-        /// 并把"命中盒会被当地面"这句后果写进日志。</para>
+        /// <para><b>层名解析失败 ⇒ 一定报 Error，绝不静默</b>：<c>NameToLayer("CsWorld") = -1</c> 会让
+        /// 掩码退化成全层 ⇒ 贴地射线命中**角色自己的命中盒** ⇒ 命中点跟着角色一起上移 ⇒
+        /// actor 的 y 每 0.05s 被抬一次（实测 -3 → 500+）。所以退化时把层名与 <c>NameToLayer</c>
+        /// 的返回值打进 Error，并把"命中盒会被当地面"这句后果写进日志。</para>
         /// </summary>
         private int GroundMask()
         {

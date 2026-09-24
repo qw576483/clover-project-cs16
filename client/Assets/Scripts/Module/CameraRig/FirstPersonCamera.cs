@@ -223,12 +223,12 @@ namespace Cs16.Module.CameraRig
                 {
                     EyeAnchor = _eyeAnchor,
                     // 整点眼位平滑会让机位在**水平方向**落后于玩家（锚点随玩家移动）⇒ 置 0：
-                    // 本组件只平滑"眼高"这一个标量（见 _eyeHeight 的那段注释），行为与原实现逐字一致。
+                    // 本组件只平滑"眼高"这一个标量（见 _eyeHeight 的那段注释），与既有实现行为一致。
                     EyeSmoothTau = 0f,
                     PitchLimit = CsCombatTuning.PitchLimit,
                     RecoilRiseTau = CsCombatTuning.RecoilRiseTau,
                     RecoilFallTau = CsCombatTuning.RecoilFallTau,
-                    // 原实现的摇晃三轴同幅（pitch/yaw/roll 各取 Range(-k,k)）⇒ 横滚比例 1。
+                    // 摇晃三轴同幅（pitch/yaw/roll 各取 Range(-k,k)）⇒ 横滚比例 1。
                     ShakeRollScale = 1f,
                     // 随机器**注入**（引擎禁用全局静态随机器）：走项目唯一的随机入口，按用途分一条独立子流。
                     ShakeRng = CsRng.Stream(CsRngStream.CameraShake),
@@ -272,7 +272,7 @@ namespace Cs16.Module.CameraRig
             _shakeMagnitude = Mathf.Clamp01(damage / CsCombatTuning.DamageShakeFullDamage);
             // 摇晃**委托给引擎 rig**：幅度 = 满幅 × 归一化伤害、时长取项目常数；随机方向由注入的
             // Rng 抽一次（`AddShake` 的内部机制：一次方向 + 幅度线性衰减到 0）。
-            // 出处对照：引擎 CloverFirstPersonCamera.AddShake 的注释逐条对应原实现 :341-349 的三轴随机。
+            // 出处对照：引擎 CloverFirstPersonCamera.AddShake 的注释逐条对应原版 :341-349 的三轴随机。
             var accepted = _rig != null &&
                            _rig.AddShake(CsCombatTuning.DamageShakeMaxDeg * _shakeMagnitude,
                                          CsCombatTuning.DamageShakeDuration);
@@ -383,7 +383,7 @@ namespace Cs16.Module.CameraRig
 
             // ---- 眼高（站/蹲与台阶做平滑；瞬移直接吸附）----
             // 只平滑"眼高"这一个标量：引擎 rig 的 EyeSmoothTau 是**整点**平滑，会让机位在水平方向
-            // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（行为与原实现逐字一致）。
+            // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（与既有实现行为一致）。
             var eyeTarget = target.EyeHeight;
             if (!_hasLastPosition || Vector3.Distance(target.Position, _lastActorPosition) > CsCombatTuning.TeleportSnapDistance)
             {
@@ -398,7 +398,7 @@ namespace Cs16.Module.CameraRig
             _hasLastPosition = true;
 
             // 眼位锚点搬到目标脚下，"脚 → 眼"的高度交给 rig 的 EyeOffset ⇒
-            // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与原实现等价）。
+            // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与既有实现等价）。
             _eyeAnchor.position = target.Position;
             _rig.EyeOffset = new Vector3(0f, _eyeHeight, 0f);
 
@@ -636,14 +636,14 @@ namespace Cs16.Module.CameraRig
         /// 这条分支在 <see cref="HideOwnBody"/> 开头就 return 掉了。</item>
         /// </list>
         ///
-        /// <para>依据契约：角色的模型由 agent-07 生成，并在受击体上挂 <see cref="CsHitboxProxy"/> +
+        /// <para>依据契约：角色的模型由视图生成器生成，并在受击体上挂 <see cref="CsHitboxProxy"/> +
         /// <c>ActorId</c>。这里把 <c>ActorId == 目标</c> 的那些受击体节点（含子节点）的 <c>Renderer</c>
         /// 关掉 —— 只影响这一个 actor，队友/敌人的模型照常显示。</para>
         ///
         /// <para>本方法由 1 秒一次的自检调用（兜住"角色视图被重建"这类情况）；
         /// <b>切换观战目标的即时还原</b>在 <see cref="PrepareView"/> 里做（相机换目标的同一帧）。</para>
         ///
-        /// <para>若你（agent-07）做的是"独立的第一人称手臂模型"，它不带 <c>CsHitboxProxy</c>，
+        /// <para>若做的是"独立的第一人称手臂模型"，它不带 <c>CsHitboxProxy</c>，
         /// 因此不会被这里关掉。</para>
         /// </summary>
         private void HideOwnBody()
@@ -826,13 +826,13 @@ namespace Cs16.Module.CameraRig
         }
 
         // ==================================================================
-        //  数学（已下沉为引擎件）
+        //  数学（引擎件）
         // ==================================================================
         //   · `FovYFromFovX`：水平 → 垂直 FOV（原版 `CalcFov` 的等价式，出处
         //     `HLSDK/cl_dll/view.cpp:1737-1752`；越界回退 90、`aspect<=0` 原样返回）；
         //   · `AimDirection`：yaw/pitch（度）→ 单位方向向量（yaw 0 = +Z、pitch + = 抬头）；
-        //   · `Follow`：指数平滑跟随。原 `FollowRecoil` 只是"按 `|target| > |current|` 在上升/回落
-        //     **合并成一条 `Follow`**，挑 tau 那一步内联在 `PrepareView` 的后坐力分支里。
+        //   · `Follow`：指数平滑跟随 —— 上升/回落按 `|target| > |current|` 选 tau，两者合并成一条，
+        //     挑 tau 那一步内联在 `PrepareView` 的后坐力分支里。
         // 本组件不许再留同名 `private static` 副本 —— 判据：全项目搜
         //    `FovYFromFovX|ComputeAimDirection|FollowRecoil`，命中只应出现在 `CameraMath.Xxx(...)` 调用处。
     }

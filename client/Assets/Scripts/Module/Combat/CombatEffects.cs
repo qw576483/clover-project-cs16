@@ -9,23 +9,22 @@ namespace Cs16.Module.Combat
     /// <summary>
     /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
     ///
-    /// <para><b>2026-09-24 补（片 FX-MUZZLE，差异 #89）</b>：用户复查「枪口火焰没有效果」。
+    /// <para><b>2026-09-24 补（差异 #89）</b>：用户复查「枪口火焰没有效果」。
     ///    （视模型动画后包围盒 z 到 0.705）⇒ 被近端枪身几何深度盖掉；
     /// 现在：落点走 <see cref="CsCombatTuning.MuzzleOffsetForward"/> 等三个**相机局部系**分量，
     /// 尺寸走 <see cref="SpriteScaleForMeters"/>，并按武器选贴图（B51/M249 → 十字形
-    /// <see cref="ResPaths.FxMuzzleFlashCross"/>）。判据资产 = <c>tools/probes/probe-muzzleflash.cs</c>
-    /// + <c>.ai-tmp/drivers/bz-muzzle.sh</c>。</para>
+    /// <see cref="ResPaths.FxMuzzleFlashCross"/>）。判据资产 = <c>tools/probes/probe-muzzleflash.cs</c>。</para>
     ///
-    /// <para><b>2026-09-23 补（片 FX-ALL，差异 #69 + #74）</b>：
+    /// <para><b>2026-09-23 补（差异 #69 + #74）</b>：
     /// ① **弹痕从 1 张变 5 张**（原版 `decals.wad` 的 `{shot1..5`，5 张全解出、每次命中随机取一，
     /// 见 <see cref="PickBulletHole"/>）；
     /// ② **新增血迹**（<see cref="BloodImpact"/>）：子弹命中角色时"命中点出血雾 + 在后面的面上贴
     /// `{blood1..6` 血迹贴花"，载体与名表出处写在该方法自己的注释里。
     /// 两张新族都由 `tools/probes/wad3-extract.py` 从**已在盘**的 `decals.wad` 解出
-    /// （落盘台账：`.ai-tmp/test/fx-decal-variants.tsv`）⇒ 不是程序化替身。</para>
+    /// （逐张落盘比对过）⇒ 不是程序化替身。</para>
     ///
     /// <para><b>2026-09-20 修正（用户报"开枪有黄色球 / 墙上没有弹痕"）</b>：
-    /// 上一版枪口火焰是 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
+    /// 枪口火焰不能用 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
     /// （原版是一张 <c>sprites/muzzleflash*.spr</c> 星形亮斑）；而且**完全没有弹痕**（原版打在墙上会留
     /// <c>decals.wad</c> 的 <c>{shot*</c> 弹痕）。现在：</para>
     /// <list type="bullet">
@@ -221,7 +220,7 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 把一张贴片放大到「世界上 <paramref name="meters"/> 米宽」所需的 <c>localScale</c>。
         ///
-        /// <para><b>为什么不能直接写 <c>Vector3.one * meters</c>（片FX-ALL 2026-09-23 实测的坑）</b>：
+        /// <para><b>为什么不能直接写 <c>Vector3.one * meters</c>（实测的坑）</b>：
         /// <c>localScale</c> 是**倍率**，不是米 —— 一张贴片"天生"多宽由它自己的导入 PPU
         /// （<c>spritePixelsToUnits</c>）决定。本工程的 <c>Resources/UI/Art/fx_*.png</c> 是 Unity
         /// 自动导入的默认值 <b>PPU=100</b>，所以 16x16 的弹痕天生只有 0.16 世界单位宽；那一行
@@ -244,15 +243,15 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 贴一个"面朝向"的四元数时要用的**参考上向**。
         ///
-        /// <para><b>为什么不能恒定用 <c>Vector3.up</c>（片FX-ALL 2026-09-23 实测）</b>：
+        /// <para><b>为什么不能恒定用 <c>Vector3.up</c>（实测）</b>：
         /// <c>Quaternion.LookRotation(forward, up)</c> 要求 <c>up</c> 与 <c>forward</c> **不平行**。
         /// 命中**地面**时法线就是 (0,1,0)，<c>-normal</c> 与 <c>Vector3.up</c> 正好反向 ⇒
         /// 该四元数**退化**，Unity 只能保留一个非法旋转（"面向下 + 上向朝上"）⇒ 贴片**立起来**，
         /// 正对相机看就是一条线。表现上又是"没有弹痕"。
         /// 地板命中改用一个与法线不平行的参考上向（前向），四元数就良定义了。</para>
         ///
-        /// <para>三处贴片（弹痕 / 火星 / 血迹）都必须走这里 —— 只修一处等于把同一个坑
-        /// 挪到另外两处等着复发（本片就是这么又捞出来两处的）。</para>
+        /// <para>三处贴片（弹痕 / 火星 / 血迹）都必须走这里 —— 只覆盖一处等于把同一个坑
+        /// 挪到另外两处等着复发。</para>
         /// </summary>
         private static Vector3 SurfaceUp(Vector3 normal)
         {

@@ -9,7 +9,7 @@ namespace Cs16.Module.Player
     /// <summary>
     /// 第一人称的**输入采集与视角**：鼠标转视角（yaw / pitch）、WASD / Shift / Ctrl / Space 意图采集。
     ///
-    /// <para><b>它不移动任何人</b>：按主 agent 的裁决，本地玩家的位移由比赛模拟（agent-03）解算
+    /// <para><b>它不移动任何人</b>：本地玩家的位移由比赛模拟解算
     /// （<see cref="ICsMatch.SetLocalInput(in CsInputState)"/> → 内部 <c>ICsMap.ResolveMove</c>）。
     /// 本组件的唯一出口就是"把 <see cref="CsInputState"/> 填好"，因此不需要、也不允许写
     /// <c>CsActor.Position</c> —— 位置一律从 <c>_match.LocalPlayer.Position</c> 读。</para>
@@ -27,8 +27,8 @@ namespace Cs16.Module.Player
         private ICsMatch _match;
 
         // ---- 视角 ----
-        // 鼠标位移 → yaw/pitch 的累加 = **引擎件** <see cref="LookAccumulator"/>（E-core-18 下沉）：
-        // 符号方向 / 夹紧口径 / 灵敏度口径（"每 count 多少度"、不乘 dt）**逐字照搬**本组件原实现
+        // 鼠标位移 → yaw/pitch 的累加 = **引擎件** <see cref="LookAccumulator"/>：
+        // 符号方向 / 夹紧口径 / 灵敏度口径（"每 count 多少度"、不乘 dt）与既有实现同口径
         private readonly LookAccumulator _look = new LookAccumulator();
 
         // ---- 设置 ----
@@ -66,7 +66,7 @@ namespace Cs16.Module.Player
         internal void ForceLook(float yaw, float pitch)
         {
             // 夹紧口径留在调用点（引擎件的 Reset 只做 yaw 的 360° 规范化，见 LookAccumulator 注释）；
-            // 数值与原实现逐字一致：Mathf.Repeat(yaw, 360f) + Mathf.Clamp(pitch, ±PitchLimit)。
+            // 数值口径与既有实现一致：Mathf.Repeat(yaw, 360f) + Mathf.Clamp(pitch, ±PitchLimit)。
             _look.Reset(yaw, Mathf.Clamp(pitch, -CsCombatTuning.PitchLimit, CsCombatTuning.PitchLimit));
         }
 
@@ -138,7 +138,7 @@ namespace Cs16.Module.Player
             }
 
             var delta = input.MouseDelta;
-            if (delta.sqrMagnitude <= 0f) return;   // 位移为零本就不该动视角（与原实现同一道提前返回）
+            if (delta.sqrMagnitude <= 0f) return;   // 位移为零本就不该动视角（与既有实现同一道提前返回）
 
             // 灵敏度口径 = **每 count 多少度**（设置值 × 玩法换算系数），不乘 dt（鼠标位移本身就是增量）。
             var degPerCount = _sensitivity * CsCombatTuning.DegreesPerMouseCount;
