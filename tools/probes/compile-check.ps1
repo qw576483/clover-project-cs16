@@ -23,7 +23,12 @@ $ErrorActionPreference = 'Stop'
 # `<项目根>\clover-project-cs16\client\Cs16.csproj`（2026-09-23 实测）。
 $projRoot = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 $client   = Join-Path $projRoot 'client'
-$tmp      = Join-Path $projRoot '.ai-tmp\test'
+# 编译中间产物（*.rsp / Check*.dll）⛔ 不写进 .ai-tmp：verify.ps1 第 43 项（tmp-budget）把
+# <项目根>/.ai-tmp 下的**每个文件**都算进预算、且看到 bin/obj/*-bak-* 目录直接 FAIL，而本脚本
+# 每运行一次就重建 4 个产物（compile.rsp / compile-editor.rsp / Check.dll / CheckEditor.dll）
+# ⇒ 一律写系统临时目录（与 GOCACHE/GOPATH/node_modules 归位系统默认是同一条规则，skill §3.5）。
+$cacheDir = Join-Path $env:TEMP 'cs16-ccheck'
+if (-not (Test-Path -LiteralPath $cacheDir)) { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null }
 
 # ---- Unity 自带 Roslyn 的自动发现（⛔ 不绑定具体 Unity / SDK 版本）----
 # 原先这里写死 `...\Hub\Editor\6000.6.0f1\...\sdk\8.0.318\...\csc.dll`：换一台机器 / 换个编辑器小版本
@@ -88,8 +93,8 @@ $defs = [regex]::Match($csproj, '<DefineConstants>([^<]+)</DefineConstants>').Gr
 # Unity's Editor assembly (that is a separate assembly compiled with UNITY_EDITOR): the previous
 # version appended the Editor sources to this runtime compile, which is neither contract and is
 # why a broken Editor script could pass.  Use -Editor for the Editor assembly.
-$rsp = Join-Path $tmp 'compile.rsp'
-$out = Join-Path $tmp 'Check.dll'
+$rsp = Join-Path $cacheDir 'compile.rsp'
+$out = Join-Path $cacheDir 'Check.dll'
 if ($Editor -ne '') {
     $srcRoot = $EditorDir
     if (($srcRoot -eq '') -or (-not (Test-Path -LiteralPath $srcRoot))) { $srcRoot = Join-Path $client 'Assets\Editor' }
@@ -103,8 +108,8 @@ if ($Editor -ne '') {
         ForEach-Object { $_.FullName })
     $refs = @($refs | Sort-Object -Unique)
     $defs = ($defs + ';UNITY_EDITOR').Trim(';')
-    $rsp = Join-Path $tmp 'compile-editor.rsp'
-    $out = Join-Path $tmp 'CheckEditor.dll'
+    $rsp = Join-Path $cacheDir 'compile-editor.rsp'
+    $out = Join-Path $cacheDir 'CheckEditor.dll'
 } else {
     $sources = @(Get-ChildItem (Join-Path $client 'Assets\Scripts') -Recurse -Filter *.cs |
         ForEach-Object { $_.FullName })

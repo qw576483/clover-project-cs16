@@ -48,11 +48,36 @@ This is ASSERTED below for every miptex lump -- it is the self-proof that the pa
 instead of an unchecked constant.  (Q: could the layout be [mips][pad][count][palette]?  No:
 then u16@e3 would be 0, but it is 256 in every lump.)
 
-Masked textures
----------------
-A decal name that starts with `{` is a *masked* texture in GoldSrc; palette index 255 is the
-transparent colour (the engine solves the draw with alpha test for `{` names).  Matches the
-convention already used by `spr-extract.py` for index 255.
+Decals vs masked textures  (READ BEFORE TRUSTING THE ALPHA)
+----------------------------------------------------------
+Every lump in `decals.wad` carries a `{` prefix, but a *decal* `{` texture is NOT the same
+thing as a *masked* `{` texture (railings / ladders, where palette index 255 is the
+see-through colour).  The decal convention is:
+
+  * the image is a **grayscale opacity mask** -- a DARK `palette[index]` means "more opaque",
+    WHITE means "transparent" (the palette ramps black<->white; "palette index == opacity");
+  * `palette[255]` is the **base colour of the whole decal** (bullet holes = black, blood =
+    dark red, yellow blood = ochre) and it **must not appear in the pixel data**;
+  * the background is index 0 == pure white == opacity 0, i.e. exactly "white == invisible".
+
+Provenance (three independent sources, mutually consistent):
+  * TWHL wiki `Texture` -- "{ (decal) textures uses palette index #255 (last index) as base
+    colour of the whole decal, which are otherwise monochromatic.  The colour index #255 must
+    not be used in the image itself.";  and `Tutorial: Decals: All You Need To Know` -- "the
+    palette runs from black to white defining the opacity, except the last index defines the
+    base colour ... what matters is the palette index == opacity".
+  * robmikh, "Finished bullet holes" (a GoldSrc re-implementation dev log) -- "Each pixel is
+    really a grayscale pixel ... The last color in the palette is the real color that should
+    be used for the decal."
+  * GameBanana, "Creating your own decals" -- "the darker parts will be more solid than the
+    lighter parts (White = invisible)."
+Carrier self-consistency, ASSERTED for every `{` lump below: index 255 never occurs in the
+pixels, and the corner/background index maps to opacity 0.
+
+The pre-2026-09-24 revision mapped decals with the *masked-texture* rule instead (every
+non-background texel -> alpha 255, RGB taken from its own palette entry).  That turns the
+WHITE end of the opacity ramp into **opaque white ink**; the user-visible symptom was the
+bullet mark rendering as a white blob -- "弹痕还是一个白点" (difference #69, 2026-09-24).
 
 Usage
 -----
@@ -131,52 +156,61 @@ def parse_miptex(raw, lump):
                 mip_sizes=mip_sizes, pal_ofs=pal_ofs, palette=palette, base=off)
 
 
-def masked_bg_index(src, w, h, name):
-    """Which palette index is the transparent one for a masked (`{`) texture?
+def _opacity(pal, idx):
+    """Opacity of one palette index = how DARK it is (255 = white = transparent).
 
-    ⛔ Do NOT assume a constant.  An earlier revision hard-coded 255 "to match
-    spr-extract.py" -- a pure analogy, and WRONG for this carrier: measured on
-    `decals.wad`, `{shot1` / `{blood1` / `{bigshot1` contain **zero** pixels of
-    index 255 while their background is index 0 (palette entry (255,255,255))
-    covering the whole border.  With the old rule those decals exported as fully
-    OPAQUE WHITE squares (read back: fx_shot1 alpha min=max=255, 256/256
-    non-zero; fx_blood1 2304/2304), i.e. "a bullet mark" was a white patch.
+    The 0..254 ramp of every `decals.wad` lump measured here is strictly descending
+    (palette[0] == (255,255,255), palette[254] == (1,1,1) or (0,0,0)), so the value equals the
+    index; computing it from the palette keeps the rule correct if a ramp is ever flipped.
+    """
+    return 255 - max(pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2])
 
-    So the index is measured from the data and self-checked:
-      1. all four corner pixels must agree;
-      2. that index must be the single most frequent one (a background dominates);
-      3. it must be 0 or 255 (anything else means this is not the family we expect).
+
+def decal_base_colour(src, w, h, pal, name):
+    """Self-check the decal convention and return `palette[255]` (the base colour).
+
+    Hard identities (this is the proof the parse is right, not an unchecked constant):
+      1. all four corner pixels agree (one flat background);
+      2. that background index is pure white -> opacity 0 ("white == invisible");
+      3. palette index 255 does not occur in the pixel data (it is the base colour).
     """
     corners = [src[0], src[w - 1], src[(h - 1) * w], src[w * h - 1]]
     if len(set(corners)) != 1:
-        raise ValueError("lump %r: masked corners disagree %r" % (name, corners))
-    idx = corners[0]
-    if idx not in (0, 255):
-        raise ValueError("lump %r: masked background index %d is neither 0 nor 255" % (name, idx))
-    counts = {}
-    for v in src:
-        counts[v] = counts.get(v, 0) + 1
-    top = max(counts.items(), key=lambda kv: kv[1])[0]
-    if top != idx:
-        raise ValueError("lump %r: corner index %d is not the most frequent (%d)"
-                         % (name, idx, top))
-    return idx
+        raise ValueError("lump %r: decal corners disagree %r" % (name, corners))
+    bg = corners[0]
+    if _opacity(pal, bg) != 0:
+        raise ValueError("lump %r: background index %d is not pure white (opacity %d != 0): %r"
+                         % (name, bg, _opacity(pal, bg), tuple(pal[bg * 3:bg * 3 + 3])))
+    if 255 in src:
+        raise ValueError("lump %r: palette index 255 is the base colour and must not occur "
+                         "in the pixel data, but it does" % (name,))
+    return (pal[255 * 3], pal[255 * 3 + 1], pal[255 * 3 + 2])
 
 
 def mip0_rgba(raw, mi):
-    """mip0 -> RGBA bytes. For a masked (`{`) texture the background index -> alpha 0;
-    which index that is comes from <see cref="masked_bg_index"/>, never from a constant."""
+    """mip0 -> RGBA, under the GoldSrc `decals.wad` convention (see the module docstring):
+
+      RGB   = palette[255]        (the single base colour of the whole decal)
+      alpha = 255 - palette[idx]  (darkness; the pure-white background lands on 0)
+    """
     w, h = mi["width"], mi["height"]
     src = raw[mi["base"] + mi["offsets"][0]: mi["base"] + mi["offsets"][0] + w * h]
-    masked = mi["name"].startswith("{")
     pal = mi["palette"]
-    bg = masked_bg_index(src, w, h, mi["name"]) if masked else -1
     out = bytearray(w * h * 4)
+    if mi["name"].startswith("{"):
+        br, bg, bb = decal_base_colour(src, w, h, pal, mi["name"])
+        for i, idx in enumerate(src):
+            out[i * 4 + 0] = br
+            out[i * 4 + 1] = bg
+            out[i * 4 + 2] = bb
+            out[i * 4 + 3] = _opacity(pal, idx)
+        return bytes(out)
+    # Not a `{` lump (decals.wad has none): fall back to plain per-index RGB, fully opaque.
     for i, idx in enumerate(src):
         out[i * 4 + 0] = pal[idx * 3 + 0]
         out[i * 4 + 1] = pal[idx * 3 + 1]
         out[i * 4 + 2] = pal[idx * 3 + 2]
-        out[i * 4 + 3] = 0 if (masked and idx == bg) else 255
+        out[i * 4 + 3] = 255
     return bytes(out)
 
 

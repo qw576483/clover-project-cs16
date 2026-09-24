@@ -38,6 +38,15 @@ namespace Cs16.Module.View
         /// <summary>本模块的执行顺序（见类注释；必须晚于 <c>PlayerModule</c> 的 -200）。</summary>
         public const int ExecutionOrder = -100;
 
+        // ---- 引擎对象池（Game.Pool）的分组名：仅作标签（ClearGroup 用），三样对象各一组便于排查 ----
+
+        /// <summary>角色视图实例的池分组。</summary>
+        private const string PoolGroupActorViews = "cs16.actorview";
+        /// <summary>头顶名牌实例的池分组。</summary>
+        private const string PoolGroupNameplates = "cs16.nameplate";
+        /// <summary>世界掉落武器视图的池分组。</summary>
+        private const string PoolGroupDrops = "cs16.dropview";
+
         private readonly CsModuleLog _log = new CsModuleLog(Tag);
 
         /// <summary>actorId → 视图。</summary>
@@ -47,6 +56,13 @@ namespace Cs16.Module.View
 
         /// <summary>已加载的预制体（含"加载中"的占位，避免同一路径重复发起加载）。</summary>
         private readonly Dictionary<string, GameObject> _prefabs = new Dictionary<string, GameObject>(16);
+
+        /// <summary>世界掉落武器视图（差异 #75）：数据对象 → 场景实例。键用**数据对象本身**（引用唯一）。</summary>
+        private readonly Dictionary<CsDroppedWeapon, CsDroppedWeaponView> _dropViews =
+            new Dictionary<CsDroppedWeapon, CsDroppedWeaponView>(16);
+
+        /// <summary>回收掉落视图时的临时列表（避免遍历时改字典）。</summary>
+        private readonly List<CsDroppedWeapon> _dropScratch = new List<CsDroppedWeapon>(16);
         private readonly HashSet<string> _pending = new HashSet<string>();
         private readonly HashSet<string> _missing = new HashSet<string>();
 
@@ -62,8 +78,6 @@ namespace Cs16.Module.View
 
         /// <summary>射线只被**世界几何**遮挡（排除角色层，否则目标自己就把视线挡了）。</summary>
         private int _worldOnlyMask;
-
-        private GameObject _nameplatePrefab;
 
         /// <summary>上一帧的观战目标 id（0 = 没在观战）——用于只在"目标真的换了"时留一条日志。</summary>
         private long _lastSpectateTargetId;
@@ -103,8 +117,9 @@ namespace Cs16.Module.View
             Object.DontDestroyOnLoad(rootGo);
             _root = rootGo.transform;
 
-            // 名牌预制体：异步加载，加载好之前视图照常显示（只是没有头顶牌子）。
-            LoadPrefab(CsViewTuning.NameplatePath, go => _nameplatePrefab = go);
+            // 名牌预制体：先异步加载进缓存（加载好之前视图照常显示，只是没有头顶牌子）。
+            // 实例化在 AttachNameplate 里走引擎对象池，按 CsViewTuning.NameplatePath 这个 key 取。
+            LoadPrefab(CsViewTuning.NameplatePath, null);
 
             _ready = true;
             _log.Always($"视图模块就绪：角色模型 Art/{{T|CT}}/player，武器视图 viewmodel_*，名牌 {CsViewTuning.NameplatePath}");
@@ -139,18 +154,117 @@ namespace Cs16.Module.View
                 {
                     _log.Always("比赛未运行：回收全部角色视图与武器视图（保持主菜单干净）");
                     ClearViews();
+                    ClearDropViews();
                 }
             }
 
             if (!running) return;
 
             SyncViews();
+            SyncDroppedWeapons();
         }
 
         private string DescribeLocal()
         {
             var l = _match.LocalPlayer;
             return l == null ? "<null>" : $"{l.Name}(id={l.Id}, {l.Team})";
+        }
+
+        // ==================================================================
+        //  掉落武器视图同步（差异 #75）
+        // ==================================================================
+        /// <summary>
+        /// 让场景里的"地上的枪"与 <c>CsMatch.DroppedWeapons</c> 对齐：
+        /// 列表里有而场景没有 ⇒ 造；场景有而列表里没有（被拾取时 CsMatch 会立刻摘掉它）⇒ 销毁。
+        /// </summary>
+        private void SyncDroppedWeapons()
+        {
+            var dropped = _match.DroppedWeapons;
+            if (dropped == null)
+            {
+                ClearDropViews();
+                return;
+            }
+
+            // 回收：数据已不在列表里。
+            _dropScratch.Clear();
+            foreach (var kv in _dropViews)
+            {
+                var still = false;
+                for (var i = 0; i < dropped.Count; i++)
+                {
+                    if (ReferenceEquals(dropped[i], kv.Key)) { still = true; break; }
+                }
+                if (!still) _dropScratch.Add(kv.Key);
+            }
+            for (var i = 0; i < _dropScratch.Count; i++) DestroyDropView(_dropScratch[i]);
+
+            // 新建：列表里有、场景还没有的。
+            for (var i = 0; i < dropped.Count; i++)
+            {
+                var d = dropped[i];
+                if (d.Consumed || _dropViews.ContainsKey(d)) continue;
+                EnsureDropView(d);
+            }
+        }
+
+        private void EnsureDropView(CsDroppedWeapon d)
+        {
+            var folder = d.Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
+            var path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + d.WeaponId;
+            if (!_prefabs.TryGetValue(path, out var prefab) || prefab == null)
+            {
+                // 首次走到这里时可能还在异步加载：发起一次，下一帧自动补上（与 EnsureView 同款）。
+                LoadPrefab(path, null);
+                return;
+            }
+
+            // 实例化走**引擎对象池**（改前是裸 Object.Instantiate）：掉落物是"一局里反复出现、又被拾取"的短命物，
+            // 正是池的用途；它的生命周期终点也是池（Game.Pool.Despawn，见 DestroyDropView / ClearDropViews）。
+            // 存在性仍由 _prefabs 缓存把关（上面刚判过），池只负责"造 / 复用"。
+            // ⛔ 不许在这里直接 Destroy —— 池里会留下已销毁的引用，下次 Spawn 把它发给业务。
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），掉落武器视图无法生成");
+                return;
+            }
+            var go = pool.Spawn(path, _root, PoolGroupDrops);
+            if (go == null)
+            {
+                // 池自己已记 Error（预制体找不到 / 工厂返回 null）：这里补一条业务语义的留痕
+                _log.Warn("dropview.spawnfail", $"掉落武器视图生成失败（对象池返回 null）：{path}");
+                return;
+            }
+            go.name = "DroppedWeapon_" + d.WeaponId;
+            go.transform.localScale = Vector3.one * CsViewTuning.ViewModelScale;
+
+            // 世界物件绝不能参与射线（与 ViewModelRig 同款：生成器没加，这里再兜一层）。
+            var cols = go.GetComponentsInChildren<Collider>(true);
+            for (var i = 0; i < cols.Length; i++) Object.Destroy(cols[i]);
+
+            var view = go.AddComponent<CsDroppedWeaponView>();
+            view.Bind(d);
+            _dropViews[d] = view;
+
+            _log.Info("dropview.create",
+                $"{d.WeaponId} 的世界视图已生成（位置 ({d.Position.x:F2}, {d.Position.y:F2}, {d.Position.z:F2})，模型={path}）");
+        }
+
+        private void DestroyDropView(CsDroppedWeapon d)
+        {
+            if (!_dropViews.TryGetValue(d, out var view)) return;
+            _dropViews.Remove(d);
+            // 生命周期终点 = 归还对象池（⛔ 不是 Destroy：Destroy 会让池里留下已销毁引用）
+            if (view != null) Game.Pool.Despawn(view.gameObject);
+        }
+
+        private void ClearDropViews()
+        {
+            if (_dropViews.Count == 0) return;
+            foreach (var kv in _dropViews) if (kv.Value != null) Game.Pool.Despawn(kv.Value.gameObject);
+            _dropViews.Clear();
+            _log.Always("掉落武器视图已全部回收（差异 #75）");
         }
 
         // ==================================================================
@@ -310,17 +424,37 @@ namespace Cs16.Module.View
                 return null;
             }
 
-            var go = Object.Instantiate(prefab, _root);
+            // 实例化走**引擎对象池**（改前是裸 Object.Instantiate）：同一路径的实例在局间复用，
+            // 生命周期终点 = Game.Pool.Despawn（见 RemoveView / ClearViews）——⛔ 不许直接 Destroy，
+            // 否则池里留下已销毁引用，下一次 Spawn 会把它发给业务。
+            // 存在性仍由 _prefabs 缓存把关（上面刚判过）：池只负责"造 / 复用"，不负责"要不要造"。
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），角色视图无法生成");
+                return null;
+            }
+            var go = pool.Spawn(path, _root, PoolGroupActorViews);
+            if (go == null)
+            {
+                // 池自己已记 Error（预制体找不到 / 工厂返回 null）：这里补一条业务语义的留痕
+                _log.Warn("view.spawnfail", $"角色视图生成失败（对象池返回 null）：{path}");
+                return null;
+            }
             go.name = $"{CsViewTuning.PlayerModelName}_{actor.Id}";
             var view = go.GetComponent<ActorView>();
             if (view == null)
             {
                 _log.Error("prefab.nocomponent",
-                    $"角色预制体 {path} 上没有 ActorView 组件 —— 视图无法工作，已销毁实例。" +
+                    $"角色预制体 {path} 上没有 ActorView 组件 —— 视图无法工作，实例已还给对象池。" +
                     "请重跑 ArtSetup 生成 player.prefab");
-                Object.Destroy(go);
+                pool.Despawn(go);
                 return null;
             }
+
+            // 复用的实例带着上一世的状态（名牌子节点 / 被关掉的渲染与碰撞体 / 尸体冻结 / 只报一次的闸）：
+            // 必须先清理再 Bind —— 否则"上一世是本地玩家或尸体"的实例会让新角色隐身 / 打不中。
+            view.PrepareForReuse();
 
             // 先 Bind（量测身高时把名牌排除在外），再挂名牌。
             view.Bind(actor.Id, actor.Team, actor.IsBot, actor.Id == localId);
@@ -337,15 +471,24 @@ namespace Cs16.Module.View
 
         private Nameplate AttachNameplate(Transform parent, long actorId)
         {
-            var prefab = _nameplatePrefab;
-            if (prefab == null)
-            {
-                if (!_prefabs.ContainsKey(CsViewTuning.NameplatePath)) return null;
-                prefab = _prefabs[CsViewTuning.NameplatePath];
-            }
-            if (prefab == null) return null;
+            // 存在性把关：预制体还没加载好（异步在途）/ 不存在时**不建**，也不重复发起加载（见 LoadPrefab）。
+            if (!_prefabs.TryGetValue(CsViewTuning.NameplatePath, out var prefab) || prefab == null) return null;
 
-            var go = Object.Instantiate(prefab, parent);
+            // 名牌随角色视图建 / 销，也是短命物 ⇒ 走引擎对象池（改前是裸 Object.Instantiate）。
+            // 回收在 ActorView.PrepareForReuse（复用时）与 Despawn 链上。
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），头顶名牌无法生成");
+                return null;
+            }
+            var go = pool.Spawn(CsViewTuning.NameplatePath, parent, PoolGroupNameplates);
+            if (go == null)
+            {
+                _log.Warn("plate.spawnfail",
+                    $"头顶名牌生成失败（对象池返回 null）：{CsViewTuning.NameplatePath}（池已记 Error）");
+                return null;
+            }
             go.name = CsViewTuning.PlateNodeName;
             go.transform.localPosition = new Vector3(0f, CsViewTuning.NameplateHeight, 0f);
             go.transform.localRotation = Quaternion.identity;
@@ -355,23 +498,25 @@ namespace Cs16.Module.View
 
         private void RemoveView(long actorId)
         {
+            _views.TryGetValue(actorId, out var view);
             _views.Remove(actorId);
             _skinOf.Remove(actorId);
-            // 视图挂在 _root 下：按名字精确删，避免误伤别的 actor。
-            var child = _root != null ? _root.Find($"{CsViewTuning.PlayerModelName}_{actorId}") : null;
-            if (child != null) Object.Destroy(child.gameObject);
+            // 生命周期终点 = 归还对象池（改前是 Destroy 场景对象）。
+            // 用 _views 里的引用而不再按名字 _root.Find：池回收后对象被移出 _root，按名字找不到会漏回收。
+            if (view != null) Game.Pool.Despawn(view.gameObject);
         }
 
         private void ClearViews()
         {
+            // 逐个归还对象池（⛔ 不 Destroy：Destroy 会让池里留下已销毁引用，
+            // 下一次 Spawn 把它当作"可复用实例"发给业务 —— 那是"角色凭空消失"的根因）。
+            foreach (var kv in _views)
+            {
+                if (kv.Value != null) Game.Pool.Despawn(kv.Value.gameObject);
+            }
             _views.Clear();
             _skinOf.Clear();
             if (_root == null) return;
-            for (var i = _root.childCount - 1; i >= 0; i--)
-            {
-                var c = _root.GetChild(i);
-                if (c != null) Object.Destroy(c.gameObject);
-            }
             if (_viewModel != null)
             {
                 _viewModel.Teardown();

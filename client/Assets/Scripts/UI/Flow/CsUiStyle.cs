@@ -93,11 +93,30 @@ namespace Cs16.UI
             UIFactory.AnchoredBottom(rt, pos, size, anchor);
         }
 
-        /// <summary>底部居中定位的文本（署名 / 版本号用）。</summary>
-        public static Text CreateBottomLabel(string name, Transform parent, string content, int fontSize,
-            Vector2 pos, Vector2 size, Color? color = null)
+        /// <summary>
+        /// **引擎署名行**（逐字 <c>by clover-engine</c>）在本工程的**唯一入口**。
+        ///
+        /// <para><b>为什么收成一个方法</b>（改前是主菜单 / 选阵营两处各写一遍
+        /// <c>CreateBottomLabel("Signature", root, "by clover-engine", 22, new Vector2(0f, 56f), new Vector2(600f, 32f))</c>）：
+        /// 品牌行的判据是"**画面上那一行**"—— 文案大小写、字体是否有小写字形、有没有贴到屏幕底部，
+        /// 三样里任何一样写错都只有实机截图才看得出来。两处各写一遍 = 两个都可能写错的地方，
+        /// 且"贴底"极易写错（左上锚点 + 大负 y 会随画布高度整体掉出屏幕，本工程实测踩过）。</para>
+        ///
+        /// <para><b>转发到引擎 <c>UIFactory.CreateCreditLabel</c></b>（不另起一套定位 / 建文本）：
+        /// 文案用**引擎默认值**（<c>by clover-engine</c>，逐字、首字母小写）—— 本工程不再自持该字面量；
+        /// 贴底锚点、字号、颜色由引擎给。</para>
+        ///
+        /// <para><b>字体一律走本工程的原版字体链</b>（<see cref="OriginalFont"/> = 系统 Verdana + CJK 回退族，
+        /// 取不到时回退引擎内置字体并 <c>Warn</c> 一次）：⛔ **不传 null** —— 引擎在 <c>font == null</c> 时会
+        /// 报"未指定字体、已回落内置字体（像素字体可能把小写渲染成全大写）"的 Warn，那是给"真没字体"的项目看的，
+        /// 本工程有原版字体链，传 null 只会把它变成假告警。</para>
+        /// </summary>
+        /// <param name="parent">宿主节点（面板根）。</param>
+        /// <param name="fontSize">字号（默认 22 = 改前两处用的值）。</param>
+        /// <param name="bottomOffset">离父节点底边的距离（默认 56 = 改前两处用的值）。</param>
+        public static Text CreateCreditLabel(Transform parent, int fontSize = 22, float bottomOffset = 56f)
         {
-            return UIFactory.CreateBottomLabel(name, parent, content, fontSize, pos, size, color ?? TextDim);
+            return UIFactory.CreateCreditLabel(parent, OriginalFont, fontSize, bottomOffset);
         }
 
         /// <summary>全屏纯色底（面板的第一层）。<paramref name="raycast"/> = true 时挡住下层点击。</summary>

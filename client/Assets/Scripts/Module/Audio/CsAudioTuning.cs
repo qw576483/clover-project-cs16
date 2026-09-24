@@ -276,14 +276,12 @@ namespace Cs16.Module.Audio
         /// 故轮询；轮询周期是音频层实现参数）。</summary>
         public const float VolumePollInterval = 0.5f;
 
-        // ---- 玩家设置键（必须与 agent-01 的 CsPlayerSettingsStore 一致）----
-        /// <summary>主音量设置键。出处：<c>UI/Flow/CsPlayerSettingsStore.cs</c>（本工程设置键真源；
-        /// 本常量与它逐字同名同值 —— 两处必须一起改）。</summary>
-        public const string SettingKeyVolumeMaster = "cs.player.volumeMaster";
-
-        /// <summary>音效音量设置键。出处：<c>UI/Flow/CsPlayerSettingsStore.cs</c>（同
-        /// <see cref="SettingKeyVolumeMaster"/>）。</summary>
-        public const string SettingKeyVolumeSfx = "cs.player.volumeSfx";
+        // ---- 玩家设置键：⛔ 本文件不再持有字面量 ----
+        // 原先这里各持一份音量键字面量（音量的**第 3 处副本**，
+        // 与 UI/Flow/CsPlayerSettingsStore、Module/Player/PlayerModule 三份并存 ⇒ 漂移即"设置改了不生效"
+        // 且不报错）。现已删除：设置键的**唯一真源** = <c>Core/CsSettingsKeys.cs</c>，
+        // 音量键 = <c>CsSettingsKeys.VolumeMaster</c> / <c>CsSettingsKeys.VolumeSfx</c>（消费点见 AudioModule.ApplyVolume）。
+        // ⛔ 不要在本文件重新引入转发常量（那还是多一处副本）。
 
         /// <summary>同类日志的打点间隔（首次 + 每 N 次）。出处：**本项目新增**
         /// （日志降频口径；工程内同款见 <c>Module/Bot/CsBotConst.LogRateEvery</c>）。</summary>

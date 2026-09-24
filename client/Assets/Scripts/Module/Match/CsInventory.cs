@@ -256,6 +256,15 @@ namespace Cs16.Module.Match
         {
             if (string.IsNullOrEmpty(weaponId)) return;
 
+            // 差异 #75：掉落要把"那把枪当时的余弹"一起带到世上 —— 所以在摘除字典**之前**抓一份。
+            var dropMag = 0;
+            var dropReserve = 0;
+            if (a.Ammo.TryGetValue(weaponId, out var before))
+            {
+                dropMag = before.inMag;
+                dropReserve = before.reserve;
+            }
+
             if (weaponId == a.PrimaryWeapon)
             {
                 a.PrimaryWeapon = null;
@@ -281,7 +290,54 @@ namespace Cs16.Module.Match
                 return;
             }
 
+            // 差异 #75：真正把"世界中的武器"生成出来。
+            // ⛔ C4 不在这里生成 —— 它的世界掉落走 Bomb 链（CsBomb.OnCarrierLost + TryPickupDropped），
+            //    两套并存会变成"同一次掉落能被捡两次"。
+            if (weaponId != CsWeapons.C4)
+                _m.SpawnDroppedWeapon(weaponId, a.Team, a.Position, a.Yaw, dropMag, dropReserve);
+
             if (a.ActiveWeapon == weaponId) SelectBestWeapon(a);
+        }
+
+        /// <summary>
+        /// 差异 #75：把世界上的掉落武器**收回**到角色手上
+        /// （原版口径 = 走到 1.2 m 内自动拾取，与 <c>CsBomb.TryPickupDropped</c> 同一条口径）。
+        ///
+        /// <para><b>槽位规则</b>：主武器（步枪 / 冲锋 / 狙击 / 机枪 / 霰弹）进
+        /// <see cref="CsActor.PrimaryWeapon"/>，其余（手枪 / 刀 / 手雷 / 装备）进
+        /// <see cref="CsActor.SecondaryWeapon"/>；**对应槽位已被占用 ⇒ 不拾取**
+        /// （原版不会把手里那把枪挤掉，是"捡不起来"）。</para>
+        /// </summary>
+        /// <returns>真的收下了返回 true。</returns>
+        public bool PickupDropped(CsActor a, CsDroppedWeapon d)
+        {
+            if (a == null || d == null || d.Consumed) return false;
+            var def = CsWeapons.Get(d.WeaponId);
+            if (def == null)
+            {
+                Game.Logger.Warn("drop.pickup.unknown", $"掉落物武器 id 不认得：{d.WeaponId}，拾取被忽略");
+                return false;
+            }
+
+            var sidearm = def.Class == CsWeaponClass.Pistol || def.Class == CsWeaponClass.Knife
+                          || def.Class == CsWeaponClass.Grenade || def.Class == CsWeaponClass.Equipment;
+            if (sidearm)
+            {
+                if (!string.IsNullOrEmpty(a.SecondaryWeapon)) return false;
+                a.SecondaryWeapon = d.WeaponId;
+            }
+            else
+            {
+                if (!string.IsNullOrEmpty(a.PrimaryWeapon)) return false;
+                a.PrimaryWeapon = d.WeaponId;
+            }
+
+            a.SetAmmo(d.WeaponId, d.MagAmmo, d.ReserveAmmo);
+            d.Consumed = true;
+            if (string.IsNullOrEmpty(a.ActiveWeapon)) SelectBestWeapon(a);
+
+            Game.Logger.Info("drop.pickup", $"{a.Name} 拾起了 {def.DisplayName}（余弹 {d.MagAmmo}+{d.ReserveAmmo}）");
+            return true;
         }
 
         // ==================================================================
@@ -439,7 +495,10 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
-            Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）");
+            // 片FIX-4 线C：把序号一起打出来 —— 「换弹动画有时候不播」的排查里，
+            // 唯一必须先确定的事实是"序号到底有没有推进"（表现层只认序号边沿）。
+            // ⛔ 不改任何判定，只是把已经存在的字段写进日志。
+            Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）seq={a.ReloadSeq}");
         }
 
         /// <summary>
@@ -571,7 +630,10 @@ namespace Cs16.Module.Match
             a.NextFireTime = now + def.SecondsPerShot;
             a.ConsecutiveShots++;
             a.RecoilPitch += def.RecoilVert;
-            a.RecoilYaw += UnityEngine.Random.Range(-def.RecoilHoriz, def.RecoilHoriz);
+            // 后坐力水平偏移：**玩法**（逐发累积进 a.RecoilYaw，决定后续弹道往哪偏）。
+            // 独立一路 RecoilYaw —— 不与散布流共用：散布每发抽 2 次（yaw/pitch），
+            // 后坐力每发抽 1 次，混在一起会让"改散布"悄悄改掉后坐力序列。
+            a.RecoilYaw += CsRng.Stream(CsRngStream.RecoilYaw).Range(-def.RecoilHoriz, def.RecoilHoriz);
 
             weaponId = def.Id;
             _m.RecordShotFired(def.Id);
@@ -669,9 +731,12 @@ namespace Cs16.Module.Match
         private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
         {
             if (spreadDegrees <= 0f) return dir;
+            // 散布：**玩法**。与 CsMatch.ApplySpread / Firearm.ApplySpread 共用全项目唯一的
+            // WeaponSpread 流（三处是同一套欧拉角扰动，同一口径只允许一个流）。
+            var rng = CsRng.Stream(CsRngStream.WeaponSpread);
             var rot = Quaternion.Euler(
-                UnityEngine.Random.Range(-spreadDegrees, spreadDegrees),
-                UnityEngine.Random.Range(-spreadDegrees, spreadDegrees),
+                rng.Range(-spreadDegrees, spreadDegrees),
+                rng.Range(-spreadDegrees, spreadDegrees),
                 0f);
             return (rot * dir).normalized;
         }

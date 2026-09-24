@@ -468,8 +468,9 @@ def part_e(tuning, paths_cs):
         total = w * h
         opaque = sum(1 for i in range(3, len(px), 4) if px[i] == 255)
         clear = sum(1 for i in range(3, len(px), 4) if px[i] == 0)
-        print('      %-16s %dx%d 不透明 %4d/%d (%.1f%%)  全透明 %4d'
-              % (k.split('/')[-1] + '.png', w, h, opaque, total, 100.0 * opaque / total, clear))
+        ink = total - clear
+        print('      %-16s %dx%d 有墨(a>0) %4d/%d (%.1f%%)  全透明 %4d  完全不透明 %4d'
+              % (k.split('/')[-1] + '.png', w, h, ink, total, 100.0 * ink / total, clear, opaque))
         if clear == 0:
             zero_tr.append(k)
     if checked != len(sorted(names)):
@@ -477,7 +478,7 @@ def part_e(tuning, paths_cs):
     elif zero_tr:
         fail('这些贴图**一个透明像素都没有**（解出来是白方块，就是原缺陷）：%s' % ', '.join(zero_tr))
     else:
-        ok('%d 张贴图都有透明像素 + 不透明像素（遮罩背景已抠透）' % checked)
+        ok('%d 张贴图都有全透明背景 + 半/不透明墨迹（decal 不透明度口径生效）' % checked)
 
     # 工具侧：透明索引必须是**实测**出来的，不能是照搬来的猜测。
     # ⛔ 自检项按**代码**断言（set(corners) / max(counts...) / idx not in (0, 255)），
@@ -487,26 +488,29 @@ def part_e(tuning, paths_cs):
         fail('找不到 tools/probes/wad3-extract.py')
         return
     t = read(w3)
-    if 'def masked_bg_index' not in t:
-        fail('wad3-extract.py 没有 masked_bg_index ⇒ 遮罩透明色又是写死的'
-             '（decals.wad 实测是索引 0，不是 255）')
+    if 'def decal_base_colour' not in t:
+        fail('wad3-extract.py 没有 decal_base_colour ⇒ decal 口径的自检又没了')
         return
-    ok('wad3-extract.py 有 masked_bg_index（从数据实测透明索引）')
+    ok('wad3-extract.py 有 decal_base_colour（口径自检函数）')
     checks = (
-        ('set(corners)', '四角必须一致'),
-        ('counts.items()', '必须是最高频（背景占多数）'),
-        ('idx not in (0, 255)', '必须是 0 或 255'),
+        ('set(corners)', '四角必须一致（一个平背景）'),
+        ('255 in src', 'palette[255] 是基色、不得出现在像素数据里'),
+        ('_opacity(pal, bg) != 0', '背景必须是纯白（不透明度 0 == 白即透明）'),
+        ('return 255 - max(', '不透明度 = 255 - 调色板亮度（白端 = 透明端）'),
+        ('pal[255 * 3]', '整张贴花的 RGB 取自 palette[255]'),
         ('raise ValueError', '不一致时要报错，⛔ 不许静默兜底'),
     )
     for needle, what in checks:
         if needle not in t:
-            fail('masked_bg_index 缺少自检项：%s（找不到 %r）' % (what, needle))
+            fail('decal 口径缺少自检项：%s（找不到 %r）' % (what, needle))
         else:
-            ok('masked_bg_index 自检：%s' % what)
-    if 'idx == bg' in t:
-        ok('alpha 由实测索引决定（idx == bg 处透明）')
+            ok('decal 口径自检：%s' % what)
+    if 'out[i * 4 + 3] = _opacity(pal, idx)' in t:
+        ok('alpha 逐像素由 _opacity 决定（白端 -> 0、深色端 -> 越不透明）')
     else:
-        fail('alpha 不是由实测索引决定 ⇒ 透明可能又写死了')
+        fail('alpha 不是由 _opacity 逐像素决定 ⇒ 口径可能没生效')
+    if 'masked_bg_index' in t:
+        fail('旧的 masked_bg_index 还在 ⇒ 仍是「{ 透明纹理」口径（差异 #69 的根因）')
 
 
 # ----------------------------------------------------------------------------- F 埋点

@@ -59,6 +59,19 @@ namespace Cs16.EditorTools
 
             Scene scene = EditorSceneManager.OpenScene(Dust2Layout.ScenePath, OpenSceneMode.Single);
 
+            // ---- ⓪ 命名标记点必须先就位（否则烘出来的 .bytes **没有** FlagMarkers 段）----
+            // 引擎烘焙器按 `MapBakeOptions.MarkerRootName` 在**场景根对象**里找那个容器；
+            // 找不到时引擎只打一条 Warn 然后导出"没有标记点"的文件 —— 那是最难查的一类静默失败
+            // （进图后机器人不动 / 包点无效），所以这里**硬拦**：先重跑生成器再烘。
+            if (Dust2Builder.FindInScene(scene, Dust2Layout.MarkerRoot) == null)
+            {
+                Debug.LogError($"{Tag} 场景里没有**根对象** {Dust2Layout.MarkerRoot}（标记点容器）⇒ " +
+                               "烘出来的 .bytes 会**不含** FlagMarkers 段（客户端按名取点全部落空）。" +
+                               "先执行 Clover/CS16/生成 de_dust2 场景 重建层级（标记点容器是场景根对象，" +
+                               "旧场景里它挂在 Level 下、烘焙器看不见），再跑本烘焙。");
+                return;
+            }
+
             // ---- ① 临时关掉"运行时物理"那一层（见类注释）----
             //
             // ★ 必须**存盘**再烘：引擎 MapBaker.Export 内部会按路径把场景**重新打开**一遍
@@ -103,6 +116,10 @@ namespace Cs16.EditorTools
                     ServerDir = Dust2Layout.ServerMapDir,
                     ClientDir = Dust2Layout.ClientMapDir,
                     SpawnMarkerPrefix = Dust2Layout.SpawnMarkerPrefix,
+                    // 命名标记点随**同一份 .bytes** 导出（引擎 `CloverMapFormat.FlagMarkers` 段）：
+                    // 客户端用 `Game.Map.GetPoints(名字)` 取 —— ⛔ 不再有 de_dust2_markers.bytes 旁路。
+                    // 取点前必须先确认那道勾（上面的 ⓪），否则引擎只会 Warn 并导出空标记点。
+                    MarkerRootName = Dust2Layout.MarkerRoot,
                 };
                 o.Save();   // 存下来：面板 / 其它 agent 的 CLI 复用同一份参数
 
@@ -118,7 +135,9 @@ namespace Cs16.EditorTools
             }
             finally
             {
-                // ---- ④ 恢复碰撞体 + 刷新运行时标记表（Export 内部重开过场景，手里的 Scene 已失效）----
+                // ---- ④ 恢复碰撞体（Export 内部重开过场景，手里的 Scene 已失效）----
+                // ⛔ 这里不再"顺手刷新运行时标记表"：命名标记点已随上面的 `.bytes` 导出，
+                //    没有第二份产物要同步（本片 2026-09-24 删除 de_dust2_markers.bytes 旁路）。
                 var reloaded = EditorSceneManager.OpenScene(Dust2Layout.ScenePath, OpenSceneMode.Single);
 
                 int restored = 0;
@@ -138,9 +157,6 @@ namespace Cs16.EditorTools
                                    "场景里的 Visual 碰撞体可能没全开，运行时子弹会穿墙（重跑本方法即可修）");
                 else
                     Debug.Log($"{Tag} 已恢复 Visual 碰撞体 {restored} 个并保存场景（运行时物理完好）");
-
-                // 标记改动后不必记得单独跑生成器：这里顺手把运行时标记表刷一遍
-                Dust2Builder.ExportMarkerResource(reloaded);
             }
         }
 

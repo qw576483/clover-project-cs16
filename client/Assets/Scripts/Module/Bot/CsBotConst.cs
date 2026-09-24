@@ -511,5 +511,11 @@ namespace Cs16.Module.Bot
         /// <summary>通用日志降频：首次 + 每 N 次。
         /// 出处：**本项目新增**（日志降频口径；工程内同款 = <c>Module/Audio/CsAudioTuning.LogRateEvery</c>）。</summary>
         public const int LogRateEvery = 50;
+
+        /// <summary>"同队路线互斥"审计间隔（秒）——见 <c>BotModule.AuditRouteDistinctness</c>。
+        /// 取值 1.0s：路线只在"回合开始 / 换目标"时变（低频事件），审计比它密一个量级即可抓到
+        /// 回合中途加入的 bot 造成的重合，而 28 对比较/tick 的开销可忽略。
+        /// 出处：**本项目新增**（A 无 bot AI，同差异 #67）。</summary>
+        public const float RouteAuditIntervalSeconds = 1f;
     }
 }

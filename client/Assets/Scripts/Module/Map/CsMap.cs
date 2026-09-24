@@ -10,13 +10,16 @@ namespace Cs16.Module.Map
     /// <summary>
     /// <see cref="ICsMap"/> 的实现（业务侧的"空间事实 + 本地碰撞解算"）。
     ///
-    /// <para><b>数据来源（两份，各司其职）</b></para>
+    /// <para><b>数据来源（**一份**：同一份 <c>.bytes</c> 里两段）</b></para>
     /// <list type="bullet">
     /// <item><b>可行走位图</b>：引擎 <c>Game.Map</c>（<c>Resources/MapData/de_dust2.bytes</c>，
-    /// 由 <c>Clover/CS16/烘焙 de_dust2</c> 导出，与服务端同源）。它只回答"这一格能不能走"。</item>
-    /// <item><b>标记点表</b>：<c>Resources/MapData/de_dust2_markers.bytes</c>（由
-    /// <c>Dust2Builder.ExportMarkerResource</c> 从场景里的标记对象导出）。位图里没有名字，
-    /// 而 AI/包点/买枪区要按名字取点，所以必须单独带一份 —— 生成时名字写错这里就会报 Error。</item>
+    /// 由 <c>Clover/CS16/烘焙 de_dust2</c> 导出，与服务端同源）。它回答"这一格能不能走"。</item>
+    /// <item><b>命名标记点</b>：**同一份 <c>.bytes</c> 的 <c>FlagMarkers</c> 段**
+    /// （名字 + 世界坐标；引擎 <c>CloverMapFormat</c> / <c>IMapData.Points/GetPoints/TryGetPoint</c> 读）。
+    /// 本类原来另外读一份 <c>Resources/MapData/de_dust2_markers.bytes</c> 文本表 —— 那条旁路
+    /// （文件 + 解析器）本片已删除：同一份空间事实不再有两份载体。
+    /// 生成侧出处：<c>MapBakeRunner</c> 的 <c>MapBakeOptions.MarkerRootName</c> ⇐
+    /// <c>Dust2Builder</c> 摆的场景根对象 <c>Markers</c>；名字写错 / 少摆标记，契约校验仍会报 Error。</item>
     /// </list>
     ///
     /// <para><b>高度从哪来</b>：真实 dust2 是多层地图（T 出生点比 CT 出生点高约 6.8m，有斜坡/楼梯/高台），
@@ -33,10 +36,6 @@ namespace Cs16.Module.Map
     public sealed class CsMap : ICsMap
     {
         private const string Tag = "Map";
-
-        /// <summary>运行时标记表资源路径真源 = <see cref="ResPaths.MapDust2Markers"/>
-        /// （生成器侧 <c>Editor/MapGen/Dust2Layout</c> 也走同一个常量 ——
-        /// 路径字面量只留在 <see cref="ResPaths"/>，两边不再各写一遍）。</summary>
 
         /// <summary>扫掠细分步长上限（米）：一帧位移切成 ≤ 这个长度的段，避免高速穿过薄墙。</summary>
         private const float MaxSweepStep = 0.25f;
@@ -132,8 +131,19 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
-        /// 载入标记点表。失败**不阻断**地图加载（地图仍可玩），但一定打 Error：
+        /// 建**运行时标记点索引**：数据来自引擎 <see cref="IMapData.Points"/>
+        /// （<c>de_dust2.bytes</c> 的 <c>CloverMapFormat.FlagMarkers</c> 段；引擎侧 <c>Map.cs</c> 已按名字建好索引）。
+        /// 失败**不阻断**地图加载（地图仍可玩），但一定打 Error：
         /// 标记缺失的表现是"机器人不动、下包无效"，不打日志就永远查不出来。
+        ///
+        /// <para>⛔ 本类**不再自己解析**任何标记表：旧实现读
+        /// <c>Resources/MapData/de_dust2_markers.bytes</c> 文本旁路（每行 <c>标记名 x y z</c>，
+        /// <c>ParseMarkers</c> 手工 <c>Split</c> / <c>float.TryParse</c>）—— 那条旁路与它的解析器本片已删除，
+        /// 标记点与位图同行装在同一份 <c>.bytes</c> 里（⛔ 同一份空间事实只有一份载体）。</para>
+        ///
+        /// <para>本方法只做两件事：① 把引擎的 <c>IReadOnlyList&lt;MapPoint&gt;</c> 按名字拷进本地数组索引
+        /// （<see cref="Points"/> 在 bot 决策热路径上，避免每次 <c>ToArray</c> 分配）；
+        /// ② 契约点名校验（<see cref="RequiredMarkerNames"/> 缺哪个报哪个）。</para>
         /// </summary>
         private void LoadMarkers(Action done)
         {
@@ -144,69 +154,29 @@ namespace Cs16.Module.Map
             }
             _markersRequested = true;
 
-            if (Game.Res == null)
+            var map = Game.Map;
+            if (map == null || !map.Loaded)
             {
                 _markersFailed = true;
-                Game.Logger?.Error(Tag, $"标记表加载失败：Game.Res 为空（Resources/{ResPaths.MapDust2Markers}.bytes 读不了）");
+                Game.Logger?.Error(Tag,
+                    "标记点不可用：引擎逻辑地图未加载（Game.Map 为空 / 未 Loaded）—— AI/包点/买枪区都会退化");
                 done?.Invoke();
                 return;
             }
 
-            Game.Res.LoadAsset<TextAsset>(ResPaths.MapDust2Markers, ta =>
+            var table = new Dictionary<string, List<Vector3>>(RequiredMarkerNames.Length);
+            var all = map.Points;
+            for (var i = 0; i < all.Count; i++)
             {
-                if (ta == null)
+                var p = all[i];
+                if (string.IsNullOrEmpty(p.Name)) continue;
+                if (!table.TryGetValue(p.Name, out var list))
                 {
-                    _markersFailed = true;
-                    Game.Logger?.Error(Tag,
-                        $"标记表缺失：Resources/{ResPaths.MapDust2Markers}.bytes 不存在 —— " +
-                        "AI/包点/买枪区都会失效（跑 Clover/CS16/生成 de_dust2 场景 重新导出）");
-                    done?.Invoke();
-                    return;
+                    list = new List<Vector3>(4);
+                    table[p.Name] = list;
                 }
-
-                ParseMarkers(ta.text);
-                done?.Invoke();
-            });
-        }
-
-        private void ParseMarkers(string text)
-        {
-            var table = new Dictionary<string, List<Vector3>>();
-            int bad = 0;
-            string firstBad = null;
-
-            if (!string.IsNullOrEmpty(text))
-            {
-                var lines = text.Split('\n');
-                for (int i = 0; i < lines.Length; i++)
-                {
-                    var line = lines[i].Trim();
-                    if (line.Length == 0 || line[0] == '#') continue;
-
-                    var parts = line.Split(' ');
-                    if (parts.Length < 4)
-                    {
-                        if (bad++ == 0) firstBad = line;
-                        continue;
-                    }
-                    if (!float.TryParse(parts[1], NumberStyles.Float, CultureInfo.InvariantCulture, out float x) ||
-                        !float.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out float y) ||
-                        !float.TryParse(parts[3], NumberStyles.Float, CultureInfo.InvariantCulture, out float z))
-                    {
-                        if (bad++ == 0) firstBad = line;
-                        continue;
-                    }
-                    if (!table.TryGetValue(parts[0], out var list))
-                    {
-                        list = new List<Vector3>();
-                        table[parts[0]] = list;
-                    }
-                    list.Add(new Vector3(x, y, z));
-                }
+                list.Add(p.Position);
             }
-
-            if (bad > 0)
-                Game.Logger?.Warn(Tag, $"标记表有 {bad} 行无法解析（首例：\"{firstBad}\"），已跳过");
 
             _markers = new Dictionary<string, Vector3[]>(table.Count);
             foreach (var kv in table) _markers[kv.Key] = kv.Value.ToArray();
@@ -220,15 +190,29 @@ namespace Cs16.Module.Map
             int total = 0;
             foreach (var kv in _markers) total += kv.Value.Length;
 
-            // 契约要求的标记全点名核对：缺哪个报哪个（每个名字只报一次）
-            foreach (var name in RequiredMarkerNames)
+            if (total == 0)
             {
-                if (!_markers.ContainsKey(name))
-                    Game.Logger?.Error(Tag, $"标记缺失：场景/标记表里没有 \"{name}\" —— " +
-                                            "对应玩法（出生点/包点/买枪区/机器人路线）会静默退化");
+                // 非预期分支（**必须点名下一步**）：地图文件里没有标记点段（旧产物，或烘焙时没配
+                // `MapBakeOptions.MarkerRootName`）。现象 = "进图后机器人集体不动"，不报就没法查。
+                Game.Logger?.Error(Tag,
+                    "地图文件里没有命名标记点段（flags 未含 FlagMarkers）：AI/包点/买枪区都会退化 —— " +
+                    "跑 Clover/CS16/生成 de_dust2 场景 + Clover/CS16/烘焙 de_dust2 重新导出" +
+                    "（⛔ 标记点已随 .bytes 同行，不再有独立标记表文件）");
+            }
+            else
+            {
+                // 契约要求的标记全点名核对：缺哪个报哪个（每个名字只报一次）
+                foreach (var name in RequiredMarkerNames)
+                {
+                    if (!_markers.ContainsKey(name))
+                        Game.Logger?.Error(Tag, $"标记缺失：地图标记点段里没有 \"{name}\" —— " +
+                                                "对应玩法（出生点/包点/买枪区/机器人路线）会静默退化");
+                }
             }
 
-            Game.Logger?.Info(Tag, $"标记表已加载：{_markers.Count} 类 / {total} 点（出生点 {_spawns.Length} 个）");
+            Game.Logger?.Info(Tag,
+                $"标记点已加载（引擎 FlagMarkers 段）：{_markers.Count} 类 / {total} 点（出生点 {_spawns.Length} 个）");
+            done?.Invoke();
         }
 
         /// <summary><see cref="CsMarkers"/> 里契约要求的全部标记名（消费方按这些名字取点）。</summary>
@@ -419,7 +403,15 @@ namespace Cs16.Module.Map
             const float r = CsConst.PlayerRadius;
             float lo = pos.y + CsConst.GroundCheckDistance + r;
             float hi = pos.y + CsConst.StandHeight - r;
-            if (hi <= lo) return false;      // 身高带比两个半径还短：没有可判的体积（退化配置）
+            if (hi <= lo)
+            {
+                // 身高带比两个半径还短：没有可判的体积（退化配置）。
+                // ⛔ 只加留痕：`hi <= lo` 判据与 `return false` 走向**逐字不变**（不改数值语义）。
+                // 走 WarnOnce（按 key 去重）—— 本方法在 CanStand 的半径采样路径上，不许每帧刷屏。
+                WarnOnce("volume.degenerate",
+                    "身高带比两个半径还短（退化配置）：本点跳过体积复核 —— 检查 CsConst.StandHeight / PlayerRadius");
+                return false;
+            }
             return Physics.CheckCapsule(new Vector3(pos.x, lo, pos.z), new Vector3(pos.x, hi, pos.z),
                                         r, GroundMask(), QueryTriggerInteraction.Ignore);
         }
@@ -450,10 +442,51 @@ namespace Cs16.Module.Map
                 return to;
             }
 
-            // 解除卡死：起点本身就站不下（出生点贴墙 / 被挤进墙里）→ 能直接到目标就去，否则别乱动
+            // ── ★ 片FIX-4 线M：起点站不下时**不再"原地不动"**（用户 #1/#5「卡住动不了」的根因）──
+            // 旧写法 = `if (!CanStand(from)) return WalkableAt(to) ? to : from;`
+            // 【实测后果（逐帧 dump：tools/probes/move-stuck.cs 的 `.ai-tmp/test/move-drive-*`）】
+            //   B 通台阶（中门 → B，底 (-10.500,-2.824,31.500) 走向顶）走到
+            //   (-10.979,-2.021,36.646) 之后：`canStand(from)=false` 而 `WalkableAt(to)=false`
+            //   ⇒ 每帧都返回 `from`；`StepActorPhysics` 见"要的位移没拿到"就把该轴速度清 0
+            //   ⇒ **位移恒 0、速度恒 0、按什么键都不动**（实测 f=51..399 连续 349 帧，跳一下也一样）。
+            //   同一形态在匪家扶手车道 x=-41.5 上 dt=0.05 时复现（停滞 67..399 / 241..399）。
+            // 【为什么 `CanStand(from)` 会是 false 而人明明站在地面上】
+            //   `CanStand` 是**半径采样**（中心 + 8 向，`PlayerRadius`=0.36m）：
+            //   `BitmapClear`（位图 9 点）或几何分支只要有一个偏移点被拒就整点判 false。
+            //   站在台阶/扶手**旁边**时，偏移点落在"顶面比脚面高 0.12~0.45 m"的那一列上 ⇒
+            //   位图那一列判挡（单层 2D 位图，差异 #64/#76），几何分支的 `BodyHeightClearAt`
+            //   又用 `GroundCheckDistance`(0.12) 当"算不算脚面"的容差 ⇒ 把它读成"身高带里有实体"。
+            //   ⇒ 人**站得好好的却"这一格不能站"**，于是走进旧的那句"原地不动"。
+            // 【修法】起点站不下时**走同一条扫掠解算**（`StepOnce`：≤0.25m 细分 + 分轴滑墙 + 台阶）
+            //   —— 这正是原版 `PM_WalkMove` 的行为：站位不完美时照走，靠滑墙/台阶把身体解出来。
+            //   ⛔ 不再"能直接到目标就跳过去"之前的那种**无几何复核**放行：目标格仍必须过
+            //     `CanStand` 或 `TryStepUp`（后者带台阶高差 / 陡坡 / 膝盖射线 / 体积四道闸门）。
+            //   ⛔ 只有"一步都挪不动"时才退回旧口径（且只在目标格位图可走时直接过去）——
+            //     那是真的被墙夹住，此时**不许**凭空穿墙。
             if (!CanStand(from, radius))
             {
-                var free = WalkableAt(to.x, to.z) ? to : from;
+                var stepped = StepOnce(from, to, radius);
+                var moved2 = (stepped.x - from.x) * (stepped.x - from.x) +
+                             (stepped.z - from.z) * (stepped.z - from.z);
+                if (moved2 > 1e-8f)
+                {
+                    trace?.Invoke(0, to, from, stepped);
+                    return new Vector3(stepped.x, to.y, stepped.z);
+                }
+                // ── 片FIX-4 线M · 差异 #92：`? from` 那条支路把 `to.y` 一起吃掉 ──────────────────
+                // 【症状（逐帧实测，tools/probes/move-stuck.cs 的 MoveStuck.Drive）】站在合法凹角里
+                //   （本工程 B 通台阶 (-18.887, 0.653, 36.948)）按跳：`a.Velocity.y` 被置成 `JumpSpeed`
+                //   5.804、`OnGround` 1→0，但 `CsActor.Position.y` **连续 6 帧一个字没变**（恒 0.653）
+                //   ⇒ 一次跳的竖向位移**精确为 0** ⇒ 玩家在墙角**永远跳不出去**。
+                // 【根因】这里三元有**两个子情形**，旧码把两者一起交给水平几何：
+                //   · `WalkableAt(to.x,to.z)==true` ⇒ 返回 **`to`**（含 `to.y`）—— 这是刻意留的"目标格
+                //     位图可走时直接过去"逃生口（见上 `:470-472`），**本来就没错**，⛔ 不许动它；
+                //   · `==false` ⇒ 返回 **`from`** ⇒ 连 `free.y` 也变成 `from.y`，**竖向分量被水平几何否决**。
+                // 【修法（最小）】**只动 `false` 支路的 Y**：水平仍钳在 `from`（⛔ 不穿墙，行为逐位不变），
+                //   Y 取 `to.y` —— 与上面 `:482`（`stepped` 出口已用 `to.y`）同口径，也与本函数 `:427-430`
+                //   的 doc「**Y 分量原样跟随目标**（重力/落地由调用方用 SampleGround 收尾）」一致。
+                // ⛔ 位图只准否决**水平**分量；竖向由重力/落地（调用方）说了算。
+                var free = WalkableAt(to.x, to.z) ? to : new Vector3(from.x, to.y, from.z);
                 trace?.Invoke(0, to, from, free);
                 return free;
             }
@@ -498,7 +531,10 @@ namespace Cs16.Module.Map
         /// <summary>
         /// 台阶 / 贴边挤压判定（<see cref="CsConst.StepUpHeight"/> 在这里真正起作用）：
         /// <list type="number">
-        /// <item><b>格子中心</b>必须可走（中心在墙里 ⇒ 这就是墙，没得商量）；</item>
+        /// <item><b>格子中心</b>可走 ⇒ 走原路径；<b>位图判挡</b>时改用真几何四道闸门放行
+        /// （该列有地面 ∨ 落点不比脚下低 ∨ 高差 ≤ 一步台阶 ∨ 法线不陡 ∨ 体积不被占 ∨ 膝盖射线通畅）——
+        /// 见下面 ★ 段：单层 2D 位图对"侧面挡人、顶面能站"的台阶/扶手只有"挡"一个答案，
+        /// 硬否决它就是用户报的「台阶上跳一下就卡住」；</item>
         /// <item>落点地面比当前脚下**高出不超过 <see cref="CsConst.StepUpHeight"/>**（0.45m）——
         /// 高过它就是一堵台沿，不许"神抬腿"迈上去；</item>
         /// <item>落点地面**不是陡坡**（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）——
@@ -513,17 +549,43 @@ namespace Cs16.Module.Map
         /// </summary>
         private bool TryStepUp(Vector3 from, Vector3 target, float radius)
         {
-            if (!WalkableAt(target.x, target.z)) return false;
-
             // 陡坡不算地面（原版 PM_WalkMove：下探后 `if (trace.plane.normal[2] < 0.7) goto usedown;`
             // ⇒ 放弃"迈上去"这条路径）。缺了它就会沿陡面走上去（= 用户报的"坡道穿模"）。
             var hasGround = TrySampleGround(target, out var point, out var normal);
             if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ) return false;
             if (hasGround && point.y - from.y > CsConst.StepUpHeight) return false;
 
+            // ── ★ 片FIX-4 线M：位图判挡**不再是硬否决**（用户 #1/#5 的另一半根因）──
+            // 旧写法第一行是 `if (!WalkableAt(target.x, target.z)) return false;` ——
+            // 而位图是**单层 2D**（一格一位、没有高度，差异 #64/#76）：楼梯踏步 / 扶手 / 台沿
+            // 这些"侧面挡人、顶面能站"的几何在位图里**只有"挡"一个答案**。
+            // ⇒ 旧写法把"迈上台阶 / 走上扶手顶面"整条路掐掉，而调用方 `AxisPassable` 只有
+            //   `CanStand || TryStepUp` 两条路 ⇒ 两条都假 ⇒ 该轴被钳住、速度被清 0 ⇒ 卡死。
+            // 【修法】位图判挡时，改用**真几何**放行，四道闸门一个不少：
+            //   ① 该列必须探得到地面（`hasGround`）—— 没地面（虚空/墙外）一律不许进；
+            //   ② 落点地面必须**不比脚下低**（低了就交给位图管：位图说挡就是挡，不许从边沿掉下去）；
+            //   ③ 高差 ≤ `CsConst.StepUpHeight`、法线 ≥ `MaxStandableSlopeNormalZ`（上面两条已判）；
+            //   ④ 落点**整具玩家体积**不与被实体占据（`BodyVolumeBlocked`，切片U 的胶囊判据）；
+            //   ⑤ 膝盖高度朝落点的射线通畅（下面一行，原口径不变）。
+            //   ⇒ 0.9 m 台沿 / 高墙照旧过不去（②③⑤ 挡），0.3 m 台阶、0.3 m 扶手能迈上去。
+            if (!WalkableAt(target.x, target.z))
+            {
+                if (!hasGround) return false;
+                if (point.y - from.y < 0f) return false;
+                if (BodyVolumeBlocked(new Vector3(target.x, point.y, target.z))) return false;
+            }
+
             var dir = new Vector3(target.x - from.x, 0f, target.z - from.z);
             float dist = dir.magnitude;
-            if (dist < 0.001f) return false;
+            if (dist < 0.001f)
+            {
+                // 落点与本点在水平面上重合（这一轴已经到位）：没有可推进的方向。
+                // ⛔ 只加留痕：阈值 `0.001f` 与 `return false` 走向**逐字不变**（不改数值语义）。
+                // StepOnce 的按轴推进每帧都会走到这里 ⇒ 必须限频（WarnOnce 按 key 只报一次）。
+                WarnOnce("stepup.zerodist",
+                    "TryStepUp 的落点与本点水平重合（dist < 0.001f）：本轴无可推进，按未通过处理");
+                return false;
+            }
             dir /= dist;
 
             var knee = new Vector3(from.x, from.y + CsConst.StepUpHeight, from.z);
@@ -657,7 +719,14 @@ namespace Cs16.Module.Map
                 return 0;
             }
             flat.Normalize();
-            if (step <= 0.01f) step = 0.1f;
+            if (step <= 0.01f)
+            {
+                // 非预期参数（测试入口）：步长过小时按 0.1 走 —— 静默改值会让"量法变了"没人认领。
+                // ⛔ 只加留痕：判据 `<= 0.01f` 与赋值 `0.1f` **逐字不变**（不改数值语义）。
+                WarnOnce("walkline.step",
+                    "WalkLineForTest 传入步长过小（<= 0.01）：本次按 0.1 处理（测试入口，不参与真实玩家路径）");
+                step = 0.1f;
+            }
 
             Game.Logger?.Info(Tag, "walkline.header | from=" + V(from) + " dir=" + V(flat) +
                                    " maxDist=" + F(maxDist) + " step=" + F(step) + " radius=" + F(radius) +
@@ -783,7 +852,9 @@ namespace Cs16.Module.Map
                 point = default;
                 return false;
             }
-            point = pts[UnityEngine.Random.Range(0, pts.Length)];
+            // 标记点随机取用：**玩法**（AI 拿到的巡逻点/包点会决定它往哪走、在哪架枪）。
+            // 走 CsRng 的 MapMarkerPick 流 —— 同一局同一调用序 ⇒ 同一个点，可重放。
+            point = pts[CsRng.Stream(CsRngStream.MapMarkerPick).Next(0, pts.Length)];
             return true;
         }
 

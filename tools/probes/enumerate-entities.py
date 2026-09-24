@@ -2197,7 +2197,7 @@ DIF = [
     # 编号 1-22 / 25-48 = 原验收表行（其中 3/18/44/45/46/48 由下面的真源文本提供）；49-64 = 真源独有、已补进验收表段。
     # 片AE（2026-09-21）：补 **23 / 24**（两处引用悬空 ⇒ 把被引用的两件事按四要素登记：23 = 对照表 §9 F-03 的
     #   "右上角落点只有非 1:1 口径载体"；24 = 对照表 §9 F-01 的 `Map: <地图名>` 行绝对 x 为推算值 15 px）。
-    ('1', 'Find Servers 列表为空', '单机版没有局域网对局可发现；面板与 `Game.LanBrowser` 链路本身是通的', '`UI/Flow/ServerListPanel.cs`', '做联机版时接真实 LAN 广播'),
+    ('1', 'Find Servers 列表为空', '单机版没有局域网对局可发现；面板与 `Game.LanBrowser` 链路本身是通的', '`UI/Flow/ServerListPanel.cs`', '做联机版时接真实 LAN 广播【2026-09-24 片LAN 进度】"做联机版时接真实 LAN 广播"**已落地一半**（见差异 #88：新增 `CsLanHost` 应答端 + 面板 `Host LAN Game` 开关 + 真实扫描，判据 `RESULT: PASS`）—— ⛔ "列表恒空"只在**同网段确实没有别的实例**时才成立，**不再**是"单机版设计如此"；本行余下的"何时消除"= 服务端 LAN 房间/开局链路落地'),
     ('2', 'Quit 未在自动化里真触发', '自动化在编辑器内跑，真 `Application.Quit()` 会把编辑器一起关掉', '`Module/Flow/AppFlow` 的 `QuitGame` 分支', '打包成独立 exe 后手测'),
     # 口径A(2026-09-23 片BW-S-R) id=3: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 4 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('3', '控制台用 / 或 0 代替 ~；补充锚点：`/`', '引擎 GameKey 枚举里没有 BackQuote（契约缺口）', '策划/验收表.md 允许的差异#3', '引擎补 GameKey.BackQuote'),
@@ -2288,7 +2288,8 @@ DIF = [
     ('62', '切片N（S1）：Defuser / Vest / VestHelm **没有第一人称 viewmodel / AnimatorController**', '它们是**被动装备** —— A（CS 1.6）里既不能"手持"、也没有第一人称动作 ⇒ **原版本身就没有**这三个 v_ 模型。旧判据把 CsWeapons 里所有 id 都当武器、要求 vm_<id>.controller 存在，对它们不成立；要满足它只能去 Editor/Views **生成**这三个控制器 = 造 A 没有的素材（skill §0 铁律 1）⇒ 判据已改为「A 也无此 viewmodel ⇒ 一致」', 'tools/probes/enumerate-entities.py（S1 段的 S1_PASSIVE_EQUIPMENT 分支）；依据 = client/Assets/Editor/Views/ModelData/*.cs16anim 共 38 个（29 个 vm_* + 9 个 player_*，装备类 0 命中）+ client/Assets/Resources/Art/Anim 的 29 个 vm_*.controller；Core/CsWeapons.cs:83-85', '不消除（与 A 一致的行为差异）'),
     # 口径A(2026-09-23 片BW-S-R) id=63: 基=登记侧; +补充锚点(盘上) 0 片; 弃(盘上) 3 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('63', '切片N：**下架了本项目新增的"伤害数字飘字"**（HudPanel 的 ShowDamageNumber / ObserveLocalDamage）', 'A（CS 1.6）的 HUD **没有伤害数字项**（原版 HUD 只有 hitmarker 与击杀提示）⇒ 屏幕上的 `-<数字>` 飘字属本项目自行新增的命中反馈文本，按 skill §0 铁律 1「A 没有 ⇒ 不加」整链删除。留下的只有**受击方向指示器**（屏幕边缘红框，A 有这条反馈）⇒ 那个被两处共用的时长常量随之由 DamageNumberTime 改名为 DamageIndicatorTime（含全部引用点）', 'client/Assets/Scripts/UI/InGame/HudPanel.cs（删除处留了注释与依据）；Core/CsConst.cs（原注释即写「本项目新增」）；策划/对照表.md §4「界面元素坐标/尺寸/颜色」——原版 HUD 元素已逐条出处化（U-01~U-37，引用到 cstrike__sprites__hud.txt:110/120/121/122/127/131/135/137/179/183 等），**其中没有任何"伤害数字"项**；策划/验收表.md B 段——我方 HUD 项清单 H1~H15 里也没有它（H9 = 命中标记 hitmarker）；client/资源欠缺清单.md——A 有 / 我方缺 的逐项对账里同样没有这项。⚠️ 如实说明：**原版硬载体 `sprites/hud.txt` 已在盘**（`原版资源/cs16src/cstrike/cstrike__sprites__hud.txt`，片AR/片AW 取回，见 `原版资源/清单.md`；同一份被 #14/#34 用作 `cstrike__sprites__hud.txt:110/120/…/183` 的出处）但**本行没有逐行读过它**；`原版资源/解包产物/` 仍不在盘（`原版资源/` 实测只有 `cs16src/` · `hlsdk/` · `备份/` · `_moved-out-from-assets/`）⇒ 本项按任务书退路仍登记为「本项目新增、与原版无关」，但**直证已可做**：下一棒读该 hud.txt 的元素清单即可给"原版 HUD 里没有伤害数字"一条原文级证据', '不消除（A 本来就没有；若将来要加回，必须先给出原版出处的 file:line）'),
-    ('64', '§G D2「低矮障碍（含楼梯扶手/台阶沿）」残留 5 格不达标（判据未放宽，逐格已查明）', '用户报的那一处（匪家矮墙/台阶沿 cell(20,27)，h=0.81 m）本片已通过：全图 71 处候选里地面挡 71/71、跳起站得住 67/71、横跨窗口全 OK（h=0.81 m 的 65 格矮墙/台阶沿里 63 格通过，另 2 格是下面的"箱堆"口径问题）。残留 5 格分三类，**都不是**"位图判挡 + 顶面够得着却站不上去"的隐形墙形态：(a) cell(82,86)/(23,123)：顶面够得着，但身高带里**真有实体**（沙子混凝土台上压着箱子，真顶面 2.44 m；军械箱上再叠一箱，真顶面 5.28 m - 来路 3.25 m = 2.03 m）⇒ 原版同样上不去 —— 这是"什么才算矮障碍"的**候选分类口径**问题，不是实现缺口；(b) cell(51,108)：军械箱顶（高差 1.13 m）逼近跳跃峰值 1.1445 m ⇒ 时间窗 0.073 s × 5.4 m/s = 0.39 m < 需跨 1.72 m，一次跳跃不可能**横跨**；本行"边界：恰好在跳跃可达高度上"一条已定案「顶面高差 ≤ 可达高度 ⇒ 能跳过去」，两条口径自相矛盾（横跨比"顶面够得着"更严，且原版 GoldSrc 起跳不改变水平速度、同样跨不过去）；(c) cell(118,52)/(118,53)：SandTrim 收边条（顶面 6.96 m / 来路 6.50 m），外侧是图外虚空 ⇒ 9 点探针有 3 个落点所在子区域**没有任何世界几何**，运行时按保守口径判挡（切片U/S 特意保留，⛔ 本片不碰）。', '判据 tools/probes/geom-check.py（A5：候选 / 来路判挡 / 顶面可站 / 横跨可达，+ probe_kind_9 把"外侧虚空"与"真有实体"分开）；运行时口径 client/Assets/Scripts/Module/Map/CsMap.cs:260-425（CanStand 两层判据 / BodyHeightClearAt 的保守判挡 / 9 点半径采样）；逐格数字见 geom-check 报告 A5 段与 策划/状态矩阵.tsv（本片回写）', '主 agent 裁决「候选分类口径」后：(a)(b) 两格在收紧为「只收格内真顶面 ≤ 可达高度的格」+「横跨窗口降级为信息行（判据 = 顶面高差 ≤ 跳跃可达高度）」时归零；(c) 两格属运行时保守口径，需把站立判定改成原版单点口径（另开片，⛔ 本片未改引擎/未改该调用链）'),
+    ('64', '§G D2「低矮障碍（含楼梯扶手/台阶沿）」残留 5 格不达标（判据未放宽，逐格已查明）', '用户报的那一处（匪家矮墙/台阶沿 cell(20,27)，h=0.81 m）本片已通过：全图 71 处候选里地面挡 71/71、跳起站得住 67/71、横跨窗口全 OK（h=0.81 m 的 65 格矮墙/台阶沿里 63 格通过，另 2 格是下面的"箱堆"口径问题）。残留 5 格分三类，**都不是**"位图判挡 + 顶面够得着却站不上去"的隐形墙形态：(a) cell(82,86)/(23,123)：顶面够得着，但身高带里**真有实体**（沙子混凝土台上压着箱子，真顶面 2.44 m；军械箱上再叠一箱，真顶面 5.28 m - 来路 3.25 m = 2.03 m）⇒ 原版同样上不去 —— 这是"什么才算矮障碍"的**候选分类口径**问题，不是实现缺口；(b) cell(51,108)：军械箱顶（高差 1.13 m）逼近跳跃峰值 1.1445 m ⇒ 时间窗 0.073 s × 5.4 m/s = 0.39 m < 需跨 1.72 m，一次跳跃不可能**横跨**；本行"边界：恰好在跳跃可达高度上"一条已定案「顶面高差 ≤ 可达高度 ⇒ 能跳过去」，两条口径自相矛盾（横跨比"顶面够得着"更严，且原版 GoldSrc 起跳不改变水平速度、同样跨不过去）；(c) cell(118,52)/(118,53)：SandTrim 收边条（顶面 6.96 m / 来路 6.50 m），外侧是图外虚空 ⇒ 9 点探针有 3 个落点所在子区域**没有任何世界几何**，运行时按保守口径判挡（切片U/S 特意保留，⛔ 本片不碰）。', '判据 tools/probes/geom-check.py（A5：候选 / 来路判挡 / 顶面可站 / 横跨可达，+ probe_kind_9 把"外侧虚空"与"真有实体"分开）；运行时口径 client/Assets/Scripts/Module/Map/CsMap.cs:260-425（CanStand 两层判据 / BodyHeightClearAt 的保守判挡 / 9 点半径采样）；逐格数字见 geom-check 报告 A5 段与 策划/状态矩阵.tsv（本片回写）', '主 agent 裁决「候选分类口径」后：(a)(b) 两格在收紧为「只收格内真顶面 ≤ 可达高度的格」+「横跨窗口降级为信息行（判据 = 顶面高差 ≤ 跳跃可达高度）」时归零；(c) 两格属运行时保守口径，需把站立判定改成原版单点口径（另开片，⛔ 本片未改引擎/未改该调用链）'
+      '【2026-09-24 片FIX-4 线M 交叉引用】本行「位图判挡 + 顶面够得着」的**规模**已量化：`.ai-tmp/test/move-geom.txt` 的 ② 段，匪家扶手/斜坡车道 0.5 m 网格 26 列里 `位图判挡但该列有碰撞面=3`；B 通台阶 760 列里 = 314；反方向 `位图判通但该列无碰撞面` = 0 / 1。另：本片把「起点位图判挡但真几何可站」这一类从"原地不动"改成"照走"（`CsMap.ResolveMoveCore` / `TryStepUp`，见 #66 行）⇒ 本行里"位图判挡"不再等价于"人过不去"。⚠️ 上面的计数只说明"位图说挡"与"这一列有几何"是两件事，⛔ 不等于"可站"。'),
     # 口径A(2026-09-23 片BW-S-R) id=65: 基=登记侧; +补充锚点(盘上) 2 片; 弃(盘上) 3 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('65', '本工程 de_dust2 几何的 X 轴跨度 4480 单位 > 原版 overview 窗口的 4096 单位（多 384 单位 = 9.4%）',
      '雷达底图换成**原版** overviews/de_dust2.bmp 后，雷达"显示哪块世界"由**原版窗口**决定（片AS 口径：X 中心 ± 2048 单位、Z 中心 ± 2730.6667 单位）。原版那张图的窗口装不下本工程几何的最东/最西两端 —— 但**这恰恰是原版行为**：原版 de_dust2 的 overview 本来就只覆盖 4096×5461 单位，多出来的 384 单位是**外挂笔刷/越界顶点**（去掉 0.5% 分位后 X 跨度 = 4064，与原版 4096 只差 0.8%，Z 轴 5461 vs 几何 5312 装得下）。主 agent 已裁决：**不剪几何 / 不改 de_dust2_geo.bin / 不重建场景**（为了"装下离群顶点"去改几何 = 1:1 复刻的反面）⇒ 只登记，不修',
@@ -2315,7 +2316,37 @@ DIF = [
      '④ **用户所见已复现 = 直线顶墙**：同一探针第三个 case「只设一次 yaw 朝目标、之后不再转向、按住前进」——'
      '**到顶=False，第 395 帧卡死**，位置 `(-10.973,-2.030,36.587)`（≈ 片BD 纯函数直线推进卡住的 `x=-10.961`），'
      '**被钳住帧=362/395**，只挪 **5.109 m** 就再也动不了 —— 即"上不去"是**路径问题（直线顶墙）**，不是几何/阈值问题。'
-     '⑤ 同类扩样（T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台）**本片未做**（改 `bsp`/扩样表属余力，见 `tools/probes/bstairs-walkline.cs` 的 `Case(...)` 调用点）。',
+     '⑤ 同类扩样（T 坡道 / A 点斜坡 / B 门台阶 / CT 出生台）**本片未做**（改 `bsp`/扩样表属余力，见 `tools/probes/bstairs-walkline.cs` 的 `Case(...)` 调用点）。'
+     '【2026-09-24 片SLOPE-AUDIT 落地 · 补上「全图楼梯/坡道/台阶的 A→B 可走性判据」（= 本行 ⑤ 缺的那一半）】'
+     '**判据资产（新增）** `tools/probes/bm-step-audit.py`（离线只读；复用 `geom-check.py` 的读取层，⛔ 不另写一套解析）。'
+     '**口径（从代码读，⛔ 不写死）**：`CanStand = BitmapClear && GroundWithinStep` **或** `BodyHeightClear`（`CsMap.cs:290-300`）；'
+     '`GroundWithinStep(pos)`：`SampleGround(pos).y − pos.y <= StepUpHeight` —— **单边**（只挡往上抬，往下掉允许）（`:324-328`）；'
+     '`TryStepUp` 的高度闸门 `SampleGround(target).y − from.y > StepUpHeight ⇒ false`（`:514-531`）'
+     '⇒ 从低格往高格走，`Δh > 0.45 m` 时**两格位图都说可走也一样过不去**。'
+     '**实测**（`client/Assets/Resources/MapData/de_dust2.bytes`：`w=127 d=145 cell=1.00 origin=(−63,−72)`）：'
+     '可走格 5312 / 采到候选地面高度 5308 / 相邻可走格对（去重）5157；'
+     '**B 完全不通 = 0**（位图不存在自相矛盾的硬边界）；**A 单向硬边界 = 69**（台阶/台沿，合法几何，只作清单）；'
+     '**C 位图可走但一格地面都没采到 = 4**（= 可走格 5312 − 采到地面的 5308；⚠️ 见下"顺带发现"）'
+     '⇒ **本判据当前判定 = `RESULT-STEP: FAIL`**（脚本退出码口径：B / C 任一非 0 即红；⛔ 不把 FAIL 藏起来，如实登记）。'
+     '**匪家框内 10 对**（x∈[−58,−2] z∈[−58,−34]）：'
+     '① **6 格连成一道 0.90 m 台沿** —— `cell(21..26, 30)` H=3.25 ↔ `cell(21..26, 31)` H=2.35，'
+     '世界 x −41.5…−36.5、z 边界 −41.5 / −40.5 ⇒ 从低侧（z=−40.5，h=2.35）**走不上去**（Δ=0.90 = 2× 台阶高 0.45），'
+     '但 **0.90 ≤ 跳跃可达 1.1445 ⇒ 跳得上去** —— 与 A5「跳起通」同结论，这就是用户点名的**匪家扶手/矮墙**；'
+     '② `cell(49, 18/19/20)` H=8.95 ↔ `cell(50, …)` H=3.85/4.05/3.25（出生点旁 x=−13.5 / z=−52.5 的高台边，Δ≈4.9~5.7 m，只能从高处往下掉）；'
+     '③ `cell(30,37)` H=6.50 ↔ `cell(31,37)` H=3.25（Δ=3.25）。'
+     '**⇒ 斜坡本身没有硬台阶**：匪家那处坡道（T 侧 18.43° ⇒ 每格 0.33 m < 0.45 m）在 69 条 A 里**一条都没有** '
+     '⇒ 「斜坡卡住」的**确定性那一半不成立**；卡住点落在**坡尽头那道 0.90 m 扶手台沿**上（走过去停住、必须跳）；'
+     '而「**概率**」来自 `CanStand` 第一层的**半径 8 向采样**（`BitmapClear` 要求中心 + 8 向全可走）与第二层几何兜底 '
+     '`BodyHeightClear` 谁先命中 —— 那部分**离线判不了**，属实机判据（登记为待补）。'
+     '⚠️ **顺带发现（新，已登记待补）**：**4 格「位图可走但一格地面都没有」** —— `cell(27,63)` / `(9,102)` / `(10,102)` / `(10,109)`；'
+     '用 `geom-check.Geom.first_up_face_y(格心, 从 50 m 往下)` 复核**四格全是 None**（格心处没有任何朝上面）；'
+     '且 `(27,63)` 是个**只连一格**的叶子格（四邻里只有 `(27,62)` 可走）。后果：`TrySampleGround` 无命中 ⇒ '
+     '`GroundWithinStep` 走 `if (!TrySampleGround(pos, …)) return true;` 的**放行分支** ⇒ `CanStand` 放行 '
+     '⇒ 玩家能走进一格**脚下没有地面**的地方（贴地采样当帧失败 = 一帧下坠/滑步）。'
+     '⛔ **未修**：修法在**位图烘焙**侧（这 4 格不该标可走），不是运行时改动；本片只出判据与坐标。'
+     '⛔ **口径坑（第一版踩过，留档）**：拿 `geom-check.up_face_by_cell()`（格内**最高**朝上面）当「地面高度」'
+     '⇒ 会报出 176 对 Δ≈**8.94 m** 的假「隐形墙」，全是**屋顶**（`cell(66,95)` 的格内最高朝上面是房顶 5.69 m，'
+     '而人在街上 −3.25 m）⇒ 本次改为**每格全部候选朝上面**（去重 0.05 m），再判「两格之间有没有一对高度差 ≤ 一步台阶」。',
      '用户本轮原话"B旋转楼梯上不去"；'
      '原版形态对账资产 `tools/probes/bsp-brushes.py` + `bsp-brushes.txt` + `bsp-brushes-scan.txt`（`n.z=0.9487 / SLOPE=6 TREAD=1 WALL=0` 原文）；'
      '工程侧逐格/逐帧数字 `tools/probes/bstairs-walkline.cs` + `tools/probes/bstairs-walkline.txt`（(D) 段逐格数字 / (E) 逐帧）'
@@ -2326,15 +2357,122 @@ DIF = [
      '真人链路判据资产 `tools/probes/real-walk-bstairs.cs`（探针）/ `.ai-tmp/drivers/bf-realwalk.ps1`（一轮 Play 驱动）/ '
      '逐帧运行时日志 `.ai-tmp/test/bf-realwalk.txt`（2003 行）/ 环境基线 `.ai-tmp/test/bf-env.txt`（AMD Radeon RX 5700 XT / Direct3D12 / 3440x1440 / 3.42 ms）',
      '无需改几何；**真人链路已于片BF 复现并关闭本行**（玩家侧可走：T 20.323 m / CT 11.247 m 到顶、剔除输入延迟后真实阻断 0 帧；'
-     '用户所见 = 直线顶墙 x=-10.973 只挪 5.109 m，属路径问题）。未做的只剩"全图其余楼梯/坡道扩样"，另片'),
+     '用户所见 = 直线顶墙 x=-10.973 只挪 5.109 m，属路径问题）。未做的只剩"全图其余楼梯/坡道扩样"，另片'
+      '。⛔ **用户 2026-09-24 复查仍报**：「斜坡会有概率卡住（点名：匪家的扶手）」⇒ 本行的"已证伪"只覆盖了 B 点主楼梯的**直线顶墙路径**；"概率卡住"是新现象（窄面/扶手），正落在本行 ⑤ 的"同类扩样未做"上 ⇒ **留在此行**，另片扩样时一并判。'
+      '【2026-09-24 片SLOPE-AUDIT 进度 · 本会话实测】本行 ⑤「同类扩样未做」**已补掉一半**：'
+      '全图楼梯/坡道/台阶的 **A→B 可走性判据**已落地（`tools/probes/bm-step-audit.py`，离线、退出码即判据：B / C 非 0 才红），'
+      '实测 **B 完全不通 = 0**、**A 单向硬边界 = 69**（清单，含匪家 10 对）、**C 缺地面 = 4**'
+      '⇒ **`RESULT-STEP: FAIL`**（C 类 4 格实红；⛔ 本行如实带红登记，判据台账原文见 `.ai-tmp/test/` 同源脚本输出）。'
+      '**匪家坡道本身一条都不在 A 里** ⇒「斜坡概率卡住」的确定性那一半**不成立**，'
+      '卡点在坡尽头那道 **0.90 m 扶手台沿**（须跳，0.90 ≤ 跳跃可达 1.1445）。'
+      '**仍未消除**：①「概率」那一半（半径 8 向采样 vs 几何兜底谁先命中）**离线判不了** ⇒ 要实机复现'
+      '（同片BF 的真人链路探针，指到 `cell(21..26, 30/31)` 那道台沿）；'
+      '② 新增待补 = **4 格「位图可走但无地面」**（`cell(27,63)` / `(9,102)` / `(10,102)` / `(10,109)`）'
+      '要在**位图烘焙侧**修（本片未改运行时）；'
+      '③ 本行「已证伪」的适用范围仍只到 B 点主楼梯 + 本次全图 A→B 高差审计。'
+     '【片LEDGE 2026-09-24 实机取证 · 本会话】⑤「概率」那一半**已实机复现**（判据资产 `tools/probes/real-walk-ledge.cs`，驱动 `.ai-tmp/drivers/bz-final4.sh`，输出 `.ai-tmp/test/r3-ledge.txt`）：'
+     '**扫 3 条车道**（世界 x=−41.5 / −39.5 / −37.5 ⇒ cell x=21/23/25，正是离线点名的那 6 列里的 3 条），每道 **5 次纯走 + 3 次带跳**，从低侧 `cell(·,35)` 朝 −z 按住前进到 `cell(·,28)`。'
+     '**判决 = `RESULT-LEDGE: PROBABILISTIC`** —— `x=−41.5`：纯走 **4/5**、带跳 3/3；`x=−39.5`：纯走 5/5、带跳 3/3；`x=−37.5`：纯走 5/5、带跳 3/3。'
+     '⇒ **用户报的「斜坡会有概率卡住」在实机上成立**（同一位置、同一输入，4/5 上得去、1/5 上不去）。'
+     '**失败那一例的原文**（`CASE 3`，lane x=−41.5，WALK）：起点 `(-41.500,1.200,-36.500)`、`爬升=0.000`、`最高y=1.200`、终点 `(-41.500,1.200,-53.997)` `cell(21,18)`、`帧=900 clamped帧=609 原因=帧数上限`；'
+     '逐帧显示它**一路贴着 y=1.200 直着穿过了整段坡**（F10 z=−37.619 / F60 z=−40.337 / F100 z=−43.438 / F290 z=−53.831），**完全没有爬升**，最后在 z≈−54.0 顶死后卡住 609 帧；'
+     '而同一车道的成功例在同一段上爬到 `y=2.217~2.811`（终点 `cell(21,29)`）。'
+     '⇒ 现象 = 「**有时把人抬上坡、有时让人贴着低面直穿过去**」，与「概率卡住」的用户体感一致。'
+     '⚠️ **同时更正一处本行旧结论**：离线那条「**0.90 m 扶手台沿**（须跳）」在实机上**不成立** —— runtime 在该车道是**连续斜坡**（成功例 y 从 1.200 连续升到 2.8，无台阶突变），'
+     '且离线/实机的高度对不上：`cell(23,30)` 离线 3.25 / 实机走面 2.381；`cell(23,35)` 离线 2.35 / 实机 **1.200**。'
+     '⇒ 离线取的是「每格**全部候选**朝上面」里的一对，**至少有一边不是该格的可走地面** ⇒ `bm-step-audit.py` 的 A 清单（69 条）里凡是这种成对的，都要按「可走地面」（而非「候选面」）重取。'
+     '⛔ **机制未定位**（本片到此为止）：为什么**同起点、同输入**会有两种结果 —— 可疑点 = ① `SampleGround` 取到的面（坡面 vs 低面）；② 软地板 `TrySoftFloor`（差异 #76 的 `_lastGroundY`）；③ `BodyHeightClear` 对 **bot** 的判定的时序。'
+     '下一片应从「**逐帧 dump `SampleGround` 命中面 + `CanStand` 两道闸门各自的 pass/fail**」下手（本探针已把落点/帧号/钳住帧全部落盘，可直接对齐）。⛔ **本行不消号**。'
+     '【片LEDGE-ROOT 2026-09-24 机制定位 + 落地修法 + 双帧率对照 · 本会话】'
+     '**根因（一句话）**：常规贴地探测 `CsMap.TrySampleGround`（`client/Assets/Scripts/Module/Map/CsMap.cs:542-557`）的射线**起点只抬 `CsConst.GroundCheckDistance`（0.12 m）且只朝下** '
+     '⇒ 它**看不见比自己脚面高出 0.12 m 以上的地面**；而 0.12 m 在原版里的用途是 `PM_CatagorizePosition` 判「算不算踩着地面」的容差，**不是爬升窗口** '
+     '（原版的爬升窗口是 `PM_WalkMove` 的 **STEPSIZE = 18 单位 = 0.4572 m**，本工程对应的常量正是 `CsConst.StepUpHeight` = 0.45）'
+     '⇒ 本工程把「爬升能力」直接变成了**帧率的函数**。'
+     '**量化（可复算）**：`CsMatch.StepActorPhysics` 每帧先施重力（`a.Velocity.y -= CsConst.Gravity * dt`，`CsMatch.cs:1943`）'
+     '⇒ `resolved.y = 上一帧地面 y − Gravity·dt²`；探测起点 = `resolved.y + GroundCheckDistance` '
+     '⇒ **有效爬升窗口 = `GroundCheckDistance − Gravity·dt²`**；一帧水平位移 = `v·dt` '
+     '⇒ 可爬坡度上限 `tanθ ≤ (GroundCheckDistance − Gravity·dt²) / (v·dt)`。'
+     '取 `GroundCheckDistance`=0.12、`Gravity`=20.32（`client/Assets/Scripts/Core/CsConst.cs`）、`v`≈5.4 m/s（本探针实测每帧 0.277 m @ dt=0.05）：'
+     '**dt=0.0074（约 135 fps）** ⇒ 窗口 0.1189 m ⇒ 上限约 71° ⇒ 18.43° 的匪家坡**通过**（实测 walk 5/5）；'
+     '**dt=0.018（约 56 fps）** ⇒ 窗口 0.1134 m ⇒ 上限约 49° ⇒ 通过（实测 4/5）；'
+     '**dt=0.050（20 fps，受控实验）** ⇒ 窗口 **0.0692 m** ⇒ 上限 **约 14.0°** ⇒ 18.43° **不通过**（实测 **0/5、2/5、0/5**）。'
+     '临界帧率解 `(0.12 − 20.32·dt²) / (5.4·dt) = tan 18.43° = 0.3333` ⇒ `dt ≈ 0.0444` ⇒ **fps ≈ 22.5**；压到 20 fps 正好落在临界之下 ⇒ 稳定复现。'
+     '⇒ **同一个坡、同一份输入，只有帧率不同，结论就翻转** —— 这正是用户报的「概率卡住」。'
+     '**修法（`client/Assets/Scripts/Module/Match/CsMatch.cs` 的 `StepActorPhysics`，最小改动）**：常规探测**落空**时补一次**抬一个台阶**的探测 —— '
+     '`lifted = resolved + Vector3.up * CsConst.StepUpHeight`；探到地面且 `0 ≤ groundPoint.y − resolved.y ≤ StepUpHeight`、且 `IsStandableGround(groundNormal)` ⇒ 承认它，'
+     '之后走**既有**的贴地 / 陡坡闸门（⛔ 本分支不新增任何判定逻辑）。'
+     '① 这是原版 `PM_WalkMove`「**贴地走一遍 + 抬 STEPSIZE 再走一遍、取走得更远的那个**」那半步的等价落地；'
+     '② 抬升上限就是 `CsConst.StepUpHeight`，与 `CanStand` 的水平准入闸门 `GroundWithinStep`（`point.y − pos.y ≤ StepUpHeight`，`CsMap.cs:324-328`）**是同一个常量** ⇒ 不开新的几何口子，高过 0.45 m 的台沿仍上不去；'
+     '③ 只在 `!hasGround && a.Velocity.y <= 0f && a.OnGround` 时触发 ⇒ 跳跃上升段、走下断崖（探到的地面在脚面以下）都不受影响；'
+     '④ 新增取证计数 `CsMatch.StepUpProbeHits`（public static）⇒ 判据能把「修法真的被走到」与「只是没触发」分开（⛔ 只看通过率会把一个死分支也算成修好）。'
+     '**修后实测（同探针 / 同车道 / 同输入 / 同 20 fps 压帧）**：`dt[min/avg/max]` 的 avg = 0.0499~0.0590（与失败轮**同档**）、三道 **walk 5/5、jump 3/3**、'
+     '爬升 **1.603~1.665**（修前 0.000~0.195）、`抬台阶接住` **1~55 次/例**（证明修法真的被走到）。'
+     '**无压帧对照轮**（`dt[avg]`≈0.0063，约 160 fps）：三道 **walk 5/5、jump 3/3**，且 `抬台阶接住` 在 lane2 **恒 0** '
+     '⇒ 常规探测够用时修法**不触发、无副作用**（lane0 那 0~20 次出现在 dt 尖峰 0.07~0.10 的例上 ⇒ 尖峰也已被覆盖）。'
+     '**判据口径本身也修了一处错（⛔ 留档，别重复踩）**：`tools/probes/real-walk-ledge.cs` 的旧口径写「PASS = 每条车道 walk **0/5** 上得去」，'
+     '那是拿**离线假设**（`bm-step-audit.py` 的 A 清单说这里有一道 0.90 m 台沿）当期望值 ⇒ 结果是**修好之后反而判 `FAIL`**（自相矛盾）。'
+     '**新口径的期望值由实测几何给出**：探针每道打印 `GEOM-BASIS` 行 —— `SampleGround(终) − SampleGround(起)` = **1.750 m > StepUpHeight(0.45)** ⇒ 三条车道**都是坡** ⇒ 期望纯走 5/5；'
+     '旧假设（台沿）的证伪见本行上一段（runtime 是连续斜坡、y 逐帧平滑上升、无台阶突变）。'
+     '**判决原文（修后 · 无压帧轮）**：`GEOM-BASIS / 判坡判据=该道 SampleGround(终)-SampleGround(起) > StepUpHeight(0.450) / 本批实测=1.750 ⇒ 三条都是坡（期望纯走 5/5）` 与 `RESULT-LEDGE: PASS`。'
+     '**产物**：`.ai-tmp/test/r4-ledge-lowfps-fix.txt`（20 fps 修后）/ `r4-ledge-highfps-fix.txt`（无压帧修后）/ `r3-ledge-lowfps.txt`（20 fps 修前）/ `r3-ledge.txt` 与 `r3-ledge-highfps.txt`（修前）；'
+     '驱动 `.ai-tmp/drivers/bz-ledge3.sh`（20 fps）/ `bz-ledge4.sh`（无压帧）。'
+     '⚠️ **仍未消除**：① 本行「已证伪」的适用范围仍只到 B 点主楼梯 + 匪家那三条车道（其余楼梯/坡道扩样未做）；'
+     '② 4 格「位图可走但一格地面都没有」（`cell(27,63)` / `(9,102)` / `(10,102)` / `(10,109)`）**仍未修**（属位图烘焙侧，不是运行时）；'
+     '③ 可爬坡度上限已从「帧率相关」改成「≤ 约 55° @20fps」，但**极端低帧率**（dt ≥ 0.1 ⇒ ≤10 fps）下上限会再降到约 24.6° —— 那是「一帧水平位移超过一个台阶」的物理上限，与原版同性质，⛔ 不再作为缺陷登记。'
+      '【2026-09-24 片FIX-4 线M · 用户「概率卡死」根因 + 修复 + 逐帧判据（走真人那条链）】判据资产（新增，只读探针、⛔ 不加钩子/不反射/不改对象结构）`tools/probes/move-stuck.cs`：`MoveStuck.Drive` 每帧 `match.SetLocalInput(cmd) + match.Tick(dt)`（= PlayerModule/MatchModule 同一条链）逐帧 dump Position / Velocity / OnGround / 水平位移 / 起点 CanStand 与位图·几何三子判据 / 落点位图 / `SampleGround` 命中面(y,法线) / `StepUpProbeHits` 增量；**卡死定义 = 输入非零且水平位移 < 0.001 m 连续 ≥60 帧**。**修前（`.ai-tmp/test/fix4-before/`，同一份构建上跑）**：`stairsjf`(dt=0.0074) f=100..399 卡死 300 帧、`stairs05`(dt=0.05) f=51..399 卡死 349 帧、`lane415w05`(dt=0.05) f=67..399 卡死 333 帧、`lane415whf`(高帧率) 0 卡死 ⇒ 精确复现用户「概率卡死」。**根因（逐帧原文）**：卡死形态统一为「`CanStand(from, radius=0.36)==false` **而** `WalkableAt(to)==false`」⇒ 旧 `ResolveMoveCore` 每帧 `return from` ⇒ `CsMatch.StepActorPhysics` 见"要的位移没拿到"把该轴速度清 0 ⇒ **位移恒 0、速度恒 0、按什么键都不动**。为什么 `CanStand(from)` 会是 false 而人明明站在地面上：`CanStand` 是**半径 8 向采样**（中心 + 8 向，`PlayerRadius`=0.36 m），站在台阶/扶手**旁边**时偏移点落在"顶面比脚面高 0.12~0.45 m"那一列 ⇒ 位图判挡（单层 2D 位图，差异 #64/#76），几何分支 `BodyHeightClearAt` 又用 `GroundCheckDistance`(0.12) 当"算不算脚面"的容差 ⇒ 把它读成"身高带里有实体"。**修法（只在本工程侧）** `client/Assets/Scripts/Module/Map/CsMap.cs`：① `ResolveMoveCore`（:453-487）起点站不下时**不再"原地不动"**，改走同一条扫掠解算 `StepOnce`（`moved2 > 1e-8f` 才认；一步都挪不动时才退回旧口径，且只在目标格位图可走时直通，⛔ 不许凭空穿墙）；② `TryStepUp`（:545-580）去掉 `if (!WalkableAt(target.x, target.z)) return false;` **硬否决**，改**真几何四道闸门**（有地面 ∨ 落点不比脚下低 ∨ 高差 ≤ `StepUpHeight`=0.45 ∨ 法线 ≥ `MaxStandableSlopeNormalZ`=0.7 ∨ `BodyVolumeBlocked`=false ∨ 膝盖射线通畅）。**修后实测**（`.ai-tmp/test/move-drive-*A.txt`）：`lane415w05A` **3/3 到终点**（终点 (-41.500,3.962,-54.050)、爬升 2.762）、**0 卡死**；`lane415whfA` 0 卡死；`stairsjfA` **0 卡死**（最长停滞 32 帧 < 60）；`stairs05A` 最长停滞 346 帧（从 f=54）——**如实登记：性质已变但未归零**（走了 5.464→11.017、爬升 0.803→3.477、`抬台阶接住` 2→35）。该残余停滞的**定性（有出处）**：20 fps 与 135 fps 停在同一处（(-18.887,0.653,36.948) 与 (-18.976,0.688,36.995)，XZ 相差 0.10 m）⇒ 与帧率无关；探针 ③ 段定向射线在该点膝高 0.45 m **只有 3/8 方向通畅**，被 `SandCrtSmSd.png` 竖直墙（nY=0.000、0.214 m）与 `_0SandRock2.png` **33.7° 陡坡**（nY=0.556 < 0.7、0.427 m）夹住 ⇒ 是几何事实（直线顶墙 + 陡坡闸门），可用出口在**身后**（+X / -Z）⇒ 属**路径问题**不是解算缺陷。**⚠️ 残余停滞的原样口径（⛔ 不许含糊、⛔ 不许写成已消除）**：**20 fps 直线顶墙 346 帧**（`stairs05A`，从 f=54）；**出口在身后**（+X / -Z）；**性质 = 路径而非解算**；而用户 #5 报的「跳一下就卡住」在 `stairsjfA`（**跳**、高帧率）下 = **0 卡死**（最长停滞 32 帧 < 60）。**无压帧对照 + 回归**：`tools/probes/bodyheight-walkline.cs` ⇒ `SUMMARY FAIL=0`。⚠️ **仍未消除**：① 「斜面前端 0.90 m 台沿」那一步的**跳起后横跨**本片未跑（驱动里 jump 只按一次、之后仍按前进，不是"跳完再转向"）；② 全图其余楼梯/坡道/台阶扩样仍未做；③ `stairs05A` 那 346 帧停滞按上面的定性**不当作缺陷**，但**判据口径要改**（探针必须能区分"顶墙前的正常停滞"与"解算不了"——本片用 ③ 段定向射线补的，建议下片并进 ② 段的逐列表）。'),
     # 口径A(2026-09-23 片BW-S-R) id=67: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 5 片 -> .ai-tmp/test/bwsr-A-discard.tsv
-     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步', '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（内 grep `AStar` 命中 0）。**拆两句**：① 业务域 = `client/Assets/**`（范围见下）；' + _scope_dif(_SCOPE_ASTAR) + '② 引擎包 = `client/Packages/com.clover.unity-engine/**`（junction）' + _scope_dif(_SCOPE_BT_ENGINE) + '⇒ 只能沿标记点最近邻序列走直线；② 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299`/`:574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds、`:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），没有多点突破/掩护/换点位。', '用户本轮原话"人机的ai太傻逼了。一直在原地踱步…警不去守点，匪不去下包 不去突破"；实现出处 `client/Assets/Scripts/Module/Bot/CsBotBrain.cs:11,29-31,298-299,338,406-455,494-516,574-575,697-701`、`client/Assets/Scripts/Module/Bot/BotNavigator.cs:9-29,115-161,183-248,269-277,322-495`、`client/Assets/Scripts/Module/Bot/CsBotConst.cs:323`（"只有 id % N == 0 的 T 去捡掉落 C4"）；难度只改反应时间/瞄准误差 `client/Assets/Scripts/Module/Match/CsTypes.cs:148`（CsBotProfile）；原版口径：**A（CS 1.6）本体不含 bot AI**（官方 bot 属 CZ/PodBot，不在本工程载体范围）⇒ 行为基线按规格 §2.4 三档表 + 差异 #58；缺的战术表（守点位/下包决策）**待补**（降级链第 4 级：参考坐标可自定，但须逐条标"本项目新增"）', '开「机器人 AI」片时：① 先把 `.bytes` 可走位图接上引擎 `AStar.FindSmoothed`（契约见 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16-19 行）`）当**寻路层**；② 再加**位置层**：从 `de_dust2.bsp` 的实体/几何取点位，建"CT 守点位表 / T 下包点表 / 突破线"；③ 判据 = 离线断言（"守点位上有人 ≥X s"、"回合内至少 1 次下包"、"T 进点路径可达"）+ 一次实机联络图。【片BU-R 何时能换回引擎实现】引擎若提供**多实例工厂**（例如 `Game.NewFsm()`，形状 = 返回一个 `IFsm` 新实例、每个 bot 各持一份），则本工程的 `CsBotFsm.cs` 可整体删掉、直接换成引擎实现；在那之前按 `IFsm` 自实现是唯一合法做法。⛔ 本片**不改引擎仓**（改动只写在本条建议里）。【片BU-R 实际进度】`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`（新增）+ `CsBotBrain.cs`（两层 FSM 分发）+ `BotConst.StuckReplanCooldownSeconds` 已落盘；片BU-R 又加了"选目标必须先过可达门禁"（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`）与 CT 包点守卫解耦（`CsBotBrain.InsideHoldSite`）。判据闸门 `tools/probes/bot-goal-gate.py`：修前 FAIL 6/7 → 修后 FAIL 5/7（净位移 0.001~0.007 → 0.008~0.044、换目标 73 → 7、求路径失败 67 → 15），**T 下包 / CT 驻留 / 守点换位仍未达成**（见 .ai-tmp/test/bu-r-goal-after.txt 与 bu-r-gate-after.txt）。**【片BU-R2 2026-09-23 00:0x 因果链 + 修后数字】** 根因（三条，全部有代码出处）：① `BotNavigator.EnsurePath` 把引擎 A* 的**起点节点**（= 机器人自己那一格的格心）留在路径里，而 `AdvancePath` 的推进规则是"离下一个节点更近才推进"——目标是自己的格心时这条规则**永远不成立**，游标整条路径生命周期钉在第 0 个节点 ⇒ 机器人一直追"自己脚下的格心"，越过 2cm（`ComputeMove` 的 0.0004 死区）就翻 180°（引擎出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs:73-76,95,160`）；② `MaybeRepath` 调 `SetRoute`（而非"原地重求路径"）⇒ 按"离当前位置最近优先"**重排整条路线**并把 `_index` 归零，把它自己注释里明令要避免的"回头找最近路点"真的做了（单次 Play Cliffe 一条 Route_CT_Mid 重排 **32 次**）；③ 采集侧的回合从不完整：New Game 面板默认已经 4v4，驱动又无条件补一次 LaunchMatch，走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ 把正跑的回合掐在 **22.5s**（L3 22:42:16.429 → 22:42:38.919），且 Play 在 22:43:49.303 被驱动停掉 ⇒ 采集窗口 93s < 一个完整回合所需的 4+105+5 = **114s**。修法：`EnsurePath` 去掉起点节点（`path[0] == from` 时 `RemoveAt(0)`）、`AdvancePath` 增加"站在该节点的格子里（≤ 半格 = `IMapData.CellSize × 0.5`）也推进"、新增 `BotNavigator.RefreshPathOnly` 并让 `MaybeRepath` 改调它（顺序与游标不动）、驱动新增 `Cs16Drv.Entry.StartBotsIfNeeded`（只有 BotCount < 8 才补 LaunchMatch）+ 采集窗口等到 `phase=RoundEnd`。修后（同一个 `tools/probes/bot-goal-gate.py`，完整回合，8 bot）：**A6 CT 包点驻留 0 → PASS（Spliff 连续 5 采样 ≤7m）**、**A7 守点换位 0 → 26 次 PASS**、A1/A2 通过 0/8 → **2/8**（Cliffe 净位移 5.7 → **66.1m**、net/total 0.032 → **0.802**；Spliff 7.8 → 24.5m / 0.401）；逐帧抖动：Move 方向翻转 Cliffe 317 → **2 次**（Gooseman 291→5、Rikk 209→4、Spliff 308→11、ZBot 88→4），rev% 78.7% → **0.0%**（出处 `tools/probes/bu-r2-motion-diag.py`，修前 `.ai-tmp/test/bu-r2-diag-before.txt` / 修后 `bu-r2-diag-after.txt`）。**仍未消除（本片不改「允许的差异」为「一致」）**：A1/A2 6/8 未达标、A4 求路径失败 18 > 10、**A5 T 侧下包仍 0**；残余根因 = **局部避障层**：`BotNavigator.Avoid` 每帧按 `CsBotConst.AvoidAngles` 顺序重扫候选，落地方向在 ±25°/±50°/±75°/±100°/±125° 之间乱跳（`[BOTFLIP]` 原始行 `probe=±25..±125 probeLeft=0.50`，即 0.5s 的 `_probeHoldSeconds` 保持每一帧就被打破）⇒ Darrell/Scuzzy 原地绕圈（总路径 350m / 净位移 17~22m、翻转 349/328 次）；归因表见 `tools/probes/bu-r2-flip-attrib.py` + `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。**【片BU-R3 2026-09-22 23:35（完整回合实测）】** 只改了 `BotNavigator.Avoid` 一处 = **换向迟滞**（① 候选偏角改按"与当前偏角的偏差升序"试，新增 `PickAvoidAngle`；② 保持期内"这个方向不可走"要**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才换锚点，**单帧不可打破**；参数出处 `tools/probes/bu-r3-avoid-replay.py` 的离线口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。修后（同一 `bot-goal-gate.py`，完整回合，8 bot）：方向翻转 296 → **167** 行（`bu-r2-flip-attrib.py`：Darrell 104 → 9、Scuzzy 117 → 53）、Darrell 总路径 384.6 → **70.3m**（`bu-r2-motion-diag.py`）、A1/A2 达标 2/8 → **3/8**；**A6/A7/A8 未回退**。**仍未消除（⛔ 本片不改本条为"一致"）**：A1/A2 5/8 未达标、A4 求路径失败 19 > 10（与 Avoid 无关，见 #77）、**A5 T 侧下包仍 0**；且残余根因**已改判到避障之外的一层**：`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节显示 4 个 bot 在 93.8s 窗口内**静止 80~90s**（Gooseman 90.5s，状态分布 `Plant:704/798` 且位移恒 0.00m）⇒ A1/A2 的"净位移"口径落在守点/静止上、A5 的直接病灶是 T 侧持包 bot 卡在 `Plant` 态不动（`CsBotBrain`/`CsBotFsm` 层）。⛔ 阈值未下调。；补充锚点：`.ai-tmp/screenshots/p_bomb_planted_b.png`'),
+     ('67', '机器人**没有战术层**：不守点 / 不下包 / 不突破，只在路点之间来回踱步', '机器人的机制是"路点推进 + 局部避障 + 卡住就换目标"，**没有寻路层、没有位置/战术层**：① 引擎通用格子 A*（`client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs`）在 `client/Assets/**` **零调用**（内 grep `AStar` 命中 0）。**拆两句**：① 业务域 = `client/Assets/**`（范围见下）；' + _scope_dif(_SCOPE_ASTAR) + '② 引擎包 = `client/Packages/com.clover.unity-engine/**`（junction）' + _scope_dif(_SCOPE_BT_ENGINE) + '⇒ 只能沿标记点最近邻序列走直线；② 每阵营只有 3 条路线标记（`CsBotBrain.cs:298-299`/`:574-575` CTDefendA/B + 中路）+ 1 条巡逻线（`:494-516`），**守点 = 到达单个包点标记后原地警戒**（`:338` ObjectiveHoldSeconds、`:31`），时长到就"换路线/去巡逻/回出生点"（`:406-455`）⇒ 观感就是"原地踱步、不知道在干啥"；③ 下包/拆包有实现但**单点依赖**（`:697-701` 只认 `intent.Use` + 站位），没有多点突破/掩护/换点位。', '用户本轮原话"人机的ai太傻逼了。一直在原地踱步…警不去守点，匪不去下包 不去突破"；实现出处 `client/Assets/Scripts/Module/Bot/CsBotBrain.cs:11,29-31,298-299,338,406-455,494-516,574-575,697-701`、`client/Assets/Scripts/Module/Bot/BotNavigator.cs:9-29,115-161,183-248,269-277,322-495`、`client/Assets/Scripts/Module/Bot/CsBotConst.cs:323`（"只有 id % N == 0 的 T 去捡掉落 C4"）；难度只改反应时间/瞄准误差 `client/Assets/Scripts/Module/Match/CsTypes.cs:148`（CsBotProfile）；原版口径：**A（CS 1.6）本体不含 bot AI**（官方 bot 属 CZ/PodBot，不在本工程载体范围）⇒ 行为基线按规格 §2.4 三档表 + 差异 #58；缺的战术表（守点位/下包决策）**待补**（降级链第 4 级：参考坐标可自定，但须逐条标"本项目新增"）', '开「机器人 AI」片时：① 先把 `.bytes` 可走位图接上引擎 `AStar.FindSmoothed`（契约见 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs（第 16-19 行）`）当**寻路层**；② 再加**位置层**：从 `de_dust2.bsp` 的实体/几何取点位，建"CT 守点位表 / T 下包点表 / 突破线"；③ 判据 = 离线断言（"守点位上有人 ≥X s"、"回合内至少 1 次下包"、"T 进点路径可达"）+ 一次实机联络图。【片BU-R 何时能换回引擎实现】引擎若提供**多实例工厂**（例如 `Game.NewFsm()`，形状 = 返回一个 `IFsm` 新实例、每个 bot 各持一份），则本工程的 `CsBotFsm.cs` 可整体删掉、直接换成引擎实现；在那之前按 `IFsm` 自实现是唯一合法做法。⛔ 本片**不改引擎仓**（改动只写在本条建议里）。【片BU-R 实际进度】`client/Assets/Scripts/Module/Bot/CsBotFsm.cs`（新增）+ `CsBotBrain.cs`（两层 FSM 分发）+ `BotConst.StuckReplanCooldownSeconds` 已落盘；片BU-R 又加了"选目标必须先过可达门禁"（`BotNavigator.CanReach` + `CsBotBrain.TryPickReachable`）与 CT 包点守卫解耦（`CsBotBrain.InsideHoldSite`）。判据闸门 `tools/probes/bot-goal-gate.py`：修前 FAIL 6/7 → 修后 FAIL 5/7（净位移 0.001~0.007 → 0.008~0.044、换目标 73 → 7、求路径失败 67 → 15），**T 下包 / CT 驻留 / 守点换位仍未达成**（见 .ai-tmp/test/bu-r-goal-after.txt 与 bu-r-gate-after.txt）。**【片BU-R2 2026-09-23 00:0x 因果链 + 修后数字】** 根因（三条，全部有代码出处）：① `BotNavigator.EnsurePath` 把引擎 A* 的**起点节点**（= 机器人自己那一格的格心）留在路径里，而 `AdvancePath` 的推进规则是"离下一个节点更近才推进"——目标是自己的格心时这条规则**永远不成立**，游标整条路径生命周期钉在第 0 个节点 ⇒ 机器人一直追"自己脚下的格心"，越过 2cm（`ComputeMove` 的 0.0004 死区）就翻 180°（引擎出处 `client/Packages/com.clover.unity-engine/Runtime/Core/AStar.cs:73-76,95,160`）；② `MaybeRepath` 调 `SetRoute`（而非"原地重求路径"）⇒ 按"离当前位置最近优先"**重排整条路线**并把 `_index` 归零，把它自己注释里明令要避免的"回头找最近路点"真的做了（单次 Play Cliffe 一条 Route_CT_Mid 重排 **32 次**）；③ 采集侧的回合从不完整：New Game 面板默认已经 4v4，驱动又无条件补一次 LaunchMatch，走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ 把正跑的回合掐在 **22.5s**（L3 22:42:16.429 → 22:42:38.919），且 Play 在 22:43:49.303 被驱动停掉 ⇒ 采集窗口 93s < 一个完整回合所需的 4+105+5 = **114s**。修法：`EnsurePath` 去掉起点节点（`path[0] == from` 时 `RemoveAt(0)`）、`AdvancePath` 增加"站在该节点的格子里（≤ 半格 = `IMapData.CellSize × 0.5`）也推进"、新增 `BotNavigator.RefreshPathOnly` 并让 `MaybeRepath` 改调它（顺序与游标不动）、驱动新增 `Cs16Drv.Entry.StartBotsIfNeeded`（只有 BotCount < 8 才补 LaunchMatch）+ 采集窗口等到 `phase=RoundEnd`。修后（同一个 `tools/probes/bot-goal-gate.py`，完整回合，8 bot）：**A6 CT 包点驻留 0 → PASS（Spliff 连续 5 采样 ≤7m）**、**A7 守点换位 0 → 26 次 PASS**、A1/A2 通过 0/8 → **2/8**（Cliffe 净位移 5.7 → **66.1m**、net/total 0.032 → **0.802**；Spliff 7.8 → 24.5m / 0.401）；逐帧抖动：Move 方向翻转 Cliffe 317 → **2 次**（Gooseman 291→5、Rikk 209→4、Spliff 308→11、ZBot 88→4），rev% 78.7% → **0.0%**（出处 `tools/probes/bu-r2-motion-diag.py`，修前 `.ai-tmp/test/bu-r2-diag-before.txt` / 修后 `bu-r2-diag-after.txt`）。**仍未消除（本片不改「允许的差异」为「一致」）**：A1/A2 6/8 未达标、A4 求路径失败 18 > 10、**A5 T 侧下包仍 0**；残余根因 = **局部避障层**：`BotNavigator.Avoid` 每帧按 `CsBotConst.AvoidAngles` 顺序重扫候选，落地方向在 ±25°/±50°/±75°/±100°/±125° 之间乱跳（`[BOTFLIP]` 原始行 `probe=±25..±125 probeLeft=0.50`，即 0.5s 的 `_probeHoldSeconds` 保持每一帧就被打破）⇒ Darrell/Scuzzy 原地绕圈（总路径 350m / 净位移 17~22m、翻转 349/328 次）；归因表见 `tools/probes/bu-r2-flip-attrib.py` + `.ai-tmp/test/bu-r2-flip-attrib-after.txt`。**【片BU-R3 2026-09-22 23:35（完整回合实测）】** 只改了 `BotNavigator.Avoid` 一处 = **换向迟滞**（① 候选偏角改按"与当前偏角的偏差升序"试，新增 `PickAvoidAngle`；② 保持期内"这个方向不可走"要**连续** `CsBotConst.AvoidBadDirSeconds`=0.1s 才换锚点，**单帧不可打破**；参数出处 `tools/probes/bu-r3-avoid-replay.py` 的离线口径自校验 + 一维扫描，输出 `.ai-tmp/test/bu-r3-replay-final.txt`）。修后（同一 `bot-goal-gate.py`，完整回合，8 bot）：方向翻转 296 → **167** 行（`bu-r2-flip-attrib.py`：Darrell 104 → 9、Scuzzy 117 → 53）、Darrell 总路径 384.6 → **70.3m**（`bu-r2-motion-diag.py`）、A1/A2 达标 2/8 → **3/8**；**A6/A7/A8 未回退**。**仍未消除（⛔ 本片不改本条为"一致"）**：A1/A2 5/8 未达标、A4 求路径失败 19 > 10（与 Avoid 无关，见 #77）、**A5 T 侧下包仍 0**；且残余根因**已改判到避障之外的一层**：`.ai-tmp/test/bu-r3-diag-after.txt` 第 1 节显示 4 个 bot 在 93.8s 窗口内**静止 80~90s**（Gooseman 90.5s，状态分布 `Plant:704/798` 且位移恒 0.00m）⇒ A1/A2 的"净位移"口径落在守点/静止上、A5 的直接病灶是 T 侧持包 bot 卡在 `Plant` 态不动（`CsBotBrain`/`CsBotFsm` 层）。⛔ 阈值未下调。；补充锚点：`.ai-tmp/screenshots/p_bomb_planted_b.png`'
+      '【片FX-MUZZLE 2026-09-24 落地 · 战术分工表（用户复查第 3 条）】'
+      '① **新增** `client/Assets/Scripts/Module/Bot/CsBotRoles.cs`：`enum CsBotRole { Breaker, Support, Scout, Anchor }` + 静态角色表；'
+      '角色由 `(阵营, CsActor.Id % 4)` **纯函数**决定（与 `PlanObjective` 的路线槽位**同一个模数** ⇒ 两处口径同源、可复现、可断言；⛔ 不用随机 —— 随机会让"这局谁突破"变成不可复现的噪声，判据也就写不出来）。'
+      ' ② **三处消费**（`CsBotBrain.cs`）：`ObjectiveHoldSeconds()` 乘 `HoldScale`（突破 0.6 / 支援 1.0 / 侦察 1.6 / 守点 2.5 倍）；'
+      '`Engage` 的偏好交战距离乘 `RangeScale`（0.75 / 1.00 / 1.30 / 1.15 倍）；`Camp` 新增「**Anchor 守到底**」分支 —— 守点位到位后**不再 `ReplanObjective`**'
+      '（这正是用户报的「警不去守点 / 一直在原地踱步」的反面：旧实现全队每 3 秒改一次目的地）。'
+      ' ③ **出处口径（⛔ 必须如实标）**：A（CS 1.6）本体**不含 bot AI**（官方 bot 属 CZ / PodBot，不在本工程载体范围，同 #58）'
+      '⇒ 角色划分与四个倍率在 A 里**没有对应量**，属**本项目新增**（降级链第 4 级），⛔ 不许写成"原版就这样"。'
+      ' ④ **判据资产（三类，全部在盘可复跑）**：'
+      '(a) 纯函数自检 `BotSelfTest.RunRoleTable()`，菜单 `Clover/自检/机器人 战术分工表（差异 #67）`（四条断言 + 打印 Normal 档四角色实际守点秒数 + `RESULT: PASS&#124;FAIL`）；'
+      '(b) **实机探针** `tools/probes/probe-bot-roles.cs`（反射取 `BotModule._brains`，逐个问**运行时实例自己**的 `RoleText()`，⛔ 不是读代码猜）——'
+      '实测 `.ai-tmp/test/r2-bot-roles.txt`（8 bot / round=3 / phase=Live）：'
+      '`Cliffe id=2 CT 侦察` / `Minh id=3 T 突破` / `Gooseman id=4 T 突破` / `ZBot id=5 T 支援` / `Rikk id=6 T 侦察` / `Spliff id=7 CT 支援` / `Darrell id=8 CT 守点` / `Scuzzy id=9 CT 守点`，'
+      '`[各队分工] CT=3种 T=3种`，`RESULT-ROLES: PASS`（口径：bot>=2 ✓ / 每队>=2 种角色 ✓ 最小=3 / 四个守点倍率互异 ✓ 4 个 / 守点角色唯一 ✓ 1 个 / **运行时==纯函数 ✓ 不一致=0**）；'
+      '(c) **可核对载体**（用户自己能看见的那一层）：回合计划日志逐字 '
+      '`[Bot] Darrell（CT/Normal/角色=守点（守点×2.5 交火×1.15 守到底））第 1 回合计划：路线=Route_CT_To_A 路点=4 目标=(34.50, 2.44, 29.50) 站点=True 守点时长=7.5s 重寻路间隔=1.00s`，'
+      '同回合 `[Bot] Minh（T/Normal/角色=突破（守点×0.6 交火×0.75））第 1 回合计划：路线=Route_T_To_A … 守点时长=1.8s` '
+      '—— **同一难度档下 7.5s vs 1.8s** 就是"真的有分工"（旧实现全队共用 3.0s 基准）；抓取 = `.ai-tmp/drivers/bz-round2.sh` phase 4b → `.ai-tmp/test/r2-bot-roles-console.txt`。'
+      '⚠️ **仍未消除**：① 寻路层仍走标记点最近邻（引擎 `AStar` 接入见本行上方旧段落）；② 角色表只覆盖"守点时长 / 交战距离 / 换目标"三处，'
+      '武器偏好与投掷物分工仍是空的（A 无 bot AI ⇒ 无出处，⛔ 不编）。'
+      '。⛔ **用户 2026-09-24 复查仍报**：「机器人 ai 没有分工吗？感觉行为方式都是一样的。机器人有点太笨了」⇒ **并入本行（⛔ 不新开号）**。'
+      '【片FX-MUZZLE 2026-09-24 进度】用户复查第 3 条**已落地**（角色表 + 三处消费 + 三类判据全部在盘；实机探针 `RESULT-ROLES: PASS`、'
+      '载体回合日志行逐字可核，见「为什么」列末的落地段）；**本行主体仍未做** —— 寻路层接引擎 `AStar.FindSmoothed`、'
+      '从 `de_dust2.bsp` 取点位建"CT 守点位表 / T 下包点表 / 突破线"、多点突破与掩护仍是空的 ⇒ ⛔ **本行不消号**，'
+      '仍留在「允许的差异」段等待「机器人 AI」片。'
+      " 【片FIX-4 线B 2026-09-24 · 用户第三次投诉「为什么每个机器人的操作，路线都是相同的。你这什么行为树，什么 ai 啊？？为什么没有分工？？？」】**根因（三条，全部有代码出处）**：① `CsBotBrain.ChoosePlan` 旧实现 `idx=self.Id%4` 后按三分支映射，T 队 `idx==0` 与 `idx==1` 落到**同一条路、同一个目标点**；② CT 队取 `idx%3` ⇒ 槽位 0 与槽位 3 撞在 `Route_CT_To_A` + 同一个点；③ 换目标 `TryRouteObjective` 用 `(self.Id + _replanCount) % 3` 只在**3 条路**里轮 ⇒ 4 只 bot 必然有两只同路。**量化（实机 · before）**：用户本人日志 `client/Logs/2026-09-24.log` 解析（`tools/probes/bot-route-dup.py --log … --only-old`）= 48 个「队-回合」样本 / 288 对同队两两 ⇒ **路线相同 48 对（每队每回合恰好 1 对）、目标点相同 96 对（每队每回合 2 对）**，明细恒为 `Spliff vs Darrell`、`Gooseman vs ZBot` ⇒ `RESULT-DUP: FAIL`（证据 `.ai-tmp/test/fix4-dup-before.txt`）。**修法**：新增 `client/Assets/Scripts/Module/Bot/CsBotPlans.cs`（**4 槽位计划表**，纯函数）：队内序号 = 同阵营 actor 按 Id 升序的名次（不再是全局 Id —— 全局 Id 会被「真人在哪一队」整体位移）；槽位 = `(队内序号 - 本回合持包者队内序号) mod 4`（模 4 平移是**双射** ⇒ 4 只 bot 必得 4 个互不相同槽位；持包者恒落槽位 0 = 主攻包点路线，出处 `策划/策划案/CS1.6单机参考规格.md:130`「T 持包到 B 点 → 下包」）；四个槽位路线标记两两不同（T：主攻路 / 中路 / 另一包点路 / 巡逻；CT：守 A / 守 B / 中路 / 巡逻），共用同一包点的两个槽位用不同 `GoalOrdinal` ⇒ 目标点也不同；`CsBotBrain.TryPickGoalPoint` 改成「按序号取确定性序（按 (x,z) 排序 + CanStand 过滤）里第 N 个走得到的点」，不再「取离自己最近的」（旧口径会让相邻出生的两只 bot 取到同一个点）；`TryRouteObjective` 改按 `(_planSlot+k)%4` 轮转；`BotModule.AuditRouteDistinctness` 每 1s 审计同队撞车（非预期分支必须留痕）。**⛔ 实机抓到的真实缺陷并已修**：2026-09-24 11:31:09（线M 的实机对局，跑的正是本片代码）审计打出 `同队路线撞车：Minh(T/槽位3) 与 Gooseman(T/槽位3) 都走 'Route_T_To_A'` —— 根因是「平移量每只 bot 各自去问一次现在谁持包」（持包者中途被打死 ⇒ 后来的 bot 拿到 -1、先来的拿到 k ⇒ 槽位重合）。修法 = `CsBotPlans.RoundCarrierOrdinal` **回合内缓存一份平移量**（回合号变小才重算）。**判据（三类，全部在盘）**：① **离线段言** `tools/probes/plan-check-offline.cs`（Edit 模式即可，⛔ 不进 Play）→ `CsBotPlans.SelfCheck` 正控 PASS / 负控（注入「槽位3=槽位0」= 旧实现行为）必须 FAIL ⇒ `.ai-tmp/test/fix4-plan-offline.txt` 输出 `RESULT-PLAN: PASS` + `RESULT-PLAN: FAIL` + `RESULT-PLAN-NEGCTL: PASS`；② **素材层序列判据** `tools/probes/bot-route-sequence-check.py --plan … --markers …` ⇒ `.ai-tmp/test/fix4-seq-check.txt` 的 `RESULT-SEQ: PASS`（A 路线标记互异 / B 目标(标记+序号)互异 / C **20/20 个出生点**下 4 条最近邻全序列两两不同）+ 负控 `.ai-tmp/test/fix4-seq-check-negctl.txt` 的 `RESULT-SEQ: FAIL`（`RESULT-SEQ-NEGCTL: PASS`）；③ **实机探针** `tools/probes/probe-bot-routes.cs`（反射读 `_brains`，逐 bot 打 槽位/角色/路线/路点数/首段路点/目标点/出生点/整条序列签名，并用「旧规则反事实」当负控）—— ⚠️ **本条的 after 取样被 Play 独占阻塞**（`.ai-tmp/play.lock` 被线C/线M 持有，二者心跳间隔 <1 分钟；本片只读探针在无 live 对局时只拿到 `bots=0 phase=None` 的空采集，按规矩作废删除）。**已备好一条命令**：`.ai-tmp/drivers/fix4-route-play.ps1`（复用 bu-r6 链：抢锁 → 编译 → Boot → editor_play → 挂驱动 → 4v4 → 采样 A/B → 停）；拿锁后即可产出 `.ai-tmp/test/fix4-route-A.txt` / `-B.txt` 与 `--probe` 口径的重复率对照表（`bot-route-dup.py --probe …`）。**⚠️ 判据口径修正（必须记）**：dispatch 写的「同队任意两只 bot 的**首段路点**不同」**在 T 队不可能通过，且与代码无关**：`Resources/MapData/de_dust2_markers.bytes` 里 `Route_T_To_A ∩ Route_T_Mid ∩ Route_T_To_B = {(-7.5, 3.251, -47.5)}`（该点离 T 出生点最近）⇒ 最近邻排序后三条路第 0 段必然相同（实测 20/20 个出生点）。可满足且同等有效的硬判据 = **整条路线序列不同**（已实现；CT 队 20/20 首段也不同，仅 T 队受素材限制）。⛔ 本片内容属**本项目新增**（A 本体无 bot AI，同 #58）；⛔ 本行主体（寻路层接引擎 AStar / 由 bsp 取点位建战术表）**仍不消号**。【片FIX-4 线B · 行为取舍（主 agent 2026-09-24 批准）】**收益**：用户投诉的「路线/目标相同」被**构造性**消除（同队 4 只恒占 4 条互异家族，换目标时也不抢队友）。**代价**：4 条家族被**活着的**队友占满时（常态），卡住的 bot **不再换路线家族**，只在原家族内换目标点。**缓解**：① 死队友让出的家族**可被接手**（死人不移动、不产生用户可见的重复）；② 退化分支**不冻结**（bot 仍移动）；③ 「卡住」根因在 BotNavigator/物理层（片BU/BL/BP 域），本片只保证互斥。**可复算发生率**（口径 = `client/Logs/Editor.log` 里时间戳 **≤ 11:59:59** 截断的 `重新选目标` 计数 = 76；该日志持续增长，**不钉窗口复算会得到不同的数**，故窗口必须钉住；复算 = 逐行取行首 `[YYYY-MM-DD HH:MM:SS.mmm]` 的 `HH:MM:SS` 与串「重新选目标」计数）：走「要选路线」分支的 = `无空路线` 7 + `换一条路线` 6 = 13 次，其中**「4 条家族全被活人占满」7 次 = 53.8%**；占全部 76 次 = 9.2%；其余 63 次是「守点时长到点/包已下守包/回出生点」不经过家族选择。**卡住时长未变差的观测代理**：7 次无空路线全落在**巡逻家族**（T/槽位2 或 CT/槽位3），其后同一只 bot 的下一次换目标多为「守点时长已到 ⇒ 正常换目标」（Gooseman 11:47:35 卡 → 11:48:26 正常；Scuzzy 11:58:17 → 11:58:20；Minh 11:53:38 卡 → 11:56:54 再卡 → 11:57:30 正常），窗口 11:46–11:59 内无一只 bot 被冻结 ⇒ 代价有界。"),
     # 口径A(2026-09-23 片BW-S-R) id=68: 基=登记侧; +补充锚点(盘上) 2 片; 弃(盘上) 7 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('68', '武器右键（attack2）**整条链缺失**：USP / M4A1 不能拆装消音器、Glock18 不能切连发',
      '① 输入层结构里**只有 `Zoom`**：`CsInputState`（`client/Assets/Scripts/Module/Match/ICsMatch.cs`）的字段逐字是 `Move / Jump / Crouch / Walk / Fire（左键按住） / Zoom（右键，AWP/Scout 开镜） / Yaw / Pitch`，**没有 attack2 / 次级开火**；唯一的右键消费点 = `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`（`cmd.Zoom = input.GetKey(GameKey.MouseRight)`）；② 武器表里也没有"是否支持消音器/连发切换"的字段（`client/Assets/Scripts/Core/CsWeapons.cs:34-46` 的 `CsWeaponDef`）⇒ 除狙击开镜外，任何武器的右键在本工程**结构性无效果**（不是某把枪漏了）。；补充锚点：`Module/Match/ICsMatch.cs`',
-     '用户本轮原话"很多枪右键没效果，就像警的默认小手枪，右键不是拆消音吗？"；实现出处 `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`、`client/Assets/Scripts/Module/Match/ICsMatch.cs`（CsInputState）、`client/Assets/Scripts/Core/CsWeapons.cs:34-46`；原版语义载体 **在盘**：CS 1.6 的逐武器 attack2 写在 `cstrike/cl_dlls/client.dll` 里（不是 cvar / 不是数据表）—— 片AW 已把它取回（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B），但**尚未反汇编**定位 attack2 分支 ⇒ 出处待补（降级链第 2 级：可执行里的常量/分支，**载体已具备**）。⚠️ `原版资源/hlsdk/dlls/weapons.cpp` 是 **HL1** 的武器实现，只能证明"开火/切换写死在类里"这一机制，⛔ 不是 CS 语义出处；补充锚点：`Module/Match/ICsMatch.cs`' + '【片FX-ALL 2026-09-23 **落地 · 部分消除**】attack2 这条链已补上：① 输入层 `CsInputState.Attack2`（**按下沿**，由 `CombatModule` 用 `GetKeyDown(GameKey.MouseRight)` 填）；② 能力表 `CsWeaponDef.CanSilence` / `CanBurst` + `CsWeapons.MarkAttack2Capabilities()` —— **只有 4 把**有出处（Usp/M4A1 = 消音、Glock18/Famas = 连发），默认 false = 无出处不接；③ 状态位 `CsActor.Silenced` / `BurstMode`；④ 消费点 `CsInventory.ToggleWeaponMode`（⛔ 切枪期间照样能切，与 `Reload` 的拦截规则不同）+ `CsMatch.UpdateLocalPlayer` 里的**模拟侧判沿** `inp.Attack2 && !_preAttack2`（`_localInput` 是**黏的**：离线驱动只置一次 true 就没人清 ⇒ 不判沿会每帧翻转一次）。**出处（新证 · 降级链第 2 级）**：在原版 `原版资源/cs16src/cstrike/cl_dlls/client.dll`（1,093,128 B）里按**文件偏移**定位到 `weapons/usp_silencer_off.wav` (0x0e3804) / `usp_silencer_on.wav` (0x0e3824) / `m4a1_silencer_off.wav` (0x0e308c) / `m4a1_silencer_on.wav` (0x0e30ac) / `famas-burst.wav` (0x0e26f4) / `#Switch_To_BurstFire` (0x0e27d4) / `#Cstrike_TitlesTXT_M4A1_Short` (0x0e6af4)，以及原版真输入通道 `+attack2` (@0x0e9f98) / `-attack2` (@0x0e4ac5)。**判据资产** = `tools/probes/attack2-probe.py`（A: 7 组结构断言；B: 上述 7 条串在该偏移处**逐字节重取**且必须是**首次出现**；C: 「按下沿」反例复现 —— S1 按住 8 帧⇒电平型切 8 次/判沿型切 1 次、S2 点按 3 次⇒两者都 3 次、S3 长按+再点⇒电平 4/判沿 2），实测 `RESULT: PASS`；离线自检 = `client/Assets/Scripts/Module/Combat/CombatSelfTest.cs` 的「差异 #68」段（能力表 4 条 + USP 按下沿 + **按住 5 帧不重复翻转** + Glock18 切连发 + 切枪期间仍生效 + AK47 无出处则状态一位不动）。**仍未消除**：① 消音后的伤害/散布、连发的发数与节奏**具体数值**无出处（要反汇编 `client.dll`）；② 判据只到「状态可切换 + 可观测」，**尚无实机联络图**（表现类判据未采）。',
+     '用户本轮原话"很多枪右键没效果，就像警的默认小手枪，右键不是拆消音吗？"；实现出处 `client/Assets/Scripts/Module/Combat/CombatModule.cs:174`、`client/Assets/Scripts/Module/Match/ICsMatch.cs`（CsInputState）、`client/Assets/Scripts/Core/CsWeapons.cs:34-46`；原版语义载体 **在盘**：CS 1.6 的逐武器 attack2 写在 `cstrike/cl_dlls/client.dll` 里（不是 cvar / 不是数据表）—— 片AW 已把它取回（`原版资源/cs16src/cstrike/cl_dlls/client.dll`，1,093,128 B），但**尚未反汇编**定位 attack2 分支 ⇒ 出处待补（降级链第 2 级：可执行里的常量/分支，**载体已具备**）。⚠️ `原版资源/hlsdk/dlls/weapons.cpp` 是 **HL1** 的武器实现，只能证明"开火/切换写死在类里"这一机制，⛔ 不是 CS 语义出处；补充锚点：`Module/Match/ICsMatch.cs`' + '【片FX-ALL 2026-09-23 **落地 · 部分消除**】attack2 这条链已补上：① 输入层 `CsInputState.Attack2`（**按下沿**，由 `CombatModule` 用 `GetKeyDown(GameKey.MouseRight)` 填）；② 能力表 `CsWeaponDef.CanSilence` / `CanBurst` + `CsWeapons.MarkAttack2Capabilities()` —— **只有 4 把**有出处（Usp/M4A1 = 消音、Glock18/Famas = 连发），默认 false = 无出处不接；③ 状态位 `CsActor.Silenced` / `BurstMode`；④ 消费点 `CsInventory.ToggleWeaponMode`（⛔ 切枪期间照样能切，与 `Reload` 的拦截规则不同）+ `CsMatch.UpdateLocalPlayer` 里的**模拟侧判沿** `inp.Attack2 && !_preAttack2`（`_localInput` 是**黏的**：离线驱动只置一次 true 就没人清 ⇒ 不判沿会每帧翻转一次）。**出处（新证 · 降级链第 2 级）**：在原版 `原版资源/cs16src/cstrike/cl_dlls/client.dll`（1,093,128 B）里按**文件偏移**定位到 `weapons/usp_silencer_off.wav` (0x0e3804) / `usp_silencer_on.wav` (0x0e3824) / `m4a1_silencer_off.wav` (0x0e308c) / `m4a1_silencer_on.wav` (0x0e30ac) / `famas-burst.wav` (0x0e26f4) / `#Switch_To_BurstFire` (0x0e27d4) / `#Cstrike_TitlesTXT_M4A1_Short` (0x0e6af4)，以及原版真输入通道 `+attack2` (@0x0e9f98) / `-attack2` (@0x0e4ac5)。**判据资产** = `tools/probes/attack2-probe.py`（A: 7 组结构断言；B: 上述 7 条串在该偏移处**逐字节重取**且必须是**首次出现**；C: 「按下沿」反例复现 —— S1 按住 8 帧⇒电平型切 8 次/判沿型切 1 次、S2 点按 3 次⇒两者都 3 次、S3 长按+再点⇒电平 4/判沿 2），实测 `RESULT: PASS`；离线自检 = `client/Assets/Scripts/Module/Combat/CombatSelfTest.cs` 的「差异 #68」段（能力表 4 条 + USP 按下沿 + **按住 5 帧不重复翻转** + Glock18 切连发 + 切枪期间仍生效 + AK47 无出处则状态一位不动）。**仍未消除**：① 消音后的伤害/散布、连发的发数与节奏**具体数值**无出处（要反汇编 `client.dll`）；② 判据只到「状态可切换 + 可观测」，**尚无实机联络图**（表现类判据未采）。'
+     '【片FX-MUZZLE 2026-09-24 落地 · **实机消费点**已取证（用户复查第 2 条）】'
+     '上一句缺的正是那一层：**在跑着的这一局里，右键那条链到底把状态翻过来了没有**。'
+     '判据资产 `tools/probes/probe-attack2-live.cs`（三段：A 逐武器读 `CsWeapons.Get(id).CanSilence/CanBurst`；'
+     'B 反射取 `CsMatch.Inventory`（`internal`，跨程序集只能反射）后对**本地玩家**逐武器调 `ToggleWeaponMode` —— '
+     '= `CombatModule` 右键那条链的**唯一出口** —— 读 `CsActor.Silenced` / `BurstMode` 的前后值；'
+     'C 同一把枪连调两次必须回原值，否则就是"按一次右键状态自己在抖"）。'
+     '实测 `.ai-tmp/test/r2-attack2.txt`（同一 Play、`phase=Live running=True`、`local=Player id=1 team=CT 手持=usp`）：'
+     '`usp CanSilence=T` → `Silenced False→True [翻]`；`m4a1 CanSilence=T` → `Silenced False→True [翻]`；'
+     '`glock18 CanBurst=T` → `BurstMode False→True [翻]`；`famas CanBurst=T` → `BurstMode False→True [翻]`；'
+     '`ak47 / m249 / awp / deagle / knife` 四标志全 False → 状态一位不动（`[不动]`）= **无出处不接**，与 `MarkAttack2Capabilities()` 逐条一致。'
+     '汇总行 `[B/C] 汇总：翻过的武器=4/9  二次调用回原值=9/9`、`[B] 能力表里应当能翻的武器数=4` ⇒ **`RESULT: PASS`**'
+     '（口径写在探针里：能翻的必须**恰好**等于能力表里 `Silence&#124;&#124;Burst` 为 true 的数目）。'
+     '⛔ 探针只读业务数据：改 `ActiveWeapon` 只为把"手里那把枪"换成待测武器，**用完恢复原值**（实测尾行 `复原：local.ActiveWeapon=usp`），不点按钮、不发包、不改 `state.txt`。'
+     '⚠️ **仍缺**：**表现类并排图**（挂上/卸下消音器后 `v_usp` 模型的差异、连发档位提示）—— 上一句的缺口只被**状态层**补上，视觉那一格仍未采。',
      '开「输入 × 玩法」片时：① 先取回 `client.dll` 的 attack2 分支（或一份原版行为证据）定死逐武器语义（USP/M4A1 消音、Glock 连发）；'
-     '② 契约扩 `CsInputState.Attack2` + `CsWeaponDef` 的支持位；③ 判据 = 离线断言（换弹/开火链在 attack2 下的状态变化）+ 硝音器模型的载体（`v_usp`/`w_usp` 的 silencer 变体））。**【片FX-ALL 2026-09-23：①② 已落地、③ 落地一半（判据资产在盘、实机联络图未采）】⇒ 本行只剩"消音后伤害/散布、连发发数与节奏的**数值**（要反汇编）"与"表现类联络图"两块；逐条见「为什么」列末尾的落地段。'),
+     '② 契约扩 `CsInputState.Attack2` + `CsWeaponDef` 的支持位；③ 判据 = 离线断言（换弹/开火链在 attack2 下的状态变化）+ 硝音器模型的载体（`v_usp`/`w_usp` 的 silencer 变体））。**【片FX-ALL 2026-09-23：①② 已落地、③ 落地一半（判据资产在盘、实机联络图未采）】⇒ 本行只剩"消音后伤害/散布、连发发数与节奏的**数值**（要反汇编）"与"表现类联络图"两块；逐条见「为什么」列末尾的落地段。'
+      '。⛔ **用户 2026-09-24 复查仍报**：「很多枪械的右键还是无效」⇒ **并入本行（⛔ 不新开号）**；本行 ③ 的"实机联络图未采"正是这条。'
+      '【片FX-MUZZLE 2026-09-24 进度】用户复查第 2 条**已落地且有实机判据**（`tools/probes/probe-attack2-live.cs` → `RESULT: PASS`，'
+      '逐武器真调 `ToggleWeaponMode`、翻过的正好是能力表里那 4 把、二次调用 9/9 回原值；见「为什么」列末的落地段）；'
+      '③ 的缺口由"实机联络图未采"**收敛为"表现类并排图未采"**（状态层已证、视觉层未采）；'
+      '本行**主体剩余** = 消音后的伤害/散布、连发发数与节奏的**具体数值**（要反汇编 `client.dll`）⇒ ⛔ **本行不消号**。'),
     # 口径A(2026-09-23 片BW-S-R) id=69: 基=登记侧; +补充锚点(盘上) 4 片; 弃(盘上) 6 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('69', '墙上弹痕与原版不符：只有 1 张变体、尺寸无出处、载体注记过期',
      '① 变体只有 1 张（原版是 `decals.wad` 的 `{shot1..5` 随机 + `{bigshot*` 大口径）；② 尺寸 `CsCombatTuning.DecalSize = 0.075f`（`Module/Combat/CsCombatTuning.cs:178`）源码注释自认是"按原版 decal 的观感（~7cm）"= **观感值不是出处**；③ `Core/ResPaths.cs:177` 的注释还写"弹痕精灵（真实文件 …，32×32）"，而盘上 `client/Assets/Resources/UI/Art/fx_bullethole` 实测 **16×16 / 234 B**（片AW 用 WAD3 解出的 `{shot1` 覆盖后注释未同步）；④ 弹痕的**表现类**判据（贴面朝向/尺寸/按材质观感）在 `策划/验收表.md` 的联络图索引里**没有格号**（片AW 只做了"换图 + 三重自洽断言"，没有并排图判过）。；补充锚点：e=0.075'
@@ -2343,7 +2481,39 @@ DIF = [
      '`client/Assets/Scripts/Module/Combat/CsCombatTuning.cs:178/181/184`（DecalSize/DecalDuration/MaxDecals）、`client/Assets/Scripts/Core/ResPaths.cs:178-179`；'
      '原版载体 `原版资源/cs16src/cstrike/decals.wad`（960,012 B，SHA256 记在 `原版资源/清单.md` 片AW 节）；'
      '尺寸映射的原始出处（原版 decal 的世界单位换算）**待补**（降级链第 2 级：可执行里的常量；`)`；差异 #52 已登记"多变体未接"',
-     '开「特效 × 材质」片时：① `tools/probes/wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来；② 工程侧支持弹痕多图变体 + 随机取一；③ 尺寸按"贴图原生尺寸 × 原版世界单位映射"重算（映射取不到 ⇒ 保持自定值并留在本行）；④ 判据 = 同机位并排图采一次（贴面朝向：朝地与朝墙两格）；补充锚点：`/` / `.ai-tmp/screenshots/ay_tmp_bullethole_floor.png` / `ay_tmp_bullethole_wall.png`'),
+     '开「特效 × 材质」片时：① `tools/probes/wad3-extract.py` 把 `{shot1..5` / `{bigshot*` 全解出来；② 工程侧支持弹痕多图变体 + 随机取一；③ 尺寸按"贴图原生尺寸 × 原版世界单位映射"重算（映射取不到 ⇒ 保持自定值并留在本行）；④ 判据 = 同机位并排图采一次（贴面朝向：朝地与朝墙两格）；补充锚点：`/` / `.ai-tmp/screenshots/ay_tmp_bullethole_floor.png` / `ay_tmp_bullethole_wall.png`'
+      '。⛔ **用户 2026-09-24 复查仍报**：「弹痕是不是还是一个白点，不是弹孔资源呢？」⇒ **并入本行（⛔ 不新开号）**；与 ① 的"5 张变体已解出"对不上 ⇒ 本片要查的是**运行时到底贴的是哪张 / 有没有贴上**'
+      '【片FX69 2026-09-24 **根因 + 落地 · 本行关闭**】根因不在"贴没贴上"，而在**解出来的像素本身是白的**：'
+      '`tools/probes/wad3-extract.py` 把 `decals.wad` 的 `{` 贴花当成 **`{` 透明纹理**口径解'
+      '（非背景像素 -> alpha=255、RGB 取各自调色板色），而贴花其实是 **decal** 口径 —— 整张图是**灰阶不透明度**'
+      '（白=透明、黑=实心），`palette[255]` 是整张的**基色**且不得出现在像素数据里。'
+      '载体实测（`decals.wad` 225/225 lump）：0..254 号调色板是**严格递减灰阶**（`pal[0]=(255,255,255)` 白、'
+      '`pal[254]` ≈ 黑），背景 = 索引 0 = 纯白。旧口径于是把不透明度斜坡的**白端**画成**不透明白墨** ⇒'
+      '16×16 的 `{shot1` 里 24 个近白像素（亮度 192..255）不透明、只有 5 个达到 alpha≥128 ⇒ 墙上就是一块**白斑**'
+      '（= 用户原话「白点」）。口径出处（三处独立、互相一致）：TWHL wiki `Texture` / `Tutorial: Decals`'
+      '（「palette index #255 是整张贴花的基色、不得用于图内」「palette index == opacity」）、robmikh 的 GoldSrc'
+      '复刻日志（「Each pixel is really a grayscale pixel… The last color in the palette is the real color」）、'
+      'GameBanana 教程（「the darker parts will be more solid (White = invisible)」）。'
+      '**【落地】**① `wad3-extract.py` 改为 `RGB = palette[255]`、`alpha = 255 - 调色板亮度`，自检换成三条硬断言'
+      '（四角一致 / 背景必须纯白即不透明度 0 / 索引 255 不得出现在像素里）；② 重解并落盘 5 张 `{shot*` + 6 张 `{blood*`'
+      '（脚本 `.ai-tmp/test/_re-extract-decals.py`；尺寸与文件名不变 ⇒ 代码一行不改），台账 `.ai-tmp/test/fx-decal-variants.tsv`'
+      '的字节/像素指纹同步刷新；③ **兜底图** `fx_bullethole.png` 旧版是**一整块纯白方块**（`make-fx-sprites.py` 程序化生成）'
+      '⇒ 改用 `{shot1` 同源、`make-fx-sprites.py` 不再生成它（退回白方块正是"白点"的另一条路）；'
+      '④ 判据 `tools/probes/decal-size-probe.py` 的 [E] 段改断言新口径 ⇒ **11 张全绿**（既有全透明背景、又有半/不透明墨迹），'
+      '工具侧断言从 `masked_bg_index` 改为 `decal_base_colour`。⚠️ 仍未消除：① **尺寸映射**（原版 decal 的世界单位换算）'
+      '仍无出处（`DecalSize=0.075f` 保持本工程值）；② 表现类并排图判据（朝地 / 朝墙两格）仍未采。'
+      '【片DECAL-LIVE 2026-09-24 实机取证 · 本会话】把「②表现类」那一格推到可判（判据资产 `tools/probes/probe-decal.cs` + 新增 `tools/probes/probe-decal-center.cs`，驱动 `.ai-tmp/drivers/bz-final4.sh` 与 `bz-decalcenter.sh`）：'
+      '**① 真调用** ⇒ `RESULT-DECAL: PASS` —— 朝墙/朝地两格都命中**真实几何**（`_0csSandWall.png` / `SandRoad.png`），`fx_shot1`..`fx_shot5` **5 个变体全用到**，贴花世界宽 **0.0750 m**、`up` = 该面法线；共 **51 个 active 弹痕**。'
+      '**② 弹痕上屏（确定位置）** ⇒ `RESULT-DECALCENTER: PASS` —— ⛔ 不再靠"扫前方锥"：玩家朝向**每次 Play 都不同**（实测两次相机 `fwd` 分别是 `(-0.73,0,-0.68)` 与 `(0.79,0,0.61)`），固定前锥必然有一次落空、实测出 `找到=False`；也⛔不能按"最近面"选（最近面落在画面下缘/中线，正被**第一人称枪身**挡住，截出来整片是枪）。改成**直接瞄准指定视口点** `(0.5,0.76)`（自底部起算 ⇒ 图像上部 30% 那条带，枪身够不到；9 个候选点依次降级）：射线命中 **4.89 m** 处的 `_0csSandWall.png`，3 张弹痕全部贴上（`fx_shot5` 等），弹痕离命中点 **0.01 m**、世界宽 **0.0750 m**、屏坐标 `(960,821)` 在画面内。'
+      '**③ 离线像素判据**（`.ai-tmp/test/r3-decal-offline.txt`，PIL 直读 PNG）⇒ `fx_shot1`..`fx_shot5` 的 `alpha>60` 像素 **平均 RGB = 0.000、近白像素占比 0.00%**（`fx_bullethole` 同源同值）'
+      '⇒ **是暗芯弹孔，⛔ 不是用户担心的"白点"**；同表 `fx_blood1`..`fx_blood6` 平均 RGB 0.086~0.188、近白 0.00%。'
+      '**④ 「并排图」= 前后帧像素差分**（新增 `tools/probes/decal-frame-diff.py` + 驱动 `.ai-tmp/drivers/bz-decal2.sh`）⇒ `RESULT-DECALPAIR: PASS`：'
+      '**同一次 Play** 里先截 `decal_before`、贴完弹痕再截 `decal_after`，在 probe 报出的**三处屏坐标**各裁 ±26 px 逐像素差分 ⇒ '
+      '**三处都真的变了像素（19 / 16 / 22 px），且"变暗"占满、"变亮" = 0**；变化像素均值亮度 **95.1 / 103.2 / 116.7 < 墙均值 134.3 / 127.6 / 147.6**，'
+      '最大单像素 ΔL = **−37.6 / −49.3 / −46.3**（前 RGB 如 `(155,139,113)` ⇒ 后 `(105,93,75)`）⇒ '
+      '**画上去的是一块比墙更暗的孔**；变化像素均值亮度离"近白"（≥200）很远 ⇒ **⛔ 不是白点**。留存图 `.ai-tmp/test/z-decal-pair.png`（4 倍）与 `z-decal-pair-zoom.png`（10 倍、十字标出报告坐标）。'
+      '⚠️ **仍未消除**：① **尺寸映射**（原版 decal 的世界单位换算）仍无出处（`DecalSize=0.075f` 保持本工程值；`DecalMetersPerPixel` 只是同族比例推演）；'
+      '② 「并排图」的**原版 CS 1.6 实拍那一半**仍缺（本工程侧已有 before/after 帧 + 像素判据）；③ `{bigshot*}`（大口径）仍刻意不落盘。⛔ **本行不消号**。'),
     # 口径A(2026-09-23 片BW-S-R) id=70: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 7 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('70', '买枪界面 / 选人（兵种）界面 UI 未按原版载体重建',
      '① 买枪界面 `client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs` 的**全部布局常量是自建**（`:27-38` DialogWidth 1020 / DialogHeight 640 / CategoryY −104 / RowHeight 46 / RowsPerColumn 6 / ColumnWidth 470 …），'
@@ -2351,10 +2521,36 @@ DIF = [
      '`原版资源/cs16src/cstrike/sprites/weapon_*.txt`（31 份，片AW 取回；逐字给出 320/640 两档下 weapon/ammo/crosshair 部件取自哪张 HUD 精灵 + 源矩形 + 屏幕落点）'
      '与 `cstrike__sprites__640hud10.spr` / `640hud11.spr`；'
      '② 选人（兵种）界面**本工程没有**（只有选阵营 `UI/Flow/TeamSelectPanel.cs`）；原版载体 `classmenu_ct.res` / `classmenu_ter.res` 本机不在盘'
-     '（差异 #36 早已登记"未做"，本行按用户本轮 #5 并入，⛔ 不新开号）。',
+     '（差异 #36 早已登记"未做"，本行按用户本轮 #5 并入，⛔ 不新开号）。'
+     '【片FX-MUZZLE 2026-09-24 落地（用户复查第 5 / 第 6 条）】'
+     '① **中文化已闭环（用户第 5 条「选角色的界面变成中文」）**：`UI/Flow/TeamSelectPanel.cs` 新增两张**字面量表** '
+     '`TitleText = "选择阵营"` 与 `ButtonTexts = { "1 恐怖分子", "2 反恐精英", "3 VIP", "5 随机分配", "6 观战", "0 取消" }`，'
+     '`BuildLayout` 改从这两张表取文案（⛔ `ButtonCommands` 逐字未动：`jointeam 1/2/3/5/6` + `vguicancel` —— 改的只是显示，不是命令）；'
+     '⚠️ 本工程 UI 是**预制体驱动**（`BuildLayout` 只在缺节点时兜底）⇒ 只改源码**不上屏**，'
+     '必须把中文**写进** `client/Assets/Resources/UI/TeamSelectPanel.prefab`：落盘脚本 `.ai-tmp/test/_fix-teamselect-texts.cs` '
+     '走 `PrefabUtility.LoadPrefabContents` + `SaveAsPrefabAsset` **定向补丁**（文案常量用**反射**从 `TeamSelectPanel` 现取，⛔ 不在脚本里重抄一份），'
+     '实测输出 `joinTeam: [SELECT TEAM] -> [选择阵营]` / `terbutton: [1 TERRORIST FORCES] -> [1 恐怖分子]` … `changed=6` / '
+     '`SAVED Assets/Resources/UI/TeamSelectPanel.prefab` / 回读 `disk joinTeam=[选择阵营]` `disk terbutton=[1 恐怖分子]`。'
+     '⛔ **刻意不跑整个 `Editor/Flow/FlowSetup.cs`**（那会连带重写 8 个预制体 + Boot/Menu 场景 + Build Settings）⇒ 爆炸半径 = 1 个文件 6 行 '
+     '（md5 前后对比：全库只有 `TeamSelectPanel.prefab` 变；diff = 6 行 `m_Text` 改成 `\\uXXXX` 转义 —— `.gitattributes` 把 `*.prefab` 标为 binary，'
+     'YAML 首行 `%YAML 1.1` 未变、文件仍可正常反序列化）。'
+     '② **"别的地图信息 / 网址"已消除（用户第 6 条）**：源码 + 预制体 + 全库（含 `策划/**`、`client/Assets/**`）逐词搜 `GameHelper` / `johnsto` / `MacMan` —— '
+     '**0 命中**；`by clover-engine` 已在位（skill §6 第 9 条的品牌署名，同差异 #41 的主菜单署名口径）。'
+     '③ **实机渲染已取证（2026-09-24 本会话）**：截帧 `33_teamselect.png` / `33_teamselect_hover.png`（各 1920×1080，同一 Play；'
+     '驱动 `.ai-tmp/drivers/bz-ui.sh`）—— 画面上**真的是中文字形**（`选择阵营` + `1 恐怖分子` / `2 反恐精英` / `3 VIP` / '
+     '`5 随机分配` / `6 观战` / `0 取消`）+ 底部 `by clover-engine`，⛔ **不是方框**（字形来自 `CsUiStyle.OriginalFont` 的 '
+     'CJK 回退族 Verdana → Microsoft YaHei → PingFang SC → Noto Sans CJK SC）。'
+     '⚠️ 这一条与前两条**不是同一件事**：①②只证"预制体里**存**的是中文"，③才证"上屏**画**的是中文" —— '
+     '预制体里存了字而字体链缺字形，屏上就是方框。',
      '用户本轮原话"买枪界面ui不对， 选人界面ui不对。"；实现出处 `client/Assets/Scripts/UI/InGame/BuyMenuPanel.cs:27-38`、`client/Assets/Scripts/UI/Flow/TeamSelectPanel.cs`；原版载体出处 `原版资源/cs16src/cstrike/sprites/weapon_*.txt`（31 份）+ `cstrike__sprites__640hud10.spr`/`640hud11.spr` + `原版资源/清单.md`（片AW 节，逐字样例已抄录）；选兵种 `.res` 本机不在盘 ⇒ **待补**（降级链第 1 级：原始数据）；补充锚点：`UI/Flow/TeamSelectPanel.cs`',
      '开「UI × 面板」片时：① 用 `weapon_*.txt` + `640hud10/11.spr` 重建买枪界面的部件矩形与落点（⛔ 不许再自定常量）；'
-     '② 取回 `classmenu_*.res` 后建选兵种界面；③ 判据 = 同机位并排图 + 控件落点的数值断言（`策划/对照表.md` §4 的 U-* 口径）'),
+     '② 取回 `classmenu_*.res` 后建选兵种界面；③ 判据 = 同机位并排图 + 控件落点的数值断言（`策划/对照表.md` §4 的 U-* 口径）。'
+      '⛔ **用户 2026-09-24 复查补充两条**：①「选角色的界面变成中文」；②「默认选角界面为啥描述里还有别的人的地图信息，和网址之类的，**直接变成 by clover-engine**」（= skill §6 第 9 条的品牌署名）。均**并入本行（⛔ 不新开号）**。'
+      '【片FX-MUZZLE 2026-09-24 进度】用户复查的第 5 / 第 6 条**已落地**（选阵营标题 + 6 个按钮中文化、且中文已写进预制体；'
+      '地图信息 / 网址全库 0 命中、牌子已是 `by clover-engine`）；**本行主体（买枪界面 / 选兵种界面按原版载体重建）仍未做** ⇒ 本行**不消号**，仍留在「允许的差异」段。'
+      '【2026-09-24 再续 · 第 5 / 第 6 条补上**实机渲染**判据】截帧 `33_teamselect.png`（中文上屏、⛔ 无方框）'
+      '+ `33_teamselect_hover.png`（悬停态仍为中文）+ 联络图 `contact-sheet-4-menu.png` 格 D-06 / D-07'
+      '（`TeamSelectPanel.prefab` 的 D4 逐控件行已按新文案重渲染）。⚠️ 仍不消号：买枪界面 / 选兵种界面是主体。'),
     # 口径A(2026-09-23 片BW-S-R) id=71: 基=登记侧; +补充锚点(盘上) 0 片; 弃(盘上) 3 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('71', '角色模型（9 皮肤）**无法自证是原版 mdl**，且派生链只到一份社区 repack',
      '① 工程模型数据的全部来源 = `原版资源/cs16src/cs16game/app/cstrike/models/player/*/*.mdl` 经 `cs16_build.py` / `cs16_anim.py` 转成 '
@@ -2399,15 +2595,40 @@ DIF = [
      '片AW 取回，未反汇编）+ `dlls/mp.dll`；优选路 = **从 `decals.wad` 直接抽 `{blood*` 贴花**（路径已验证：差异 #69 已从同一 wad 取 `{shot1..5` 弹痕变体）⇒ 次选 = 反汇编 `client.dll` 的受击渲染分支；末选 = 原版实拍/视频量化（降级链第 4 级）。',
      '开「特效 × 受击」片时：① **从已在盘的 `decals.wad` 抽 `{blood*` 贴花（⛔ 无需降级链第 4 级）**，'
      '并定死"贴在哪 / 贴几张 / 触发时机"（若定不下来 ⇒ 留一次实机或反汇编 `mp.dll`／`client.dll`）；'
-     '② 按素材来源补血雾贴图（`原版资源/` 或降级链逐级退）并挂到 `CsDamage.ApplyHit`；③ 判据 = 一次实机联络图（命中敌人 / 被命中两格）。'),
+     '② 按素材来源补血雾贴图（`原版资源/` 或降级链逐级退）并挂到 `CsDamage.ApplyHit`；③ 判据 = 一次实机联络图（命中敌人 / 被命中两格）。'
+     '【片FX-HIT 2026-09-24 实机取证 · 本会话】③ 那条判据的**两半都采到了**（同一次 Play，驱动 `.ai-tmp/drivers/bz-hit-ledge2.sh`）：'
+     '**半一（真调用）** `tools/probes/probe-blood.cs` ⇒ **`RESULT-BLOOD: PASS`** —— 6 个变体 `fx_blood1`..`fx_blood6` **全用到**、41 个 active 血迹、贴花世界宽 0.1152 m（另有大贴花 0.2250 m）；'
+     '**半二（真命中链）** 为此新增 public 类型化入口 `CsMatch.ApplyBulletHitForTest(shooter, victim, weaponId, box, point, dist)`（一层转发 `CsDamage.ApplyHit`；`Damage` 是 internal 字段，离线驱动编进独立程序集拿不到）'
+     '⇒ `tools/probes/probe-blood-hit.cs` 出 **`RESULT-BLOODHIT: PASS`**：入口返回 True、受击者 `hp 100→92`、FX 根下新增 1 个 active 血迹（`fx_blood1` 落在命中点 `(-15.085,-0.668,27.323)`，世界宽 0.086 m）。'
+     '⇒ 「打中角色 ⇒ `CsDamage.ApplyHit` ⇒ `RaiseBulletHit` ⇒ `OnBulletHit` ⇒ `CombatEffects.BloodImpact` 落贴花」**整条链在实机上跑通**（⛔ 不是反射直调特效函数那种"只验特效函数能出图"）。'
+     '⚠️ **仍未消除**：'
+     '① **血雾**的独立载体 `sprites/bloodspray.spr` / `sprites/blood.spr` 仍不在盘（两个串都在 `mp.dll` 里）⇒ 现用血迹贴图染色的小贴片替身；'
+     '② 行为口径（贴几张 / 触发时机）仍无直证；'
+     '③ 「命中敌人」那一格的可视并排图仍未采 —— 本轮虽截到 `.ai-tmp/screenshots/blood_hit.png`，但受击者距本地玩家 **75.9 m**、不在画面内，⛔ 不作表现类判据。'
+     '【口径更正 · 同一会话】`CombatEffects.BloodImpact` 的**返回值语义**是"是否真的落了贴花"（命中点沿弹道 `BloodDecalTraceRange`=2.5 m 内找到可贴面），'
+     '⛔ **不是"有没有出血"** —— 找不到可贴面时它照样出 0.14 s 的血雾、只返回 false。'
+     '⇒ `probe-blood.cs` 原判据第①条"返回 true"**过严会导致假红**，已改为 `activeBlood >= 1 && names.Count >= 2 && wide > 0.01f`，返回值降级为**报告值**。'),
     # 口径A(2026-09-23 片BW-S-R) id=75: 基=登记侧; +补充锚点(盘上) 1 片; 弃(盘上) 5 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('75', '掉落的枪**不在世界里**（同一个根因：工程里没有"世界中的武器"这个对象）',
      '① `client/Assets/Scripts/Module/Match/CsInventory.cs:255-285` 的 `DropWeapon` **只改库存字段**（摘掉 `PrimaryWeapon` / `SecondaryWeapon`，或对 C4 走 `Bomb.OnCarrierLost`），再 `SelectBestWeapon`，**不生成任何世界实体**；（`CsMatch.cs:931` 是唯一调用点。）② 工程里也没有世界武器模型：`client/Assets/Editor/Views/ModelData/` 的 38 份模型数据 = 9 角色 + **29 个第一人称视模型 `vm_*`**，**没有任何 `w_*.mdl`**（原版的第三人称手持与掉落物都用 `w_*`）；`client/Assets/Resources/Art/{T,CT}/viewmodel_*.prefab` 同理（29×2 全是视模型）。⇒ 用户看到的"枪也不在地上"是**结构性未做**（不是掉落逻辑写错）。；补充锚点：份 = 9',
      '用户本轮原话"枪也不在地上？"；实现出处 `client/Assets/Scripts/Module/Match/CsInventory.cs:255-285`、`client/Assets/Scripts/Module/Match/CsMatch.cs:931`；'
      '建模数据口径 `策划/对照表.md:135`（M-02）与 `:150`（M-17：38 份 = 9 + 29）；'
      '原版载体 `models/w_*.mdl` 本机不在盘（`原版资源/` 无 `models/`）⇒ 需照片AR 的 `codeload` 路径从同一 repack 取回 ⇒ **待补**（降级链第 1 级：原始数据）',
-     '开「世界物件（掉落武器）」片时：① 取回 `models/w_*.mdl` 并转成 `w_*.cs16mdl`（复用 `Cs16MdlData` 链）；'
-     '② 加"掉落武器实体"（位置 = 死亡点 / 丢弃点，绕 Y 轴微转，可被 `+use` 拾取）；③ 判据 = 数值类（掉落/拾取的运行时日志 + 断言）+ 一次联络图'),
+      '开「世界物件（掉落武器）」片时：① 取回 `models/w_*.mdl` 并转成 `w_*.cs16mdl`（复用 `Cs16MdlData` 链）；'
+      '② 加"掉落武器实体"（位置 = 死亡点 / 丢弃点，绕 Y 轴微转，可被 `+use` 拾取）；③ 判据 = 数值类（掉落/拾取的运行时日志 + 断言）+ 一次联络图'
+      '【片DROP 2026-09-23 落地 · 2026-09-24 数值判据复采】① **世界实体已做**：新增 '
+      '`client/Assets/Scripts/Module/Match/CsDroppedWeapon.cs`（数据：`WeaponId` / `Team` / `Position` / `YawDeg` / `MagAmmo` / `ReserveAmmo` / `DroppedAt` / `Consumed`）'
+      '与 `client/Assets/Scripts/Module/View/CsDroppedWeaponView.cs`（视图：`Bind()` 把视图摆到数据的位置与朝向）；'
+      '`CsMatch` 增 `_dropped` 列表 + `DroppedWeapons`（只读出口）+ `TickDroppedWeapons`（走到 `CsMatchConst.PickupRadius` 内自动拾取、上限 `MaxDroppedWeapons`）+ `Start`/`Stop` 清空；'
+      '`CsInventory.DropWeapon` 成功摘除后写入掉落表；`Module/View/ViewModule.cs` 负责生成 / 回收视图。'
+      '② **数值判据 ⇒ PASS**（`tools/probes/run-drop-selftest.cs` → `Cs16.Module.Combat.CombatSelfTest.RunDropOnly()`，离线跑、⛔ 不进 Play；原文 `.ai-tmp/test/r3-drop-selftest.txt`）：'
+      '`掉落① ak47 @ (0.00,0.00,8.00) 余弹 17+42` / `拾取③ ak47 回到手上 余弹 17+42` / `重开清空⑤ 重开前 1 件 ⇒ 重开后 0 件` / `>>> 结论: PASS`；'
+      '负控两条也过：② 站 5 m 外（> PickupRadius 1.2）不该被捡（世界仍 1 件）、④ 主槽已满时主武器捡不起来（口径：原版不会挤掉手里那把）。'
+      '⛔ 断言特意取"非满弹 17+42"，就是为了能把"余弹原样回来"与"回满弹"区分开。'
+      '③ **模型来源 = 降级链（必须留痕）**：原版掉落物用 `models/w_*.mdl`，而本机全盘 `.mdl` 计数 = 0 ⇒ 退到"复用第一人称视模型 '
+      '`client/Assets/Resources/Art/{T,CT}/viewmodel_<weapon>.prefab`"（同一批 CS 1.6 原始资产转出的 prefab，⛔ 不是占位色块 / 内置几何体）。'
+      '⚠️ **仍未消除**：① **表现类那一半没采** —— 「掉落枪躺在地上」+「被拾取后消失」的一张联络图（本轮只做数值侧；数值 PASS ≠ 画出来了）；'
+      '② 原版 `w_*.mdl` 仍不在盘（取回后应换回真模型）；③ 掉落物**刻意不自转** —— 任务书曾写"绕 Y 轴微转"，但那是目标描述、⛔ 不是原版出处 ⇒ 按 skill §0 铁律 3 不加（要加 ⇒ 先补出处）。⛔ **本行不消号**。'),
     # 口径A(2026-09-23 片BW-S-R) id=76: 基=登记侧; +补充锚点(盘上) 0 片; 弃(盘上) 4 片 -> .ai-tmp/test/bwsr-A-discard.tsv
     ('76', '机器人"钻地"（地形贴合的边界：单层位图 + 软地板 + 无寻路）',
      '**bot 与真人走同一条物理**（`client/Assets/Scripts/Module/Match/CsMatch.cs:1752` 与 `:2292` 都调 `StepActorPhysics`），'
@@ -2424,7 +2645,8 @@ DIF = [
      '原版口径 `pm_shared.c`（`原版资源/hlsdk/pm_shared/pm_shared.c`，片AY 已落盘）⇒ 可对照 `PM_CatagorizePosition` / `PM_WalkMove`',
      '开「AI 移动 / 地形」片时：① **先接寻路**（#67 ①）让 bot 不再朝不可走方向推进；'
      '② 加"多帧贴地一致性"断言（`Position.y` 与 `SampleGround` 之差 ≤ 一个台阶，且不得低于它）；'
-     '③ 判据 = 一次实机 + 逐帧数值日志（⛔ 不靠截图）；若步 (b) 坐实"软地板把人贴低"，改 `TrySoftFloor` 的回落条件（需另开片，⛔ 本片未改引擎/未改该链）'),
+     '③ 判据 = 一次实机 + 逐帧数值日志（⛔ 不靠截图）；若步 (b) 坐实"软地板把人贴低"，改 `TrySoftFloor` 的回落条件（需另开片，⛔ 本片未改引擎/未改该链）'
+      '【2026-09-24 片FIX-4 线M · 用户「碰撞和模型不一样」的三套值对照（**出表**）】判据资产 `tools/probes/move-stuck.cs` 的 `MoveStuck.Geom` → 产物 `.ai-tmp/test/move-geom.txt`（30820 B，一次 Play 内采）。**① 场景几何台账**：`colliders=880`（`BoxCollider` 811 全是 **trigger** 的烘焙块、`CapsuleCollider` 36 = 角色、`MeshCollider` **33 = 真几何**）、`meshRenderers=33`、`worldLayer=10`、`不在世界层的碰撞体=36`、`trigger=811`；`碰撞体所在的 GO 上没有 Renderer=847`（811+36，只有碰撞、看不见）。**② 逐列（0.5 m 网格）(a)位图 vs (b)碰撞面**：匪家扶手/斜坡车道 `cols=26` ⇒ `位图判挡但该列有碰撞面=3`、`位图判通但该列无碰撞面=0`；B 通台阶（中门）`cols=760` ⇒ `位图判挡但该列有碰撞面=314`、`位图判通但该列无碰撞面=1`（`cell(40,108)@(-23.500,36.000)`，与 #66 已登记的 4 格「位图可走但一格地面都没有」同类）。**③ (c) 渲染网格面 = 取不到，原因有出处**：`MeshRenderer 无 MeshFilter/mesh=0（其中不可读=33）` ⇒ 33/33 `Mesh.isReadable == false`；且 Unity 6 已移除 `Mesh.Raycast`（本片改用自写 Möller–Trumbore，但因不可读仍拿不到顶点）⇒ `renUp=-inf`、`Δ(col-ren)` 无法计算。**④ 为什么"实例不同"**（这条一开始判错过，**留档**）：第一版用 `ReferenceEquals(mc.sharedMesh, mf.sharedMesh)` 比 ⇒ 报「相同=0 不同=33」，那是**假的**（`ReferenceEquals` 比的是托管包装对象，同一原生 Mesh 的两处 `sharedMesh` 会给出两个包装）；改用 Unity 重载 `==` 后**仍是** `相同=0 不同=33`，逐条打样本才看清真相：同 GO 上渲染网格的名字全是 `Combined Mesh (root: scene)`（= Unity **静态合批**产生的合并网格，`!isReadable`、bounds = 整图 (113.792,15.443,134.925)），而碰撞网格是**真几何资产** `mesh_<材质名>`（可读，逐组 vc/tri 已知，如 `mesh_SandWllWndw` vc=308/tri=174）。**⇒ 三套值对照的结论（一句话）**：碰撞面与渲染面**不是同一份 Mesh 实例**，但那是 `Dust2Builder.cs:203` 给每个材质组打 `StaticEditorFlags.BatchingStatic` 之后引擎在运行期换上的**合批网格**，**不是**本工程把两套几何做错了 —— 生成侧 `Dust2Builder.BuildVisual` 的 `:180/198/201` 三行把**同一个 `mesh` 变量**同时赋给 `MeshFilter.sharedMesh` 与 `MeshCollider.sharedMesh`（`:192-194` 还把它存成 `mesh_<名>.asset`）；用户感到的"不一样"来自**另一个来源**：**水平阻挡是单层 2D 位图**（`de_dust2.bytes`，一格一位、没有高度），而高度/落地走真实几何 ⇒ 两者对同一格给出的答案可以不同（② 的两个计数就是它的规模）。**逐条判定：是引擎限制 / 是本工程生成侧 / 是运行时解算** ——(1) 「渲染面取不到」= **引擎/资源层限制**（合批网格无 CPU 副本 + `Mesh.Raycast` 已移除），⛔ 非本工程可修、也⛔ 不该为取证去关合批（会改交付物）；(2) 「碰撞网格 = 真几何资产」= **本工程生成侧正确**（`:180/198/201` 同一份 mesh，33/33 组名对得上）；(3) 「同一格里位图与几何不同答案」= **运行时解算**（`CsMap.CanStand` 的两层判据：位图 9 点 vs 真实几何），本条是差异 #64/#76 的量化。⚠️ 本表只判"两套数据是否一致"，**不判"某格可不可站"**（`colUp` 是整列最高的朝上面，可能是旁边楼顶）⇒ 口径别混。'),
     # ---- 片BQ（2026-09-22）：位图孤立分量的**定案 = 乙**（真有几何挡/真实落差，原版也走不过去）
     #   ⇒ 按 T0「宁可登记为差异，不许放水」登记四要素；⛔ 本片**未改**位图 / 未重烘（定案不是甲、也不是丙）。
     # 口径A(2026-09-23 片BW-S-R) id=77: 基=登记侧; +补充锚点(盘上) 2 片; 弃(盘上) 5 片 -> .ai-tmp/test/bwsr-A-discard.tsv
@@ -2457,12 +2679,208 @@ DIF = [
      ('85', '`Module/CameraRig/FirstPersonCamera.cs:416` 用 `Object.DontDestroyOnLoad(go)` 让该相机常驻', '同上：相机必须跨场景存活（比赛切图 / 回菜单再进图时不能重建，否则 `_camera` 引用失效）；⛔ 不能用 `HideAndDontSave` 替代（会改生命周期语义，见同文件 :415 一带注释）', '`client/Assets/Scripts/Module/CameraRig/FirstPersonCamera.cs:416`', '同 BU-V-2'),
      ('86', '`Module/Combat/CombatSelfTest.cs:291` 用 `new GameObject` 造自检受击体', '自检要造"能挡射线的碰撞体"给射线断言用（没有碰撞体则 hits=0，命中归属判不了）；自检是 Play 内一次性链路，引擎无「临时碰撞体对象」设施。本片已同时加 `HideFlags.HideInHierarchy`（:294）并用 finally `DestroyImmediate`（:282-285）⇒ 不残留、不画图标（BotSelfTest.cs 同形，其 basename 已在登记表内）', '`client/Assets/Scripts/Module/Combat/CombatSelfTest.cs:291`', '引擎提供临时对象/测试夹具门面后消除'),
      ('87', '5 行跨维度交叉判定行的「多文件锚点」只被**机械复核第一项**（3176 D7×D12 / 3268 D8×D6 / 3302 D9×角色类型 / 3373 D11×上下文 / 3753 S1×D10）', '这 5 行的判据是**多个文件上的"布尔与"**（`PlayBGM && StopBGM` / `ClassifyImpact && 弹着音 hit_wall` / `TryResolve && SeparateFromOtherActors && sep_ok` / `inputAllowed && NonBlockingPanels` / `HitHead && HitChest`）、载体列 = `跨维度因果对` ⇒ 工程侧**没有单一产物可指**。片FX-ALL 按本行原定的「处置方向」把**合法写法**落了地：证据列写 `（多文件锚点：A:<行> && B:<行>）`，每一项都是**现算的** `文件:行号`（生成器 `CROSS_ANCH` 表 + `code_site()` 现场解析，⛔ 绝不写死 —— 行号随插入漂移）⇒ `verify.ps1` 第 39 项对这 5 行不再红。**残余（本行唯一还成立的一半）**：第 39 项的实现（`tools/probes/audit-verdict-rows.py` 的 `PATHLINE_RE` + `classify_anchor()`）只取**首个** `path:line` 命中 ⇒ 第二项及以后**不被机械复核**，只有人逐个打开能验。⛔ 不许把这条读成"第二项可以编"：`code_site()` 解析不到的项会被**直接丢掉**（`_hits` 过滤空串），锚点凑不出来时该行自动退回挂 `（见允许差异 #87）` —— 判据自己会说话，不靠自律。', '`tools/probes/enumerate-entities.py` 的 `CROSS_ANCH` 表（键 = `CROSS` 的 dim，5 条）与同文件的 `code_site()`；机械取锚口径 = `tools/probes/audit-verdict-rows.py` 的 `PATHLINE_RE` / `classify_anchor()` / SECTION A 注释；闸门侧 = `tools/verify.ps1` 第 39 项 `evidence-anchor`', '给 `verify.ps1` 第 39 项加「多锚点逐项复核」时（方向 = 按 `&&` 切开锚点、**每一项**都必须解析到盘上的文件与在范围内的行号；判据 = 一个"第二项指向不存在的文件"的样本必须被判红）；⛔ 本轮不改闸门'),
+    # 用户 2026-09-24 报的第 4 条：局域网联机（全新条目；A 有 ⇒ 要做，skill §0 铁律 1）
+    ('88', '**必须支持局域网联机**（用户 2026-09-24 明确要求，非"可选"）',
+     '① 原版 CS 1.6 **有** LAN 联机（A 有 ⇒ 要做，skill §0 铁律 1）；'
+     '② 本工程现在是**单机版** —— 差异 #1「Find Servers 列表为空」已登记"单机版没有局域网对局可发现"；'
+     '③ 引擎侧**有现成能力**：差异 #1 的「为什么」写明"面板与 `Game.LanBrowser` 链路本身是通的" ⇒ 载体在盘、不是从零造。'
+     '【片LAN 2026-09-24 落地 · 本会话实测】**按「引擎 LAN 广播发现」这条路落地（⛔ 不另造协议）**：'
+     '① 新增 `client/Assets/Scripts/Module/Net/CsLanHost.cs`（**本工程侧**的应答端；协议逐字 = 差异 #1 引的引擎口径 '
+     '`CLOVER-LAN-QUERY/1&#124;<nonce32hex>` → `CLOVER-LAN-REPLY/1&#124;<json>`，UDP `47777`，单包 ≤512 B）；'
+     '② `UI/Flow/ServerListPanel.cs` 新增 `Host LAN Game` 开关（节点名 `Btn_HostLan`）：开 ⇒ 本机对外应答同网段寻服查询、'
+     '按钮文案变 `Stop LAN Host`、状态行打出 `LAN host name / gateway / udp / players`；关 ⇒ `CsLanHost.Stop()`；'
+     '列表里点一台主机真的走 `CloverNet.Init`（⛔ 不是空实现）。'
+     '**实测（判据资产 `tools/probes/probe-lan-host.cs` + `tools/probes/probe-lan-verify.cs`；驱动 `.ai-tmp/drivers/bz-lan.sh`）**：'
+     '`RESULT: PASS` —— 本机广播后**真的收到了自己的应答**：`收到查询=4 回出=4`、`LanBrowser hosts=1`、'
+     '`address=192.168.1.164:8002` 命中本机广播（`命中本机广播=True`）；'
+     'UI 侧同一次 Play 的实测截帧 `22_serverlist_hoston.png`（按钮 `Stop LAN Host` + 状态行 '
+     '`本机已广播：LAN host name="clover-cs 16 LAN host @ DONGSHENG" gateway=192.168.1.164:8002 '
+     'udp=192.168.1.164:8003 players=1/10`）。'
+     '⚠️ **顺带修掉一处自相矛盾（本会话实测截到）**：预制体 `Assets/Resources/UI/ServerListPanel.prefab` 是 FlowSetup '
+     '生成时烘的，而 `BuildLayout` 在预制体已存在时**根本不会被调用** ⇒ 加了 `Host LAN Game` 按钮后底注还是旧串'
+     '「单机版不连接任何服务器（不调 CloverNet 的网络初始化）」，与正下方的按钮自相矛盾（截帧 `22_serverlist.png` 就是它）。'
+     '修法 = `OnOpen` 里按 `FooterText` 常量覆写一次底注（与 `Btn_HostLan` 的运行期补建同一套路），'
+     '⛔ **不重跑 FlowSetup**（那会连带重写 8 个预制体 + 两个场景，爆炸半径远超本需求）。'
+     '⛔ **仍未消除**：① 只证到"**同网段能互相发现**"（= 本行 ④ 的"互见"那一半）；'
+     '② "两实例**互见 + 能开局**"里的**"能开局"未做** —— 真连上还要求 `gateway` 指向一台在监听的真网关'
+     '（`CloverNet.Init` 的目标），服务端 LAN 房间 / 开局链路仍是空的；'
+     '③ "两进程"与"两机器"未做区分（本轮是本机自收自发）。',
+     '用户本轮原话"我们是一定要支持局域网联机！"；'
+     '面板出处 `client/Assets/Scripts/UI/Flow/ServerListPanel.cs`（Find Servers）；'
+     '引擎链路 `Game.LanBrowser`（差异 #1 引）；差异 #1 / #2（Quit 未自动化）同段',
+     '开「联机」片时：① 先定**网络形态**（引擎 LAN 广播发现 vs 直连 IP）并写进规格；'
+     '② 接 `Game.LanBrowser` 做真实 LAN 广播/发现（顶掉"列表恒空"）；③ 服务端要有 LAN 房间/开局链路；'
+     '④ 判据 = 同一局域网内两实例（或两进程）**互见 + 能开局**的运行时日志 + 一次联络图。⛔ 本行是新维度（网络），不是单机差异的延伸。'
+     '【片LAN 2026-09-24 进度 · 本会话实测】① **网络形态已定并落地** = 引擎 LAN 广播发现（⛔ 未另造协议）；'
+     '② **已接** `Game.LanBrowser` 的真实扫描 + 新增 `CsLanHost` 应答端 ⇒ "列表恒空"被顶掉一半'
+     '（**能发现**；同网段确实没有别的实例时仍为空，那是正常的，⛔ 不再是"设计如此"）；'
+     '③ **服务端 LAN 房间 / 开局链路仍未做**；'
+     '④ 判据已出 `RESULT: PASS`（本机自收自发：`收到查询=4 回出=4` / `hosts=1`）+ UI 截帧 '
+     '`22_serverlist_hoston.png`；"**两实例互见 + 能开局**"**尚未采**。⛔ **本行不消号**。'
+     '【片LAN-B 2026-09-24 补 · "能开局"缺口的定性（本轮查证）】③ 那一段**缺的到底是什么**已查明：'
+     '**引擎侧只有"发现端"** —— `client/Packages/com.clover.unity-engine/Runtime/Network/Lan/` 下只有 `CloverLan.cs` / `LanBrowser.cs` / `LanSocket.cs` / `LanProtocol.cs` / `LanCapabilities.cs`，'
+     '全目录 grep `class .*Host` / `LanServer` / `StartHost` **命中 0** ⇒ 引擎不提供"被连的主机"。'
+     '`CloverNet.Init(addr, udpAddr)` 连的是 **TCP 网关**（`host:port`），而 `CsLanHost` 广播出去的 `gateway:8002` **没有任何进程在监听**（本机实测）⇒ 点"加入"之后接不上。'
+     '**本仓库有一个通用服务端** `clover-server-engine/`（Go；`internal/transport/gateway/gwcore` = WS / TCP 接入 + 上行转发 + NATS 下行桥接），但它**不含任何 CS16 对局逻辑** ⇒ 就算起起来也只到"连上网关"，到不了"进一局"。'
+     '⇒ "能开局"至少是三段：ⓐ 起/适配网关（`clover-server-engine`）；ⓑ 定义并实现 **CS16 房间 + 开局 + 世界同步**协议（本工程现在是**纯单机本地模拟**，`CsMatch` 没有"远端权威"这一层）；ⓒ 客户端把 `CloverNet.Init` 之后的对局接到 `CsMatch` 上。'
+      '⛔ 本片**不动手**（属大件），只把缺口定死在这里，供下一片按 ⓐⓑⓒ 拆。'
+      '⇒「互见」那一半已有 `RESULT: PASS`；「能开局」**仍未采**。⛔ **本行不消号**。'
+      '【片LAN-C 2026-09-24 落地 · 「能开局」第一段已采】第一刀落在**客户端侧**（不依赖 Go 服务端，也更接近"两台机器直连"的用法）：'
+      '① 新增 `client/Assets/Scripts/Module/Net/CsLanGateway.cs` —— 主机侧 **TCP 对局网关**：监听、接受加入、回开局信息，此后 10 Hz 把**主机权威的世界**'
+      '（回合 / 阶段 / 比分 / 存活数 / 掉落数 + 每个角色的 id / 名字 / 阵营 / 坐标 / 朝向 / 血量 / 存活 / 手持武器）按行推给每个已握手客户端。'
+      '② 线格式逐字定死（两端必须同值）：`CS16-LAN-JOIN/1&#124;&lt;json&gt;` → `CS16-LAN-WELCOME/1&#124;&lt;json&gt;` → 每 0.1 s 一条 `CS16-LAN-SNAP/1&#124;&lt;json&gt;`，客户端可发 `CS16-LAN-INPUT/1&#124;&lt;json&gt;`。'
+      '③ **线程模型**：`MatchModule.Update` 在主线程调 `CsLanGateway.Pump`（只读模拟 + 拼一行 + 入队，⛔ 主线程不碰 socket）；每客户端一个后台线程负责真正的 `Write`。'
+      '④ `CsLanHost.Start/Stop` 现在把广播出去的那个 gateway 端口**真的开起来**（在此之前它只是个参数、没有进程监听 —— 这就是"列表里看得到、点加入接不上"的直接原因）。'
+      '⑤ **判据 ⇒ 双 PASS，且客户端是独立进程**（⛔ 不是同进程自问自答）：主机探针 `tools/probes/probe-lan-gateway.cs` + **独立进程**客户端 `tools/probes/lan-gateway-client.py` + 读计数 `tools/probes/probe-lan-gateway-verify.cs`，驱动 `.ai-tmp/drivers/bz-lan2.sh`；'
+      '客户端原文：`RESULT-LANCLIENT: PASS  口径：连上=True 收到WELCOME>=1=True（=1） 收到SNAP>=5=True（=117） 解析出>=2个角色=True（=9）`，并逐条打出远端角色（如 `id=1 Player T pos=(-11.5,3.251,-48.5) hp=100 alive=True w=glock18`）；'
+      '主机侧原文：`RESULT-LANGW: PASS  口径：连接≥1（=1）收到JOIN≥1（=1）推出快照≥1（=164）非法行=0（=0）`。'
+      '⑥ ⚠️ **取证环境事实 + 由此新增的一道闸门**：本机 `127.0.0.1:8002` 已被**另一个进程**占着（`netstat -ano` 实测：`TCP 127.0.0.1:8002 LISTENING` + `UDP 127.0.0.1:8003`，同一个 PID，且另有一个 Unity 编辑器连着它）'
+      '⇒ 本工程的 `0.0.0.0:8002` 靠 `SO_REUSEADDR` bind **成功**，但内核把连接交给绑定更具体的对方 ⇒ **accept 永不触发、计数器恒为 0**（第一轮取证就是这样"看起来起了却没人连得上"）。'
+      '⇒ `CsLanGateway.Start` 现在**先探测该端口是否已有别人在听**（能连上就拒绝启动并报错），⛔ 不再静默共存；取证因此改用空闲端口 **8012**（端口是参数 —— `CsLanHost.Start(gatewayPort:)` 与广播报文里的 `gateway` 字段就是它，协议与端口无关）。'
+      '⚠️ **仍未消除（「能开局」剩下的两段）**：① 客户端的 `CS16-LAN-INPUT/1` **只计数、尚未驱动主机模拟**（"远端权威"这一层还没接进 `CsMatch`）；'
+      '② 客户端**还没有把快照画成远端角色**（收到数据 ≠ 看得见人）。⇒ 现状 = "**连得上、进得去房间、看得见世界数据**"，还不到"**两台机器能对打**"。⛔ **本行不消号**。'),
+    # 用户 2026-09-24 报的第 8 条：枪口火焰（全新条目）
+    ('89', '**枪口火焰没有效果**；原版 B51（M249）的枪口火焰是**十字形**',
+     '① 工程**已有** MuzzleFlash（`CombatEffects.cs` 四类特效之一：枪口火焰/弹道/弹痕/爆炸）⇒ 不是"没做"，是"**没效果**" ⇒ 先查运行时到底有没有生成/有没有被裁剪；'
+     '② 原版枪口火焰**按武器有不同变体**（`muzzleflash1.spr` / `muzzleflash2.spr` 在盘），B51 用**十字形** —— 而"哪把枪用哪张"的**逐武器映射本工程未取证**。',
+     '用户本轮原话"枪的枪口火焰好像没效果，我记得 B51 是个十字的枪口火焰"；'
+     '实现出处 `client/Assets/Scripts/Module/Combat/CombatEffects.cs`（MuzzleFlash 段）；'
+     '原版载体 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash1.spr` / `muzzleflash2.spr`（**在盘**，片AW 取回）；'
+     '逐武器映射出处（哪把枪用哪张 spr）**待补**（原版 client.dll / 实拍）'
+     '【片FX-MUZZLE 2026-09-24 根因 + 落地】'
+     '**载体侧硬事实**（`tools/probes/spr-extract.py --info` 逐条自洽：size 恒等式 + radius 恒等式 OK）：'
+     '四张**全部在盘** —— `muzzleflash1.spr` 48×48×1 帧（星芒）/ `muzzleflash2.spr` 64×64×**3 帧**（圆团鼓包）/ '
+     '`muzzleflash3.spr` 72×72×**3 帧**（**十字 / X 形** ← 用户记的 B51）/ `muzzleflash4.spr` 48×48×1 帧（星芒偏黄）；'
+     '导帧拼版 `.ai-tmp/test/mf-frames/_sheet.png`（8 张帧 + 拼版）。'
+     '⚠️ **旧注释的"载体不在盘"与"映射在 client.dll"两句都要更正**：逐字节扫 `原版资源/**` 全树，`muzzleflash` 只出现在 '
+     '`原版资源/清单.md`(4 处) 与 `原版资源/hlsdk/dlls/weapons.cpp`(3 处)；后者是 **HL1** 的武器实现，只证明机制 '
+     '（`pev->effects` 按位或上 `EF_MUZZLEFLASH`），⛔ 不是 CS 的逐武器表。`cl_dlls/client.dll`(1,093,128 B) 与 `dlls/mp.dll`(1,640,960 B) 里 '
+     '`muzzleflash1..4` / `muzzleflash` **命中 0**（case-insensitive 亦 0）⇒ sprite 选择在**引擎 `hw.dll`**，该文件**不在盘** '
+     '⇒ 降级链停在"载体已具备、立即数取不到"。'
+     '**工程侧根因（两处口径错，⛔ 都不是"没做"）**：'
+     '① **落点**旧值 `eye + dir*0.34 + right*0.13 + down*0.09` 把火焰放在相机局部系 `z=+0.34`，而视模型 idle 姿态实测包围盒（逐轴数字抄在 '
+     '`ViewModelRig.cs` 的 `EnsureAlwaysAnimate` 注释里）是 `x∈[-0.026,+0.239] y∈[-0.286,-0.062] z∈[-0.087,+0.705]` '
+     '⇒ 枪管尖在 `z≈0.70`，火焰落在**枪身内部**；SpriteRenderer 走透明队列且**开深度测试** ⇒ 被枪身里 `z<0.34` 的那一截几何盖掉，'
+     '表现就是"没有火焰"；'
+     '② **尺寸**旧值 `Vector3.one * CsCombatTuning.MuzzleFlashSize` 把"米"当**倍率**写（同类坑已在 #69 的 decals 上修过），'
+     '贴片 PPU=100、64 px 天生宽 0.64 世界单位 ⇒ 实际只画出 `0.64×0.30=0.192 m`（小 3.1 倍）。'
+     '**落地（四条）**：① `CsCombatTuning` 新增三个**相机局部系**偏移常量 '
+     '`MuzzleOffsetRight=0.13 / MuzzleOffsetUp=-0.12 / MuzzleOffsetForward=0.72`（从上述实测包围盒的**最前端** z=0.705 再外让 0.015 m 反推），'
+     '并更正 `MuzzleFlashDuration`/`MuzzleFlashSize` 两段过期注释（"载体不在盘"已不成立）；'
+     '② `CombatEffects.MuzzleFlash` 签名改 `(Vector3 eye, Quaternion viewRotation, string weaponId)` —— 落点改成 '
+     '`eye + viewRotation * offset`（⛔ 不再用 world-up 叉乘算 right/up：俯仰 ±90° 会退化），尺寸改走 `SpriteScaleForMeters` '
+     '（`meters` 才真的是米），并新增 `shot.muzzle` 可核对日志（落点/贴图/启用/世界宽/缩放）；'
+     '③ **逐武器贴图**只落**有一条证据**的那条映射：B51/M249 → 十字形（`Resources/UI/Art/fx_muzzleflash3.png`，'
+     '72×72，由 `原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash3.spr` 的帧 0 解出；'
+     '落盘脚本 `.ai-tmp/test/_add-muzzleflash3.py`，走既有**确定性 GUID** 方案 guid=`0000000000000000000000007f3b0012`；'
+     '`ResPaths.FxMuzzleFlashCross` 新增 key、`CombatEffects.PickMuzzleFlash` 按 id 选）—— 证据两层：用户 2026-09-24 实机记忆 '
+     '「B51 是个十字的枪口火焰」+ 四张载体里**只有** `muzzleflash3.spr` 是十字/X 形（唯一匹配）；⛔ 其余武器**不编**映射，维持默认那张；'
+     '④ 判据资产 `tools/probes/probe-muzzleflash.cs`（存在性台账 + 视模型动画后 AABB vs 落点 + 反射真调 `MuzzleFlash` + 冻 `timeScale` 供截图）'
+     '+ `tools/probes/fx-buy-m249.cs`（走业务 `TryBuyFor` 把 B51 交到本地玩家）+ `.ai-tmp/drivers/bz-muzzle.sh`（驱动；'
+     '⛔ 本沙箱 `unity` CLI 从 **Python 子进程**调用会挂起、从 **bash** 调用正常 ⇒ 驱动写成 bash）。'
+     '⚠️ **仍未消除**：① 逐武器映射只有 m249 一条（选择表在 `hw.dll`，不在盘）；'
+     '② `muzzleflash2/3` 的**逐帧播放**未做（载体各 3 帧，但帧时长/总时长无出处，本工程 `MuzzleFlashDuration` 仍是本项目新增）；'
+     '③ 火星无独立原版载体（继承 #53）。'
+     '**【片FX-MUZZLE 2026-09-24 实机三段判据 · 全部 PASS（本会话实测）】**'
+     '判据资产**拆成三个**（原因见下"沙箱限制"）：'
+     '`tools/probes/probe-muzzleflash-geom.cs`（几何半）/ `probe-muzzleflash-fire.cs`（真调用半）/ `tools/probes/compare-frames.py`（像素半，需 system python 3.12 的 numpy+Pillow）；'
+     '驱动 = `.ai-tmp/drivers/bz-round2.sh`（**一轮 Play 覆盖 #68 / #67 / #88 / #89 四条**，⛔ 不是一差异一个驱动）。'
+     '**【① 几何 · RESULT-GEOM: PASS】**（`.ai-tmp/test/r2-muzzle-geom.txt`）'
+     '`cam=CsFpsCamera screen=1920x1080 fovY=58.7155 near=0.0500 eye=(18.5000,-1.6312,34.5000)`；'
+     '视模型动画后世界 AABB `smr=7`，换算到**相机局部系** `x∈[-0.0962,+0.2033] y∈[-0.3286,-0.0797] z∈[-0.0261,+0.5515]`；'
+     '旧落点 `camLocal=(0.1300,-0.0900,0.3400)` **在包盒内 = True** ⇒ **"被枪身盖掉"这个根因当场成立**；'
+     '新落点 `camLocal=(0.1300,-0.1200,0.7200)` 在包盒内 = False、比盒前端更前（z>0.5515）= True、`onScreen=True`（screen=(1133.33,380.00)）；'
+     '`ResPaths.FxMuzzleFlashCross=UI/Art/fx_muzzleflash3 贴图在盘=True`。'
+     '⚠️ **顺带更正一处过时数字**：本行上文引的盒 `z∈[-0.087,+0.705]` 是**另一姿态**（`ViewModelRig.cs` 注释里那组）；这一帧（CT 持 USP、idle）实测 z 上界 **0.5515**。'
+     '两处都自洽 —— 关键是**新落点在两处姿态下都在盒外**（0.72 > 0.705 > 0.5515），旧落点 0.34 都在盒内。'
+     '**【② 真调用 · RESULT-FIRE: PASS】**（`.ai-tmp/test/r2-muzzle-fire.txt`）'
+     '反射校验 `MuzzleFlash 参数个数=3 [Vector3,Quaternion,String]`（⇒ 程序集是新版）；'
+     '真调 `MuzzleFlash(eye, camRotation, "m249")` 后读 FX 池台账：'
+     '`[A]before.sum active=12 lightsOn=0` → `[C]after.sum active=13 lightsOn=1`，新增的那件逐字为 '
+     '`[0] FX_Sprite wpos=(19.2143,-1.7512,34.3417) scale=(0.4167,0.4167,0.4167) sprite=fx_muzzleflash3 sprEnabled=True lightOn=True lightRange=8.0000`。'
+     '⚠️ **尺寸自证**：`scale=0.4167` 而不是 0.30 ⇒ 因为 72 px / PPU 100 = 0.72 世界单位，0.72 × 0.4167 = **0.3000 m** = `CsCombatTuning.MuzzleFlashSize` '
+     '—— 这正是"米终于真的是米"的数字证据（旧代码写 `Vector3.one * 0.30` 只画出 0.192 m）。'
+     '**【③ 像素 · RESULT-DIFF: PASS】**（`.ai-tmp/test/r2-muzzle-diff.txt` + 图 `.ai-tmp/screenshots/89_muzzle_2up.png`）'
+     '同一冻结帧 A/B（`timeScale=0`；`89_ctl_nofx.png` 无火焰 / `89_muzzle_flash.png` 有火焰，各 1920×1080）：'
+     '`changed_pixels=1997348 (96.323%)`、`brighter=93.914% vs darker=2.409%`、`brighter_share=0.9750`；'
+     '火焰窗（几何探针给的投影点 (1133,380) 翻成图像坐标 (1133,700)）±115 px 内 `dl<-60` 的像素 = **18.53%**、压暗幅度 **90.97**（原亮度 111.62 → 20.64）。'
+     '⛔ **三个口径坑（我踩过，如实留档，别重复踩）**：'
+     '(a) `capture_game_view --source screen` 抓的是**整屏**，且 `--save_path` 按**工程内**解析（传 `client/_shots/x.png` 实际落在 `client/Assets/_shots/x.png`）'
+     '⇒ 两张对照帧必须在**同一个冻结帧**下拍；'
+     '(b) **第一版判据"差异块必须局部(<40%屏)"⇒ 误判 FAIL** —— 因为火焰除了贴精灵还在同点挂了一盏 **Point Light**，把面前**整面墙**照亮（96.3% 像素都变了、外接框=全屏）；'
+     '**第二版"窗内平均亮度 ≥ +40"也 FAIL（实测 +39.98）且没有区分度** —— 点光溢出下屏幕**任意** 230×230 窗口的平均增量都有 **+125**；'
+     '最终改用的量是**变暗簇**：点光**只能把像素变亮**，唯一能压暗墙的就是**精灵自己的不透明像素** ⇒ 窗内 18.53% 像素被压暗 ≥60 而**全屏**变暗只占 1.59%，这条不可被点光伪造；'
+     '(c) Unity `Camera.WorldToScreenPoint` 的 **y 是左下原点**，直接当图像坐标会把"火焰投影窗"红框画到屏幕上半部分（第一版 2-up 图就是这样）⇒ `compare-frames.py` 加了 `--y-from-unity` 做 `y = h − y`。'
+     '**【沙箱限制 · 为什么拆三个探针】**本沙箱 Pipeline 对 `eval_file` 有 **5 s 主线程上限**：8 bot + 整张 de_dust2 在跑时，'
+     '原先"台账 + 几何 + 真调用 + 冻结"合一的 `tools/probes/probe-muzzleflash.cs` **实测超时**（`Main thread operation timed out after 5000ms`，'
+     '旧驱动 `.ai-tmp/drivers/bz-muzzle.sh` phase 5）⇒ 拆成 geom / fire 两个小探针（另两个同族限制：`unity` CLI 从 **Python 子进程**调用会**挂起**、从 bash 调用正常；'
+     "`console --format json` 落盘带 UTF-8 BOM + 系统 ANSI 码页乱码 + 原始控制字符 ⇒ 读它要 `utf-8-sig` + `strict=False` + 逐行 `encode('gbk').decode('utf-8')` 修复）。"
+     '⚠️ **新增待补**：`MuzzleFlash` 那盏点光的 `range=8 / intensity=4`（`CombatEffects.cs`）是**本项目新增**值 —— '
+     '本次改动**没有动它**，但正是本次修复让它**第一次真的看得见**（旧位置在枪身内部，光也闷在里面）。'
+     '原版枪口 dlight 的强度/半径是逐武器立即数，在引擎 `hw.dll`、**不在盘** ⇒ 同①②③一起按"载体不在盘"登记待补。',
+     '开「特效 × 枪口」片时：① 先做**存在性判据**（开火时到底有没有生成 muzzle 节点 / 有没有像素变化）；'
+     '② 把 `muzzleflash*.spr` 解出并定死**逐武器映射**；③ 判据 = 同机位并排图（至少覆盖 B51 十字形一格）。'
+     '【片FX-MUZZLE 2026-09-24 进度 · 本会话实测】① ② ③ **全部落地**：'
+     '① 存在性判据**已跑出 PASS**（几何 / 真调用 / 像素三条，逐条数字见「为什么」列末的实机段）；'
+     '③ B51 十字形已接，且有了**同机位 2-up 并排图** `89_muzzle_2up.png`（上=无火焰 control / 下=有火焰，红框=火焰投影窗，'
+     '格号登记进 `策划/验收表.md`）；'
+     '② **仍只接了 m249 一条**（四张载体全在盘、但"哪把枪用哪张"的选择表在 `hw.dll`，不在盘 ⇒ 其余武器无出处、⛔ 不编）。'
+     '⚠️ 新增待补两条：(a) `muzzleflash2/3` 的**逐帧播放**仍无帧时长出处；(b) 枪口点光 `range=8 / intensity=4` 无出处（同 `hw.dll`）。'),
+    # ---- 用户 2026-09-24 复查：第 3 条拆两半（#3a 消音器 / #3b 大狙开镜），登记号 90 / 91 由 lead 于 2026-09-24 裁定；
+    #      第 92 条 = 闸门 33「no-sync-subagents」那 2 行的**已知偏差**（不补列）。三条都是「允许的差异」侧。
+    # 用户 2026-09-24 复查第 3 条（#3a）：消音器手枪右键「没效果、没动画」
+    #   口径 = 素材缺口 + 消费侧缺口；与 #68（输入链语义）的边界写在「出处」列里，两行不许互相顶替。
+    ('90', '**消音器手枪右键只翻了一个没人读的状态位**：`usp_silencer_on/off.wav` 采样与「消音后伤害 / 散布 / 射速」的数值都无出处，且全仓没有一处代码消费 `CsActor.Silenced`',
+     '① 右键那条链**已经通了、但没有下游**：输入 `CsInputState.Attack2` → `CsInventory.ToggleWeaponMode` 翻 `CsActor.Silenced`（`Module/Match/CsTypes.cs:80`），'
+     '而全仓对 `Silenced` 只有三处 —— 写（`Module/Match/CsInventory.cs:528`）、自检读（`Module/Combat/CombatSelfTest.cs:527-598`）、声明（`CsTypes.cs:80`）'
+     '⇒ 开火 / 音效 / 渲染 / 数值**一条都不消费**（`Module/View/ViewModelRig.cs` 对 `Silenced` / `Silencer` / `vm_usp_silencer` grep **0 命中**）'
+     '—— 用户「没效果、没动画」与这条完全对上。'
+     '② 逐枪语义**有出处**（`Core/CsWeapons.cs:170-171` 的 `client.dll` 偏移 0x0e3804 / 0x0e3824 / 0x0e308c / 0x0e30ac，`tools/probes/attack2-probe.py` 段 B 逐字节复算），'
+     '但「消音后的伤害 / 散布 / 射速」**无出处**（`CsWeapons.cs:178-181` 逐字写明要反汇编 `client.dll`）—— 本机现成**没有** x86 反汇编器（capstone / objdump / dumpbin / distorm3 全 ✗）⇒ ⛔ 不为它装工具，这一格只能挂起。'
+     '③ 音效采样**原版有、本工程无**：`sound/weapons/` 盘上只有 `m4a1-1.wav`（`.ai-tmp/test/jd-tree.txt:2` 证明原版有 `usp_silencer_on.wav` / `usp_silencer_off.wav`）。'
+     '⚠️ **与 #68 的边界（不许互相顶替）**：#68 记的是**输入链语义**（attack2 该给哪把枪、按下沿、能力表 4 把）与「状态可切换」的实机判据；本行记的是 #3a 的**素材侧 + 消费侧**。',
+     '判据与逐条盘点 = `.ai-tmp/test/fix3-asset-gap.md` §1（A1..A9 九条，含「结论 / 判据」两列）；消费点 0 命中的口径就写在 A8 行；'
+     '状态位 `client/Assets/Scripts/Module/Match/CsTypes.cs:80`；翻转点 `client/Assets/Scripts/Module/Match/CsInventory.cs:528`；'
+     '逐枪语义与数值缺口 `client/Assets/Scripts/Core/CsWeapons.cs:50,170-171,178-181,192-193`；'
+     '实机（状态层）判据 `tools/probes/probe-attack2-live.cs` → `RESULT: PASS`（翻过的**恰好**是能力表里 `CanSilence` 或 `CanBurst` 为真的 4 把；二次调用 9/9 回原值）；'
+     '视模型素材**在盘**：`client/Assets/Resources/Art/Tex/vm_usp_silencer.png` + `Art/Mat/vm_usp_silencer.mat`（缺的不是它）；'
+     '反汇编器存在性探测（只探不装）= `.ai-tmp/test/fix3-fetch/struct-check.txt`',
+     '① 素材：按**已记录的唯一渠道**试取 `sound/weapons/usp_silencer_on.wav` / `usp_silencer_off.wav`（⛔ 不换渠道、⛔ 不用替代源；失败逐件记 HTTP + `curl` stderr 原因；判「取没取到」看**字节 + SHA256**，⛔ 不看 `http_code`），取到后**入库须 lead 批**。'
+     '② 实现：`ViewModelRig` 消费 `Silenced`（装上 / 拆下的视模型差异）+ 开火分支走消音音效与数值 —— 另开片。'
+     '③ 数值：等有反汇编工具面再谈（⛔ 本阶段不装）。⛔ 本行不消号。'),
+    # 用户 2026-09-24 复查第 3 条（#3b）：大狙右键「那个准星瞄准器呢？？？？」
+    ('91', '**大狙 / 鸟狙 / G3SG1 / SG550 右键开镜只有 FOV 收窄、没有镜片覆盖层**：覆盖层精灵与四角弧素材未取回，覆盖层渲染实现为零',
+     '① 开镜**触发层齐备**：`Module/CameraRig/FirstPersonCamera.cs:328` 的 `wantFov = zoomed ? CsConst.ZoomFov : _baseFov` + `Core/CsConst.cs:165` `ZoomFov = 40f`。'
+     '② 覆盖层的**部件定义（出处）齐备且三处互证**：`weapon_awp.txt:7-8`（320 档 `zoom` / `zoom_autoaim` → `ch_sniper 0 0 256 256`）、`:14-15`（640 档 → `sniper_scope 0 0 256 256`）；'
+     '同族 `weapon_scout.txt:7,14`、`weapon_g3sg1.txt:7`（`ch_sniper2`）、`weapon_sg550.txt:7`；镜内准星 `weapon_awp.txt:5-6` + `cstrike__sprites__hud.txt:55,147`（`autoaim_c`）。'
+     '③ 覆盖层**渲染实现 = 0**：`Module/` 下 `grep -i scope` 只命中**视模型材质 / 贴图**（`Art/Mat/vm_awp_scope.mat` 等 = 枪上的镜筒，不是屏幕覆盖层），`Module/Combat/CrosshairState.cs` 只做准星**缩放**。'
+     '④ ⚠️ **只补渲染而不取素材 = 自画近似图** ⇒ 违反 skill §6 第 3/4 条，**不可交付**（这是本条为什么不能「先画一个凑合」的原因）。',
+     '`原版资源/cs16src/cstrike/sprites/weapon_awp.txt`、`weapon_scout.txt`、`weapon_g3sg1.txt`、`weapon_sg550.txt`（**均在盘**；31/31 份 `weapon_*.txt` 见 `原版资源/清单.md:292-320`）；'
+     '`原版资源/cs16src/cstrike/cstrike__sprites__hud.txt:55,147`；逐条盘点 = `.ai-tmp/test/fix3-asset-gap.md` §2（B1..B8）；'
+     '素材侧像素对照（判据资产 + 图）= `.ai-tmp/test/fix3-spr-cmp/FIX3-SPR-CMP-sheet.png`（1024x256）—— 其中 `ch_sniper` vs `ch_sniper2` 的 drawn-mask Jaccard = **1.0000** 是**量具正控**（同图换色），'
+     '`sniper_scope` vs `ch_sniper2` = **0.1447** 判 DISTINCT-IMAGES（口径自校验写在产物第 150-158 行）；'
+     '取件逐件记录 = `.ai-tmp/test/fix3-fetch-attempt.txt` 与 `原版资源/补充记录-FIX3取件.md`',
+     '① 先按**已记录的唯一渠道**取回 `sprites/ch_sniper.spr`、`ch_sniper2.spr`、`sniper_scope.spr`、`scope_arc.tga` / `_ne` / `_nw` / `_sw`（⛔ 不换渠道；失败逐件记 HTTP + `curl` stderr；形状判据看字节 + SHA256）；'
+     '② 取到后**入库须 lead 批**（落 `原版资源/cs16src/cstrike/`，命名 `cstrike__sprites__<原名>`，来源随件记进 `原版资源/补充记录-FIX3取件.md`）；'
+     '③ 渲染覆盖层 + 表现判据（开镜前后同机位并排图 + 部件落点数值断言，口径按 `策划/对照表.md` 的 U-*）另开片 —— ⛔ 本行不消号。'),
+    # 主 agent 2026-09-24 裁决：闸门 33「no-sync-subagents」那 2 行**不补列**，登记为已知偏差（不是待修项）
+    ('92', '`tools/probes/dispatch-log.tsv` 标记行之后有 **2 行**没有 team / member 两列（`:124` 4 列 / `:125` 5 列），闸门 `no-sync-subagents` 因此判红 —— **裁定不补列**',
+     '闸门 33 的口径是**反着判**的：「一行没有 team / member ⇒ 这活儿是走**同步**通道派出去的」，而同步通道会 `code=10003` 卡死、调用方拿不到报告。'
+     '但这两行**不是同步派活**：`:124` 是 `clover-impl .ai-tmp/test/dispatch-片DROP-任务书.md …` 的 4 列行；`:125` 是 `team-lead 主-片DROP #takeover: …` 的 5 列行（**lead 接管**，按定义没有「派给哪个成员」这一说）。'
+     '⚠️ 我**没有**能证明「它们当时走的是哪个通道」的产物 ⇒ 按 **「宁可不绿，不许伪造」**：⛔ 不补 team / member 两列 —— `dispatch-log.tsv` 自己的表头写着「留痕文件本身不许事后补写」；'
+     '⛔ 也不改闸门口径去把这 2 行刷绿（把口径放宽来消灭红点，等于把闸门拆掉）。⇒ 本行是**「已知且已解释的红」**，不是待修项。',
+     '`tools/probes/dispatch-log.tsv`（留痕标记行 **`:111`** = `# team-member-required-below-this-line`；标记行之后字段数 < 6 的行 = `:124` / `:125`，本裁决逐字引原文）；'
+     '闸门口径 `tools/verify.ps1:1525-1552`（`$noTeamTrace` = 列数 < 6 或 `Cols[4]` / `Cols[5]` 为空；**本闸门没有豁免注册表**）；'
+     '闸门自我说明 `tools/verify.ps1:1455-1473`；记账器口径 `tools/probes/append-dispatch.py` 的 docstring（2026-09-23 更正：闸门 33 需 >=6 字段，第 5 / 6 列 = team / member；默认 `cs16-fix` / `team-lead`）',
+     '保持红（**不消号、也不当待修**）。真要转绿只有一条正路 = 给闸门 33 加**注册表式豁免**（照 `tools/verify.ps1:334-364` 那个资产名豁免的写法：**打印**豁免计数与前几个名字、**绝不静默**，且豁免按**行内容**绑定、⛔ 不能按文件整体放行），'
+     '并配**两向自检**（命中豁免的行 ⇒ 不红；未登记的同类行 ⇒ 仍红）。⛔ 本行不改闸门；改闸门另开片、由 lead 批。'),
     ]
 
 # ============================================================================
 #  片BW-E：`DIF` 源自身的 **id / 单元格式卫生自检**（⛔ 早于任何落盘 ⇒ 非法 id 一个字节都不写）
 # ============================================================================
-# 为什么（team-lead 2026-09-23 把今晚三个坑 + 本片新增的"插入"能力合并成**四条解析约定**）：
+# 为什么（team-lead 2026-09-23 把今晚三个坑 + 本片新增的"插入"能力合并成**四条解析约定**；
+#        片FX-MUZZLE 2026-09-24 追加第 ⑤ 条 —— 见下）：
 #   ① **数据行首字段必须是纯数字** —— ⛔ 不带 `#`（`#82` 会被"以 # 开头 = 整行注释"的读取
 #      逻辑**静默跳过**；实测 bu-v 第一版就这么写，自检"统计非注释行"只数到 4 行才发现）；
 #      ⛔ 也不许用"第 N 行 / 行数 +1"推编号（实测 bot-ai-r4 推成 #80、与登记表错位）。
@@ -2470,6 +2888,16 @@ DIF = [
 #   ③ **以 `#` 开头 = 整行注释**（表头 / 说明行）⇒ **数据行不许以 `#` 开头**。
 #   ④ **单元里不许有裸竖线 `|`** —— 需要该字符时用 HTML 实体 `&#124;`（否则"按竖线分列"的
 #      检查会把一行切成 10 列；实测 bu-v 第一版把"按位或赋值"写成竖线形式就中招）。
+#   ⑤ **散文行里出现 ASCII 单引号 ⇒ 必须换定界符**（2026-09-24 片FX-MUZZLE 实测踩坑）：
+#      `DIF` 的文字行**多数用单引号定界**。正文里若要写**带单引号的代码片段**
+#      （如 `encode('gbk').decode('utf-8')`），那一行的引号会**提前把字符串闭合**
+#      ⇒ `ast.parse` 报 `invalid syntax. Perhaps you forgot a comma?`，而且**报错行不是真凶**
+#      （实测真病灶在 #89 的 2628 行，报错却指到 2557 / 2558 —— 级联误导，白查半天）。
+#      ⛔ 两个"看着能查出来、其实查不出来"的假信号：`tokenize` **全文件 OK**
+#      （词法上 `'a' NAME 'b'` 也是合法 token 流）、括号深度**全平衡**（`()` 计数不受影响）。
+#      **唯一可靠的自检 = `ast.parse(src)`**；辅以「逐行归并 token、看有没有非
+#      (STRING / 逗号 / 括号) 的 token」的扫描。**修法**：把那一行的外层定界符换成双引号
+#      （该行不得同时含 ASCII 双引号）。
 # ---- 两条**已定口径**（team-lead 2026-09-23 裁决；本轮只写注释，不改输出）--------------------
 # ① **「多文件锚点」合法写法（⛔ 待下一片实现，本轮不写进生成器）**：
 #      写法 = 以 " && " 连接 N(>=2) 个**单点锚点**；单点必须满足现有 F1 / F2 形态

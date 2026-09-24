@@ -132,9 +132,13 @@ namespace Cs16.Module.Combat
         public static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
         {
             if (spreadDegrees <= 0f) return dir;
+            // 散布：**玩法**（真人这一发的命中判定）。走全项目唯一的 WeaponSpread 流
+            // （与 CsMatch.ApplySpread / CsInventory.ApplySpread 同一套欧拉角扰动口径，
+            // 见三处注释）—— ⛔ 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
+            var rng = CsRng.Stream(CsRngStream.WeaponSpread);
             var rot = Quaternion.Euler(
-                UnityEngine.Random.Range(-spreadDegrees, spreadDegrees),
-                UnityEngine.Random.Range(-spreadDegrees, spreadDegrees),
+                rng.Range(-spreadDegrees, spreadDegrees),
+                rng.Range(-spreadDegrees, spreadDegrees),
                 0f);
             return (rot * dir).normalized;
         }

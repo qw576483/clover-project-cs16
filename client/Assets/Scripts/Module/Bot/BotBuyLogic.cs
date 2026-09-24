@@ -175,7 +175,10 @@ namespace Cs16.Module.Bot
             {
                 var rifle = self.Team == CsTeam.T ? CsWeapons.Ak47 : CsWeapons.M4A1;
                 var awp = CsWeapons.Get(CsWeapons.Awp);
-                var wantAwp = awp != null && self.Money >= awp.Price && Random.value < CsBotConst.AwpChanceTier2;
+                // AWP 掷：**玩法**（决定该 bot 的火力档 ⇒ 影响经济与回合结果）。
+                // 走 CsRng 的 BotBuy 流：每回合每 bot 抽一次，序列必须能从本局 seed 重放。
+                var wantAwp = awp != null && self.Money >= awp.Price &&
+                              CsRng.Stream(CsRngStream.BotBuy).NextFloat() < CsBotConst.AwpChanceTier2;
 
                 if (wantAwp)
                 {

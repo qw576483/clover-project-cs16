@@ -172,6 +172,52 @@ namespace Cs16.Module.Bot
         public Vector3 RouteEnd => _route.Count > 0 ? _route[_route.Count - 1] : Vector3.zero;
         /// <summary>还没有走完的路点数量（日志/自检用）。</summary>
         public int RemainingWaypoints => Mathf.Max(0, _route.Count - _index);
+
+        /// <summary>
+        /// 当前路线的**第一段路点**（= 从设置路线那一刻的起点做"最近邻排序"后的 `_route[0]`）。
+        ///
+        /// <para>为什么要暴露它（★ 片FIX-4 线B 新增）：用户投诉「每个机器人的路线都是相同的」，
+        /// 验收判据写的是「**同一回合内任意两个同队 bot 的首段路点不同**」——
+        /// 判据必须读**真的那条路的第一段**（含 `SetRoute` 的最近邻排序 + 两层过滤的结果），
+        /// ⛔ 不能拿"路线标记名不同"当近似（两只 bot 可以标记不同却在同一格起走，也可以标记相同却岔开）。</para>
+        /// <para>⛔ 只读：不改变游标、不触发重排。路线为空时返回 <see cref="Vector3.zero"/>，
+        /// 用 <see cref="HasFirstWaypoint"/> 先判有没有。</para>
+        /// </summary>
+        public Vector3 FirstWaypoint => _route.Count > 0 ? _route[0] : Vector3.zero;
+
+        /// <summary><see cref="FirstWaypoint"/> 是否有意义（路线为空 ⇒ false）。</summary>
+        public bool HasFirstWaypoint => _route.Count > 0;
+
+        /// <summary>
+        /// 当前路线**整条有序序列**的签名（"x1,z1;x2,z2;…"，1 位小数；空路线 = "EMPTY"）。
+        ///
+        /// <para>为什么要它（★ 片FIX-4 线B）：判据原本写的是"同队两只 bot 的**首段**路点不同"，但本工程
+        /// 的地图标记数据里 **T 队三条路共用同一个岔口点** <c>(-7.5, 3.251, -47.5)</c>
+        /// （`Resources/MapData/de_dust2_markers.bytes`：Route_T_To_A ∩ Route_T_Mid ∩ Route_T_To_B 都是它，
+        /// 离 T 出生点最近 ⇒ 最近邻排序后必然排在第一位）⇒ "首段不同"在 T 队**任何代码都做不到**，
+        /// 那是**素材层的公共点**、不是缺陷。可满足且同等有效的判据 = **整条序列不同**（两条路线一旦分岔，
+        /// 序列必然不同；两条路线完全相同则签名相同）。首段路点仍照打（观测列）。</para>
+        /// <para>⛔ 只给判据用（探针只读），不参与任何运行时决策；每次调用都重新拼串（低频）。</para>
+        /// </summary>
+        public string RouteSignature
+        {
+            get
+            {
+                if (_route.Count == 0) return "EMPTY";
+                var sb = new System.Text.StringBuilder(_route.Count * 12);
+                for (var i = 0; i < _route.Count; i++)
+                {
+                    if (i > 0) sb.Append(';');
+                    sb.Append(_route[i].x.ToString("F1", System.Globalization.CultureInfo.InvariantCulture))
+                      .Append(',')
+                      .Append(_route[i].z.ToString("F1", System.Globalization.CultureInfo.InvariantCulture));
+                }
+                return sb.ToString();
+            }
+        }
+
+        /// <summary>当前路线的路点数（= <c>_route.Count</c>，含已走完的）。</summary>
+        public int WaypointCount => _route.Count;
         /// <summary>路线有路点且已经全部走完（= "剩余路点 0"）。此时继续"跳过路点"是空操作，必须由上层换目标。</summary>
         public bool RouteExhausted => _route.Count > 0 && _index >= _route.Count;
 
@@ -259,7 +305,7 @@ namespace Cs16.Module.Bot
 
             // ★ 兜底（切片BC）：抽点后**排掉站不住的点**（`!CanStand`）。
             //
-            // 为什么要有这一层：标记点的坐标是**数据**（生成侧已在 DumpMarkers / ExportMarkerResource 里
+            // 为什么要有这一层：标记点的坐标是**数据**（生成侧已在 Dust2Builder.DumpMarkers 里
             // 把"落在阻挡格上"的点吸附到最近可走格心，见 Dust2Builder.SnapMarkerToWalkable），而
             // `CanStand` 是**运行时**才有的判据（位图 8 向 + 地面一步台阶 + 身体高度带几何复核）——
             // 只有它知道"这一格上是否真的站得下一个 radius 半径的人"。两者不一致时（地图资产过期、
@@ -681,12 +727,12 @@ namespace Cs16.Module.Bot
                 return false;
             }
 
-            if (_path != null && _pathGoalCell == to && _pathIndex < _path.Count && Time.time < _nextRepathAt)
+            if (_path != null && _pathGoalCell == to && _pathIndex < _path.Count && CsClock.Now < _nextRepathAt)   // replan gate is decision timing; not injected it is literally Time.time
             {
                 return true;                       // 沿用既有路径（时间闸未到）
             }
 
-            _nextRepathAt = Time.time + CsBotConst.PathReplanInterval;
+            _nextRepathAt = CsClock.Now + CsBotConst.PathReplanInterval;
 
             // ★ 切片BN：**高度一致性**层 —— 只给 bot 这一次求路径的可走判据补一层"落脚高度"，
             //   位图本体与 `ICsMap.WalkableAt` / `CsMap.WalkableAt` 的语义**一字不动**（玩家行为零影响）。

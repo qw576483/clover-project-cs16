@@ -56,11 +56,10 @@ namespace Cs16.Module.Player
             "RoundEndPanel",   // 回合结算（官方在同一时刻仍可移动）
         };
 
-        // ---- 玩家设置键：必须与 agent-01 的 `CsPlayerSettingsStore` 保持一致（那里是契约之外的 UI 层实现）----
-        private const string SettingKeySensitivity = "cs.player.sensitivity";
-        private const string SettingKeyInvertY = "cs.player.invertY";
-        private const string SettingKeyAutoReload = "cs.player.autoReload";
-        private const string SettingKeyFov = "cs.player.fov";
+        // ---- 玩家设置键：唯一真源 = `Core/CsSettingsKeys`（契约层）----
+        // 改前这里自持一份字面量、UI 层的 `CsPlayerSettingsStore` 另持一份 ⇒ 两处漂移时不报错，
+        // 只表现为"设置改了不生效"（本模块读到的是默认值）。分层禁止 Module 引用 UI，
+        // 所以真源落在两边都能引用的 Core（见 CsSettingsKeys 的类注释）。
 
         private readonly CsModuleLog _log = new CsModuleLog(Tag);
 
@@ -218,7 +217,10 @@ namespace Cs16.Module.Player
         {
             if (!_ready) return;
 
-            var dt = Time.deltaTime;
+            // 时钟取 `Core/CsClock`（本帧由 MatchModule.Update 驱动过），**不再直接读 Time.deltaTime**：
+            // 表现侧（相机 / 射击表现）与模拟侧必须同一步长，否则注入假时钟时会出现
+            // "模拟快进了、表现没跟上"（换弹/切枪/开镜稳定的观感全乱）。出处见 CsClock 类注释。
+            var dt = CsClock.Delta;
 
             // ① 相机先算好"眼睛在哪、看哪"；② 射击用同一个方向与起点射线；③ 再把位姿写进相机。
             // 顺序不能换：射线方向必须与画面上准星所指完全一致（含后坐力抬升）。
@@ -361,7 +363,7 @@ namespace Cs16.Module.Player
         {
             var setting = Game.Setting;
             if (setting == null) return (int)CsConst.DefaultFov;
-            return setting.Get(SettingKeyFov, (int)CsConst.DefaultFov);
+            return setting.Get(CsSettingsKeys.Fov, (int)CsConst.DefaultFov);
         }
 
         private void ApplyRuntimeSettings(bool force)
@@ -375,10 +377,10 @@ namespace Cs16.Module.Player
                 return;
             }
 
-            var sensitivity = setting.Get(SettingKeySensitivity, CsConst.DefaultSensitivity);
-            var invertY = setting.Get(SettingKeyInvertY, false);
-            var autoReload = setting.Get(SettingKeyAutoReload, true);
-            var fov = setting.Get(SettingKeyFov, (int)CsConst.DefaultFov);
+            var sensitivity = setting.Get(CsSettingsKeys.Sensitivity, CsConst.DefaultSensitivity);
+            var invertY = setting.Get(CsSettingsKeys.InvertY, false);
+            var autoReload = setting.Get(CsSettingsKeys.AutoReload, true);
+            var fov = setting.Get(CsSettingsKeys.Fov, (int)CsConst.DefaultFov);
 
             var changed = force
                           || !Mathf.Approximately(sensitivity, _appliedSensitivity)

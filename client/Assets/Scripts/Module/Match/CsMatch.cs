@@ -130,6 +130,12 @@ namespace Cs16.Module.Match
         /// 出处：**本项目新增**（原版地面武器拾取由服务端实体触碰判定（<c>mp.dll</c>，不在盘）⇒ 球半径自定）。</summary>
         public const float PickupRadius = 1.2f;
 
+        /// <summary>
+        /// 世界同时存在的掉落武器上限（差异 #75）。超了丢**最老的**那一件并记一条 warn ——
+        /// 防"一直丢枪"把列表刷爆（机器人每回合都会换枪）。
+        /// </summary>
+        public const int MaxDroppedWeapons = 32;
+
         // ---- 记分 ----
         // 出处（下面 2 条）：**本项目新增** —— 原版记分板的分数列由 <c>mp.dll</c> 的结算逻辑给出（载体不在盘）。
         public const int ScorePerKill = 1;
@@ -213,9 +219,9 @@ namespace Cs16.Module.Match
     /// <para>它自己持有全部权威状态；回合/经济/炸弹/伤害/装备五块逻辑分别委托给
     /// <see cref="CsRound"/> / <see cref="CsEconomy"/> / <see cref="CsBomb"/> / <see cref="CsDamage"/> / <see cref="CsInventory"/>。</para>
     ///
-    /// <para>时间基准：<see cref="Time.time"/>。原因 —— <see cref="CsActor"/> 的
+    /// <para>时间基准：<see cref="CsClock"/>（`Core/CsClock.cs`）。原因 —— <see cref="CsActor"/> 的
     /// NextFireTime/ReloadEndTime/SwitchEndTime/FlashEndTime 是"绝对时间"，表现层（Module/Combat）
-    /// 也会拿它跟 <see cref="Time.time"/> 比；统一用同一个时钟才不会错位。
+    /// 也会拿它跟同一个 <c>Now</c> 比；统一用同一个时钟才不会错位。
     /// 暂停时把所有人的绝对时间整体后移，抵消暂停时长（见 <see cref="SetPaused"/>）。</para>
     /// </summary>
     public sealed class CsMatch : ICsMatch
@@ -233,6 +239,9 @@ namespace Cs16.Module.Match
         private readonly Dictionary<long, float> _botBurstUntil = new Dictionary<long, float>();
         private readonly Dictionary<string, int> _rateCounters = new Dictionary<string, int>(32);
         private readonly List<CsKillFeedItem> _killFeed = new List<CsKillFeedItem>(CsMatchConst.MaxKillFeedStore);
+
+        /// <summary>世界中的掉落武器（差异 #75）。只含**未被拾取**的项。</summary>
+        private readonly List<CsDroppedWeapon> _dropped = new List<CsDroppedWeapon>(CsMatchConst.MaxDroppedWeapons);
         private readonly List<string> _pendingShots = new List<string>(CsMatchConst.MaxPendingShots);
         private readonly RaycastHit[] _hitBuffer = new RaycastHit[CsMatchConst.BotHitBufferSize];
         private readonly List<CsActor> _aliveScratch = new List<CsActor>(CsMatchConst.MaxTeamSize * 2);
@@ -244,6 +253,13 @@ namespace Cs16.Module.Match
         private readonly Dictionary<long, float> _lastGroundY = new Dictionary<long, float>();
         /// <summary>软地板的"老化计数"：连续多少个被步进的帧里地面探测失败（探测成功 / 踩着它即清零）。</summary>
         private readonly Dictionary<long, int> _softFloorMisses = new Dictionary<long, int>();
+
+        /// <summary>
+        /// 差异 #66 的取证计数：**常规贴地探测落空、改用"抬一个台阶再探"**（见 <see cref="StepActorPhysics"/>）
+        /// 并成功接住地面的次数。判据资产 `tools/probes/real-walk-ledge.cs` 靠它把"修法真的被走到"与
+        /// "只是没触发"分开 —— 只报 walk 通过率的话，一个不触发的分支也会显得"修好了"。
+        /// </summary>
+        public static int StepUpProbeHits;
 
         // ---- 机器人射线结算统计（诊断 + 交付证据；见 BotResolveShot / LogBotShotDiag）----
         /// <summary>累计打出的弹丸射线数（= 真正结算过的发数）。</summary>
@@ -348,6 +364,50 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
+        /// **测试入口，供离线取证驱动使用**：让 <paramref name="victim"/> 挨一枪
+        /// <paramref name="weaponId"/>（命中部位 <paramref name="box"/>、命中点 <paramref name="point"/>、
+        /// 距离 <paramref name="dist"/> 米、不穿墙）—— 走的正是射击模块算完射线后调的**同一条业务链**
+        /// <see cref="CsDamage.ApplyHit"/>（见 <c>CsMatch.cs</c> 内 <c>FireHitscan</c> 处的调用）。
+        ///
+        /// <para><b>为什么必须有它</b>：差异 #74「子弹打在人身上要有血迹」的取证，必须验"**真实命中链**
+        /// 上确实发出了 <see cref="OnBulletHit"/> 事件"（表现层 <c>CombatModule.OnBulletHit</c> 据此出血雾
+        /// + 贴血迹）。若驱动侧直接反射调 <c>CombatEffects.BloodImpact</c>，验的只是"这个特效函数能出图"，
+        /// **绕过了 <c>CsDamage.ApplyHit</c> 这一段**（<c>RaiseBulletHit</c> 到底发没发、发的方向对不对、
+        /// 爆头位判断对不对，全都验不到）。<c>Damage</c> 是 internal 字段、驱动编在独立程序集拿不到，
+        /// 故按 clover-engine skill §0.6 第 3 条补这个 public 类型化入口
+        /// （与 <see cref="ApplyBombExplosionForTest"/> 同一形状）。</para>
+        ///
+        /// <para><b>返回值语义</b>：<c>true</c> = 参数齐备、<see cref="CsDamage.ApplyHit"/> 确实被调用；
+        /// <c>false</c> = 武器 id 不存在 / victim 为空或已阵亡（此时**不**调用，避免误判成"链没通"）。
+        /// ⚠️ 注意 <see cref="CsDamage.ApplyHit"/> 本身返回 <c>void</c>，且"是否真出血"取决于
+        /// 表现层能不能在弹道 2.5 m 内找到可贴面 —— 所以本入口的 <c>true</c> **只代表"链走到了"**，
+        /// 不代表"血迹已落"；后者由驱动侧数 FX 根下的 active 血迹物件来判。</para>
+        ///
+        /// <para><b>⛔ 不改变真实玩家行为</b>：本方法只在被显式调用时生效 —— 没有任何 Update / 事件会调它，
+        /// 真实伤害仍只由射击模块的射线命中触发。</para>
+        /// </summary>
+        public bool ApplyBulletHitForTest(CsActor shooter, CsActor victim, string weaponId, CsHitbox box,
+            Vector3 point, float dist)
+        {
+            var def = CsWeapons.Get(weaponId);
+            if (def == null)
+            {
+                Game.Logger.Warn(Tag,
+                    $"测试入口 ApplyBulletHitForTest：武器 id=\"{weaponId}\" 不存在，本次命中已忽略");
+                return false;
+            }
+            if (victim == null || !victim.IsAlive)
+            {
+                Game.Logger.Warn(Tag,
+                    $"测试入口 ApplyBulletHitForTest：victim={(victim == null ? "null" : victim.Name + "（已阵亡）")}，" +
+                    "本次命中已忽略");
+                return false;
+            }
+            Damage.ApplyHit(shooter, victim, def, box, point, dist, false);
+            return true;
+        }
+
+        /// <summary>
         /// **测试入口，供离线取证驱动使用**：把**本局运行时**的"半场换边"开关设成
         /// <paramref name="enabled"/>（只改 <see cref="Cfg"/> 这个本局副本）。
         ///
@@ -408,21 +468,27 @@ namespace Cs16.Module.Match
         //  内部访问器（供 CsRound / CsEconomy / CsBomb / CsDamage / CsInventory 使用）
         // ==================================================================
         /// <summary>
-        /// 时间源，默认 <see cref="Time.time"/>。
+        /// 时间源：**代理到 <see cref="CsClock.Now"/>**（未注入时 = 墙钟 <c>Time.time</c>）。
         ///
         /// <para><b>为什么必须是可替换的</b>：<see cref="CsActor"/> 的 NextFireTime / ReloadEndTime /
-        /// SwitchEndTime / FlashEndTime 都是"绝对时间"，表现层（Module/Combat）也会拿它们跟
-        /// <see cref="Time.time"/> 比 —— 所以**默认值必须是 Time.time**，否则跨模块会错位。
-        /// 反过来，自检/回归要跑"60 秒对局"时不可能真等 60 秒，于是留这个替换点：
+        /// SwitchEndTime / FlashEndTime 都是"绝对时间"，表现层（Module/Combat）也会拿它们跟同一个
+        /// <c>Now</c> 比 —— 所以模拟与表现**必须共用一个时间源**。
+        /// 自检/回归要跑"60 秒对局"时不可能真等 60 秒，于是留这个替换点：
         /// 换上可快速前进的假时钟就能瞬时跑完（<see cref="CsMatch"/> 一次性用完
         /// <c>now</c> 再算，不会有半个 Tick 用旧时钟的问题）。</para>
         ///
+        /// <para><b>与 <see cref="CsClock"/> 的关系（重要）</b>：默认值 <c>() =&gt; CsClock.Now</c> 是
+        /// **代理**、不是第二份时钟 —— 写一次 <c>CsClock.Inject(() =&gt; simTime, dt)</c>，
+        /// 模拟与表现（<c>CombatModule</c> 读 <c>CsClock.Now</c>）就同时被换掉，不会再出现
+        /// "模拟用假时钟、表现读墙钟"的静默错位。反过来，只写 <c>CsMatch.Clock = ...</c>
+        /// **只影响模拟侧**；需要两侧一起受控时请注入 <c>CsClock</c>。</para>
+        ///
         /// <para><b>注意</b>：本成员不是 <see cref="ICsMatch"/> 契约的一部分，只为自检/回归存在。</para>
         /// </summary>
-        public static Func<float> Clock = () => Time.time;
+        public static Func<float> Clock = () => CsClock.Now;
 
-        /// <summary>当前模拟时间（= <see cref="Clock"/> 的取值）。</summary>
-        internal float Now => Clock != null ? Clock() : Time.time;
+        /// <summary>当前模拟时间（= <see cref="Clock"/> 的取值 → 默认 <see cref="CsClock.Now"/>）。</summary>
+        internal float Now => Clock != null ? Clock() : CsClock.Now;
 
         internal CsMatchConfig Cfg => _cfg;
         internal ICsMap Map => _map;
@@ -461,6 +527,14 @@ namespace Cs16.Module.Match
 
             if (_running) Stop();
 
+            // 本局随机源（片 sink4-cs16-random）：**一处定种子**，清空全部子流。
+            // 为什么必须在最前面：下面 CreateLocalPlayer/CreateConfiguredBots/BalanceTeams
+            // 以及 Round.BeginMatch → RespawnAllForRound 都会立刻取 SpawnYaw 等流，
+            // 先定种子才能保证"这一局的随机序列"从第 1 次抽取起就受控。
+            // 来源口径（引擎 Rng.cs:47-54）：没注入过 seed 就走 Rng.FromTime()（唯一允许的
+            // 不可复现入口，自带 Info 日志），CsRng 再打一条含 seed 与来源的 Info ⇒ 可重放。
+            CsRng.BeginMatch();
+
             _cfg = cfg;
             _actors.Clear();
             _botIntents.Clear();
@@ -473,6 +547,7 @@ namespace Cs16.Module.Match
             _pendingShots.Clear();
             _rateCounters.Clear();
             _lastGroundY.Clear();
+            ClearDroppedWeapons();
             _softFloorMisses.Clear();
             ResetBotShotStats();
             _nextActorId = 1;
@@ -519,6 +594,7 @@ namespace Cs16.Module.Match
             Bomb.Reset();
             Inventory.Reset();
             Round.Reset();
+            ClearDroppedWeapons();
             _actors.Clear();
             _botIntents.Clear();
             _botUseHeld.Clear();
@@ -569,6 +645,9 @@ namespace Cs16.Module.Match
             // 4) 炸弹（下包/拆包/倒计时）
             Bomb.Tick(dt, now);
 
+            // 4b) 世界中的掉落武器：自动拾取（差异 #75；不自转，见 CsDroppedWeapon 的类注释）
+            TickDroppedWeapons(now);
+
             // 5) 胜负判定（全歼 / 超时）
             Round.EvaluateWin(now);
 
@@ -577,6 +656,83 @@ namespace Cs16.Module.Match
 
             WriteHudSnapshot(dt);
         }
+
+        // ==================================================================
+        //  世界中的掉落武器（差异 #75）
+        // ==================================================================
+        /// <summary>
+        /// 把一件武器**掉到世界上**（由 <see cref="CsInventory.DropWeapon"/> 调用）。
+        /// <para>位置 = 掉落瞬间的持枪者位置；朝向 = 他当时的 <see cref="CsActor.Yaw"/>；
+        /// 余弹一起带走（拾取后原样回到拾取者手上，不是"满弹"）。</para>
+        /// </summary>
+        internal void SpawnDroppedWeapon(string weaponId, CsTeam team, Vector3 pos, float yaw, int mag, int reserve)
+        {
+            if (string.IsNullOrEmpty(weaponId)) return;
+
+            if (_dropped.Count >= CsMatchConst.MaxDroppedWeapons)
+            {
+                // 丢最老的（列表只 append + 从中间摘，顺序天然按掉落时间）。
+                var oldest = _dropped[0];
+                _dropped.RemoveAt(0);
+                Game.Logger.Warn(Tag,
+                    $"掉落武器已达上限 {CsMatchConst.MaxDroppedWeapons}，丢弃最老的 {oldest.WeaponId}" +
+                    $"（掉落于 t={oldest.DroppedAt:F1}）");
+            }
+
+            _dropped.Add(new CsDroppedWeapon
+            {
+                WeaponId = weaponId,
+                Team = team,
+                Position = pos,
+                YawDeg = yaw,
+                MagAmmo = mag,
+                ReserveAmmo = reserve,
+                DroppedAt = Now,
+                Consumed = false,
+            });
+
+            Game.Logger.Info(Tag,
+                $"{weaponId} 掉落在 ({pos.x:F2}, {pos.y:F2}, {pos.z:F2})，余弹 {mag}+{reserve}（世界上现有 {_dropped.Count} 件）");
+        }
+
+        /// <summary>
+        /// 每帧：把"站到 1.2 m 内"的掉落武器收回给角色（原版口径 = 自动拾取，与 C4 同）。
+        /// <para>只在 <see cref="CsRoundPhase.Live"/> 判定 —— 冻结期不让人在地上捡枪。</para>
+        /// </summary>
+        private void TickDroppedWeapons(float now)
+        {
+            if (_dropped.Count == 0) return;
+            if (Round.Phase != CsRoundPhase.Live) return;
+
+            for (var i = _dropped.Count - 1; i >= 0; i--)
+            {
+                var d = _dropped[i];
+                if (d.Consumed)
+                {
+                    _dropped.RemoveAt(i);
+                    continue;
+                }
+
+                for (var k = 0; k < _actors.Count; k++)
+                {
+                    var a = _actors[k];
+                    if (!a.IsAlive) continue;
+
+                    var v = a.Position - d.Position;
+                    v.y = 0f;
+                    if (v.sqrMagnitude > CsMatchConst.PickupRadius * CsMatchConst.PickupRadius) continue;
+
+                    // 槽位满了就捡不起来（原版不会把手里那把枪挤掉）⇒ 换下一个人试。
+                    if (!Inventory.PickupDropped(a, d)) continue;
+
+                    _dropped.RemoveAt(i);
+                    break;
+                }
+            }
+        }
+
+        /// <summary>掉落武器列表清空（开局 / 停局）。</summary>
+        private void ClearDroppedWeapons() => _dropped.Clear();
 
         // ==================================================================
         //  状态查询
@@ -711,6 +867,9 @@ namespace Cs16.Module.Match
         }
 
         public IReadOnlyList<CsActor> Actors => _actors;
+
+        /// <summary>世界中的掉落武器（差异 #75）。表现层只读它来同步世界视图。</summary>
+        public IReadOnlyList<CsDroppedWeapon> DroppedWeapons => _dropped;
         public CsActor LocalPlayer => _local;
 
         public CsActor SpectateTarget
@@ -1202,7 +1361,7 @@ namespace Cs16.Module.Match
             else
             {
                 // 把"绝对时间"类型的字段整体后移，抵消暂停时长 —— 否则玩家可以靠暂停白跳过换弹/切枪冷却。
-                var offset = Time.time - _pauseStart;
+                var offset = Now - _pauseStart;
                 if (offset > 0f) ShiftAbsoluteTimes(offset);
                 Game.Logger.Info(Tag, $"比赛已恢复：模拟时间补偿 {offset:F2}s");
             }
@@ -1508,7 +1667,10 @@ namespace Cs16.Module.Match
             // ⛔ 不许"清掉不设"：清掉之后第一帧若因大 dt 一步跨过薄楼板（dust2 的楼板是薄刷子，
             // 其下方是空的 ⇒ 向下射线再也找不到它），角色就会一路穿出去 —— 实测 100s 内 1923 次掉图。
             SetSoftFloor(a.Id, a.Position.y);
-            a.Yaw = UnityEngine.Random.Range(0f, CsMatchConst.SpawnYawRandomDeg);
+            // 出生朝向：**玩法**（开局看向哪 / 有没有被背后的人看到）。
+            // 走 CsRng 的 SpawnYaw 流（独立子序列）—— 每回合每人都抽一次，若共用一个全局流，
+            // 谁先复活就决定了别人拿到什么朝向 ⇒ 重放必对不上。
+            a.Yaw = CsRng.Stream(CsRngStream.SpawnYaw).Range(0f, CsMatchConst.SpawnYawRandomDeg);
             a.Pitch = 0f;
             a.NextFireTime = 0f;
             a.ReloadEndTime = 0f;
@@ -1609,7 +1771,9 @@ namespace Cs16.Module.Match
                 return;
             }
 
-            var pick = candidates[UnityEngine.Random.Range(0, candidates.Count)];
+            // C4 交给谁：**玩法**（回合级资源分配，直接左右回合结果）。
+            // 走 CsRng 的 BombCarrier 流：每回合抽一次，序列必须能从本局 seed 重放。
+            var pick = candidates[CsRng.Stream(CsRngStream.BombCarrier).Next(0, candidates.Count)];
             pick.HasBomb = true;
             Bomb.CarrierId = pick.Id;
             Bomb.Dropped = false;
@@ -1844,6 +2008,41 @@ namespace Cs16.Module.Match
                 a.Velocity.z = 0f;
                 hasGround = _map.TrySampleGround(resolved, out groundPoint, out groundNormal,
                                                  CsMatchConst.GroundProbeDrop);
+            }
+
+            // ── ★ 台阶上抬探测（原版 `PM_WalkMove` 的"贴地走一遍 + 抬 STEPSIZE 再走一遍、取走得更远的那个"）──
+            // 【为什么必须有】常规贴地探测（`CsMap.TrySampleGround`）的射线起点只抬
+            // `CsConst.GroundCheckDistance`（0.12 m）**且只朝下** ⇒ 它**看不见比自己脚面高出 0.12 m 以上的地面**。
+            // 这个 0.12 m 在原版里是 `PM_CatagorizePosition` 判"算不算踩着地面"的容差，**不是**爬升窗口；
+            // 本工程把它借来当爬升窗口用 ⇒ 爬升能力直接变成**帧率的函数**：
+            // 水平速度 v 时每帧位移 v·dt，斜坡上对应高差 rise ≈ v·dt·tanθ。高帧率（dt≈0.0074）时 rise ≤ 0.12
+            // ⇒ 每帧都能被抬上去；低帧率（dt≈0.05，实测每帧 0.24~0.32 m）时 rise > 0.12 ⇒ 探测落空 ⇒ 被当成
+            // **悬空** ⇒ 不贴地、不爬升，人贴着坡面以起始平台高度滑过去（= 差异 #66"匪家扶手斜坡概率卡住"，
+            // 且"概率"与帧率强相关 —— 受控实验：dt≈0.0074 → walk 5/5；dt≈0.05 → 0/5、2/5、0/5）。
+            // 【修法】把探测起点整体抬高一个台阶（`CsConst.StepUpHeight` = 0.45 m）再探一次；探到的地面若落在
+            // `[脚面, 脚面 + StepUpHeight]` 且是**可站立**的地面（法线 y ≥ `MaxStandableSlopeNormalZ`），就承认它。
+            // 之后走的是**既有**的贴地/陡坡闸门，本分支不新增任何逻辑。
+            // ⛔ 只改"能不能探到"，不改任何可站高度语义：抬升上限就是 `CsConst.StepUpHeight`，与 `CanStand` 的
+            //    水平准入闸门 `GroundWithinStep`（`point.y - pos.y <= StepUpHeight`）**同一个常量**，
+            //    ⇒ 不会开出"能走进、却站不上"的新几何口子，也不会让人爬上高过 0.45 m 的台沿。
+            // ⛔ 只在"上一帧还站在地上、且竖直速度不朝上"时用 ⇒ 跳跃上升段、走下断崖（探到的地面在脚面以下）都不受影响。
+            if (!hasGround && a.Velocity.y <= 0f && a.OnGround)
+            {
+                var lifted = resolved + Vector3.up * CsConst.StepUpHeight;
+                if (_map.TrySampleGround(lifted, out var upPoint, out var upNormal, CsMatchConst.GroundProbeDrop)
+                    && IsStandableGround(upNormal)
+                    && upPoint.y - resolved.y >= 0f
+                    && upPoint.y - resolved.y <= CsConst.StepUpHeight)
+                {
+                    StepUpProbeHits++;
+                    groundPoint = upPoint;
+                    groundNormal = upNormal;
+                    hasGround = true;
+                    RateWarn("move.stepup",
+                        $"{a.Name} 常规贴地探测落空、把探测点抬一个台阶（{CsConst.StepUpHeight:F2}m）后探到地面 " +
+                        $"y={upPoint.y:F2}（比脚面高 {upPoint.y - resolved.y:F2}m）：按原版 PM_WalkMove 的台阶口径接住" +
+                        "（低帧率上斜坡必需；缺了它爬升能力就变成帧率的函数）");
+                }
             }
 
             var groundY = hasGround ? groundPoint.y : float.NegativeInfinity;
@@ -2250,7 +2449,7 @@ namespace Cs16.Module.Match
                     if (kit != null && a.Money >= kit.Price)
                     {
                         Economy.Add(a, -kit.Price, "机器人自动购买 Defusal Kit");
-                        Inventory.GivePurchased(a, kit, Time.time);
+                        Inventory.GivePurchased(a, kit, Now);
                     }
                 }
             }
@@ -2352,9 +2551,13 @@ namespace Cs16.Module.Match
             {
                 _botAimErrorRefreshAt[a.Id] = now + CsMatchConst.BotAimErrorRefresh;
                 var err = profile.AimErrorDegrees;
+                // bot 瞄准误差：**玩法**（难度 → 命中率）。按 actor 再派生一路
+                // （Derive(BotAimError, a.Id)）—— 同一个 bot 恒定拿同一条子流，
+                // 别的 bot 多抽一次不会改动它的误差（这就是"哪一路随机"显式化）。
+                var aimRng = CsRng.Derive(CsRngStream.BotAimError, a.Id);
                 _botAimError[a.Id] = new Vector2(
-                    UnityEngine.Random.Range(-err, err),
-                    UnityEngine.Random.Range(-err, err));
+                    aimRng.Range(-err, err),
+                    aimRng.Range(-err, err));
             }
             var e = _botAimError.TryGetValue(a.Id, out var ev) ? ev : Vector2.zero;
 
@@ -2378,9 +2581,13 @@ namespace Cs16.Module.Match
                 if (!_botFirePauseUntil.TryGetValue(a.Id, out var pauseUntil)) pauseUntil = 0f;
                 if (now < pauseUntil) return;
 
-                _botBurstUntil[a.Id] = now + UnityEngine.Random.Range(profile.FireBurstMin, profile.FireBurstMax);
+                // 连发/停火节奏：**玩法**（决定 bot 的输出节奏与命中数）。
+                // 按 actor 派生一路（Derive(BotFirePacing, a.Id)），与瞄准误差流分开 ——
+                // 若共用一条，"瞄准误差重采样更频繁的 bot"会推位别人的开火节奏。
+                var fireRng = CsRng.Derive(CsRngStream.BotFirePacing, a.Id);
+                _botBurstUntil[a.Id] = now + fireRng.Range(profile.FireBurstMin, profile.FireBurstMax);
                 _botFirePauseUntil[a.Id] = _botBurstUntil[a.Id] +
-                    UnityEngine.Random.Range(profile.FirePauseMin, profile.FirePauseMax);
+                    fireRng.Range(profile.FirePauseMin, profile.FirePauseMax);
             }
 
             // 扣弹药成功 = 真的打出了这一发（射速/弹匣/换弹都在 TryDischarge 里校验）。
@@ -2578,8 +2785,13 @@ namespace Cs16.Module.Match
         private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
         {
             if (spreadDegrees <= 0f) return dir;
-            var yaw = UnityEngine.Random.Range(-spreadDegrees, spreadDegrees);
-            var pitch = UnityEngine.Random.Range(-spreadDegrees, spreadDegrees);
+            // 散布：**玩法**（命中判定的输入 —— 同一发必须永远同结果）。
+            // 走全项目唯一的 WeaponSpread 流：这里（机器人霰弹/难度误差）、
+            // CsInventory.ApplySpread（模拟侧）、Firearm.ApplySpread（真人侧）本来就是
+            // 同一套欧拉角扰动（口径见三处注释），共用一个流才不会各抽各的。
+            var rng = CsRng.Stream(CsRngStream.WeaponSpread);
+            var yaw = rng.Range(-spreadDegrees, spreadDegrees);
+            var pitch = rng.Range(-spreadDegrees, spreadDegrees);
             return Quaternion.Euler(pitch, yaw, 0f) * dir;
         }
 

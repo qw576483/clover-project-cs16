@@ -25,7 +25,9 @@ namespace Cs16.UI
     public static class CsPlayerSettingsStore
     {
         private const string Tag = "UI";
-        private const string KeyPrefix = "cs.player.";
+
+        // 键名不再在本文件维护：唯一真源 = Core/CsSettingsKeys（见该类的注释：
+        // 键面原先在 UI 与 Module 两处各写一套，漂移时不报错、只表现为"设置不生效"）。
 
         /// <summary>默认玩家名（用户没填也没存过时用）。</summary>
         public const string DefaultPlayerName = "Player";
@@ -49,15 +51,16 @@ namespace Cs16.UI
                 return s;
             }
 
-            s.PlayerName = setting.Get(KeyPrefix + "name", s.PlayerName);
-            s.MouseSensitivity = setting.Get(KeyPrefix + "sensitivity", s.MouseSensitivity);
-            s.InvertMouseY = setting.Get(KeyPrefix + "invertY", s.InvertMouseY);
-            s.MasterVolume = setting.Get(KeyPrefix + "volumeMaster", s.MasterVolume);
-            s.SfxVolume = setting.Get(KeyPrefix + "volumeSfx", s.SfxVolume);
-            s.BgmVolume = setting.Get(KeyPrefix + "volumeBgm", s.BgmVolume);
-            s.Fov = setting.Get(KeyPrefix + "fov", s.Fov);
-            s.ShowFps = setting.Get(KeyPrefix + "showFps", s.ShowFps);
-            s.AutoReload = setting.Get(KeyPrefix + "autoReload", s.AutoReload);
+            // 键名唯一真源 = CsSettingsKeys（Core 契约层）：本处与 Module/Player 读的是同一批常量。
+            s.PlayerName = setting.Get(CsSettingsKeys.PlayerName, s.PlayerName);
+            s.MouseSensitivity = setting.Get(CsSettingsKeys.Sensitivity, s.MouseSensitivity);
+            s.InvertMouseY = setting.Get(CsSettingsKeys.InvertY, s.InvertMouseY);
+            s.MasterVolume = setting.Get(CsSettingsKeys.VolumeMaster, s.MasterVolume);
+            s.SfxVolume = setting.Get(CsSettingsKeys.VolumeSfx, s.SfxVolume);
+            s.BgmVolume = setting.Get(CsSettingsKeys.VolumeBgm, s.BgmVolume);
+            s.Fov = setting.Get(CsSettingsKeys.Fov, s.Fov);
+            s.ShowFps = setting.Get(CsSettingsKeys.ShowFps, s.ShowFps);
+            s.AutoReload = setting.Get(CsSettingsKeys.AutoReload, s.AutoReload);
 
             Normalize(s);
             return s;
@@ -81,15 +84,16 @@ namespace Cs16.UI
 
             Normalize(s);
 
-            setting.Set(KeyPrefix + "name", s.PlayerName);
-            setting.Set(KeyPrefix + "sensitivity", s.MouseSensitivity);
-            setting.Set(KeyPrefix + "invertY", s.InvertMouseY);
-            setting.Set(KeyPrefix + "volumeMaster", s.MasterVolume);
-            setting.Set(KeyPrefix + "volumeSfx", s.SfxVolume);
-            setting.Set(KeyPrefix + "volumeBgm", s.BgmVolume);
-            setting.Set(KeyPrefix + "fov", s.Fov);
-            setting.Set(KeyPrefix + "showFps", s.ShowFps);
-            setting.Set(KeyPrefix + "autoReload", s.AutoReload);
+            // 键名唯一真源 = CsSettingsKeys（Core 契约层），与 Load 逐条同键。
+            setting.Set(CsSettingsKeys.PlayerName, s.PlayerName);
+            setting.Set(CsSettingsKeys.Sensitivity, s.MouseSensitivity);
+            setting.Set(CsSettingsKeys.InvertY, s.InvertMouseY);
+            setting.Set(CsSettingsKeys.VolumeMaster, s.MasterVolume);
+            setting.Set(CsSettingsKeys.VolumeSfx, s.SfxVolume);
+            setting.Set(CsSettingsKeys.VolumeBgm, s.BgmVolume);
+            setting.Set(CsSettingsKeys.Fov, s.Fov);
+            setting.Set(CsSettingsKeys.ShowFps, s.ShowFps);
+            setting.Set(CsSettingsKeys.AutoReload, s.AutoReload);
             setting.Save();
 
             Game.Logger?.Info(Tag,

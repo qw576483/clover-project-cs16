@@ -334,7 +334,9 @@ namespace Cs16.Module.Audio
                 if (now <= prev + 0.0001f) continue;      // 没开始换弹
                 if (string.IsNullOrEmpty(a.ActiveWeapon)) continue;
 
-                var clip = "sfx/" + a.ActiveWeapon + "_reload";
+                // 短名前缀真源 = CsAudioTuning.ClipRoot；⛔ 不在这里另写一份字面量（同款"前缀两处
+                // 维护"的漂移在设置键上已经吃过一次，见 Core/CsSettingsKeys.cs）。
+                var clip = CsAudioTuning.ClipRoot + a.ActiveWeapon + "_reload";
                 if (a.Id == localId) _sfx.Play(clip);
                 else PlaySpatialIfNear(new[] { clip }, a.Position);
             }
@@ -509,8 +511,10 @@ namespace Cs16.Module.Audio
                 return;
             }
 
-            var master = Mathf.Clamp01(setting.Get(CsAudioTuning.SettingKeyVolumeMaster, 1f));
-            var sfx = Mathf.Clamp01(setting.Get(CsAudioTuning.SettingKeyVolumeSfx, 1f));
+            // 设置键真源 = Core/CsSettingsKeys.cs（字符串与原先本模块持有的音量键字面量逐字同值
+            // ⇒ 老存档不受影响）。⛔ 这里不再走本模块自己的常量副本。
+            var master = Mathf.Clamp01(setting.Get(CsSettingsKeys.VolumeMaster, 1f));
+            var sfx = Mathf.Clamp01(setting.Get(CsSettingsKeys.VolumeSfx, 1f));
             var want = master * sfx;
 
             if (!force && Mathf.Abs(want - _appliedSfx) < 0.001f) return;

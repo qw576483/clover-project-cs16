@@ -67,6 +67,12 @@ namespace Cs16.Module.Match
         bool BombCarrierIs(long actorId);
 
         IReadOnlyList<CsActor> Actors { get; }
+
+        /// <summary>
+        /// **世界中的掉落武器**（差异 #75）。表现层按它同步"地上那把枪"的世界视图；
+        /// 已被拾取的项会立刻从列表里摘掉（⇒ 表现层按"不在列表里"回收视图）。
+        /// </summary>
+        IReadOnlyList<CsDroppedWeapon> DroppedWeapons { get; }
         CsActor LocalPlayer { get; }
         CsActor SpectateTarget { get; }
         CsActor Find(long actorId);

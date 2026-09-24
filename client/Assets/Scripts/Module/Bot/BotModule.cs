@@ -61,6 +61,26 @@ namespace Cs16.Module.Bot
         private int _ambiguousAttribution;
         private int _prevRoundNumber;
 
+        // ---- 片FIX-4 线B：同队路线互斥审计（见 AuditRouteDistinctness）----
+        private float _nextRouteAuditAt;
+        private bool _routeAuditClear = true;
+        private int _routeAuditCount;
+
+        // ★ 2026-09-24：被判据**排除**（集体目标：守 C4 / 回出生点）的同队同路对数 —— 排除必须看得见。
+        private int _routeAuditOffPlan;
+
+        /// <summary>最近一次审计里"同队两人走同一条路"的对数（0 = 互斥成立）。给探针只读用。</summary>
+        public int RouteCollisionPairs => _routeAuditCount;
+
+        /// <summary>
+        /// 最近一次审计里**被排除**（非分工家族：包已下的守 C4 / 兜底回出生点）的同队同路对数。
+        /// <para>给探针只读用：判据排除了一整类状态，就必须能把它的数量单独报出来（不然"排除"就成了藏分）。</para>
+        /// </summary>
+        public int RouteOffPlanPairs => _routeAuditOffPlan;
+
+        /// <summary>最近一次审计是否**没有**发现同队撞车。</summary>
+        public bool RouteDistinctOk => _routeAuditClear;
+
         /// <summary>是否已拿到比赛门面（拿不到时本组件会自己禁用并打 Error）。</summary>
         public bool IsReady => _match != null;
 
@@ -123,7 +143,7 @@ namespace Cs16.Module.Bot
             if (_match == null && !TryResolveMatch()) return;
             if (_map == null) _map = ResolveMap();
 
-            var now = Time.time;
+            var now = CsClock.Now;   // gameplay clock: bot decisions + hit attribution share the simulation time source (Core/CsClock.cs), never the wall clock
 
             if (!_match.IsRunning)
             {
@@ -141,7 +161,7 @@ namespace Cs16.Module.Bot
                 return;
             }
 
-            _accumulator += Time.deltaTime;
+            _accumulator += CsClock.Delta;   // cadence uses the same dt; not injected this is literally Time.deltaTime (host MatchModule.Update calls CsClock.Drive())
             if (_accumulator < CsConst.BotTickInterval) return;
 
             var dt = _accumulator;
@@ -266,6 +286,98 @@ namespace Cs16.Module.Bot
                 _statsTimer = 0f;
                 LogStats();
             }
+
+            AuditRouteDistinctness(now);
+        }
+
+        /// <summary>
+        /// **同队路线互斥审计**（★ 片FIX-4 线B 新增；用户投诉「每个机器人的路线都是相同的」）。
+        ///
+        /// <para>为什么要有它：<see cref="CsBotPlans"/> 用"模 4 循环平移"**构造性**保证同队 4 只 bot 的
+        /// 槽位互不相同，但**运行期**仍有两种途径让两只 bot 撞到同一条路：① 回合中途加入的 bot
+        /// （它的槽位是按"当时的 actor 集合"算的，可能与先来的那只重合）；② 上一回合遗留的目标
+        /// （换目标前的 <c>_planRoute</c>）。这两种都是**非预期分支** —— 按项目铁律必须留痕，
+        /// 所以这里逐 tick 审计一次（8 只 bot ⇒ 28 对比较，可忽略），撞了就降频 Warn 并给出**是哪两只、哪条路**。</para>
+        ///
+        /// <para>⛔ 只审计、不"纠正"：纠正会让"谁先 tick 谁赢"进入计划（不可复现）；互斥必须靠计划表的构造性质。</para>
+        /// </summary>
+        private void AuditRouteDistinctness(float now)
+        {
+            if (_brains.Count < 2) return;
+            if (now < _nextRouteAuditAt) return;
+            _nextRouteAuditAt = now + CsBotConst.RouteAuditIntervalSeconds;
+
+            _routeAuditClear = true;
+            _routeAuditCount = 0;
+            _routeAuditOffPlan = 0;
+
+            foreach (var kv in _brains)
+            {
+                var a = kv.Value;
+                if (a.PlanRoute == null) continue;
+
+                foreach (var kv2 in _brains)
+                {
+                    var b = kv2.Value;
+                    if (b.ActorId <= a.ActorId) continue;                  // 每对只比一次
+                    if (b.PlanRoute != a.PlanRoute) continue;
+
+                    var sa = _match.Find(a.ActorId);
+                    var sb = _match.Find(b.ActorId);
+                    if (sa == null || sb == null || sa.Team != sb.Team) continue;   // 跨队同路是正常的
+
+                    // ★ 2026-09-24：只数**活着**的两只。死人不再移动，与死人同名一条路不产生用户可见的
+                    //   "行为相同"；反过来，死人让出的家族/目标序号应当可以被卡住的活人接手
+                    //   （口径与 CsBotPlans.AliveSlotTable 一致，两处必须同步改）。
+                    if (!sa.IsAlive || !sb.IsAlive) continue;
+
+                    if (!IsPlanFamily(a.PlanRoute))
+                    {
+                        // 「包已下 → 全队回 C4 守包」（_match.BombPlanted 后所有 T 都走守C4）与
+                        // 「回出生点」（换目标全部失败时的兜底）是**集体**目标 —— 全队去同一个点是有意的，
+                        // 不属于"分工路线"判据。⛔ 但也不许静默放过：单独计数 + 打日志，让它看得见。
+                        _routeAuditOffPlan++;
+                        Game.Logger.Warn(Tag,
+                            $"同队非分工路线共用（已排除在互斥判据外）：{sa.Name}({sa.Team}) 与 {sb.Name}({sb.Team}) " +
+                            $"都在 '{a.PlanRoute}'（{CsBotPlans.RouteLabel(a.PlanRoute)}）—— 包已下的集合守包 / " +
+                            "换目标兜底回出生点属于有意行为；若这行出现在**回合开始**的进攻/防守阶段，才是异常");
+                        continue;
+                    }
+
+                    _routeAuditClear = false;
+                    _routeAuditCount++;
+                    Game.Logger.Warn(Tag,
+                        $"同队路线撞车：{sa.Name}({sa.Team}/槽位{a.PlanSlot}) 与 {sb.Name}({sb.Team}/槽位{b.PlanSlot}) " +
+                        $"都走 '{a.PlanRoute}'（{CsBotPlans.RouteLabel(a.PlanRoute)}）→ " +
+                        $"目标 {a.GoalPosition} vs {b.GoalPosition}。" +
+                        "预期不会出现（CsBotPlans 的槽位是模 4 平移、构造性互异，换目标也走互斥门禁）；" +
+                        "出现即说明存在「回合中途加入」「上一回合遗留目标」或「换目标抢了队友的家族」，" +
+                        "见 BotModule.AuditRouteDistinctness 与 CsBotBrain.TryRouteObjective 的注释");
+                }
+            }
+        }
+
+        /// <summary>
+        /// 这个路线标记是不是**计划表里的分工家族**（4 槽位表给出的路线 ∪ 巡逻线）。
+        /// <para>用途：互斥判据只对"分工路线"成立；守 C4 / 回出生点这类集体兜底目标要排除，
+        /// 但会用 <see cref="RouteOffPlanPairs"/> 单独计数并打日志（⛔ 不静默放过）。</para>
+        /// <para>⛔ 表不在这里重写一份：直接问 <see cref="CsBotPlans.For"/>（回合取 0/1 两种奇偶，
+        /// 因为 T 的主攻包点按回合奇偶轮换）。</para>
+        /// </summary>
+        private static bool IsPlanFamily(string routeMarker)
+        {
+            if (string.IsNullOrEmpty(routeMarker)) return false;
+
+            for (var round = 0; round <= 1; round++)
+            {
+                for (var slot = 0; slot < CsBotPlans.Slots; slot++)
+                {
+                    if (CsBotPlans.For(CsTeam.T, slot, round).RouteMarker == routeMarker) return true;
+                    if (CsBotPlans.For(CsTeam.CT, slot, round).RouteMarker == routeMarker) return true;
+                }
+            }
+
+            return false;
         }
 
         private void SyncBrains()
@@ -333,7 +445,7 @@ namespace Cs16.Module.Bot
         {
             if (victim == null) return;
 
-            var brain = BotHitAttribution.Pick(_brains.Values, victim.Id, Time.time, out var candidates);
+            var brain = BotHitAttribution.Pick(_brains.Values, victim.Id, CsClock.Now, out var candidates);   // reproducibility gap: LastFireIntentTime is written from the simulation now, so the tie-break must read the same Now
             if (brain == null) return;
 
             if (candidates > 1)

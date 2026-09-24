@@ -252,7 +252,7 @@ namespace Cs16.Core
         // 出处：原版地图文件名 `maps/de_dust2.bsp`（规格 §3 / §5；工程内的原版载体 =
         // `client/Assets/ThirdParty/Dust2/de_dust2.bsp`）。
         public const string MapDust2 = "de_dust2";
-        // 资源路径（Resources 相对）真源 = Core/ResPaths.cs：MapDust2（位图）/ MapDust2Markers（标记表）。
+        // 资源路径（Resources 相对）真源 = Core/ResPaths.cs：MapDust2（位图 + 命名标记点段，同一份 .bytes）。
     }
 
     /// <summary>Unity 场景名（禁止散落字符串字面量）。</summary>

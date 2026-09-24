@@ -84,6 +84,17 @@
 | `CsWeapons` | `Core/CsWeapons.cs` | 32 条武器定义（价格/伤害/射速/弹匣/备弹/后坐力/击杀奖励…） | 逐行带 `mp.dll:0x10f7xx`（`WeaponInfo[]`） |
 | `CsMatchConfig` | `Core/CsMatchConfig.cs` | 一局比赛的运行参数（回合数 / 阵营 / 友好伤害…） | — |
 
+## Core 横切设施（`client/Assets/Scripts/Core/**`；切片 sink4 2026-09-24 新增）
+
+| 设施 | 文件 | 形态 | 契约 / 职责 |
+| --- | --- | --- | --- |
+| `CsClock` | `Core/CsClock.cs` | 静态可注入时钟 | **玩法时间的唯一入口**：`Now`/`Delta` 默认为**引擎 Tick 注入的 dt**（`EngineRunner.cs:207`），宿主在 `MatchModule.Update` 调 `Drive()`；离线/自检用 `Inject(now,delta)`（可 `Restore`）；`NowSource`/`DeltaSource` 可查当前来源。⛔ 玩法路径**不许**直接读 `Time.time`/`Time.deltaTime`（表现层白名单见切片 `sink-combat-clock` 的 TSV）。判定入口：玩法文件里墙钟命中必须为 0（白名单 = 只有 `CsClock.cs` 自己） |
+| `CsSettingsKeys` | `Core/CsSettingsKeys.cs` | 常量类（唯一真源） | **设置键名的唯一真源**：`UI/Flow/CsPlayerSettingsStore`（18 处）、`Module/Player/PlayerModule`（5 处）、`Module/Audio/CsAudioTuning`（2 处）一律引用它；⛔ 任何地方**不许再写字面量键名**（两处维护 ⇒ 改一处漏一处，静默丢设置） |
+| `CsRng` | `Core/CsRng.cs` | 静态唯一入口 + 可注入种子 | 本局随机源的**唯一入口**：`BeginMatch(seed)` 定种子并清各子流、`InjectSeed(seed)` 注入且**黏**（不随后续 `BeginMatch` 漂移）；13 路 `CsRngStream` **一路一 salt**，bot 再按 `actor id` `Derive`；未定种子时首次取流**显式**走引擎 `Rng.FromTime` 并打含 seed 的 `Info` 留痕 |
+
+- ⛔ **业务代码不得直接调 `UnityEngine.Random`**（`value` / `Range` / `insideUnitSphere` / `ColorHSV` 等）—— 玩法随机（出生朝向、散布、后坐力、bot 决策）一律经 `CsRng` 的对应子流；自检/测试用固定种子（如 `BotSelfTest` = `20260924`）。理由：裸 `Random` 取全局时间种子 ⇒ **同一局不可复现**，任何"同 seed 同结果"的判据都无法成立。
+- 判定入口：`Scripts` 树内**非注释**的 `Random.` 命中必须为 **0**（仓内自检 `sink4-cs16-random-selfcheck.ps1` 持此判据，并含负控）。
+
 ## 原版载体（`原版资源/**`，⛔ 只读；不进 git、不进交付）
 
 | 子目录 | 是什么 | 用途 |

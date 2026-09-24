@@ -122,10 +122,11 @@ namespace Cs16.UI
             _quitButton = CsUiStyle.CreateMenuItem("Btn_Quit", root, "Quit",
                 new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
 
-            // 署名（skill §1.6 硬规则：每个游戏的界面下方必须有这一行，**居底居中**、低调）。
-            // 必须用底部锚点：左上锚点 + 大负 y 会随画布高度变化掉出屏幕（实测踩过）。
-            CsUiStyle.CreateBottomLabel("Signature", root, "by clover-engine", 22,
-                new Vector2(0f, 56f), new Vector2(600f, 32f));
+            // 署名（skill §8 品牌硬规则：每个游戏的界面下方必须有这一行，**居底居中**、低调）。
+            // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
+            // 逐字 `by clover-engine`）：贴底锚点 / 字号 / 字体回退都在那一处，本面板不再自写文案与定位
+            // （原先自写"左上锚点 + 大负 y"曾让整行掉出屏幕，只有实机截图才发现）。
+            CsUiStyle.CreateCreditLabel(root);
         }
 
         public override void OnOpen(object param)

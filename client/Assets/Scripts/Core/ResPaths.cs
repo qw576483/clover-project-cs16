@@ -30,12 +30,10 @@ namespace Cs16.Core
         /// </summary>
         public const string MapDust2 = "MapData/de_dust2";
 
-        /// <summary>
-        /// 运行时标记点表（真实文件 <c>Resources/MapData/de_dust2_markers.bytes</c>）：
-        /// 位图里没有名字，而 AI / 包点 / 买枪区都要按名字取点，所以单独带一份。
-        /// 生成器（<c>Editor/MapGen</c>）导出与运行时（<c>Module/Map/CsMap</c>）读取**同源**。
-        /// </summary>
-        public const string MapDust2Markers = "MapData/de_dust2_markers";
+        // ⛔ 原名 `MapDust2Markers`（`MapData/de_dust2_markers`）**已删除**（本片 2026-09-24）：
+        //    命名标记点改随**同一份** `MapData/de_dust2.bytes` 的 `CloverMapFormat.FlagMarkers` 段同行，
+        //    运行时经引擎 `Game.Map.Points/GetPoints/TryGetPoint` 取（见 `Module/Map/CsMap.cs`）。
+        //    ⛔ 这里不许再冒出一个"标记表旁路"的路径常量：同一份空间事实只允许一份载体。
 
         // ==================================================================
         //  音效 —— 落在 Resources/Sound/SFX/（短名形如 sfx/xxx）
@@ -171,13 +169,42 @@ namespace Cs16.Core
         // **原版载体**解出同名覆盖（枪口火焰 ← `sprites/muzzleflash2.spr`，工具 `tools/probes/spr-extract.py`；
         // 弹痕/血迹 ← `decals.wad` 的 `{shot*` / `{blood*`，工具 `tools/probes/wad3-extract.py`）。
         // 换素材仍是**只换文件**（同名覆盖），代码一行都不用改。
+        //
+        // ⚠️ `decals.wad` 的 `{` 贴花是 **decal** 口径、**不是** `{` 透明纹理口径：整张图是灰阶
+        // **不透明度**（白=透明、黑=实心），`palette[255]` 是整张贴花的**基色**（弹孔=黑、血=暗红）
+        // 且不得出现在像素里。旧版按透明纹理口径解 ⇒ 不透明度的**白端**变成不透明白墨，
+        // 弹痕在墙上渲染成**白斑**（差异 #69，用户 2026-09-24 复查：「弹痕是不是还是一个白点」）。
+        // 口径出处与逐条自检见 `tools/probes/wad3-extract.py` 的模块头。
 
-        /// <summary>枪口火焰精灵（真实文件 <c>Resources/UI/Art/fx_muzzleflash.png</c>，64×64）。</summary>
+        /// <summary>枪口火焰精灵（真实文件 <c>Resources/UI/Art/fx_muzzleflash.png</c>，64×64）。
+        ///
+        /// <para>载体 = 原版 <c>sprites/muzzleflash2.spr</c> 的**帧 0**
+        /// （<c>原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr</c>，64×64×3 帧，
+        /// 由 <c>tools/probes/spr-extract.py</c> 解出）。这是**默认**那张（多数武器用它）。</para>
+        ///
+        /// <para>⚠️ 原版**逐武器**选 <c>muzzleflash1..4</c>，而选择表在引擎 <c>hw.dll</c>（不在盘）——
+        /// 见 <see cref="FxMuzzleFlashCross"/> 与 <c>策划/差异登记.tsv</c> #89。</para></summary>
         public const string FxMuzzleFlash = "UI/Art/fx_muzzleflash";
 
-        /// <summary>弹痕精灵（程序化替身：真实文件 <c>Resources/UI/Art/fx_bullethole.png</c>，16×16 ——
-        /// 切片AW 已用 `decals.wad` 的 `{shot1` 同名覆盖；现在只作**变体不可用时的兜底**，见
-        /// <see cref="FxBulletHolePrefix"/>）。</summary>
+        /// <summary>
+        /// 枪口火焰**十字形**变体（真实文件 <c>Resources/UI/Art/fx_muzzleflash3.png</c>，72×72）
+        /// —— 原版 <c>sprites/muzzleflash3.spr</c> 的帧 0。
+        ///
+        /// <para><b>为什么单独立一条 key</b>：原版按武器选 1..4，本工程只落**有一条证据**的那条映射 ——
+        /// <b>B51 / M249 → 十字形</b>。证据两层：① 用户 2026-09-24 实机记忆「B51 是个十字的枪口火焰」；
+        /// ② 四张载体解帧后**只有** <c>muzzleflash3.spr</c> 是十字/X 形（其余三张是星芒/圆团），
+        /// 唯一匹配。⛔ 其余武器**不编**映射（缺口在 <c>策划/差异登记.tsv</c> #89）。</para>
+        ///
+        /// <para>帧数：载体是 72×72×**3 帧**，本工程只落帧 0（逐帧播放的时长无出处 —— 引擎不在盘）。</para>
+        /// </summary>
+        public const string FxMuzzleFlashCross = "UI/Art/fx_muzzleflash3";
+
+        /// <summary>弹痕**兜底**精灵（真实文件 <c>Resources/UI/Art/fx_bullethole.png</c>，16×16）——
+        /// 与 <c>fx_shot1</c> 同源：原版 <c>decals.wad</c> 的 `{shot1`（口径 = 灰阶不透明度 +
+        /// <c>palette[255]</c> 基色），只在 5 张变体**全都**加载不到时才被用
+        /// （<c>CombatEffects.PickBulletHole</c>），见 <see cref="FxBulletHoleKeys"/>。
+        /// ⛔ 旧版这里是**一整块纯白方块**（<c>make-fx-sprites.py</c> 程序化生成）—— 一旦退回它，
+        /// 用户看到的就是「弹痕是一个白点」（差异 #69，2026-09-24 复查）。</summary>
         public const string FxBulletHole = "UI/Art/fx_bullethole";
 
         /// <summary>

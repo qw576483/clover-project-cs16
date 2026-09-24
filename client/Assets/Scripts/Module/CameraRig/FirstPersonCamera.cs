@@ -9,31 +9,56 @@ using UnityEngine;
 namespace Cs16.Module.CameraRig
 {
     /// <summary>
-    /// **业务自写**的第一人称相机（引擎只提供锁 Z 的 <c>Game.Camera.Follow</c>，明确不许用于 FPS）。
+    /// 第一人称相机 —— **业务外壳（MonoBehaviour）**：装配自建相机、喂输入 / 眼位给引擎的
+    /// 第一人称 rig，并处理**引擎 rig 不管的那几件事**（第三人称观战机位、模型显隐、外来相机 / 音频监听器）。
     ///
-    /// <para><b>职责</b>：每帧把相机放到本地玩家眼睛位置、朝向 = 玩家视角 + 后坐力表现，
-    /// 叠加视点晃动 / 受击晃动 / 开镜 FOV；**死亡观战走第三人称机位**（见 <see cref="ResolveChaseDistance"/>）。</para>
-    ///
-    /// <para><b>FOV 口径</b>：<c>_fov</c> 是**水平** FOV（原版口径，见 <see cref="CsConst.DefaultFov"/>），
-    /// 每帧按当前宽高比换算成 Unity 要的**垂直** <c>fieldOfView</c>
-    /// （见引擎件 <see cref="CameraMath.FovYFromFovX"/>，E-core-18 下沉）。</para>
-    ///
-    /// <para><b>两条硬约定</b>：</para>
-    /// <list type="number">
-    /// <item><b>不自己累加后坐力</b>：权威值在比赛模拟里（<c>CsActor.RecoilPitch/RecoilYaw</c>，
-    /// 模拟负责累加与回复），本组件只做"指数跟随 + 回正"的**表现**，绝不再加一份；</item>
-    /// <item><see cref="AimDirection"/> 把这份后坐力一起算进去 —— 因为后坐力在 CS 里就是"准星被抬起来"，
-    /// 子弹必须跟着抬起来的方向走（射线由 <c>CombatModule</c> 用同一个方向发出）。</item>
+    /// <para><b>视角数学一律委托给引擎 rig</b> <see cref="CloverEngine.CloverFirstPersonCamera"/>
+    /// （<c>Runtime/Presentation/CloverFirstPersonCamera.cs</c>；它的数学层是从本项目逐字搬过去的，
+    /// 见其类注释的出处标注）：</para>
+    /// <list type="bullet">
+    /// <item><b>yaw/pitch 累加与夹取</b>：引擎 <c>LookAccumulator</c> + <c>PitchLimit</c>，⛔ 本组件不再自己夹；</item>
+    /// <item><b>后坐力表现跟随</b>：<c>SetRecoil(pitch, yaw)</c> —— 只喂**模拟的权威值**
+    /// （<c>CsActor.RecoilPitch/RecoilYaw</c>），上跳/回正两个时间常数在引擎里挑（⛔ 不再留第二份跟随）；</item>
+    /// <item><b>受击摇晃</b>：<c>AddShake(amp, dur)</c> + 注入的 <see cref="CloverEngine.Rng"/>
+    /// （<c>CsRng.Stream(CsRngStream.CameraShake)</c>）—— ⛔ 本组件不再用裸 <c>UnityEngine.Random</c>；
+    /// <b>视点晃动</b>：引擎件 <c>ViewBob</c> 的输出经 <c>ViewOffset</c>/<c>ViewRoll</c> 塞进去；</item>
+    /// <item><b>水平 FOV + 宽高比换算</b>：<c>FovX</c>/<c>FovSmoothTau</c> 交给引擎
+    /// （<see cref="CameraMath.FovYFromFovX"/> 在引擎里逐帧算垂直 <c>fieldOfView</c>）；</item>
+    /// <item><b>位姿下发</b>：<c>Tick(dt)</c> 写相机 Transform 与 <c>fieldOfView</c>
+    /// （<c>rotation = Euler(-Pitch, Yaw, ViewRoll+ShakeRoll)</c> 这一行也在引擎里）。</item>
     /// </list>
     ///
-    /// <para><b>为什么相机由本组件创建</b>：舞台场景由 agent-02 生成，不保证里面有相机；
-    /// 而第一人称必须有相机。自建一台常驻相机（比赛未运行时关闭）可以彻底消除
-    /// "进图后黑屏 / 和菜单相机抢 <c>Camera.main</c>"这两类问题。</para>
+    /// <para><b>本组件自己保留的（引擎 rig 不提供的）</b>：</para>
+    /// <list type="number">
+    /// <item><b>相机本体</b>：舞台场景不保证有相机，自建一台常驻相机（比赛未运行时关闭）
+    /// 可以彻底消除"进图后黑屏 / 和菜单相机抢 <c>Camera.main</c>"这两类问题。rig 用
+    /// <c>Bind(camera)</c> 显式绑它（⛔ 不走 <c>Game.Camera.Main</c>：那台可能不是我们这台）。</item>
+    /// <item><b>眼位</b>：眼位来自**逻辑**（<c>CsActor.Position + 眼高</c>，没有 Transform），
+    /// 故本组件维护一个隐藏的眼位锚点 Transform（<c>CsFpsEyeAnchor</c>）并只平滑**眼高**那一个标量
+    /// （站↔蹲、上下台阶不跳变，瞬移直接吸附）；引擎 <c>EyeSmoothTau</c> 是**整点**平滑（会让机位
+    /// 在水平方向落后于玩家）故置 0。</item>
+    /// <item><b>输入映射</b>：视角输入由玩家模块采集（<c>PlayerMotor.Yaw/Pitch</c>），
+    /// 本组件每帧 <c>SetView(motor.Yaw, motor.Pitch)</c> 喂给 rig；rig 自己的鼠标读取**关掉**
+    /// （<c>SetControlEnabled(false)</c>）—— ⛔ 两处读鼠标会把灵敏度算两遍。这是项目专有的输入映射。</item>
+    /// <item><b>第三人称观战机位</b>（<see cref="ResolveChaseDistance"/>，原版 <c>V_GetChaseOrigin</c>）、
+    /// 模型显隐、外来主相机 / 音频监听器收编、FOV 与机位的自证日志。</item>
+    /// </list>
+    ///
+    /// <para><b>两条硬约定（不变）</b>：</para>
+    /// <list type="number">
+    /// <item><b>不自己累加后坐力</b>：权威值在比赛模拟里（<c>CsActor.RecoilPitch/RecoilYaw</c>，
+    /// 模拟负责累加与回复），本组件只把权威值**喂**给引擎 rig 做表现；</item>
+    /// <item><see cref="AimDirection"/> 来自引擎 rig（含后坐力）—— 因为后坐力在 CS 里就是"准星被抬起来"，
+    /// 子弹必须跟着抬起来的方向走（射线由 <c>CombatModule</c> 用同一个方向发出）。</item>
+    /// </list>
     /// </summary>
     public sealed class FirstPersonCamera : MonoBehaviour
     {
         private const string Tag = "Camera";
         private const string CameraObjectName = "CsFpsCamera";
+
+        /// <summary>眼位锚点对象名（隐藏空物体；见 <see cref="_eyeAnchor"/>）。</summary>
+        private const string EyeAnchorObjectName = "CsFpsEyeAnchor";
 
         /// <summary>近裁剪面（米）：第一人称离墙很近，必须足够小。</summary>
         private const float NearClipPlane = 0.05f;
@@ -70,6 +95,21 @@ namespace Cs16.Module.CameraRig
         private PlayerMotor _motor;
 
         /// <summary>
+        /// **视角数学的唯一实现**（引擎件）：yaw/pitch 累加与夹取、后坐力表现跟随、受击摇晃（注入 Rng）、
+        /// 水平 FOV 平滑 + 宽高比换算、位姿下发。⛔ 本组件不再自己算这些
+        /// （见类注释与 <c>Runtime/Presentation/CloverFirstPersonCamera.cs</c>）。
+        /// </summary>
+        private CloverFirstPersonCamera _rig;
+
+        /// <summary>
+        /// 眼位锚点（隐藏的空物体）：眼位来自**逻辑**（<c>CsActor.Position</c>，角色模拟没有 Transform），
+        /// 所以每帧把本锚点搬到目标脚下位置，<c>EyeOffset</c> 再给"脚 → 眼"的高度
+        /// ⇒ 引擎 rig 的 <c>EyePosition = 锚点位置 + 眼高</c>，与原来的
+        /// <c>target.Position + (0, _eyeHeight, 0)</c> 逐字等价。
+        /// </summary>
+        private Transform _eyeAnchor;
+
+        /// <summary>
         /// 视点晃动 = **引擎件** <see cref="CloverEngine.ViewBob"/>（纯逻辑类，不再是 MonoBehaviour）。
         /// 由 <c>PlayerModule</c> 用项目自己的 <see cref="CloverEngine.ViewBobConfig"/> 构造后经
         /// <see cref="Init"/> 注入（7 个数值仍取项目原常量，一个都没变）。
@@ -78,18 +118,19 @@ namespace Cs16.Module.CameraRig
 
         private bool _subscribedDamage;
 
+        /// <summary>玩家设置里的**水平** FOV（原版口径，见 <see cref="CsConst.DefaultFov"/>）——
+        /// 每帧转交给引擎 rig 的 <c>FovX</c>，垂直换算 / 平滑都在引擎里。</summary>
         private float _baseFov = CsConst.DefaultFov;
-        private float _fov;
+
+        /// <summary>本帧眼高（米，脚面之上）：只平滑这一个标量（见类注释"本组件自己保留的"第 2 条）。</summary>
         private float _eyeHeight;
         private Vector3 _lastActorPosition;
         private bool _hasLastPosition;
 
         private long _lastTargetId;
-        private float _recoilPitch;
-        private float _recoilYaw;
         private float _zoomHeldTime;
 
-        private float _shakeTime;
+        /// <summary>最近一次受击的归一化幅度（0~1）：<c>OnDamaged</c> 用它折算摇晃幅度交给引擎 rig。</summary>
         private float _shakeMagnitude;
 
         private float _selfCheckTimer;
@@ -107,15 +148,20 @@ namespace Cs16.Module.CameraRig
         private int _loggedWidth;
         private int _loggedHeight;
 
-        /// <summary>本帧射线起点（眼睛位置，**不含** bob：子弹不跟着脚步摆）。</summary>
-        public Vector3 EyePosition { get; private set; }
+        /// <summary>本帧射线起点（眼睛位置，**不含** bob：子弹不跟着脚步摆）。
+        /// 值来自引擎 rig 的 <c>EyePosition</c>（未在比赛中时为上一次的值 / 初始零）。</summary>
+        public Vector3 EyePosition => _eyePosition;
 
         /// <summary>
         /// 本帧视线方向（含后坐力表现，与相机朝向一致）：
         /// <c>(cos(pitch)*sin(yaw), sin(pitch), cos(pitch)*cos(yaw))</c> —— 与比赛模拟的
         /// <c>CsInventory.AimDirection</c> 同口径（yaw 0 = +Z，pitch + = 抬头）。
+        /// 值来自引擎 rig 的 <c>AimDirection</c>（未在比赛中时保持 <c>Vector3.forward</c>）。
         /// </summary>
-        public Vector3 AimDirection { get; private set; } = Vector3.forward;
+        public Vector3 AimDirection => _aimDirection;
+
+        private Vector3 _eyePosition;
+        private Vector3 _aimDirection = Vector3.forward;
 
         /// <summary>开镜是否已"稳定"（未稳定 = 不享受开镜精度加成，即 quickscope 惩罚）。</summary>
         public bool ScopeSettled =>
@@ -137,27 +183,68 @@ namespace Cs16.Module.CameraRig
             _bob = bob;
 
             _baseFov = Mathf.Clamp(baseFovDegrees > 0 ? baseFovDegrees : CsConst.DefaultFov, MinBaseFov, MaxBaseFov);
-            _fov = _baseFov;
 
             EnsureCamera();
             EnsureAudioListener();
             HookDamage();
+            EnsureRig();
 
             // 让第一帧 PrepareView 立刻做一次自检（启用相机 / 找监听器 / 关掉别的主相机）。
             _selfCheckTimer = SelfCheckInterval;
 
             _log.Always($"第一人称相机就绪：camera={(_camera != null ? _camera.name : "null")} " +
-                        $"水平FOV={_baseFov:F0}（开镜 {CsConst.ZoomFov:F0}；Unity.fieldOfView 按宽高比逐帧换算）" +
-                        $"near={NearClipPlane} far={FarClipPlane}；第三人称机位 {CsConst.ChaseDistance:F4}~{CsConst.ChaseMinDistance:F4} m");
+                        $"水平FOV={_baseFov:F0}（开镜 {CsConst.ZoomFov:F0}；垂直换算与平滑由引擎 rig 逐帧做）" +
+                        $"near={NearClipPlane} far={FarClipPlane}；第三人称机位 {CsConst.ChaseDistance:F4}~{CsConst.ChaseMinDistance:F4} m" +
+                        $"；视角 rig={(_rig != null ? "CloverFirstPersonCamera" : "缺失")}");
         }
 
-        /// <summary>玩家设置里的 FOV 变了（Options 面板）时同步。</summary>
+        /// <summary>玩家设置里的 FOV 变了（Options 面板）时同步（只改引擎 rig 的 <c>FovX</c>；平滑在引擎里）。</summary>
         internal void SetBaseFov(int fovDegrees)
         {
             var clamped = Mathf.Clamp(fovDegrees, (int)MinBaseFov, (int)MaxBaseFov);
             if (Mathf.Approximately(_baseFov, clamped)) return;
             _baseFov = clamped;
+            if (_rig != null) _rig.FovX = _baseFov;
             _log.Always($"FOV 设置更新：{_baseFov:F0}");
+        }
+
+        /// <summary>
+        /// 建/绑**引擎第一人称 rig**（<see cref="CloverFirstPersonCamera"/>）—— 视角数学的唯一实现。
+        /// 数值全部来自项目的数值表（引擎不内置手感值）：俯仰限位 / 后坐力两个时间常数 / 摇晃横滚比例 /
+        /// 开镜 FOV 过渡常数见 <see cref="CsCombatTuning"/>，FOV 见 <see cref="CsConst"/>。
+        /// </summary>
+        private void EnsureRig()
+        {
+            if (_rig == null)
+            {
+                var anchorGo = new GameObject(EyeAnchorObjectName);
+                anchorGo.hideFlags = HideFlags.HideInHierarchy;
+                Object.DontDestroyOnLoad(anchorGo);
+                _eyeAnchor = anchorGo.transform;
+
+                _rig = new CloverFirstPersonCamera
+                {
+                    EyeAnchor = _eyeAnchor,
+                    // 整点眼位平滑会让机位在**水平方向**落后于玩家（锚点随玩家移动）⇒ 置 0：
+                    // 本组件只平滑"眼高"这一个标量（见 _eyeHeight 的那段注释），行为与原实现逐字一致。
+                    EyeSmoothTau = 0f,
+                    PitchLimit = CsCombatTuning.PitchLimit,
+                    RecoilRiseTau = CsCombatTuning.RecoilRiseTau,
+                    RecoilFallTau = CsCombatTuning.RecoilFallTau,
+                    // 原实现的摇晃三轴同幅（pitch/yaw/roll 各取 Range(-k,k)）⇒ 横滚比例 1。
+                    ShakeRollScale = 1f,
+                    // 随机器**注入**（引擎禁用全局静态随机器）：走项目唯一的随机入口，按用途分一条独立子流。
+                    ShakeRng = CsRng.Stream(CsRngStream.CameraShake),
+                    FovSmoothTau = CsCombatTuning.ZoomTransitionTau,
+                    FovX = _baseFov,
+                };
+
+                // ⛔ rig 不许自己读鼠标：视角输入由 PlayerMotor 采集（项目专有的输入映射，见类注释），
+                //    两处读鼠标会把灵敏度算两遍。关掉输入后 rig 仍照常由 Tick 驱动机位。
+                _rig.SetControlEnabled(false);
+            }
+
+            if (_camera != null && !_rig.IsBound) _rig.Bind(_camera);
         }
 
         private void OnDestroy()
@@ -186,20 +273,42 @@ namespace Cs16.Module.CameraRig
             if (local == null || victim == null || victim.Id != local.Id) return;
 
             _shakeMagnitude = Mathf.Clamp01(damage / CsCombatTuning.DamageShakeFullDamage);
-            _shakeTime = CsCombatTuning.DamageShakeDuration;
-            _log.Info("shake", $"自己受击：{damage} 点（{(headshot ? "爆头" : "普通")}{(lethal ? "·致死" : string.Empty)}），镜头晃动");
+            // 摇晃**委托给引擎 rig**：幅度 = 满幅 × 归一化伤害、时长取项目常数；随机方向由注入的
+            // Rng 抽一次（`AddShake` 的内部机制：一次方向 + 幅度线性衰减到 0）。
+            // 出处对照：引擎 CloverFirstPersonCamera.AddShake 的注释逐条对应原实现 :341-349 的三轴随机。
+            var accepted = _rig != null &&
+                           _rig.AddShake(CsCombatTuning.DamageShakeMaxDeg * _shakeMagnitude,
+                                         CsCombatTuning.DamageShakeDuration);
+            _log.Info("shake", $"自己受击：{damage} 点（{(headshot ? "爆头" : "普通")}{(lethal ? "·致死" : string.Empty)}），" +
+                               $"镜头晃动幅度={CsCombatTuning.DamageShakeMaxDeg * _shakeMagnitude:F3}°（引擎 rig AddShake={accepted}）");
         }
 
         // ==================================================================
-        //  每帧：算好 → 应用
+        //  每帧：喂输入 → 引擎 rig 推进并下发位姿 →（仅观战）覆盖为第三人称机位
         // ==================================================================
-        /// <summary>算本帧的相机位姿 / 视线方向（不写 Transform）。必须在射线之前调用。</summary>
+        /// <summary>
+        /// 本帧：算好眼位 / 输入 / 后坐力 / 视点晃动 / FOV，喂给引擎 rig，由 rig 推进一帧并**下发第一人称位姿**。
+        ///
+        /// <para>与 <see cref="ApplyToTransform"/> 的分工（调用方 <c>PlayerModule</c> 在两者之间做射击射线）：
+        /// 第一人称位姿在**本方法内**已经下发（引擎 <c>Tick</c> 的职责）；只有第三人称观战机位要等射线之后再覆盖一次。
+        /// "射线方向必须与画面上准星所指一致"这条约定不受影响 —— 朝向由 <see cref="AimDirection"/> 给出（引擎算的）。</para>
+        /// </summary>
         internal void PrepareView(float dt)
         {
+            _hasPendingView = false;
+
             if (_camera == null) EnsureCamera();
             if (_camera == null)
             {
                 _log.Warn("camera.missing", "相机不可用（创建失败？），第一人称视角不会更新");
+                return;
+            }
+
+            EnsureRig();
+            if (_rig == null)
+            {
+                // 非预期分支：rig 建不出来就没人算视角 —— 必须留痕，不许静默黑屏。
+                _log.Warn("rig.missing", "第一人称 rig 不可用（引擎 CloverFirstPersonCamera 未建成），本帧视角不更新");
                 return;
             }
 
@@ -208,8 +317,11 @@ namespace Cs16.Module.CameraRig
 
             if (!running)
             {
-                // 比赛没开始（主菜单 / 读条 / 已回主菜单）：不动相机、不算射线。
-                AimDirection = Vector3.forward;
+                // 比赛没开始（主菜单 / 读条 / 已回主菜单）：不推进 rig、不动相机。
+                // 位姿表现状态清干净，免得下一局开局还挂着上一局的后坐力 / 摇晃。
+                _rig.ClearRecoil();
+                _rig.ClearShake();
+                _aimDirection = Vector3.forward;
                 return;
             }
 
@@ -240,8 +352,7 @@ namespace Cs16.Module.CameraRig
             if (_lastTargetId != target.Id)
             {
                 _lastTargetId = target.Id;
-                _recoilPitch = 0f;
-                _recoilYaw = 0f;
+                _rig.ClearRecoil();      // 换目标：后坐力表现立即清零（引擎 rig 持有该状态）
                 _hasLastPosition = false;
                 _bob?.Reset();
                 // 观战切换：把自由视角先对齐到被观察者的朝向，避免"瞬间背对"。
@@ -273,7 +384,9 @@ namespace Cs16.Module.CameraRig
                 _chaseHitDistance = -1f;
             }
 
-            // ---- 眼睛位置（站/蹲与台阶做平滑；瞬移直接吸附）----
+            // ---- 眼高（站/蹲与台阶做平滑；瞬移直接吸附）----
+            // 只平滑"眼高"这一个标量：引擎 rig 的 EyeSmoothTau 是**整点**平滑，会让机位在水平方向
+            // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（行为与原实现逐字一致）。
             var eyeTarget = target.EyeHeight;
             if (!_hasLastPosition || Vector3.Distance(target.Position, _lastActorPosition) > CsCombatTuning.TeleportSnapDistance)
             {
@@ -286,113 +399,68 @@ namespace Cs16.Module.CameraRig
 
             _lastActorPosition = target.Position;
             _hasLastPosition = true;
-            EyePosition = target.Position + new Vector3(0f, _eyeHeight, 0f);
 
-            // ---- 后坐力表现（只跟随模拟的权威值）----
-            var recoilPitch = 0f;
-            var recoilYaw = 0f;
-            if (!spectating)
+            // 眼位锚点搬到目标脚下，"脚 → 眼"的高度交给 rig 的 EyeOffset ⇒
+            // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与原实现等价）。
+            _eyeAnchor.position = target.Position;
+            _rig.EyeOffset = new Vector3(0f, _eyeHeight, 0f);
+
+            // ---- 喂 rig ①：视角（**项目专有的输入映射** —— 权威 yaw/pitch 由 PlayerMotor 采集）----
+            _rig.SetView(_motor != null ? _motor.Yaw : target.Yaw,
+                         _motor != null ? _motor.Pitch : target.Pitch);
+
+            // ---- 喂 rig ②：后坐力（只喂**模拟的权威值**，跟随 / 上跳回落时间常数在引擎里）----
+            if (spectating)
             {
-                var wantPitch = target.RecoilPitch * CsCombatTuning.RecoilViewScale;
-                var wantYaw = target.RecoilYaw * CsCombatTuning.RecoilViewScale;
-                // 后坐力的表现跟随：**上跳用快常数、回正用慢常数**（"抬得快、落得慢"）；
-                // 只平滑跟随模拟的权威值，不累加。
-                // 合并口径：引擎只提供一条 CameraMath.Follow（原 FollowRecoil 只是"按
-                // |target| > |current| 在上升/回落两个 tau 里挑一个"，属业务数值选择）⇒
-                // 那一步就近内联在这里，⛔ 不留第二份跟随实现。
-                _recoilPitch = CameraMath.Follow(_recoilPitch, wantPitch, dt,
-                    Mathf.Abs(wantPitch) > Mathf.Abs(_recoilPitch) ? CsCombatTuning.RecoilRiseTau : CsCombatTuning.RecoilFallTau);
-                _recoilYaw = CameraMath.Follow(_recoilYaw, wantYaw, dt,
-                    Mathf.Abs(wantYaw) > Mathf.Abs(_recoilYaw) ? CsCombatTuning.RecoilRiseTau : CsCombatTuning.RecoilFallTau);
-                recoilPitch = _recoilPitch;
-                recoilYaw = _recoilYaw;
+                _rig.ClearRecoil();   // 观战时没有自己的后坐力（权威值属于被观察者）
             }
             else
             {
-                _recoilPitch = 0f;
-                _recoilYaw = 0f;
+                _rig.SetRecoil(target.RecoilPitch * CsCombatTuning.RecoilViewScale,
+                               target.RecoilYaw * CsCombatTuning.RecoilViewScale);
             }
 
-            // ---- 视角 ----
-            var yaw = (_motor != null ? _motor.Yaw : target.Yaw) + recoilYaw;
-            var pitch = Mathf.Clamp((_motor != null ? _motor.Pitch : target.Pitch) + recoilPitch,
-                -CsCombatTuning.PitchLimit, CsCombatTuning.PitchLimit);
-
-            // 射线方向 = 不含 bob / 不含受击抖动的视线（子弹不该跟着画面抖）
-            // 俯仰的 ±PitchLimit 夹紧已在上一行做过（引擎件 CameraMath.AimDirection 只做纯几何，见其注释）。
-            AimDirection = CameraMath.AimDirection(yaw, pitch);
-
-            // ---- 开镜 FOV ----
+            // ---- 喂 rig ③：开镜 FOV（水平口径；垂直换算与平滑在引擎里）----
             var zoomed = _match.IsZoomed;
             _zoomHeldTime = zoomed ? _zoomHeldTime + dt : 0f;
-            var wantFov = zoomed ? CsConst.ZoomFov : _baseFov;
-            _fov = CameraMath.Follow(_fov, wantFov, dt, CsCombatTuning.ZoomTransitionTau);
+            _rig.FovX = zoomed ? CsConst.ZoomFov : _baseFov;
 
-            // ---- bob ----
+            // ---- 喂 rig ④：视点晃动（引擎件 ViewBob 的输出缝）----
             var speedXZ = new Vector2(target.Velocity.x, target.Velocity.z).magnitude;
             if (_bob != null) _bob.Tick(dt, spectating ? 0f : speedXZ, target.OnGround);
-            var bobOffset = _bob != null ? _bob.Offset : Vector3.zero;
-            var bobRoll = _bob != null ? _bob.Roll : 0f;
+            _rig.ViewOffset = _bob != null ? _bob.Offset : Vector3.zero;
+            _rig.ViewRoll = _bob != null ? _bob.Roll : 0f;
 
-            // ---- 受击晃动 ----
-            var shakePitch = 0f;
-            var shakeYaw = 0f;
-            var shakeRoll = 0f;
-            if (_shakeTime > 0f)
-            {
-                _shakeTime = Mathf.Max(0f, _shakeTime - dt);
-                var k = _shakeTime / CsCombatTuning.DamageShakeDuration *
-                        CsCombatTuning.DamageShakeMaxDeg * _shakeMagnitude;
-                shakePitch = Random.Range(-k, k);
-                shakeYaw = Random.Range(-k, k);
-                shakeRoll = Random.Range(-k, k);
-            }
-
-            var finalYaw = yaw + shakeYaw;
-            var finalPitch = Mathf.Clamp(pitch + shakePitch, -CsCombatTuning.PitchLimit, CsCombatTuning.PitchLimit);
+            // ---- 引擎 rig 推进一帧：后坐力跟随 / 摇晃衰减 / FOV 平滑 / 位姿 + fieldOfView 下发 ----
+            _rig.Tick(dt);
+            _eyePosition = _rig.EyePosition;
+            _aimDirection = _rig.AimDirection;
 
             if (spectating)
             {
                 // ---- 第三人称观战 / 跟随（原版 view.cpp:617-635）----
-                // 机位 = 眼位沿**视线反方向**退 ofs[2]；roll 归零；距离与防穿墙见 ResolveChaseDistance。
-                // 方向用 AimDirection（不含 bob / 不含受击抖动）：原版的 camForward 也是由玩家视角算的，
-                // 抖动的只是视角、不是机位本身。
-                var dist = ResolveChaseDistance(EyePosition, AimDirection);
-                _pendingRotation = Quaternion.Euler(-finalPitch, finalYaw, 0f);   // roll 归零（view.cpp:627）
-                _pendingPosition = EyePosition - AimDirection * dist;
+                // 机位 = 眼位沿**视线反方向**退 ofs[2]；roll 归零（view.cpp:627）；距离与防穿墙见 ResolveChaseDistance。
+                // 朝向 / 眼位 / 视线方向全部取 rig 算好的值（⛔ 这里不再自己拼 yaw/pitch）。
+                var dist = ResolveChaseDistance(_eyePosition, _aimDirection);
+                _pendingRotation = Quaternion.Euler(-_rig.Pitch, _rig.Yaw, 0f);
+                _pendingPosition = _eyePosition - _aimDirection * dist;
                 _hasPendingView = true;
-                return;
             }
-
-            var rotation = Quaternion.Euler(-finalPitch, finalYaw, bobRoll + shakeRoll);
-
-            // bob 是"画面局部偏移"：先转进视线空间再加到眼睛位置（这样左右晃不会穿墙方向错）。
-            _pendingPosition = EyePosition + rotation * new Vector3(bobOffset.x, bobOffset.y, 0f);
-            _pendingRotation = rotation;
-            _hasPendingView = true;
         }
 
-        /// <summary>把 <see cref="PrepareView"/> 算出的位姿写到相机上（在射线之后调用）。</summary>
+        /// <summary>
+        /// 把**第三人称观战**机位写到相机上（在射线之后调用）。
+        ///
+        /// <para>第一人称位姿**已由引擎 rig 的 <c>Tick(dt)</c> 下发**（含垂直 <c>fieldOfView</c>：
+        /// Unity 的 <c>fieldOfView</c> 是垂直口径，引擎在 <c>ApplyToCamera</c> 里按 <c>cam.aspect</c> 用
+        /// <see cref="CameraMath.FovYFromFovX"/> 换算）⇒ 那种情况下本方法是空操作。
+        /// 这正是调用方 <c>PlayerModule</c> 的「① 相机 ② 射线 ③ 落位」三段顺序仍然成立的原因：
+        /// 第 ③ 步只对观战机位有意义，⛔ 本组件不再自己算垂直 FOV（那是第二份宽高比换算）。</para>
+        /// </summary>
         internal void ApplyToTransform()
         {
-            if (_camera == null) return;
-            if (!_hasPendingView)
-            {
-                _camera.fieldOfView = CurrentVerticalFov();
-                return;
-            }
-
+            if (_camera == null || !_hasPendingView) return;
             _camera.transform.SetPositionAndRotation(_pendingPosition, _pendingRotation);
-            // Unity 的 fieldOfView 是**垂直** FOV，而 _fov 是原版口径的**水平** FOV
-            // ⇒ 每帧按当前宽高比换算（见引擎件 CameraMath.FovYFromFovX）。⛔ 不许写死 58.72。
-            _camera.fieldOfView = CurrentVerticalFov();
-        }
-
-        /// <summary>当前屏幕宽高比下的垂直 FOV（度）——<c>_fov</c> 是水平 FOV。</summary>
-        private float CurrentVerticalFov()
-        {
-            if (Screen.width <= 0 || Screen.height <= 0) return _fov;   // 取不到视口时保持原值（不在 Play 里的退化分支）
-            return CameraMath.FovYFromFovX(_fov, Screen.width / (float)Screen.height);
         }
 
         private Vector3 _pendingPosition;
@@ -476,7 +544,10 @@ namespace Cs16.Module.CameraRig
             var h = Screen.height;
             if (w <= 0 || h <= 0) return;
 
-            var fovY = CurrentVerticalFov();
+            if (_rig == null) return;
+            // 两个数都取自引擎 rig（它是宽高比换算 / 平滑的唯一实现）：垂直 = 真正下发给 Unity 的那个。
+            var fovY = _rig.VerticalFieldOfView;
+            var fovX = _rig.FovXCurrent;
             if (w == _loggedWidth && h == _loggedHeight && Mathf.Abs(fovY - _loggedFovY) < 0.001f) return;
             _loggedWidth = w;
             _loggedHeight = h;
@@ -484,7 +555,7 @@ namespace Cs16.Module.CameraRig
 
             var aspect = w / (float)h;
             var backToHorizontal = 2f * Mathf.Atan(Mathf.Tan(fovY * 0.5f * Mathf.Deg2Rad) * aspect) * Mathf.Rad2Deg;
-            _log.Always($"FOV 口径核对：Screen={w}x{h} aspect={aspect:F4} 水平FOV={_fov:F2}° " +
+            _log.Always($"FOV 口径核对：Screen={w}x{h} aspect={aspect:F4} 水平FOV={fovX:F2}° " +
                         $"→ Unity.fieldOfView(垂直)={fovY:F2}°；反算等效水平={backToHorizontal:F2}° " +
                         $"（原版 default_fov=90 是水平 · HLSDK/cl_dll/hud.cpp:332 + view.cpp:1737-1752）");
         }

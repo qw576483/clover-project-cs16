@@ -98,12 +98,52 @@ namespace Cs16.Module.Match
             Unsubscribe();
             _match?.Stop();
             _match = null;
+
+            // ★ 差异 #88 第②段：本模块是局域网客户端与远端视图的泵主 ⇒ 收尾时要一起停掉，
+            //   ⛔ 否则线程会成为"没人管的后台线程"、远端角色会跟着常驻对象活到下一次进图。
+            StopLanClientAndViews("MatchModule 销毁");
+        }
+
+        /// <summary>停局域网客户端 + 回收全部远端视图（幂等；两处调用点共用，⛔ 不各写一套）。</summary>
+        private void StopLanClientAndViews(string why)
+        {
+            if (Cs16.Module.Net.CsLanClient.IsRunning)
+            {
+                Game.Logger.Info(Tag, why + "：停止局域网客户端（" + Cs16.Module.Net.CsLanClient.Describe() + "）");
+            }
+            Cs16.Module.Net.CsLanClient.Stop();
+            Cs16.Module.View.CsLanRemoteView.RecycleAll();
         }
 
         private void Update()
         {
+            // ★ 时钟注入点（全工程**唯一**一处调 `CsClock.Drive`）：本组件是引擎帧循环与业务之间
+            //   的那一层，把引擎 Tick 的 dt 交给 `Core/CsClock`，模拟 / 战斗 / 玩家三侧再从
+            //   `CsClock.Delta` 取同一个值（理由见 CsClock 的类注释：三处各自读 Time.deltaTime /
+            //   Time.time 会把可复现性打死）。⛔ 别在这里改成别的时钟源 —— 换时钟请注入 CsClock。
+            CsClock.Drive();
+            var dt = CsClock.Delta;
+
             // Tick 内部自己判 IsRunning / IsPaused；未开局时是廉价空转。
-            _match?.Tick(Time.deltaTime);
+            _match?.Tick(dt);
+
+            // 差异 #88「能开局」：局域网网关的快照泵。**必须在这里（主线程）**—— 网关只做
+            // "读模拟 + 拼一行 JSON + 入队"，真正的 socket 写在它自己的后台线程里
+            // （理由见 CsLanGateway 的线程模型注释）。未开网关时这一行是一次 bool 判断。
+            if (Cs16.Module.Net.CsLanGateway.IsRunning)
+            {
+                Cs16.Module.Net.CsLanGateway.Pump(_match, dt);
+            }
+
+            // ★ 差异 #88「能开局」第②段（片LAN-D）：**客户端侧** —— 消费主机推来的快照，
+            //   并把远端角色画到场上。主线程这里只做两件轻活：
+            //   ① CsLanClient.Pump()：吐后台日志 + 纠偏"线程死了状态还在跑"（socket 归它的读线程，
+            //      主线程一次都不读 —— 见 CsLanClient 的线程模型注释）；
+            //   ② CsLanRemoteView.SyncAll()：让场上的远端视图与最新一帧快照对齐（新建成 / 有的刷 /
+            //      快照里没有的回收）。客户端没在跑时两者都是"廉价空转 + 一次回收"，不会每帧扫字典。
+            //   ⚠️ 这两行**不在** `IsRunning` 判断里：客户端停掉时也要靠 SyncAll 把远端角色收干净。
+            Cs16.Module.Net.CsLanClient.Pump();
+            Cs16.Module.View.CsLanRemoteView.SyncAll();
         }
 
         // ==================================================================
@@ -344,6 +384,10 @@ namespace Cs16.Module.Match
 
         private void OnDisconnect()
         {
+            // ★ 差异 #88 第②段：断开请求 = 退出这一局 ⇒ 局域网客户端也要停（⛔ 否则远端角色会留在场上，
+            //   "我已经退出了却还看得见别人"）。
+            StopLanClientAndViews("收到断开请求");
+
             if (_match == null || !_match.IsRunning) return;
             Game.Logger.Info(Tag, "收到断开请求，停止比赛模拟");
             _match.Stop();

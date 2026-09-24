@@ -8,6 +8,8 @@
 #
 # 它只做"改 → 跑 verify → 读该条状态 → 还原"，且每处改动都在还原后做**哈希自证**（未被篡改残留）。
 # ⛔ 不删 .ai-tmp/screenshots/ 的任何既有文件：临时探针 png 是本脚本新建、用完即删的自己的文件。
+# ⛔ 历史说明（2026-09-24「cs16 闸门精简轮」）：本文件各节自证的那批闸门已从 tools/verify.ps1 删除（47 → 7 项），
+#   本文件**不再作为交付判据**、保留仅为历史；新 verify.ps1 不再接受这里的 TEST SEAM（它打 NOTE seams-removed 并判真实路径）。
 #
 # ASCII-only on purpose (PS 5.1 reads a BOM-less .ps1 as ANSI).
 param([string]$Project = '')

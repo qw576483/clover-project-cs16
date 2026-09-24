@@ -185,9 +185,12 @@ namespace Cs16.Module.Player
         //  移动意图
         // ==================================================================
         /// <summary>
-        /// 读移动意图。**优先用引擎的高层向量**（<see cref="InputState.MoveDirection"/>，后端无关、手柄也能用），
-        /// 但 <c>Game.Input.Tick()</c> 由引擎的 <c>EngineRunner</c>（默认执行顺序）驱动，
-        /// 与业务 <c>Update</c> 的先后不保证 —— 所以再直读一次 WASD，非零者优先，消除"移动慢一帧"。
+        /// 读移动意图。**优先用引擎的高层向量**（<see cref="InputState.MoveDirection"/>，后端无关、手柄也能用）。
+        /// <para>【2026-09-24 实测更正】原注释写「<c>Game.Input.Tick()</c> 由 <c>EngineRunner</c>（默认执行顺序）驱动，与业务 <c>Update</c> 的先后不保证」——
+        /// 与当前引擎**不符**：<c>EngineRunner</c> 的执行顺序实为 <c>-10000</c>（引擎 <c>Runtime/Core/EngineRunner.cs:78</c>），
+        /// 且 <c>Game.Tick</c> 的第一件事就是 <c>Input?.Tick()</c>（引擎 <c>Runtime/Core/Game.cs:754</c>），
+        /// 本模块的执行顺序是 <c>-200</c> ⇒ 读到的是**本帧**输入，不存在"移动慢一帧"。</para>
+        /// <para>因此下面「再直读一次 WASD，非零者优先」属**冗余保险**（保留以兼容顺序被改动的场景，非必需）。</para>
         /// </summary>
         private Vector2 ReadMoveIntent()
         {

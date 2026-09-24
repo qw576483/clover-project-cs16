@@ -42,11 +42,32 @@ namespace Cs16.Module.View
         private string _modelKey;
         private Transform _modelRoot;
 
+        /// <summary>第一人称武器模型实例的池分组（仅作标签，ClearGroup 用）。</summary>
+        private const string PoolGroupViewModel = "cs16.viewmodel";
+
         // ---- 只读快照（用于检测"发生了什么"）----
         private float _preNextFireTime;
         private int _preReloadSeq;
         private string _preWeapon;
         private bool _haveSnapshot;
+
+        /// <summary>
+        /// 上一次观察到的**本地玩家对象**（片FIX-4 线C 2026-09-24）。
+        ///
+        /// <para><b>为什么必须跟踪身份，而不只是序号</b>：换弹边沿原来的唯一信号是
+        /// <c>CsActor.ReloadSeq</c>「变了没」。但 <c>ReloadSeq</c> 是**挂在 actor 对象上**的字段 ——
+        /// 一旦对象被换掉（本工程的 <c>CsMatch</c> 在局/回合切换处 <c>new CsActor</c>），新对象的
+        /// <c>ReloadSeq</c> 从 0 重新开始 ⇒ 第一次换弹是 <c>0→1</c>，而 <c>_preReloadSeq</c> 还停在旧对象的
+        /// <c>1</c> ⇒ <b><c>1 == 1</c>，边沿被判为"没变"，整段换弹动画静默丢掉</b>。</para>
+        ///
+        /// <para>用户 2026-09-24 亲身实测的日志正好是这个形状：全天 <c>Player 开始换弹</c> 25 次，
+        /// <c>第一人称播换弹</c> 只有 2 次，**且这 2 次都是 <c>seq=1</c>**（= 只有"基线还是 0"
+        /// 的那个对象的第一发换弹被看见）。</para>
+        /// </summary>
+        private CsActor _preLocal;
+
+        /// <summary>当前是否处于"reload 覆盖态"（见 <see cref="UpdateAnim"/> 的换弹段）。</summary>
+        private bool _reloadAnimActive;
 
         /// <summary>第一人称播过几次换弹（差异 #72 的断言用）。</summary>
         private int _reloadAnimsPlayed;
@@ -96,8 +117,8 @@ namespace Cs16.Module.View
         /// <summary>解绑/换相机时清掉模型（避免把枪留在菜单相机上）。</summary>
         internal void Teardown()
         {
-            if (_model != null) Destroy(_model);
-            _model = null;
+            // 生命周期终点 = 归还对象池（改前是 Destroy；直接销毁会让池里留下已销毁引用）
+            DespawnModel();
             _modelKey = null;
             CurrentWeaponId = null;
             _anim = null;
@@ -105,6 +126,11 @@ namespace Cs16.Module.View
             _overrideState = null;
             _lastState = null;
             _haveSnapshot = false;
+            _preLocal = null;              // 片FIX-4：换相机后本地玩家基线一并作废
+            _preReloadSeq = 0;
+            _reloadAnimActive = false;
+            _reloadProbeAt = 0f;
+            _reloadProbeState = null;
             if (_modelRoot != null) Destroy(_modelRoot.gameObject);
             _modelRoot = null;
         }
@@ -119,6 +145,7 @@ namespace Cs16.Module.View
             var match = _match;
             if (match == null || !match.IsRunning)
             {
+                DiagReload(match, null, "闸门A !IsRunning");
                 SetModelVisible(false);
                 return;
             }
@@ -126,13 +153,15 @@ namespace Cs16.Module.View
             var local = match.LocalPlayer;
             if (local == null)
             {
+                DiagReload(match, null, "闸门B LocalPlayer==null");
                 SetModelVisible(false);
                 return;
             }
 
-            // ---- 观战 / 死亡：把枪收起来（CS 里观战没有第一人称武器）----
             if (match.IsSpectating || !local.IsAlive)
             {
+                // 观战 / 死亡：把枪收起来（CS 里观战没有第一人称武器）
+                DiagReload(match, local, $"闸门C IsSpectating={match.IsSpectating} IsAlive={local.IsAlive}");
                 SetModelVisible(false);
                 ResetSnapshot(local);
                 return;
@@ -140,8 +169,189 @@ namespace Cs16.Module.View
 
             SetModelVisible(true);
             SyncModel(local);
+            DiagReload(match, local, "运行");
             UpdateAnim(local);
+            ProbeReloadAnim();
+            SettleReload();
         }
+
+        /// <summary>
+        /// **换弹动画的"真的在跑"心跳**（片FIX-4 线C，2026-09-24 实测暴露的**量具缺陷**收口）。
+        ///
+        /// <para><b>为什么非要有它（这一条比修 bug 更重要）</b>：
+        /// <c>第一人称播换弹</c> 原来走 <c>CsModuleLog.Info(key,msg)</c> ⇒ 引擎
+        /// <c>LogThrottle.InfoCounted</c> 的口径是「每 key **首次必打**，之后每
+        /// <see cref="CsModuleLog.LogRateEvery"/> 次打一条」（<c>CsCombatTuning.LogRateEvery = 50</c>）。
+        /// 换弹是 5.5 s 一次的低频事件 ⇒ <b>一次比赛里 17 次换弹只会打出 1 行</b>。
+        /// 实测：<c>Player 开始换弹</c>（走不降频的 <c>Game.Logger.Info</c>）17 行，
+        /// <c>第一人称播换弹</c>（走降频的 <c>CsModuleLog.Info</c>）**恰好 1 行** ——
+        /// 两者的"1 : 17"**完全是量具造成的**，不是表现层漏播。
+        /// 结论：**任何"计数一致"型判据都必须用不降频的口子**，否则判据本身是坏的。</para>
+        ///
+        /// <para>本方法在"播过换弹之后 <see cref="ReloadProbeDelay"/> 秒"取一次
+        /// <c>Animator</c> 的真实状态：状态是不是 reload 剪辑、归一化时间有没有在走。
+        /// 这是"帧动画真的在跑"的 L3 读数 —— 光有 <c>_anim.Play(...)</c> 那句调用**不算证据**。</para>
+        /// </summary>
+        private void ProbeReloadAnim()
+        {
+            if (_reloadProbeAt <= 0f || Time.time < _reloadProbeAt) return;
+            _reloadProbeAt = 0f;
+
+            var detail = "无 Animator（拿不到状态）";
+            if (_animator != null)
+            {
+                var si = _animator.GetCurrentAnimatorStateInfo(0);
+                var isReload = _reloadProbeState != null && si.IsName(_reloadProbeState);
+                detail = $"是reload剪辑={isReload} 归一化时间={si.normalizedTime:F2} 速度={si.speed:F2} " +
+                         $"（期望状态={_reloadProbeState ?? "-"}）";
+            }
+            // ⛔ 豁免条款：**换弹中途切枪 = 换弹被取消**（CsInventory.SwitchWeapon 把 ReloadEndTime 归零），
+            //    这是原版行为，不是缺陷。取消后 0.45 s 时 Animator 当然不在 reload 剪辑上 ——
+            //    若不豁免，判据就会把"原版正确行为"判成红（本片实测踩过一次：序列 8 次里那 1 次红的
+            //    正好是驱动 5d 相位的 Slot1/Slot2 换弹中断）。
+            //    判定用 _reloadAnimActive（reloading 变假时它会被清）—— 它假 = 这次换弹没在跑 = 被打断。
+            var cancelled = !_reloadAnimActive;
+            _log.Always($"换弹动画心跳（播后 {ReloadProbeDelay:F1}s）：seq={_reloadProbeSeq} " +
+                        $"被打断={cancelled}" + (cancelled ? "（换弹中切枪，原版即如此，本判据豁免）" : "") +
+                        $" {detail}");
+        }
+
+        /// <summary>
+        /// **换弹闸门的逐帧心跳**（片FIX-4 线C，2026-08-24 实机实测暴露的最后一层闸门）。
+        ///
+        /// <para><b>为什么要它</b>：本片实测（`probe-fix4c-verdict.py` 的 J-R1）显示
+        /// 9 次真实换弹只播了 1 次（`seq=1`），而且**三条已有的闸门留痕一条都没打** ——
+        /// 说明"边沿根本没走到判它的那一行"。⇒ 缺的是一个**无条件**的逐帧心跳：
+        /// 只要"当前正在换弹"（<c>ReloadEndTime</c> 未到），就把**每一个闸门的实测值**打出来，
+        /// 这样"卡在哪一道门"从推断变成一个**读得出来的字段**。</para>
+        ///
+        /// <para><b>不打屏</b>：只在"正在换弹"时打，且**每次换弹最多 N 行 / 每 M 帧一行**
+        /// （<see cref="DiagEveryFrames"/> / <see cref="DiagMaxLinesPerReload"/>）；
+        /// 非换弹期一条都不打。</para>
+        /// </summary>
+        private void DiagReload(ICsMatch match, CsActor local, string where)
+        {
+            // ------------------------------------------------------------------
+            //  ① 闸门切换留痕 —— 这是"换弹动画被静默丢掉"的**第二种可能**的唯一读数：
+            //     如果 Tick 在 A/B/C 任一闸门早退，UpdateAnim 根本不会被调用，那时
+            //     「边沿去哪了」的答案不是"边沿没来"，而是"**判边沿的那一帧压根没跑到**"。
+            //     ⛔ 只在闸门**变了**时打一行（否则每帧一行 = 刷屏），且总量封顶。
+            // ------------------------------------------------------------------
+            if (!string.Equals(where, _lastGate, System.StringComparison.Ordinal))
+            {
+                var prev = _lastGate;
+                _lastGate = where;
+                if (prev != null && _gateLogs < GateLogCap)
+                {
+                    _gateLogs++;
+                    _log.Always(
+                        $"每帧闸门 {prev} → {where}｜seq={(local != null ? local.ReloadSeq : -1)} " +
+                        $"preSeq={_preReloadSeq} haveSnap={_haveSnapshot} " +
+                        $"anim={(_anim == null ? "null" : "ok")} active={_reloadAnimActive} " +
+                        $"phase={(match != null ? match.Phase.ToString() : "?")}");
+                }
+            }
+
+            if (local == null)
+            {
+                // 连 local 都没有：只有真的在换弹节奏里才值得记（否则菜单期刷屏）。
+                if (!_diagArmed) return;
+                _diagArmed = false;
+                _log.Always($"viewmodel.reload.diag 换弹心跳中断：{where}");
+                return;
+            }
+
+            var reloading = local.ReloadEndTime > 0f && Time.time < local.ReloadEndTime;
+            if (!reloading)
+            {
+                if (_diagArmed)
+                {
+                    _diagArmed = false;
+                    _log.Always(
+                        $"viewmodel.reload.diag 换弹结束：seq={local.ReloadSeq} 已播={_reloadAnimsPlayed}" +
+                        $"（本次心跳共 {_diagLines} 行）");
+                    // 片FIX-4 线C：OnClipFinished 修法的**残留风险**（换弹末帧卡住）需要一次
+                    // "换弹跑完之后"的取样 —— 心跳本身只在 reloading 期间打，看不到清没清。
+                    // 若这 0.6 s 内又起了一次换弹，UpdateAnim 的播放分支会把 _reloadSettleAt 归零，
+                    // 不会把"新一次换弹的覆盖态"误判成"上一次没清"。
+                    _reloadSettleAt = Time.time + ReloadSettleDelay;
+                    _reloadSettleSeq = local.ReloadSeq;
+                }
+                return;
+            }
+
+            if (!_diagArmed)
+            {
+                _diagArmed = true;
+                _diagLines = 0;
+                _diagFrame = 0;
+            }
+
+            _diagFrame++;
+            if (_diagLines >= DiagMaxLinesPerReload || _diagFrame % DiagEveryFrames != 0) return;
+            _diagLines++;
+
+            _log.Always(
+                $"viewmodel.reload.diag [{where}] seq={local.ReloadSeq} preSeq={_preReloadSeq} " +
+                $"haveSnap={_haveSnapshot} " +
+                $"anim={(thisRefNull() ? "null" : "ok")} over={_overrideState ?? "-"} active={_reloadAnimActive} " +
+                $"ReloadEndTime={local.ReloadEndTime:F2} now={Time.time:F2}");
+        }
+
+        /// <summary>`_anim` 是否为空（心跳里要打出来；单独包一个方法只是为了少写三目）。</summary>
+        private bool thisRefNull() => _anim == null;
+
+        private bool _diagArmed;
+        private int _diagFrame;
+        private int _diagLines;
+
+        /// <summary>换弹跑完之后再过 <see cref="ReloadSettleDelay"/> 秒取一次覆盖态样本（判据 J-R6）。</summary>
+        private float _reloadSettleAt;
+        private int _reloadSettleSeq;
+        private const float ReloadSettleDelay = 0.6f;
+
+        /// <summary>
+        /// 片FIX-4 线C · OnClipFinished 修法的**残留风险**取样：换弹结束后 0.6 s，`_overrideState`
+        /// 必须已经清成 `-`（否则枪定格在换弹末帧）。⛔ 用 Always：一次换弹只该有一行。
+        /// </summary>
+        private void SettleReload()
+        {
+            if (_reloadSettleAt <= 0f || Time.time < _reloadSettleAt) return;
+            _reloadSettleAt = 0f;
+            _log.Always(
+                $"viewmodel.reload.settle 换弹结束后 {ReloadSettleDelay:F1}s：seq={_reloadSettleSeq} " +
+                $"over={_overrideState ?? "-"} active={_reloadAnimActive}" +
+                (_overrideState == null
+                    ? "（覆盖态已归位 = 判据 J-R6 绿）"
+                    : "⛔（覆盖态没清 = 换弹末帧卡住，判据 J-R6 红）"));
+        }
+
+        /// <summary>上一帧走的闸门（闸门切换才留一条日志）。</summary>
+        private string _lastGate;
+
+        /// <summary>闸门切换日志已打几条（封顶，防"每帧翻转"刷屏）。</summary>
+        private int _gateLogs;
+
+        /// <summary>闸门切换日志上限。</summary>
+        private const int GateLogCap = 60;
+
+        /// <summary>播换弹之后多久取一次 Animator 真实状态（秒）。</summary>
+        private const float ReloadProbeDelay = 0.45f;
+
+        /// <summary>下一次"换弹动画真的在跑"取样的时刻（0 = 不取）。</summary>
+        private float _reloadProbeAt;
+
+        /// <summary>取样对应的换弹序号。</summary>
+        private int _reloadProbeSeq;
+
+        /// <summary>取样时期望的 reload 状态名。</summary>
+        private string _reloadProbeState;
+
+        /// <summary>心跳打点间隔（帧）—— 换弹 2.2 s ≈ 130 帧 ⇒ 每 20 帧一行 = 最多 7 行/次。</summary>
+        private const int DiagEveryFrames = 20;
+
+        /// <summary>单次换弹最多打几行心跳。</summary>
+        private const int DiagMaxLinesPerReload = 8;
 
         private void SetModelVisible(bool visible)
         {
@@ -183,15 +393,17 @@ namespace Cs16.Module.View
                 return;
             }
 
-            if (_owner.TryGetViewModelPrefab(path, out var ready))
+            // 缓存命中 ⇒ 让池去实例化 / 复用（传的是**资源键**，不是预制体对象）。
+            if (_owner.TryGetViewModelPrefab(path, out _))
             {
-                Attach(ready, path);
+                Attach(path, path);
                 return;
             }
 
-            if (_owner.TryGetViewModelPrefab(ViewModelPath(local.Team, CsViewTuning.ViewModelFallbackWeapon), out var knife))
+            var fallbackPath = ViewModelPath(local.Team, CsViewTuning.ViewModelFallbackWeapon);
+            if (_owner.TryGetViewModelPrefab(fallbackPath, out _))
             {
-                Attach(knife, path + "(回退 刀)");
+                Attach(fallbackPath, path + "(回退 刀)");
             }
 
             _owner.RequestViewModelPrefab(path, go =>
@@ -202,17 +414,16 @@ namespace Cs16.Module.View
                     OnModelMissing(path, local.Team);
                     return;
                 }
-                Attach(go, path);
+                Attach(path, path);
             });
 
             // 刚开局（还没有任何模型）时先摆一个刀，避免"手上空着"
             if (wasNull && _model == null)
             {
-                var fb = ViewModelPath(local.Team, CsViewTuning.ViewModelFallbackWeapon);
-                _owner.RequestViewModelPrefab(fb, go =>
+                _owner.RequestViewModelPrefab(fallbackPath, go =>
                 {
                     if (this == null || _model != null) return;
-                    if (go != null) Attach(go, fb + "(回退)");
+                    if (go != null) Attach(fallbackPath, fallbackPath + "(回退)");
                 });
             }
         }
@@ -232,12 +443,45 @@ namespace Cs16.Module.View
             return CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + weaponId;
         }
 
-        private void Attach(GameObject prefab, string key)
+        /// <summary>把当前模型还给对象池（换枪 / <see cref="Teardown"/> 的**唯一出口**）。</summary>
+        private void DespawnModel()
+        {
+            if (_model == null) return;
+            var pool = Game.Pool;
+            if (pool != null) pool.Despawn(_model);
+            else Destroy(_model);      // 池不可用（未 Launch / 已 Shutdown）：退回销毁，别把模型留在场上
+            _model = null;
+        }
+
+        /// <summary>
+        /// 换上一把武器模型：**实例化走引擎对象池**（改前是裸 <c>Instantiate</c>）。
+        ///
+        /// <para><paramref name="path"/> = 资源键（<c>Art/{阵营}/viewmodel_&lt;武器&gt;</c>，与
+        /// <c>CsViewTuning</c> 同源）；<paramref name="key"/> = 命名 / 日志用的展示键（回退分支带 "(回退 …)" 后缀）。</para>
+        ///
+        /// <para>存在性由调用方用 <c>ViewModule.TryGetViewModelPrefab</c> 把关（与 ViewModule 同款口径）：
+        /// 池只负责"造 / 复用"，"要不要造"仍由预制体缓存决定 —— 缺资源时不建、也不每帧刷屏。</para>
+        ///
+        /// <para>生命周期终点是 <see cref="DespawnModel"/>（换枪 / 解绑都走它）：
+        /// ⛔ 不许 <c>Destroy</c>，否则池里留下已销毁引用，下次 Spawn 会把它发回来。</para>
+        /// </summary>
+        private void Attach(string path, string key)
         {
             if (_modelRoot == null) return;
-            if (_model != null) Destroy(_model);
+            DespawnModel();          // 先还旧的（池内复用），再取新的
 
-            _model = Instantiate(prefab, _modelRoot);
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），第一人称武器模型无法生成");
+                return;
+            }
+            _model = pool.Spawn(path, _modelRoot, PoolGroupViewModel);
+            if (_model == null)
+            {
+                _log.Warn("viewmodel.spawnfail", $"第一人称武器模型生成失败（对象池返回 null）：{path}");
+                return;
+            }
             _model.name = "ViewModel_" + key;
             _model.transform.localPosition = Vector3.zero;
             _model.transform.localRotation = Quaternion.identity;
@@ -352,6 +596,39 @@ namespace Cs16.Module.View
         private void OnClipFinished()
         {
             if (_overrideState == null) return;
+            // ==================================================================
+            // 片FIX-4 线C（2026-09-24）**修复：陈旧完成回调**（差异 #72，
+            // 用户报「换弹有时候没有动画」的真根因，与日志降频无关的那一半）
+            // ------------------------------------------------------------------
+            // 【缺陷】本方法原先**无条件**清 `_overrideState`，而这次完成回调**可能属于上一段剪辑**：
+            //   引擎 `clover-client-unity-engine/Runtime/Presentation/Animation.cs`
+            //     `Play()`      第 116 行 `_completeFired = false;`
+            //     `Update()`    第 146 行 `stateInfo.normalizedTime >= 1f && !_completeFired` ⇒ 派发 OnComplete
+            //   而 Unity 的 `Animator.Play()` 之后**下一帧取到的 `GetCurrentAnimatorStateInfo(0)`
+            //   仍描述上一段剪辑**（实测 isreload=False、归一化时间=0.66，即上一段已播完的状态）。
+            //   ⇒ 换弹动作刚 `Play` 下去一两帧，就被上一段剪辑的收尾回调踢掉 `_overrideState`，
+            //     那一帧起走回 idle 定格 = 用户看到的「这次换弹没有动画」。
+            // 【实测频率】run E 9 次换弹里 1 次被截断；run D 4 次里 1 次 ⇒ 与用户「有时候」吻合。
+            // 【修法】只有"当前状态**就是**这段一次性动作、且它**真的**播到了末尾"才允许清。
+            // 【为什么不会丢真完成】引擎 `Update()` 第 160-161 行
+            //   `if (stateInfo.normalizedTime < 1f) _completeFired = false;`
+            //   ⇒ 被我们拦掉的那一帧之后，剪辑进入播放中（<1）会**重新武装** `_completeFired`，
+            //     真完成时仍会派发回调，不会被这次拦截吃掉。
+            // 【残留风险（必须复验）】⚠️ 若 reload 剪辑**永远不会**让 `normalizedTime >= 1f`
+            //   （speed=0 / 循环剪辑 / 状态带 exit 转移立刻跳出），则 `_overrideState` **永不清空**
+            //   ⇒ 枪定格在换弹末帧（`UpdateAnim` 末尾 `if (_overrideState != null) return;` 也不回 idle）。
+            //   表现上会自愈（下一次开火会重置 `_overrideState` 并在其播完时清），但"换弹末尾卡住"本身
+            //   是用户可见的。故复验必须**同时**查这一条：
+            //     J-R5 = `Animator 真状态取样` 的 `是reload剪辑=False` 计数为 0，
+            //            且换弹中途不出现 `over=-`（陈旧回调被拦住的证据）；
+            //     J-R6 = 换弹结束后 `over` **必须归 `-`**（末帧卡住的反面证据）。
+            // ==================================================================
+            if (_animator != null)
+            {
+                var si = _animator.GetCurrentAnimatorStateInfo(0);
+                if (!si.IsName(_overrideState)) return;   // 这条回调属于上一段剪辑（陈旧完成）
+                if (si.normalizedTime < 1f) return;       // 当前这段还在播
+            }
             _overrideState = null;
             _lastState = null;      // 强制下一帧回到 idle
         }
@@ -378,15 +655,48 @@ namespace Cs16.Module.View
         /// <summary>只读权威状态 → 切原版序列（开火 / 换弹 / 静止）。</summary>
         private void UpdateAnim(CsActor local)
         {
-            if (_anim == null) return;
+            // ------------------------------------------------------------------
+            // 闸门①：没有动画播放器 ⇒ 任何动作都播不出来。这里是"静默丢动作"的第一个岔口，
+            // 必须在**边沿被吞掉的那一刻**留痕（否则只剩"用户说没动画"这一个现象）。
+            // ------------------------------------------------------------------
+            if (_anim == null)
+            {
+                if (local.ReloadSeq != _preReloadSeq)
+                {
+                    _preReloadSeq = local.ReloadSeq;
+                    // ⛔ Always：这一条是"边沿被吞"的**唯一**现场证据，一次换弹只可能有一次，
+                    //    绝不能让它被 LogThrottle 的"每 50 次一条"口径吃掉。
+                    _log.Always(
+                        $"viewmodel.reload.gate.anim 换弹边沿被闸门①吞掉（_anim==null）：seq={local.ReloadSeq}，" +
+                        $"武器={_modelKey ?? "null"}，本段换弹不会播（差异 #72）");
+                }
+                return;
+            }
+
+            // ------------------------------------------------------------------
+            // 身份跟踪（片FIX-4）：本地玩家对象被换掉 ⇒ 旧基线全部作废。
+            // ⛔ 只重置基线、**不**在对象刚换完的那一帧就抢播（新对象 ReloadSeq 通常还是 0，
+            //    与基线 0 相等 ⇒ 不会误播）；真正在换弹中的情况由下面的"拉取式"信号兜住。
+            // ------------------------------------------------------------------
+            if (!ReferenceEquals(_preLocal, local))
+            {
+                var prev = _preLocal;
+                _preLocal = local;
+                _log.Always(
+                    $"viewmodel.local.changed 本地玩家对象变了（{Describe(prev)} → {Describe(local)}）⇒ 换弹边沿基线重置" +
+                    $"（旧 seq={_preReloadSeq} ⇒ 新对象 seq={local.ReloadSeq}；差异 #72 的漏播根因之一）");
+                _haveSnapshot = false;
+                _preReloadSeq = 0;
+                _reloadAnimActive = false;
+            }
 
             if (!_haveSnapshot)
             {
+                // 只对齐基线，**不再 return**：若此刻正处在换弹中，下面的"拉取式"信号要能补播。
                 _haveSnapshot = true;
                 _preWeapon = local.ActiveWeapon;
                 _preNextFireTime = local.NextFireTime;
                 _preReloadSeq = local.ReloadSeq;
-                return;
             }
 
             if (local.ActiveWeapon != _preWeapon)
@@ -395,9 +705,16 @@ namespace Cs16.Module.View
                 _shotIndex = 0;
             }
 
-            // 换弹：ReloadSeq 变了 = 开始换弹（差异 #72：原口径比 ReloadEndTime 时间戳，
-            // 会在"结算归零 / 切枪归零 / 同帧跨完"三种序列上漏掉整段动画）
-            if (local.ReloadSeq != _preReloadSeq)
+            // ---- 换弹：**两个信号取并集**（片FIX-4 线C，差异 #72 收口）----
+            //   信号甲（推）= ReloadSeq 变了：能盖住"同帧跨完 / 掉了中间帧"。
+            //   信号乙（拉）= "现在正在换弹"（ReloadEndTime 尚未到）：能盖住"对象被换掉、
+            //                 序号从 0 重来、边沿被判成没变"以及"边沿落在没有快照的那一帧"。
+            //   单独任何一个都会漏：甲漏"对象换掉"，乙漏"同帧跨完"（那一刻 ReloadEndTime 已归零）。
+            var reloading = local.ReloadEndTime > 0f && Time.time < local.ReloadEndTime;
+            if (_reloadAnimActive && !reloading) _reloadAnimActive = false;
+
+            var seqEdge = local.ReloadSeq != _preReloadSeq;
+            if (seqEdge || (reloading && !_reloadAnimActive))
             {
                 _preReloadSeq = local.ReloadSeq;
                 var st = ResolveState(CsViewTuning.VmStateReload);
@@ -405,9 +722,27 @@ namespace Cs16.Module.View
                 {
                     _anim.Play(st, 0f);
                     _overrideState = st;
+                    _reloadAnimActive = true;
                     _reloadAnimsPlayed++;
-                    _log.Info("viewmodel.reload.play",
-                        $"第一人称播换弹 seq={local.ReloadSeq} 状态={st}（{_modelKey}）");
+                    // 新一次换弹 ⇒ 上一次的"归位取样"作废（否则会把新覆盖态误判成旧的一次没清）。
+                    _reloadSettleAt = 0f;
+                    // ⛔ 必须用 Always（不降频）：换弹是 5.5 s 一次的低频事件，用降频口径
+                    //    会让 17 次换弹只留 1 行 —— 那就是"换弹有时候没有动画"这条报障
+                    //    被误判成"表现层漏播"的全部原因（见 ProbeReloadAnim 的长注释）。
+                    _reloadProbeAt = Time.time + ReloadProbeDelay;
+                    _reloadProbeSeq = local.ReloadSeq;
+                    _reloadProbeState = st;
+                    _log.Always($"第一人称播换弹 seq={local.ReloadSeq} 状态={st}（{_modelKey}）" +
+                        $"[信号={(seqEdge ? "推:序号边沿" : "拉:正在换弹")}]");
+                }
+                else
+                {
+                    // 闸门②：状态机里没有 reload ⇒ 边沿在这里被吞。ResolveState 自己的告警只在
+                    // 首次出现，单靠它无法把"这一次换弹"与"某一次换弹"对上，故在此显式留痕。
+                    // ⛔ Always：同 gate.anim —— 一次换弹只该有一行，不能被降频口径吃掉。
+                    _log.Always(
+                        $"viewmodel.reload.gate.state 换弹边沿被闸门②吞掉（状态机找不到 reload）：" +
+                        $"seq={local.ReloadSeq} 武器={_modelKey ?? "null"}（差异 #72）");
                 }
             }
 
@@ -441,6 +776,12 @@ namespace Cs16.Module.View
                 _lastState = idle;
                 _anim.CrossFade(idle, CsViewTuning.AnimCrossFade);
             }
+        }
+
+        /// <summary>诊断用：把 actor 描述成「名字(id=..)」；null 也要可读（差异 #72 的现场证据）。</summary>
+        private static string Describe(CsActor a)
+        {
+            return a == null ? "<null>" : $"{a.Name}(id={a.Id})";
         }
 
         // ==================================================================

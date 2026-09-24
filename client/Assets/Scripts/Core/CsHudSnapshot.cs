@@ -11,7 +11,7 @@ namespace Cs16.Core
         public CsTeam VictimTeam;
         public string WeaponId;
         public bool Headshot;
-        public float BornTime;   // Time.time，用于淡出
+        public float BornTime;   // 比赛时钟（Core/CsClock.Now），用于淡出
     }
 
     /// <summary>雷达上的一个点。</summary>

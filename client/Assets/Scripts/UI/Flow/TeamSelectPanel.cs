@@ -20,8 +20,10 @@ namespace Cs16.UI
     /// </para>
     ///
     /// <para>
-    /// <b>文案</b>逐字取自 `cstrike/resource/cstrike_english.txt`（行号见各常量注释）；
+    /// <b>文案</b>：原版逐字取自 `cstrike/resource/cstrike_english.txt`（行号见各常量注释）；
     /// `&amp;N` 是 VGUI 的热键前缀，**显示时去掉 `&amp;`、保留数字/字母**（VGUI 惯例；字母会被画上角标下划线）。
+    /// ⚠️ <b>2026-09-24 起显示改为中文</b>（用户本轮第 5 条「选角色的界面变成中文」）—— 英文原文仍逐条
+    /// 保留在 <see cref="ButtonTexts"/> 的注释里，中译与本项目新增的登记见该常量。
     /// </para>
     ///
     /// <para>
@@ -58,13 +60,30 @@ namespace Cs16.UI
         };
 
         /// <summary>
-        /// 显示文案 = `cstrike_english.txt` 的 token 去 `&amp;`。
-        /// token 行号：`Cstrike_Terrorist_Forces` :85 / `Cstrike_CT_Forces` :86 / `Cstrike_VIP_Team` :87 /
-        /// `Cstrike_Team_AutoAssign` :88 / `Cstrike_Menu_Spectate` :89 / `Cstrike_Cancel` :79。
+        /// 显示文案 —— **2026-09-24 按用户要求改为中文**（用户本轮第 5 条：「选角色的界面变成中文」）。
+        ///
+        /// <para><b>原版出处仍在，只是不再直接显示</b>：原版文案取自 `cstrike_english.txt` 的 token
+        /// （去 `&amp;` 后显示）：`Cstrike_Terrorist_Forces` :85 / `Cstrike_CT_Forces` :86 /
+        /// `Cstrike_VIP_Team` :87 / `Cstrike_Team_AutoAssign` :88 / `Cstrike_Menu_Spectate` :89 /
+        /// `Cstrike_Cancel` :79（英文原文逐字见下方注释）。中文译法取 CS 中文版的通行译名。</para>
+        ///
+        /// <para>⛔ 这是**本项目新增**的可见差异（登记在 `策划/差异登记.tsv` #70）：中文字面在原版载体里
+        /// **不存在**。之所以做：① 用户明确要求；② 本面板本来就已经带一条**非原版**的底部署名
+        /// `by clover-engine`（同一次用户要求）；③ 工程字体链已内置 CJK 回退族
+        /// （`CsUiStyle.OriginalFont` = Verdana → Microsoft YaHei → PingFang SC → Noto Sans CJK SC），
+        /// 该回退族本身也已登记为「允许的差异」⇒ 中文能正常出字形，不是方框。</para>
+        ///
+        /// <para>`ButtonCommands` 侧的 `jointeam 1/2/3/5/6` + `vguicancel` **逐字不变**（那是 `.res` 的
+        /// 命令，翻译它等于改行为）。</para>
         /// </summary>
         private static readonly string[] ButtonTexts =
         {
-            "1 TERRORIST FORCES", "2 CT FORCES", "3 VIP", "5 AUTO ASSIGN", "6 SPECTATE", "0 CANCEL",
+            "1 恐怖分子",     // 原版 Cstrike_Terrorist_Forces :85 → "&1 TERRORIST FORCES"
+            "2 反恐精英",     // 原版 Cstrike_CT_Forces :86        → "&2 CT FORCES"
+            "3 VIP",          // 原版 Cstrike_VIP_Team :87         → "&3 VIP"（专有名词，保留原文）
+            "5 随机分配",     // 原版 Cstrike_Team_AutoAssign :88  → "&5 AUTO ASSIGN"
+            "6 观战",         // 原版 Cstrike_Menu_Spectate :89    → "&6 SPECTATE"
+            "0 取消",         // 原版 Cstrike_Cancel :79           → "&0 CANCEL"
         };
 
         /// <summary>`.res` 的 `command` / `Command`（原版就是大小写混用：最后一个是 `"Command"`）。</summary>
@@ -73,14 +92,12 @@ namespace Cs16.UI
             "jointeam 1", "jointeam 2", "jointeam 3", "jointeam 5", "jointeam 6", "vguicancel",
         };
 
-        /// <summary>`#Cstrike_Join_Team` = `SELECT TEAM`（`cstrike_english.txt:84`）。</summary>
-        private const string TitleText = "SELECT TEAM";
+        /// <summary>`#Cstrike_Join_Team` = `SELECT TEAM`（`cstrike_english.txt:84`）。
+        /// 2026-09-24 按用户要求显示中文「选择阵营」（同 <see cref="ButtonTexts"/> 的登记）。</summary>
+        private const string TitleText = "选择阵营";
 
         /// <summary>AUTO ASSIGN（原版 `jointeam 5`）在本工程里按对半随机挑边（见 <see cref="OnAutoAssign"/>）。</summary>
         private const int AutoAssignTeams = 2;
-
-        /// <summary>底部署名（skill §8 品牌硬约定：**逐字** `by clover-engine`）。</summary>
-        private const string SignatureText = "by clover-engine";
 
         [SerializeField] private Text _titleLabel;
         /// <summary>6 个按钮的引用（`[SerializeField]` 才能进预制体 —— 数组元素是场景对象引用，可序列化）。</summary>
@@ -116,8 +133,9 @@ namespace Cs16.UI
             //    的正文。用户 2026-09-20 明确要求把那段正文（含 GameHelper.com / johnsto.co.uk / aol.com
             //    三行外部站点署名）**整块去掉**，只留 `by clover-engine` ⇒ 现在这里就是那一行。
             // 必须用底部锚点：左上锚点 + 大负 y 会随画布高度变化掉出屏幕（MainMenuPanel 实测踩过）。
-            CsUiStyle.CreateBottomLabel("Signature", root, SignatureText, 22,
-                new Vector2(0f, 56f), new Vector2(600f, 32f));
+            // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
+            // 逐字 `by clover-engine`）：本面板不再自持文案常量、不再自写贴底定位与尺寸。
+            CsUiStyle.CreateCreditLabel(root);
 
             // 生成期（FlowSetup 造预制体）也设一次字体：动态字体不是工程资产、存不进 .prefab，
             // 因此 OnOpen 还会再设一次；这里只是为了运行期兜底搭布局那条路径不至于少字体。
@@ -201,7 +219,12 @@ namespace Cs16.UI
         /// </summary>
         private void OnAutoAssign()
         {
-            var pick = Random.Range(0, AutoAssignTeams);
+            // **玩法**：这一掷决定玩家进 T 还是 CT ⇒ 影响整局。
+            // 走 CsRng 的 UiAutoAssign 流（UI 不许引用 Module，只能经 Core 取随机源）。
+            // 注意时序：本面板出现在 `_match.Start` **之前** ⇒ CsRng 此时尚未定种子，
+            // 首次取流会按「首次使用（时间）」显式定一次并打 Info（含 seed）；
+            // 随后 CsMatch.Start → CsRng.BeginMatch() 会重定本局种子并清空子流。
+            var pick = CsRng.Stream(CsRngStream.UiAutoAssign).Next(0, AutoAssignTeams);
             var team = pick == 0 ? CsTeam.T : CsTeam.CT;
             Game.Logger.Info(Tag, $"选阵营: AUTO ASSIGN（原版按人数少的一方分配）→ {team}");
             Game.Event.Emit(Events.TeamChosen, team);

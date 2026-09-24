@@ -54,7 +54,10 @@ namespace Cs16.Module.Audio
         public void PlayRandom(string[] clips, bool spatial, Vector3 position)
         {
             if (clips == null || clips.Length == 0) return;
-            var idx = clips.Length == 1 ? 0 : Random.Range(0, clips.Length);
+            // 选变体是**表现**（避免"复读机"），与玩法无关；但**必须**走 CsRng 而不是
+            // UnityEngine.Random —— 后者是全局静态流，脚步/死亡每秒多次，用它抽会把
+            // 玩法侧的散布/瞄准序列推位。独立一路 SfxVariant ⇒ 表现抽多少次都不动玩法流。
+            var idx = clips.Length == 1 ? 0 : CsRng.Stream(CsRngStream.SfxVariant).Next(0, clips.Length);
             if (spatial) PlayAt(clips[idx], position);
             else Play(clips[idx]);
         }

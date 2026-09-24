@@ -264,13 +264,16 @@ def write_meta(png, name, w, h, seed):
 def main():
     os.makedirs(OUT, exist_ok=True)
     make_muzzleflash()
-    make_bullethole()
     make_spark()
+    # ⛔ `fx_bullethole` 不再由本脚本生成（2026-09-24，差异 #69 复查）：
+    #    它现在与 `fx_shot1` 同源 = 原版 `decals.wad` 的 `{shot1`（口径 = 灰阶不透明度 +
+    #    `palette[255]` 基色），由 `.ai-tmp/test/_re-extract-decals.py` 落盘。
+    #    旧版这里生成的是一整块**纯白方块** ⇒ 一旦 5 张变体都加载不到就退回它，
+    #    用户看到的就是「弹痕还是一个白点」。`make_bullethole()` 保留但不调用（历史对照）。
     write_meta(os.path.join(OUT, 'fx_muzzleflash.png'), 'fx_muzzleflash', 64, 64, 0x11)
-    write_meta(os.path.join(OUT, 'fx_bullethole.png'), 'fx_bullethole', 32, 32, 0x22)
     write_meta(os.path.join(OUT, 'fx_spark.png'), 'fx_spark', 16, 16, 0x33)
-    print("已生成 3 张特效贴图 + .meta → %s" % OUT)
-    for n in ('fx_muzzleflash.png', 'fx_bullethole.png', 'fx_spark.png'):
+    print("已生成 2 张特效贴图 + .meta → %s（fx_bullethole 由 decals.wad 落盘）" % OUT)
+    for n in ('fx_muzzleflash.png', 'fx_spark.png'):
         p = os.path.join(OUT, n)
         print("   %-20s %d 字节" % (n, os.path.getsize(p)))
 

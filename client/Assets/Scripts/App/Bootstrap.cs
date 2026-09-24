@@ -9,6 +9,7 @@ using Cs16.Module.View;
 using Cs16.UI;
 using UnityEngine;
 using UnityEngine.EventSystems;
+using UnityEngine.SceneManagement;
 
 namespace Cs16.App
 {
@@ -40,9 +41,6 @@ namespace Cs16.App
         /// </summary>
         private const string ResourceRootPrefix = "";
 
-        /// <summary>常驻事件系统所在的场景名（引擎自建的 EventSystem 是 DontDestroyOnLoad）。</summary>
-        private const string PersistentSceneName = "DontDestroyOnLoad";
-
         private IAppFlow _flow;
         private bool _started;
 
@@ -51,8 +49,14 @@ namespace Cs16.App
 
         private void Awake()
         {
-            // 编辑器窗口失焦时也要跑帧（否则第一次点 Play 后切出去就会"卡住不动"）
-            Application.runInBackground = true;
+            // 宿主级开关交给引擎门面（改前是自己写 Application.runInBackground）：
+            // 编辑器窗口失焦时也要跑帧（否则第一次点 Play 后切出去就会"卡住不动"）。
+            // ⛔ 必须在 Game.Launch 之前（本方法早于 Start），否则 DuplicateInstanceGuard / OwnAudioListener
+            // 这两项"创建宿主时执行一次"的动作会记 Warn 且不生效（见 EngineRunner.Configure）。
+            // ⛔ 刻意**不开** OwnAudioListener：那会让 3D 空间音效按宿主位置（原点）算距离衰减 ——
+            // CS 1.6 的脚步 / 枪声远近衰减是玩法判据（EngineRunner.cs 该选项的注释明说这类项目不要开），
+            // 监听器归属仍由跟随机位的相机自己管（Module/CameraRig）。
+            Game.ConfigureHost(new EngineHostOptions { RunInBackground = true });
 
             // 单实例守卫：用**静态引用**而不是 FindObjectsByType 的返回值顺序。
             // 切场景时新场景里的 Bootstrap 会先创建，此刻旧的那个可能还没被 DontDestroyOnLoad 之外的
@@ -141,32 +145,45 @@ namespace Cs16.App
         /// </summary>
         private void OnSceneLoaded(string sceneName)
         {
-            var systems = FindObjectsByType<EventSystem>(FindObjectsSortMode.None);
-            if (systems.Length <= 1) return;
-
-            var persistentCount = 0;
-            for (var i = 0; i < systems.Length; i++)
-            {
-                if (systems[i] != null && systems[i].gameObject.scene.name == PersistentSceneName)
-                    persistentCount++;
-            }
-
-            if (persistentCount == 0)
+            // 显式归属（改前是场景级 `FindObjectsByType<EventSystem>` 全场景搜索）：
+            // ① 常驻实例不再靠"所在场景名"猜，而是**引擎持有的那一个** —— CloverInput.Init 建的
+            //    DontDestroyOnLoad 对象就是 uGUI 的 `EventSystem.current`（引擎自己维护，见
+            //    IInputManager.EnsureEventSystem 的注释：避免业务各自 new 出重复 InputModule）；
+            // ② 场景自带的那份只从**该场景的根节点**里找（场景名由引擎的场景回调给出），
+            //    不再对整个工程做类型搜索。
+            var persistent = EventSystem.current;
+            if (persistent == null)
             {
                 Game.Logger?.Error(Tag,
-                    $"场景 {sceneName} 里有 {systems.Length} 个 EventSystem 且没有常驻实例；不敢乱删，请检查 CloverInput.Init 是否被调用");
+                    "引擎的常驻 EventSystem 不存在（CloverInput.Init 没调用？）；不敢乱删，请检查启动链路");
                 return;
             }
 
-            for (var i = 0; i < systems.Length; i++)
+            var scene = SceneManager.GetSceneByName(sceneName);
+            if (!scene.IsValid() || !scene.isLoaded)
             {
-                var es = systems[i];
+                // 非预期分支：回调给的场景名不在已加载列表里（异步加载 / 已卸载）⇒ 留痕，且不猜着删。
+                Game.Logger?.Warn(Tag,
+                    $"场景 {sceneName} 不在已加载的场景列表里（异步加载或已卸载？），跳过 EventSystem 去重");
+                return;
+            }
+
+            var roots = scene.GetRootGameObjects();
+            var removed = 0;
+            for (var i = 0; i < roots.Length; i++)
+            {
+                if (roots[i] == null) continue;
+                var es = roots[i].GetComponent<EventSystem>();
                 if (es == null) continue;
-                if (es.gameObject.scene.name == PersistentSceneName) continue;
+                if (es == persistent) continue;      // 引擎的常驻实例：不动
 
                 Game.Logger?.Warn(Tag, $"场景 {sceneName} 自带重复 EventSystem「{es.name}」，已移除（常驻实例唯一）");
                 Destroy(es.gameObject);
+                removed++;
             }
+
+            if (removed > 0)
+                Game.Logger?.Info(Tag, $"场景 {sceneName}：已移除 {removed} 个重复 EventSystem（常驻实例唯一）");
         }
     }
 }

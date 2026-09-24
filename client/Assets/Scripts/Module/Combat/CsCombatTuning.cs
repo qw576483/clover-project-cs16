@@ -160,22 +160,113 @@ namespace Cs16.Module.Combat
         // ==================================================================
         //  表现（枪口火焰 / 弹道 / 手雷视觉）
         // ==================================================================
-        /// <summary>枪口火焰持续时间（秒）。出处：**本项目新增**（原版 <c>sprites/muzzleflash*.spr</c>
-        /// 载体不在盘，见 <c>策划/对照表.md</c> §9 附录「枪口火焰/弹痕」）。</summary>
+        /// <summary>枪口火焰持续时间（秒）。出处：**本项目新增**。
+        /// ⚠️ 2026-09-24 更正：旧注释写"原版 `sprites/muzzleflash*.spr` 载体不在盘" —— **已不成立**，
+        /// 四张 `.spr` 现在都在盘（`原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash1..4.spr`），
+        /// 但它们只给出"每张几帧"（`muzzleflash2/3` 各 3 帧），给不出**总时长**（引擎 `hw.dll` 不在盘）
+        /// ⇒ 时长仍是本项目新增，缺口记在 `策划/差异登记.tsv` #89。</summary>
         public const float MuzzleFlashDuration = 0.045f;
 
         /// <summary>
-        /// 枪口火焰**贴片**的世界尺寸（米）= 0.30m。
-        /// 口径来自原版：`sprites/muzzleflash1.spr` 的原画布约 96×96，在 4:3、fov 90（水平）下
-        /// 贴片落在枪口前方 ~0.3m 处时约占屏幕 6~7%（≈0.3m）—— 本工程取同一量级；
-        /// ⛔ 原版 `.spr` 载体不在仓库 ⇒ 这个数是**本项目新增**（登记在验收表「允许的差异」）。
+        /// 枪口火焰**贴片**的世界尺寸（米）= 0.30m（本项目新增，登记在 `策划/差异登记.tsv` #89）。
+        ///
+        /// <para><b>2026-09-24 更正</b>：旧注释说"载体不在盘 ⇒ 这个数无出处"，前半句已不成立
+        /// （四张 `.spr` 在盘：48×48 / 64×64 / 72×72 / 48×48），但**没有任何载体给出"火焰的世界尺寸"**
+        /// —— 那是引擎的投影选择 ⇒ 仍按本项目新增记。</para>
+        ///
+        /// <para>⛔ <b>单位是"米"，但必须经 <c>SpriteScaleForMeters</c> 换成倍率</b>：贴片导入 PPU=100，
+        /// 64 px 天生只有 0.64 世界单位宽，直接 `Vector3.one * 0.30f` 画出来只有 0.192 m
+        /// （= 0.64 × 0.30，小 3.1 倍）—— 同族口径见 <see cref="DecalSize"/> 的注释与
+        /// <c>CombatEffects.SpriteScaleForMeters</c>。</para>
         /// </summary>
         public const float MuzzleFlashSize = 0.30f;
 
+        // ------------------------------------------------------------------
+        //  枪口火焰的**落点**（片 FX-MUZZLE，2026-09-24；差异 #89）
+        // ------------------------------------------------------------------
+        /// <summary>
+        /// 枪口火焰在**相机局部系**里的落点（米）：<c>x</c>=右、<c>y</c>=上、<c>z</c>=前。
+        ///
+        /// <para><b>为什么不是旧值"相机前方 0.34 m + 右 0.13 + 下 0.09"</b>：
+        /// 旧值把火焰放在 <c>z = +0.34</c>，而本工程**实测**的视模型动画后包围盒是
+        /// <c>x∈[-0.026,+0.239] y∈[-0.286,-0.062] z∈[-0.087,+0.705]</c>
+        /// （逐轴数字抄在 <c>ViewModelRig.EnsureAlwaysAnimate</c> 的注释里）——
+        /// 枪管尖在 <c>z ≈ 0.70</c> ⇒ 火焰被放进**枪身内部**；SpriteRenderer 走透明队列且
+        /// **开深度测试**，于是被枪身/手臂里 <c>z &lt; 0.34</c> 的那一截几何盖掉，
+        /// 表现就是用户 2026-09-24 报的「枪口火焰没有效果」。</para>
+        ///
+        /// <para><b>本值怎么来的</b>：取上面那条实测包围盒的**最前端**（<c>z=0.705</c>）再往外让
+        /// 0.015 m（防 z-fighting）⇒ <c>Forward = 0.72</c>；<c>x / y</c> 取枪管轴在包围盒里的位置
+        /// （右偏 + 略低于视平线）。⛔ **这不是原版出处**：原版落点在引擎 <c>hw.dll</c>（不在盘）；
+        /// 它是**从本工程实测几何反推**的，缺口与判据记在 <c>策划/差异登记.tsv</c> #89。</para>
+        /// </summary>
+        public const float MuzzleOffsetRight = 0.13f;
+
+        /// <summary>见 <see cref="MuzzleOffsetRight"/>（相机局部系 y；负数 = 视平线以下）。</summary>
+        public const float MuzzleOffsetUp = -0.12f;
+
+        /// <summary>见 <see cref="MuzzleOffsetRight"/>（相机局部系 z；正数 = 相机前方）。</summary>
+        public const float MuzzleOffsetForward = 0.72f;
+
         public const float MuzzleLightDuration = 0.055f;
 
-        /// <summary>弹痕贴片的世界尺寸（米）= 0.075m（原版 decal 的观感量级：~7cm 的弹孔）。</summary>
-        public const float DecalSize = 0.075f;
+        /// <summary>
+        /// 弹痕贴片**整块画布**的世界尺寸（米）= 0.128 m（= 16 px × <see cref="DecalMetersPerPixel"/>）。
+        ///
+        /// <para><b>2026-09-24 片FIX-4 线C 复核（用户第 4 次报「弹痕还是没有」）</b>——
+        /// 旧值 0.075 m 的**问题不在"有没有贴"**（日志一直显示贴了），而在**"看得见的那一块有多小"**。
+        /// 实测（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，读的就是进工程的同一批 PNG）：
+        /// <c>fx_shot1..5</c> 是 16×16、RGB **纯黑 (0,0,0)**、alpha = 不透明度掩码，其中
+        /// <b><c>alpha≥32</c> 只有 13~16 px / 256、<c>alpha≥160</c> 只有 2~4 px</b>
+        /// ⇒ 真正"黑得看得见"的**核心只有约 4 px 宽 = 整块的 4/16</b>。</para>
+        ///
+        /// <para>⇒ 旧值下<u>可见墨迹</u> = 0.075 × 5/16 = <b>2.34 cm</b>。按 1920 px / 水平 90° 的投影
+        /// （<c>px = 1920 · w / (2d)</c>）：2 m 处只有 <b>约 11 px</b>、4.89 m 处约 4.6 px
+        /// （而**整块**画布在 4.89 m 处投影 ≈ 14.7 px —— 与上一轮实机差分测到的 19/16/22 px 同量级，
+        /// 说明"贴了、但只有 19 px 的淡影、其中仅约 5 px 是有墨的"）。这就是用户看不到它的原因。</para>
+        ///
+        /// <para><b>本值怎么定的</b>（可复算，⛔ 不是"随手放大"）：把判据写成"**可见墨迹**在
+        /// 2 m 处 ≥ 15 px"（2 m = 贴脸打墙的典型距离），反解
+        /// <c>墨迹 ≥ 15·2·2/1920 = 3.13 cm</c> ⇒ 整块 ≥ 3.13 × 16/5 = 10.0 cm ⇒ 取 <b>12.8 cm</b>。
+        /// 于是墨迹 = 4.0 cm（2 m 处 <b>19.2 px</b>、4.89 m 处 7.8 px），实心核心 = 1.92 cm（2 m 处 9.2 px）。</para>
+        ///
+        /// <para>⛔ <b>出处缺口如实登记</b>：原版"贴花世界尺寸"的映射在**引擎**（<c>hw.dll</c>，
+        /// 不在盘 ⇒ <c>策划/对照表.md</c> 的 BLOCKED 口径），本值**没有** <c>文件:偏移</c> 级出处，
+        /// 属**本项目新增**；缺口记在 <c>策划/差异登记.tsv</c> #69，判据 = 可见性阈值（见上）。
+        /// 全工程**只有这一个旋钮**决定弹痕大小（血迹按 <see cref="DecalMetersPerPixel"/> 同比例联动），
+        /// 拿到引擎侧出处后**只改这一处**。</para>
+        /// </summary>
+        public const float DecalSize = 0.128f;
+
+        /// <summary>
+        /// 弹痕**可见墨迹**占整块画布宽度的比例 = 5/16 = 0.3125（实测 4~5 px 的上界取值）。
+        ///
+        /// <para><b>出处 = 载体逐像素实测</b>（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，
+        /// 读的就是进工程的同一批 PNG）：<c>decals.wad</c> 的 <c>{shot1..5</c> 是 16×16，RGB 纯黑、
+        /// alpha = 不透明度掩码；其中
+        /// <b><c>alpha≥32</c>（= 会真的改变屏幕像素的墨迹）的水平跨度 = 4~5 px</b>
+        /// （总像素 13~16 / 256），而 <c>alpha≥160</c> 的**实心黑核心**只有 1~3 px 宽。
+        /// 判据取前者（它是"看得见"的直接成因），后者只作诊断数报出来。</para>
+        ///
+        /// <para>用途：运行期日志把"**可见墨迹**的世界宽度 / 屏幕投影"直接打出来，
+        /// 让"看不看得见"成为**可核对的数**，而不是"我看了觉得行"。</para>
+        /// </summary>
+        public const float DecalOpaqueCoreRatio = 5f / 16f;
+
+        /// <summary>可见性判据的参考距离（米）—— 贴脸打墙的典型距离，判据 <see cref="DecalSize"/> 按它反解。</summary>
+        public const float DecalVisibleReferenceDistance = 2f;
+
+        /// <summary>参考屏幕上该距离处 1 米世界宽度投成的像素数（1920 px 宽 / 水平 90° FOV ⇒ <c>1920/(2d)</c>）。</summary>
+        public static float ScreenPixelsPerMeter(float distanceMeters)
+        {
+            if (distanceMeters <= 0.0001f) return 0f;
+            const float screenW = 1920f;      // HUD 画布参考宽（CsHudTheme 的 referenceResolution）
+            const float halfFovTan = 1f;      // 水平 90° ⇒ tan(45°) = 1
+            return screenW / (2f * distanceMeters * halfFovTan);
+        }
+
+        /// <summary>弹痕**可见核心**的世界宽度（米）= <see cref="DecalSize"/> × <see cref="DecalOpaqueCoreRatio"/>。</summary>
+        public static float DecalVisibleCoreMeters => DecalSize * DecalOpaqueCoreRatio;
 
         /// <summary>弹痕存活时长（秒）。原版 decal 会留很久（受 decal 数量上限控制），这里给足 25s。</summary>
         public const float DecalDuration = 25f;

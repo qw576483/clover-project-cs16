@@ -48,6 +48,15 @@ namespace Cs16.Module.Bot
         private readonly long _id;
         private readonly Dictionary<string, int> _rateCounters = new Dictionary<string, int>(8);
 
+        // ---- 本 bot 的随机源（片 sink4-cs16-random；`Core/CsRng.cs` 的"一路一 salt"）----
+        // 为什么按 actor id 再派生，而不是共用一路：同一难度下 N 个 bot 都在抽随机，
+        // 共用一路时"第 3 个 bot 的瞄头掷"取决于前 2 个 bot 抽了几次 ⇒ 谁先出生 / 谁掉线
+        // 都会改掉别人的行为；per-bot 子流后，每个 bot 的序列只由 (本局 seed, 用途, 自己的 id) 决定。
+        /// <summary>瞄准手感流：瞄头掷（<see cref="ChooseHeadshot"/>）+ 头部摆动（<see cref="HeadWobbleOffset"/>）。</summary>
+        private readonly Rng _rngAim;
+        /// <summary>决策流：守点择优 / 换位（<see cref="PickCampSpot"/>）。</summary>
+        private readonly Rng _rngDecision;
+
         // ---- 战术层状态机（引擎 IFsm 语义，每个 bot 各一份；见 CsBotFsm 的类注释）----
         /// <summary>顶层：<see cref="CsBotFsmStates"/>（Idle / Patrol / Engage / Objective）。</summary>
         private readonly CsBotFsm _fsm;
@@ -61,6 +70,23 @@ namespace Cs16.Module.Bot
 
         // ---- 本轮计划 ----
         private int _planRound = -1;
+
+        /// <summary>
+        /// 本机器人的**战术分工**（<see cref="CsBotRoles"/>；用户 2026-09-24 复查原话
+        /// 「机器人 ai 没有分工吗？感觉行为方式都是一样的」）。角色是 <c>(阵营, 队内序号 % 4)</c> 的**纯函数**，
+        /// 每回合在 <see cref="MaybeResolveRound"/> 里重算一次（换边 / 换 id 都能跟上），
+        /// 影响三处：守点时长倍率、偏好交战距离倍率、以及"守够了要不要换目标"。
+        /// </summary>
+        private CsBotRole _role = CsBotRole.Support;
+
+        /// <summary>本机器人在**本方阵营内的序号**（0 起；<see cref="CsBotPlans.TeamLocalOrdinal"/>）。
+        /// ⛔ 不是全局 actor Id —— 全局 Id 会被"真人玩家在哪一队"整体位移（旧实现按全局取模，导致 CT 队撞槽位）。</summary>
+        private int _ordinal;
+
+        /// <summary>本回合的计划槽位（<see cref="CsBotPlans.SlotOf"/>；决定路线与目标点，见 <see cref="CsBotPlans"/>）。
+        /// 换目标时按 <c>(_planSlot + k) % Slots</c> 轮转 ⇒ 同队的 bot 仍然岔开。</summary>
+        private int _planSlot = -1;
+
         private string _planRoute;
         private Vector3 _goalPos;
         private bool _goalValid;
@@ -147,6 +173,31 @@ namespace Cs16.Module.Bot
         public CsBotProfile Profile => _profile;
         public string Name => _name;
         public string PlanRoute => _planRoute;
+
+        /// <summary>本回合的计划槽位（0..3；探针与日志用。⛔ 只读）。</summary>
+        public int PlanSlot => _planSlot;
+
+        /// <summary>本机器人在本方阵营内的序号（探针用来核对"角色 = <c>(阵营, 序号)</c>"这条纯函数口径）。</summary>
+        public int TeamOrdinal => _ordinal;
+
+        /// <summary>当前路线的**第一段路点**（<see cref="BotNavigator.FirstWaypoint"/>）。
+        /// 判据"同队任意两只 bot 的首段路点不同"直接读它（探针只读）。</summary>
+        public Vector3 FirstWaypoint => _nav.FirstWaypoint;
+
+        /// <summary>当前路线是否至少有一段路点（false ⇒ <see cref="FirstWaypoint"/> 无意义）。</summary>
+        public bool HasFirstWaypoint => _nav.HasFirstWaypoint;
+
+        /// <summary>当前路线**整条有序序列**的签名（判据"同队两只 bot 走的是不是同一条路"用；见 BotNavigator.RouteSignature）。</summary>
+        public string RouteSignature => _nav.RouteSignature;
+
+        /// <summary>当前路线的路点数。</summary>
+        public int WaypointCount => _nav.WaypointCount;
+
+        /// <summary>本轮目标点（探针/日志只读；配合 <see cref="GoalIsSite"/> 一起看）。</summary>
+        public Vector3 GoalPosition => _goalPos;
+
+        /// <summary>本轮目标是否包点。</summary>
+        public bool GoalIsSite => _goalIsSite;
         public int RemainingWaypoints => _nav.RemainingWaypoints;
         public float LastFireIntentTime { get; private set; }
 
@@ -157,6 +208,10 @@ namespace Cs16.Module.Bot
             _map = map;
             _sense = sense;
             _id = actorId;
+            // 随机源（片 sink4-cs16-random）：本局 seed 由 CsMatch.Start → CsRng.BeginMatch 定，
+            // 这里只按 (用途, 本 bot id) 派生 —— 纯函数，同 seed 同 id ⇒ 同序列，可重放。
+            _rngAim = CsRng.Derive(CsRngStream.BotAimFlavor, _id);
+            _rngDecision = CsRng.Derive(CsRngStream.BotDecision, _id);
             _difficulty = difficulty;
             _profile = CsBotProfile.For(difficulty);
             if (!string.IsNullOrEmpty(name)) _name = name;
@@ -261,9 +316,19 @@ namespace Cs16.Module.Bot
         {
             return $"难度={_difficulty} 反应={_profile.ReactionTime:F2}s 瞄准误差=±{_profile.AimErrorDegrees:F1}° " +
                    $"转视角={_profile.AimSpeedDegrees:F0}°/s 视野={_profile.VisionRange:F0}m " +
-                   $"偏好距离={_profile.PreferredRange:F0}m 爆头率={_profile.HeadshotChance:P0} " +
+                   $"偏好距离={_profile.PreferredRange:F0}m（角色后={PreferredRange():F0}m）爆头率={_profile.HeadshotChance:P0} " +
                    $"买枪档={_profile.BuyBudgetTier} 重决策={_profile.RepathInterval:F2}s " +
                    $"连发={_profile.FireBurstMin:F2}~{_profile.FireBurstMax:F2}s/停顿={_profile.FirePauseMin:F2}~{_profile.FirePauseMax:F2}s（由模拟执行）";
+        }
+
+        /// <summary>
+        /// 本机器人当前**战术分工**的中文名（写进开局日志与回合计划日志 —— 就是"真的有分工"的可核对载体：
+        /// 同一队 4 个人应当打印出至少 2 种不同的角色名，且 4 个角色的 <c>守点时长</c> 互不相同）。
+        /// </summary>
+        public string RoleText()
+        {
+            return $"{CsBotRoles.Label(_role)}（守点×{CsBotRoles.HoldScale(_role):F1} " +
+                   $"交火×{CsBotRoles.RangeScale(_role):F2}{(CsBotRoles.StaysOnObjective(_role) ? " 守到底" : "")}）";
         }
 
         /// <summary>取"进入交战"事件（已被消费则返回 false）。统计与日志用。</summary>
@@ -341,6 +406,12 @@ namespace Cs16.Module.Bot
             if (_planRound == _match.RoundNumber) return;
 
             _planRound = _match.RoundNumber;
+
+            // ★ 片FIX-4 线B：角色按**队内序号**取（不是全局 Id）—— 全局 Id 会被"真人在哪一队"整体位移。
+            //   序号在这里算一次，ChoosePlan 直接复用（两处同一口径，⛔ 不各算一套）。
+            _ordinal = CsBotPlans.TeamLocalOrdinal(_match.Actors, self.Team, self.Id);
+            _planSlot = -1;
+            _role = CsBotRoles.For(self.Team, _ordinal);
             _buy.OnRoundStart(_match.RoundNumber);
             _buy.SetOwner(self.Name);
             _nav.Reset();
@@ -394,44 +465,38 @@ namespace Cs16.Module.Bot
             _goalIsSite = false;
             _goalPos = self.Position;
 
-            var idx = (int)(self.Id % 4);
-            var siteIsA = (_match.RoundNumber % 2) == 0;   // 全队按回合数统一主攻点 → 像一支队伍而不是散兵
-
-            string routeMarker;
-            string siteMarker;
-
-            if (self.Team == CsTeam.T)
-            {
-                if (idx == 2)
-                {
-                    routeMarker = CsMarkers.TMid;
-                    siteMarker = siteIsA ? CsMarkers.BombsiteA : CsMarkers.BombsiteB;
-                }
-                else if (idx == 3)
-                {
-                    routeMarker = siteIsA ? CsMarkers.TAttackB : CsMarkers.TAttackA;
-                    siteMarker = siteIsA ? CsMarkers.BombsiteB : CsMarkers.BombsiteA;
-                }
-                else
-                {
-                    routeMarker = siteIsA ? CsMarkers.TAttackA : CsMarkers.TAttackB;
-                    siteMarker = siteIsA ? CsMarkers.BombsiteA : CsMarkers.BombsiteB;
-                }
-            }
-            else if (self.Team == CsTeam.CT)
-            {
-                var pick = idx % 3;
-                if (pick == 0) { routeMarker = CsMarkers.CTDefendA; siteMarker = CsMarkers.BombsiteA; }
-                else if (pick == 1) { routeMarker = CsMarkers.CTDefendB; siteMarker = CsMarkers.BombsiteB; }
-                else { routeMarker = CsMarkers.CTMid; siteMarker = null; }
-            }
-            else
+            if (self.Team != CsTeam.T && self.Team != CsTeam.CT)
             {
                 Game.Logger.Warn(Tag,
                     $"{self.Name} 的阵营是 {self.Team}（非 T/CT）—— 机器人不该出现在这个阵营，本轮不做导航");
                 return;
             }
 
+            // ★ 片FIX-4 线B（用户第三次投诉「为什么每个机器人的操作，路线都是相同的…为什么没有分工？？？」
+            //   2026-09-24）：本轮计划改为**4 槽位计划表**（CsBotPlans），而不是旧的 `self.Id % 4` + 三分支 if。
+            //
+            // 旧实现的病灶（用户本人日志 client/Logs/2026-09-24.log 实测 22 个"队-回合"）：
+            //   ① T 队 idx==0 与 idx==1 走**同一条路、同一个目标点**；
+            //   ② CT 队 `idx % 3` ⇒ 槽位 0 与槽位 3 撞在 Route_CT_To_A + 同一个点；
+            //   ③ 每回合固定出现 1 对 bot 的「路线+目标点」完全一样（Spliff/Darrell 恒同、Gooseman/ZBot 恒同），
+            //      另有 44 对"目标点相同" ⇒ 用户看到的正是"路线都是相同的"。
+            //
+            // 新口径（构造性保证互不相同，不靠随机、不靠概率）：
+            //   队内序号 = 同阵营 actor 里按 Id 升序的名次（0..n-1，与"真人在哪队"无关）；
+            //   槽位 = (队内序号 - 持包者队内序号) mod 4（双射 ⇒ 4 只 bot 必得 4 个不同槽位）；
+            //   持包者恒落槽位 0 = 主攻包点路线（出处：策划/策划案/CS1.6单机参考规格.md:130「T 持包到 B 点 → 下包」）。
+            var ordinal = CsBotPlans.TeamLocalOrdinal(_match.Actors, self.Team, self.Id);
+            _ordinal = ordinal;
+            // ⛔ 平移量必须取**本回合缓存的那一份**（RoundCarrierOrdinal），不能每只 bot 各问一次
+            //   "现在谁持包"：实测持包者中途被打死会让后来的 bot 拿到 -1、先来的拿到 k ⇒ 槽位重合
+            //   （2026-09-24 11:31:09 实机审计抓到 `同队路线撞车：Minh(槽位3) 与 Gooseman(槽位3)`）。
+            var carrierOrdinal = CsBotPlans.RoundCarrierOrdinal(
+                _match.Actors, _match, self.Team, _match.RoundNumber);          // CT ⇒ -1（该函数内已判）
+            var plan = CsBotPlans.For(self.Team, CsBotPlans.SlotOf(ordinal, carrierOrdinal), _match.RoundNumber);
+            _planSlot = plan.Slot;
+
+            var routeMarker = plan.RouteMarker;
+            var siteMarker = plan.GoalMarker;
             _planRoute = routeMarker;
             _nav.SetRoute(_map, routeMarker, self.Position);
 
@@ -441,11 +506,11 @@ namespace Cs16.Module.Bot
             //   按抬腿 ≤ 0.45m 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
             //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束（Minh 全程位移 0.00m）。
             //   口径与运行时同一份：BotNavigator.CanReach = SnapToWalkable + WalkableCellHeightAware + AStar。
-            if (!string.IsNullOrEmpty(siteMarker) && TryPickReachablePoint(self, siteMarker, out var site))
+            if (!string.IsNullOrEmpty(siteMarker) && TryPickGoalPoint(self, siteMarker, plan.GoalOrdinal, out var site))
             {
                 _goalPos = site;
                 _goalValid = true;
-                _goalIsSite = true;
+                _goalIsSite = plan.GoalIsSite;
             }
             else if (TryPickReachableRouteEnd(self, routeMarker, out var routeEnd))
             {
@@ -474,10 +539,74 @@ namespace Cs16.Module.Bot
 
             ArmGoal(self, now);
 
+            // ★ 片FIX-4 线B：这一行是用户"看得见分工"的**唯一载体**（8 只 bot 各一行，人眼可逐条核对
+            //   「谁走哪条路、去哪个点、担任什么角色、路的头一段是哪」）。⛔ 不许删字段：
+            //   tools/probes/bot-route-dup.py 与本片验收表的重复率判据都从这一行/同名字段抽数。
             Game.Logger.Info(Tag,
-                $"{self.Name}（{self.Team}/{_difficulty}）第 {_match.RoundNumber} 回合计划：路线={_planRoute ?? "无"}" +
-                $" 路点={_nav.RemainingWaypoints} 目标={( _goalValid ? _goalPos.ToString() : "无" )} 站点={_goalIsSite}" +
+                $"{self.Name}（{self.Team}/{_difficulty}/角色={RoleText()}）第 {_match.RoundNumber} 回合计划：" +
+                $"槽位={_planSlot}/队内序号={_ordinal}{(self.HasBomb ? "(持C4)" : "")} 路线={_planRoute ?? "无"}" +
+                $"（{CsBotPlans.RouteLabel(_planRoute)}） 首段路点={(HasFirstWaypoint ? FirstWaypoint.ToString() : "无")} 路点={_nav.RemainingWaypoints}" +
+                $" 目标={( _goalValid ? _goalPos.ToString() : "无" )}（{CsBotPlans.GoalLabel(siteMarker)}#{plan.GoalOrdinal}）站点={_goalIsSite}" +
                 $" 守点时长={ObjectiveHoldSeconds():F1}s 重寻路间隔={_profile.RepathInterval:F2}s");
+        }
+
+        /// <summary>
+        /// 按**槽位序号**取目标点（★ 片FIX-4 线B 新增；取代"取最靠近自己的那个点"）。
+        ///
+        /// <para><b>为什么要"按序号"而不是"取最近"</b>：一个包点标记里有 6~9 个点，两个槽位（T 槽位 0 与 1）
+        /// 都去同一个包点 —— 若各自"取离自己最近的点"，两只 bot 从相邻出生点出发会**取到同一个点**
+        /// （用户实测日志里 3 只 T bot 的目标点同为 <c>(-25.50, 0.00, 33.50)</c>、3 只同 <c>(34.50, 2.44, 29.50)</c>）。
+        /// 改成"取确定性序列里第 <paramref name="ordinal"/> 个"后，**目标点由槽位决定、与出生位置无关**，
+        /// 于是"同队两个槽位必得不同目标点"是构造性的。</para>
+        ///
+        /// <para><b>确定性序列</b> = 该标记的全部点先过滤 <c>CanStand</c>（与移动解算同口径），再按 (x, z) 排序
+        /// —— 排序键与 <see cref="CsBotHoldSpots.Build"/> 完全一致（同一份口径，⛔ 不另写一套）。
+        /// 然后从第 <c>ordinal % count</c> 个起**向后找第一个走得到**的点（<see cref="BotNavigator.CanReach"/>）；
+        /// 一个都走不到时退化为旧的"最近的走得到的点"并打 Warn（⛔ 不许比旧行为更差）。</para>
+        /// </summary>
+        /// <returns>true = 目标点已落进 <paramref name="point"/>。</returns>
+        private bool TryPickGoalPoint(CsActor self, string marker, int ordinal, out Vector3 point)
+        {
+            point = Vector3.zero;
+            if (_map == null || !_map.IsLoaded) return false;
+
+            var pts = _map.Points(marker);
+            if (pts == null || pts.Length == 0) return false;
+
+            var cand = new List<Vector3>(pts.Length);
+            for (var i = 0; i < pts.Length; i++)
+                if (_map.CanStand(pts[i])) cand.Add(pts[i]);
+
+            if (cand.Count == 0)
+            {
+                RateWarn("goal.nostand." + marker,
+                    $"{_name} 的标记 '{marker}' 有 {pts.Length} 个点但**没有一个站得住**（CanStand 全 false）" +
+                    "→ 退回未过滤点集里离自己最近的（与本方法引入前的行为一致）");
+                return TryPickReachablePoint(self, marker, out point);
+            }
+
+            cand.Sort(CompareXZ);
+
+            var start = ((ordinal % cand.Count) + cand.Count) % cand.Count;
+            for (var k = 0; k < cand.Count; k++)
+            {
+                var p = cand[(start + k) % cand.Count];
+                if (!_nav.CanReach(self.Position, p)) continue;
+
+                point = p;
+                return true;
+            }
+
+            RateWarn("goal.unreachable." + marker,
+                $"{_name} 的标记 '{marker}' 第 {start + 1}/{cand.Count} 个点起**向后一个都走不到**" +
+                "→ 退化为「离自己最近的走得到的点」（旧口径，⛔ 不许比旧行为更差）");
+            return TryPickReachablePoint(self, marker, out point);
+        }
+
+        private static int CompareXZ(Vector3 a, Vector3 b)
+        {
+            var c = a.x.CompareTo(b.x);
+            return c != 0 ? c : a.z.CompareTo(b.z);
         }
 
         private bool TryPickPoint(string marker, out Vector3 point)
@@ -508,8 +637,22 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float ObjectiveHoldSeconds()
         {
+            // ★ 片BOT-ROLE（差异 #67）：再乘一层**角色倍率** —— 同一个难度档下，
+            //   突破手（0.6×）到点就走、守点位（2.5×）赖着不走，这才是用户要的"分工"。
+            //   难度倍率与角色倍率是**两层**：前者定"这局 bot 多勤快"，后者定"队里每个人干什么"。
+            var roleScale = CsBotRoles.HoldScale(_role);
             return Mathf.Max(CsBotConst.CampHoldSeconds,
-                _profile.RepathInterval * CsBotConst.ObjectiveHoldScale);
+                _profile.RepathInterval * CsBotConst.ObjectiveHoldScale) * roleScale;
+        }
+
+        /// <summary>
+        /// 偏好交战距离（米）= <c>CsBotProfile.PreferredRange × <see cref="CsBotRoles.RangeScale"/></c>。
+        /// ⛔ 唯一取值处：交战段（<c>Engage</c>）不许再直接读 <c>_profile.PreferredRange</c>，
+        /// 否则角色倍率只在一半的判定里生效（同一支枪在"推进"和"开火"上按两套距离走）。
+        /// </summary>
+        private float PreferredRange()
+        {
+            return _profile.PreferredRange * CsBotRoles.RangeScale(_role);
         }
 
         /// <summary>换了目标之后的统一收尾：重置守点计时、重寻路计时与"朝目标距离"基准。</summary>
@@ -684,22 +827,49 @@ namespace Cs16.Module.Bot
             return false;
         }
 
-        /// <summary>"换一条路线"候选：轮换本阵营的三条路，跳过刚走完的那条（别的都不行才回头）。</summary>
+        /// <summary>
+        /// "换一条路线"候选（★ 片FIX-4 线B 重写）：沿**本队 4 个计划槽位**轮转，而不是旧实现的
+        /// <c>(self.Id + _replanCount) % 3</c>。
+        ///
+        /// <para><b>旧行为的病灶</b>：只有 3 条路可选、且起点取 <c>(Id + replanCount) % 3</c> —— 4 只 bot
+        /// 必然有两只落在同一条路上（换目标之后同样"路线都是相同的"，正是用户看到的现象）。</para>
+        ///
+        /// <para><b>新规则</b>：从**自己的槽位**起按 <c>(_planSlot + k) % 4</c> 轮转（k = 1,2,3）。
+        /// 因为每只 bot 的 <c>_planSlot</c> 互不相同，取 <c>k</c> 相同的两只 bot 得到的槽位也互不相同
+        /// ⇒ **每次换目标后，同队 4 只 bot 仍走 4 条不同的路、去 4 个不同的目标点**
+        /// （旧实现只保证"3 条路里挑一条"，撞车是必然；现在撞车需要两只 bot 的槽位相同，而那已被构造性排除）。</para>
+        ///
+        /// <para>轮转时跳过**刚走完的那条路**（<c>_planRoute</c>）：槽位差 1 的平移天然换路，所以 k 从 1 起即可。</para>
+        /// </summary>
         private bool TryRouteObjective(CsActor self, string reason, float now)
         {
-            var start = (int)((self.Id + _replanCount) % 3);
-            for (var k = 0; k < 3; k++)
+            // ---- 互斥门禁（★ 2026-09-24 实机缺陷的修复；见 CsBotPlans.AliveSlotTable 的注释）----
+            // 「路线家族」是同队的**共享资源**：计划表保证开局 4 只各占一格，轮转也必须遵守同一条互斥，
+            // 否则一只卡住的 bot 会轮转进队友正走着的路 —— 实机证据（本工程审计自己打出来的）：
+            //   11:39:30 [Warn] [Bot] 同队路线撞车：Cliffe(T/槽位3) 与 ZBot(T/槽位3) 都走 'Route_T_To_A'
+            // 两只当时**都活着**（Cliffe 同秒还在命中对手），即用户看到的"路线都一样"。
+            var carrier = CsBotPlans.RoundCarrierOrdinal(_match.Actors, _match, self.Team, _match.RoundNumber);
+            var taken = CsBotPlans.AliveSlotTable(_match.Actors, self.Team, carrier, _match.RoundNumber, null);
+            var from = _planSlot >= 0 ? _planSlot : CsBotPlans.SlotOf(_ordinal, carrier);
+
+            for (var k = 1; k <= CsBotPlans.Slots; k++)
             {
-                var slot = (start + k) % 3;
-                RouteSlot(self.Team, slot, out var routeMarker, out var siteMarker);
+                var slot = ((from + k) % CsBotPlans.Slots + CsBotPlans.Slots) % CsBotPlans.Slots;
+                if (slot >= 0 && slot < CsBotPlans.Slots && taken[slot])
+                {
+                    continue;   // 该家族有**活着的**队友在走 ⇒ ⛔ 不抢（死人的家族算空出来的，可以被接手）
+                }
+
+                var plan = CsBotPlans.For(self.Team, slot, _match.RoundNumber);
+                var routeMarker = plan.RouteMarker;
                 if (string.IsNullOrEmpty(routeMarker)) continue;
-                if (routeMarker == _planRoute && k < 2) continue;   // 刚走完的那条最后再试
+                if (k < CsBotPlans.Slots && routeMarker == _planRoute) continue;   // 刚走完的那条最后再试
 
                 _nav.SetRoute(_map, routeMarker, self.Position);
                 if (!_nav.HasRoute)
                 {
                     RateWarn("replan.route.empty",
-                        $"{_name} 换路线 '{routeMarker}' 失败（地图上没有该标记的路点）→ 试下一条");
+                        $"{_name} 换路线 '{routeMarker}'（槽位 {plan.Slot}）失败（地图上没有该标记的路点）→ 试下一条");
                     continue;
                 }
 
@@ -708,10 +878,11 @@ namespace Cs16.Module.Bot
                 var goal = Vector3.zero;
                 var isSite = false;
 
-                if (!string.IsNullOrEmpty(siteMarker) && TryPickReachablePoint(self, siteMarker, out var site))
+                if (!string.IsNullOrEmpty(plan.GoalMarker) &&
+                    TryPickGoalPoint(self, plan.GoalMarker, plan.GoalOrdinal, out var site))
                 {
                     goal = site;
-                    isSite = true;
+                    isSite = plan.GoalIsSite;
                 }
                 else if (TryPickReachable(self, _map.Points(routeMarker), 0f, false, out var end))
                 {
@@ -721,14 +892,88 @@ namespace Cs16.Module.Bot
                 {
                     RateWarn("replan.route.unreachable." + routeMarker,
                         $"{_name} 换路线 '{routeMarker}' 的目标点全判为走不到" +
-                        $"（包点 '{siteMarker ?? "无"}' 与该路线的标记点都没过 BotNavigator.CanReach）→ 试下一条");
+                        $"（目标标记 '{plan.GoalMarker ?? "无"}' 与该路线的标记点都没过 BotNavigator.CanReach）→ 试下一条");
                     continue;
                 }
 
-                ApplyObjective(self, routeMarker, goal, isSite, $"换一条路线（{reason}）", now);
+                _planSlot = plan.Slot;
+                ApplyObjective(self, routeMarker, goal, isSite,
+                    $"换一条路线（槽位 {plan.Slot}={plan.RouteLabel}→{plan.GoalLabel}#{plan.GoalOrdinal}；{reason}）", now);
                 return true;
             }
+
+            // ---- 退一档：4 条家族都被**活着的**队友占着（全队都活着 = 常态）⇒ ⛔ 不抢队友的路，
+            //      留在自己的槽位、只把**目标点**换成同一条路线上另一个点（序号也要与队友互斥）。----
+            //      为什么不是"随便挑一条"：那样就回到用户投诉的"路线都是相同的"（旧实现 3 条路 + 4 只 bot
+            //      必然撞车）。宁可"同一路线的另一个点"，也不要"两个人的路一模一样"。
+            var mySlot = from;
+            var myPlan = CsBotPlans.For(self.Team, mySlot, _match.RoundNumber);
+            if (!string.IsNullOrEmpty(myPlan.RouteMarker))
+            {
+                _nav.SetRoute(_map, myPlan.RouteMarker, self.Position);
+                if (_nav.HasRoute)
+                {
+                    var count = GoalCandidateCount(myPlan.GoalMarker);
+                    var goal = Vector3.zero;
+                    var picked = false;
+                    var ordinal = myPlan.GoalOrdinal;
+
+                    for (var d = 0; d < count; d++)
+                    {
+                        var o = CsBotPlans.NextFreeGoalOrdinal(_match.Actors, self.Team, carrier,
+                            _match.RoundNumber, self.Id, myPlan.GoalMarker, ordinal, count);
+                        if (o < 0) break;                       // 该标记上的序号被队友占满了
+                        if (o == ordinal) break;                // 没有下一个（count=1 之类）
+                        ordinal = o;
+                        if (TryPickGoalPoint(self, myPlan.GoalMarker, ordinal, out var pt))
+                        {
+                            goal = pt;
+                            picked = true;
+                            break;
+                        }
+                    }
+
+                    if (!picked && TryPickReachable(self, _map.Points(myPlan.RouteMarker), 0f, false, out var end))
+                    {
+                        goal = end;
+                        picked = true;
+                        RateWarn("replan.inslot.gofallback",
+                            $"{_name} 留在槽位 {mySlot}（'{myPlan.RouteLabel}'）但目标标记 '{myPlan.GoalMarker}' " +
+                            "上的序号都被占/走不到 → 退化为该路线上离自己最近的走得到的路点");
+                    }
+
+                    if (picked)
+                    {
+                        _planSlot = mySlot;
+                        ApplyObjective(self, myPlan.RouteMarker, goal, myPlan.GoalIsSite,
+                            $"无空路线（4 条都被**活着的**队友占着）⇒ 留在槽位 {mySlot}={myPlan.RouteLabel}，" +
+                            $"只换目标点（{myPlan.GoalLabel}#{ordinal}；{reason}）", now);
+                        return true;
+                    }
+                }
+            }
+
             return false;
+        }
+
+        /// <summary>
+        /// 某个目标标记上**实际可用**的点数（<c>CanStand</c> 过滤后）—— 给
+        /// <see cref="CsBotPlans.NextFreeGoalOrdinal"/> 当 <c>candidateCount</c>。
+        /// <para>与 <see cref="TryPickGoalPoint"/> 用的是**同一条过滤**（<c>CanStand</c>）；两者若漂移，
+        /// 序号与点就对应不上，所以这里刻意只留一处过滤条件、并在 <c>TryPickGoalPoint</c> 注释里互指。</para>
+        /// </summary>
+        private int GoalCandidateCount(string marker)
+        {
+            if (_map == null || !_map.IsLoaded || string.IsNullOrEmpty(marker)) return 0;
+
+            var pts = _map.Points(marker);
+            if (pts == null || pts.Length == 0) return 0;
+
+            var n = 0;
+            for (var i = 0; i < pts.Length; i++)
+                if (_map.CanStand(pts[i])) n++;
+
+            return n;
         }
 
         /// <summary>
@@ -747,6 +992,23 @@ namespace Cs16.Module.Bot
                 RateWarn("replan.patrol.empty",
                     $"{_name} 想巡逻但地图上没有 '{CsMarkers.Patrol}' 标记（Points 返回空）→ 试其它目标");
                 return false;
+            }
+
+            // ★ 2026-09-24（互斥门禁，与 TryRouteObjective 同一口径）：巡逻线是槽位 2 的**路线家族**。
+            //   旧行为里"换目标"可以直接跳进巡逻线 —— 于是槽位 2 的主人（本来就该走巡逻）与这只 bot
+            //   同时走 `Route_Patrol`，实机审计当场打出"同队路线撞车"（用户看到的就是这个）。
+            //   活着的队友在走 ⇒ 不抢；死人的家族算空出来的（可以被接手）。
+            if (_planRoute != CsMarkers.Patrol)
+            {
+                var patrolCarrier = CsBotPlans.RoundCarrierOrdinal(_match.Actors, _match, self.Team, _match.RoundNumber);
+                if (CsBotPlans.FamilyHeldByAliveTeammate(_match.Actors, self.Team, patrolCarrier,
+                        _match.RoundNumber, self.Id, CsMarkers.Patrol))
+                {
+                    Game.Logger.Info(Tag,
+                        $"{_name}（{self.Team}/{_difficulty}）本想去巡逻，但巡逻线已被一只**活着的**队友占着" +
+                        $"→ 不抢（互斥优先于换目标；{reason}）");
+                    return false;
+                }
             }
 
             _nav.SetRoute(_map, CsMarkers.Patrol, self.Position);
@@ -800,38 +1062,17 @@ namespace Cs16.Module.Bot
             ArmGoal(self, now);
 
             Game.Logger.Info(Tag,
-                $"{_name}（{self.Team}/{_difficulty}）重新选目标：{why} → 路线={_planRoute} " +
+                $"{_name}（{self.Team}/{_difficulty}）重新选目标：{why} → 槽位={_planSlot} 路线={_planRoute}" +
+                $" 首段路点={(HasFirstWaypoint ? FirstWaypoint.ToString() : "无")} " +
                 $"目标={_goalPos} 站点={_goalIsSite} 路点={_nav.RemainingWaypoints} " +
                 $"守点时长={ObjectiveHoldSeconds():F1}s（第 {_replanCount} 次换目标）");
         }
 
-        /// <summary>
-        /// 阵营 → 三条"路"的槽位映射（与 <see cref="ChoosePlan"/> 的映射同源）。
-        /// slot 0/1 = 两个包点；slot 2 = 中路（T 的中路配本轮主攻包点，与回合奇偶约定一致）。
-        /// </summary>
-        private void RouteSlot(CsTeam team, int slot, out string routeMarker, out string siteMarker)
-        {
-            var siteIsA = (_match.RoundNumber % 2) == 0;
-            if (team == CsTeam.T)
-            {
-                switch (slot)
-                {
-                    case 0: routeMarker = CsMarkers.TAttackA; siteMarker = CsMarkers.BombsiteA; return;
-                    case 1: routeMarker = CsMarkers.TAttackB; siteMarker = CsMarkers.BombsiteB; return;
-                    default:
-                        routeMarker = CsMarkers.TMid;
-                        siteMarker = siteIsA ? CsMarkers.BombsiteA : CsMarkers.BombsiteB;
-                        return;
-                }
-            }
-
-            switch (slot)
-            {
-                case 0: routeMarker = CsMarkers.CTDefendA; siteMarker = CsMarkers.BombsiteA; return;
-                case 1: routeMarker = CsMarkers.CTDefendB; siteMarker = CsMarkers.BombsiteB; return;
-                default: routeMarker = CsMarkers.CTMid; siteMarker = null; return;
-            }
-        }
+        // ⛔ 2026-09-24（片FIX-4 线B）**已删除** `RouteSlot(team, slot, out route, out site)`：
+        //   它把 3 条路按 `slot` 0/1/2 映射（slot 2 = 中路、其余 = 两个包点），是"每队必有一对 bot 同路同点"
+        //   的直接来源（T: 槽位 0 与 1 都落主攻路；CT 由 `idx % 3` 使槽位 0 与 3 同路）。
+        //   现在路线/目标一律由 `CsBotPlans.For(team, slot, round)` 这张**4 槽位表**给（含巡逻线，4 条路互不相同），
+        //   换目标走 `TryRouteObjective` 的槽位轮转。⛔ 需要改路线选择时改 `CsBotPlans`，不要在这里复活三分支映射。
 
         /// <summary>
         /// ★ 片BU-R 新增：从一组候选标记点里挑一个**真的走得到**的（近的优先；<paramref name="farthest"/> = true 时远的优先）。
@@ -1262,14 +1503,14 @@ namespace Cs16.Module.Bot
                 // 持包：边走边打，朝本轮包点压上（⛔ 不因"距敌人够近"而置零）
                 intent.Move = _nav.ComputeMove(self.Position, plantAim, CsBotConst.PlantStopRadius, now);
             }
-            else if (dist > _profile.PreferredRange * CsBotConst.AdvanceRangeFactor)
+            else if (dist > PreferredRange() * CsBotConst.AdvanceRangeFactor)
             {
                 // 太远：压上去
                 intent.Move = HorizontalDir(self.Position, target.Position);
             }
             else
             {
-                if (dist > _profile.PreferredRange && _nav.RemainingWaypoints <= 0)
+                if (dist > PreferredRange() && _nav.RemainingWaypoints <= 0)
                 {
                     // 任务书 §4.2：距离 > PreferredRange → 蹲下（提高精度）。
                     //
@@ -1459,7 +1700,8 @@ namespace Cs16.Module.Bot
             if (now >= _headRollAt)
             {
                 _headRollAt = now + CsBotConst.HeadshotRollSeconds;
-                _headRoll = Random.value < _profile.HeadshotChance;
+                // 瞄不瞄头：**玩法**（直接改伤害与击杀数）。走本 bot 的 BotAimFlavor 流。
+                _headRoll = _rngAim.NextFloat() < _profile.HeadshotChance;
             }
             return _headRoll;
         }
@@ -1469,7 +1711,8 @@ namespace Cs16.Module.Bot
             if (now >= _wobbleRefreshAt)
             {
                 _wobbleRefreshAt = now + CsBotConst.AimWobbleRefreshSeconds;
-                _wobble = new Vector2(Random.Range(-1f, 1f), Random.Range(-1f, 1f));
+                // 头部摆动：**玩法**（它是瞄准偏移，直接进 AimPoint）。同一个 BotAimFlavor 流。
+                _wobble = new Vector2(_rngAim.Range(-1f, 1f), _rngAim.Range(-1f, 1f));
             }
 
             if (Mathf.Approximately(_wobble.x, 0f) && Mathf.Approximately(_wobble.y, 0f)) return Vector3.zero;
@@ -1908,9 +2151,22 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            // ③ 守够时间 → 重新选目标（"路线走完之后必须有后续行为"：换路线 / 去巡逻 / 回出生点）。
-            //    绝不允许停在原地空转 —— 那正是主 agent 实测日志里"剩余路点 0 + 反复卡住"的病根。
-            if (_goalHoldUntil > 0f && now >= _goalHoldUntil &&
+            // ③' 角色 = **守点**（Anchor，CT 的 A/B 守位）：守点时长到点后**不换目标**，只把计时重新起算。
+            //     这一条直接对着用户 2026-09-24 的原话「警不去守点…一直在原地踱步」：旧行为里**所有** bot
+            //     守够 2.5~4.8s 就 ReplanObjective（换路线 / 去巡逻 / 回出生点），CT 守卫也每几秒改一次
+            //     目的地 ⇒ 观感就是"全队都在乱走、没人真的守点"。
+            //     ⛔ 这不是"站着不动"：本函数上面的守位表轮换（_holdSpots + _holdSwapAt）照常跑，
+            //        玩家看到的是"在包点里换位置盯人"；⛔ 也不影响卡住/包已下等其它换目标路径。
+            if (_goalHoldUntil > 0f && now >= _goalHoldUntil && _goalIsSite && self.Team == CsTeam.CT &&
+                CsBotRoles.StaysOnObjective(_role))
+            {
+                var ensure = ObjectiveHoldSeconds();
+                _goalHoldUntil = now + ensure;
+                RateWarn("role.anchor.hold",
+                    $"{_name}（角色={CsBotRoles.Label(_role)}）在包点 {_holdSiteMarker} 守满 {ensure:F1}s → " +
+                    $"{ensure:F1}s 内**继续守**（不 ReplanObjective；守位 {_holdSpots.Count} 个、累计换位 {_holdSwapCount} 次）");
+            }
+            else if (_goalHoldUntil > 0f && now >= _goalHoldUntil &&
                 ReplanObjective(self, $"守点 {ObjectiveHoldSeconds():F1}s 已到（{_difficulty}）", now))
             {
                 return Advance(self, intent, now);   // 新目标一定在 MinPatrolDistance 之外 → 不会立刻又 Arrived
@@ -1944,8 +2200,9 @@ namespace Cs16.Module.Bot
                         // 会把"紧贴墙壁的格子"选成纳窝点 → 走不过去 → 顶着墙被反复判卡住。
                         if (!_map.CanStand(patrol[i])) continue;
 
-                        // 带随机项的择优：都取最近的话全队会挤在同一格里
-                        var score = dist + Random.value * CsBotConst.CampRepositionRadius;
+                        // 带随机项的择优：都取最近的话全队会挤在同一格里。
+                        // **玩法**（决定 bot 站哪一格 ⇒ 谁先看到谁）⇒ 走本 bot 的 BotDecision 流。
+                        var score = dist + _rngDecision.NextFloat() * CsBotConst.CampRepositionRadius;
                         if (score >= bestScore) continue;
 
                         bestScore = score;
@@ -1956,11 +2213,12 @@ namespace Cs16.Module.Bot
 
                 if (!ok)
                 {
-                    // 没有巡点标记 → 在守点周围随机取一个可走的点
+                    // 没有巡点标记 → 在守点周围随机取一个可走的点。
+                    // **玩法**（同上）⇒ 同一个 BotDecision 流（ang 与 r 是"一条子流上连抽两次"）。
                     for (var i = 0; i < 6; i++)
                     {
-                        var ang = Random.value * 360f;
-                        var r = CsBotConst.CampRepositionRadius * Random.value;
+                        var ang = _rngDecision.NextFloat() * 360f;
+                        var r = CsBotConst.CampRepositionRadius * _rngDecision.NextFloat();
                         var cand = goal + Quaternion.Euler(0f, ang, 0f) * new Vector3(0f, 0f, r);
                         if (!_map.CanStand(cand)) continue;
                         best = cand;

@@ -48,9 +48,6 @@ namespace Cs16.EditorTools
         public const string ServerMapDir = "Assets/MapData";
         /// <summary>客户端运行时读取的产物目录（必须在 Resources 下）。</summary>
         public const string ClientMapDir = "Assets/Resources/MapData";
-        /// <summary>运行时标记表（Resources 路径，不带扩展名）= 运行期真源
-        /// <see cref="ResPaths.MapDust2Markers"/>（⛔ 路径字面量只留 <c>Core/ResPaths.cs</c>）。</summary>
-        public const string MarkerResourceFile = ClientMapDir + "/de_dust2_markers.bytes";
 
         // ---- 场景层级（烘焙器按名字决定"谁算障碍"）----
         public const string LevelRoot = "Level";
@@ -58,8 +55,17 @@ namespace Cs16.EditorTools
         public const string VisualRoot = LevelRoot + "/Visual";
         /// <summary>阻挡体：每格一个轴对齐 BoxCollider ——**只有它参与烘焙**，位图由它逐格还原。</summary>
         public const string BlockerRoot = LevelRoot + "/Blockers";
-        /// <summary>标记点（名字 = <see cref="CsMarkers"/> 里的字符串）。</summary>
-        public const string MarkerRoot = LevelRoot + "/Markers";
+        /// <summary>
+        /// 标记点根对象（名字 = <see cref="CsMarkers"/> 里的字符串）。
+        /// <para>⚠️ <b>必须是**场景根对象**</b>（⛔ 不是 <c>Level</c> 的子物体）：引擎烘焙器按
+        /// <c>MapBakeOptions.MarkerRootName</c> 在**场景根对象列表**里按名字找它
+        /// （<c>Editor/MapBake/MapBaker.cs:424-427</c> 的 <c>scene.GetRootGameObjects()</c>），
+        /// 找到后把该根下每个子物体的"对象名 = 标记名、世界坐标 = 点位"写进 <c>.bytes</c> 的
+        /// <c>FlagMarkers</c> 段（<c>MapBaker.cs:418-457</c>）。
+        /// 引擎文档里那句"如 cs16 的 <c>Level/Markers</c> 那个 <c>Markers</c>"说的就是本对象 —— 名字是 <c>Markers</c>；
+        /// 旧层级把它挂在 <c>Level</c> 下（烘焙器看不见），本轮已提到场景根。</para>
+        /// </summary>
+        public const string MarkerRoot = "Markers";
         public const string LightingRoot = LevelRoot + "/Lighting";
 
         /// <summary>

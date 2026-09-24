@@ -60,6 +60,7 @@ namespace Cs16.Module.Combat
             CheckShotQueueDiscrimination();
             CheckRaycastHitsHitboxProxy();
             CheckMatchFastForward();
+            CheckDroppedWeaponWorldEntity();
 
             var sb = new StringBuilder();
             sb.AppendLine("========== 第一人称操作与射击 自检报告 ==========");
@@ -78,6 +79,37 @@ namespace Cs16.Module.Combat
                 }
             }
             sb.AppendLine("===============================================");
+
+            var text = sb.ToString();
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>
+        /// **只跑差异 #75 的数值判据**并返回报告 —— 供 <c>unity command eval_file</c> 调用。
+        /// <para>⛔ 刻意不走 <see cref="RunAll"/>：RunAll 有 6 组快进，整跑会撞 eval_file 的
+        /// 「主线程 5 s」上限（实测 <c>Main thread operation timed out after 5000ms</c>），
+        /// 而本入口只跑一组、秒级返回。</para>
+        /// </summary>
+        public static string RunDropOnly()
+        {
+            Failures.Clear();
+            Notes.Clear();
+            CheckDroppedWeaponWorldEntity();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("========== 差异 #75 「掉落武器不在世界里」数值自检 ==========");
+            for (var i = 0; i < Notes.Count; i++) sb.AppendLine("· " + Notes[i]);
+            if (Failures.Count == 0)
+            {
+                sb.AppendLine(">>> 结论: PASS");
+            }
+            else
+            {
+                sb.AppendLine($">>> 结论: FAIL（{Failures.Count} 项未达标）");
+                for (var i = 0; i < Failures.Count; i++) sb.AppendLine("   ✗ " + Failures[i]);
+            }
+            sb.AppendLine("=============================================================");
 
             var text = sb.ToString();
             Game.Logger.Info(Tag, text);
@@ -592,6 +624,180 @@ namespace Cs16.Module.Combat
         private static void Fail(string message)
         {
             Failures.Add(message);
+        }
+
+        // ==================================================================
+        //  ⑥ 世界中的掉落武器（差异 #75）—— 数值类判据，**离线跑，不进 Play**
+        // ==================================================================
+        /// <summary>
+        /// 差异 #75 的数值判据：**掉落 ⇒ 世界上多一件（并带着当时的余弹）；站在 5 m 外捡不到（负控）；
+        /// 走到 1.2 m 内 ⇒ 自动拾取且余弹原样回来；主槽已满 ⇒ 捡不起来（负控）**。
+        ///
+        /// <para>判据两点说明：① 用 <see cref="SelfTestMap"/> 快进（与 ④ 同做法），
+        /// <c>TrySampleGround</c> 会把角色贴到 y=0，但**水平的 x/z 由本自检摆** ⇒ 距离判定不受影响；
+        /// ② 每次 Tick 都写 <c>default(CsInputState)</c>（不按任何键）⇒ 角色不会自己走开。</para>
+        /// </summary>
+        private static void CheckDroppedWeaponWorldEntity()
+        {
+            var prevClock = CsMatch.Clock;
+            var simTime = 0f;
+            CsMatch match = null;
+
+            try
+            {
+                match = new CsMatch(new SelfTestMap());
+                var cfg = new CsMatchConfig
+                {
+                    MapName = "drop-selftest",
+                    BotsPerTeam = 1,
+                    PlayerTeam = CsTeam.CT,
+                    PlayerName = "DropSelfTest",
+                    RoundsPerHalf = 1,
+                    RoundTime = 60f,
+                    FreezeTime = 0.2f,
+                    HalfTimeSwap = false,
+                };
+
+                CsMatch.Clock = () => simTime;
+                match.Start(cfg);
+
+                var local = match.LocalPlayer;
+                if (local == null)
+                {
+                    Fail("掉落自检：开局后拿不到 LocalPlayer");
+                    match.Stop();
+                    return;
+                }
+
+                // 先过冻结期：拾取只在 Live 判定。
+                var idle = default(CsInputState);
+
+                // ⛔ 必须把**非本地** actor 挪远：本用例的掉落点就在 CT 出生点旁 0.72 m，
+                //    而 CT 侧那个 bot 正出生在那里 ⇒ 它会在第一帧就把枪捡走（实测过）。
+                //    每帧 Tick 前重设一次（bot 每帧会自己走，所以不能只设一次）。
+                void KeepBotsAway()
+                {
+                    var list = match.Actors;
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        var a = list[i];
+                        if (!ReferenceEquals(a, local)) a.Position = new Vector3(100f, 0f, 100f);
+                    }
+                }
+                for (var i = 0; i < 60 && match.Phase != CsRoundPhase.Live; i++)
+                {
+                    match.SetLocalInput(idle);
+                    KeepBotsAway();
+                    match.Tick(FrameDt);
+                    simTime += FrameDt;
+                }
+                if (match.Phase != CsRoundPhase.Live)
+                {
+                    Fail($"掉落自检：快进 60 帧后仍未进 Live（实际 {match.Phase}）");
+                    match.Stop();
+                    return;
+                }
+
+                // 备货：主武器 AK（弹匣 17 + 备弹 42，特意不是满弹 ⇒ 能判"余弹原样回来"）。
+                local.PrimaryWeapon = CsWeapons.Ak47;
+                local.SecondaryWeapon = CsWeapons.Usp;
+                local.ActiveWeapon = CsWeapons.Ak47;
+                local.SetAmmo(CsWeapons.Ak47, 17, 42);
+
+                var before = match.DroppedWeapons.Count;
+
+                // ---- ① 掉落：世界上应多一件，且带当时余弹 ----
+                match.DropActiveWeapon();
+                Assert(match.DroppedWeapons.Count == before + 1,
+                    $"掉落自检①：DropActiveWeapon 后世界上应有 {before + 1} 件，实际 {match.DroppedWeapons.Count}");
+
+                if (match.DroppedWeapons.Count == 0)
+                {
+                    Fail("掉落自检①：掉落列表为空，后面的用例无法进行");
+                    match.Stop();
+                    return;
+                }
+
+                var d0 = match.DroppedWeapons[match.DroppedWeapons.Count - 1];
+                Assert(d0.WeaponId == CsWeapons.Ak47,
+                    $"掉落自检①：掉落的应是 {CsWeapons.Ak47}，实际 {d0.WeaponId}");
+                Assert(d0.MagAmmo == 17 && d0.ReserveAmmo == 42,
+                    $"掉落自检①：掉落物应带当时余弹 17+42，实际 {d0.MagAmmo}+{d0.ReserveAmmo}");
+                Notes.Add($"掉落① {d0.WeaponId} @ ({d0.Position.x:F2},{d0.Position.y:F2},{d0.Position.z:F2}) 余弹 {d0.MagAmmo}+{d0.ReserveAmmo}");
+
+                var dropPos = d0.Position;
+
+                // ---- ② 负控：站在 5 m 外（> PickupRadius 1.2）⇒ 不该被捡 ----
+                local.Position = new Vector3(dropPos.x + 5f, dropPos.y, dropPos.z);
+                for (var i = 0; i < 5; i++) { match.SetLocalInput(idle); KeepBotsAway(); match.Tick(FrameDt); simTime += FrameDt; }
+                Assert(match.DroppedWeapons.Count == 1,
+                    $"掉落自检②（负控）：站在 5 m 外不该被拾取，实际剩 {match.DroppedWeapons.Count} 件");
+
+                // ---- ③ 走到 0.5 m 内（< 1.2）⇒ 自动拾取，余弹原样回来 ----
+                local.Position = new Vector3(dropPos.x + 0.5f, dropPos.y, dropPos.z);
+                for (var i = 0; i < 5; i++) { match.SetLocalInput(idle); KeepBotsAway(); match.Tick(FrameDt); simTime += FrameDt; }
+                Assert(match.DroppedWeapons.Count == 0,
+                    $"掉落自检③：走到 0.5 m 内应被自动拾取（世界清零），实际剩 {match.DroppedWeapons.Count} 件");
+                Assert(local.PrimaryWeapon == CsWeapons.Ak47,
+                    $"掉落自检③：拾取后应重新拿回 {CsWeapons.Ak47}，实际 {local.PrimaryWeapon}");
+                var back = local.GetAmmo(CsWeapons.Ak47);
+                Assert(back.inMag == 17 && back.reserve == 42,
+                    $"掉落自检③：拾取后余弹应原样回来 17+42，实际 {back.inMag}+{back.reserve}");
+                Notes.Add($"拾取③ {CsWeapons.Ak47} 回到手上 余弹 {back.inMag}+{back.reserve}");
+
+                // ---- ④ 负控：主槽已被占 ⇒ 主武器捡不起来 ----
+                local.PrimaryWeapon = null;
+                local.ActiveWeapon = null;
+                local.SecondaryWeapon = CsWeapons.Usp;
+                local.SetAmmo(CsWeapons.Ak47, 0, 0);
+                match.DropActiveWeapon();   // 手上没主武器 ⇒ 会走 "没这把枪" 分支，这里改用直接掉落验负控
+                // 上面那次不一定丢成功；改为"先给一把再丢"以确保世界上有一件：
+                if (match.DroppedWeapons.Count == 0)
+                {
+                    local.PrimaryWeapon = CsWeapons.Ak47;
+                    local.ActiveWeapon = CsWeapons.Ak47;
+                    local.SetAmmo(CsWeapons.Ak47, 5, 5);
+                    match.DropActiveWeapon();
+                }
+                Assert(match.DroppedWeapons.Count == 1,
+                    $"掉落自检④：动手前世界上应有 1 件，实际 {match.DroppedWeapons.Count}");
+                if (match.DroppedWeapons.Count == 1)
+                {
+                    var d1 = match.DroppedWeapons[0];
+                    local.PrimaryWeapon = CsWeapons.M4A1;   // 主槽**已满**
+                    local.SetAmmo(CsWeapons.M4A1, 30, 90);
+                    local.Position = new Vector3(d1.Position.x + 0.5f, d1.Position.y, d1.Position.z);
+                    for (var i = 0; i < 5; i++) { match.SetLocalInput(idle); KeepBotsAway(); match.Tick(FrameDt); simTime += FrameDt; }
+                    Assert(match.DroppedWeapons.Count == 1,
+                        "掉落自检④（负控）：主槽已满时不该能捡起主武器（原版不会挤掉手里那把）");
+                }
+
+                // ---- ⑤ 重开一局 ⇒ 世界上不留上一局的掉落物（`Stop()`/`Start()` 都走 ClearDroppedWeapons）----
+                if (match.DroppedWeapons.Count == 0)
+                {
+                    local.PrimaryWeapon = CsWeapons.Ak47;
+                    local.ActiveWeapon = CsWeapons.Ak47;
+                    local.SetAmmo(CsWeapons.Ak47, 3, 3);
+                    match.DropActiveWeapon();
+                }
+                var beforeRestart = match.DroppedWeapons.Count;
+                Assert(beforeRestart >= 1,
+                    $"掉落自检⑤：重开前世界上应有 ≥1 件，实际 {beforeRestart}");
+                match.Stop();
+                match.Start(cfg);
+                Assert(match.DroppedWeapons.Count == 0,
+                    $"掉落自检⑤：重开一局后世界上不该留着上一局的掉落物，实际还剩 {match.DroppedWeapons.Count} 件");
+                Notes.Add($"重开清空⑤ 重开前 {beforeRestart} 件 ⇒ 重开后 {match.DroppedWeapons.Count} 件");
+            }
+            catch (Exception ex)
+            {
+                Fail($"掉落自检抛异常：{ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                CsMatch.Clock = prevClock;
+                if (match != null) match.Stop();
+            }
         }
 
         /// <summary>自检用假地图：不做碰撞、出生点在原点附近，只让模拟能跑起来（与 agent-03 的自检同做法）。</summary>

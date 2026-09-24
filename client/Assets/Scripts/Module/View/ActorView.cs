@@ -116,6 +116,75 @@ namespace Cs16.Module.View
         public bool IsLocal => _isLocal;
 
         // ==================================================================
+        //  对象池复用前置清理
+        // ==================================================================
+        /// <summary>
+        /// **对象池复用前的清理**（改前每个角色视图都是"新建 → 用 → Destroy"，没有这个必要性；
+        /// 现在实例由 <c>Game.Pool</c> 在世界掉落 / 角色视图之间复用，同一实例可能被交给另一个 actor）。
+        ///
+        /// <para><b>为什么必须有</b>（不清就会静默画出错的东西）：池交回的实例**带着上一世的状态** ——
+        /// <list type="number">
+        /// <item>上一世的名牌 <c>Plate</c> 子节点还在 ⇒ 会被 <see cref="Bind"/> 的
+        /// <c>GetComponentsInChildren&lt;Renderer&gt;</c> 快照算进"实测身高"，整具模型的缩放 / 贴地全错；</item>
+        /// <item>上一世若是本地玩家，4 个渲染被 <see cref="HideOwnRenderers"/> 关过 ⇒ 新角色**看不见**；</item>
+        /// <item>上一世若是尸体，碰撞体被关过、Animator 速度被冻过（<see cref="ReleaseCorpsePose"/> 之外的回滚路径）
+        /// ⇒ 射线打不中（"打不死人"）；</item>
+        /// <item>各种"只报一次"的闸 / 动画快照 / 复活标记仍是上一世的 ⇒ 日志与表现错位。</item>
+        /// </list></para>
+        ///
+        /// <para><b>调用时机</b>：<c>ViewModule.EnsureView</c> 里 <see cref="Bind"/> **之前** ——
+        /// 必须早于 Bind 的快照，否则第 ① 条照样发生。</para>
+        /// </summary>
+        public void PrepareForReuse()
+        {
+            // ① 上一世的名牌：整棵子节点删掉（名牌本身也是池对象，交给池回收）
+            var plateTf = transform.Find(CsViewTuning.PlateNodeName);
+            if (plateTf != null)
+            {
+                var old = plateTf.gameObject;
+                var pool = Game.Pool;
+                if (pool != null) pool.Despawn(old);
+                else Destroy(old);      // 池不可用（未 Launch）：退回销毁，别把它留在新角色头上
+            }
+            _plate = null;
+
+            // ②③ 渲染与碰撞体还回来 + 动画速度复位（关过的都要开回来）
+            for (var i = 0; i < _renderers.Length; i++)
+            {
+                if (_renderers[i] != null) _renderers[i].enabled = true;
+            }
+            for (var i = 0; i < _colliders.Length; i++)
+            {
+                if (_colliders[i] != null) _colliders[i].enabled = true;
+            }
+            if (_animator != null) _animator.speed = 1f;
+
+            // ④ 身份与状态闸复位（Bind 会重新填身份；这里清的是"上一世的账"）
+            _isLocal = false;
+            _alive = true;
+            _bodyHiddenLogged = false;
+            _proxiesChecked = false;
+            _animFailedLogged = false;
+            _overrideState = null;
+            _lastState = null;
+            _deathPlayed = false;
+            _deathState = null;
+            _hideAfterDeath = false;
+            _corpseHeld = false;
+            _corpseFrozen = false;
+            _haveAnimSnapshot = false;
+            _preWeapon = null;
+            _preNextFireTime = 0f;
+            _preReloadSeq = 0;
+            _reloadAnimsPlayed = 0;
+            _anim = null;
+            _fitScale = 1f;
+            _modelLift = 0f;
+            _crouchScale = 1f;
+            IsShown = false;
+        }
+
+        // ==================================================================
         //  绑定
         // ==================================================================
         /// <summary>绑定 actor 身份，并做**量测优先**的尺寸/贴地校正。</summary>

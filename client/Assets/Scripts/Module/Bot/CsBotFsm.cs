@@ -1,29 +1,42 @@
 using System;
-using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Module.Match;   // CsBotState（叶子状态枚举）定义在 Module/Match/CsTypes.cs
 
 namespace Cs16.Module.Bot
 {
     /// <summary>
-    /// 机器人战术层状态机（**实现引擎的状态机接口** <see cref="IFsm"/>）。
+    /// 机器人战术层状态机 —— **每个 bot 一棵**，实例由引擎 <see cref="Game.NewFsm"/> 提供。
     ///
-    /// <para><b>为什么不是直接用 <c>Game.Fsm</c></b>（片BU 落纸复核，⛔ 不是猜测）：</para>
+    /// <para><b>引擎能力（本类只做壳，⛔ 不再复刻 <c>Fsm</c>）</b>：</para>
     /// <list type="number">
-    /// <item>引擎里**只有一份**全局 FSM：<c>Runtime/Core/Game.cs:169</c> 的 <c>public static IFsm Fsm</c>，
-    /// 在 <c>Game.cs:383</c> 由 <c>Fsm = new Fsm()</c> 建立、<c>Game.cs:849</c> 的 <c>InitFsm()</c> 注册的是
-    /// **游戏流程**状态（Launching / CheckingUpdate / Logging / MainCity / Battle…）。它是**应用级单例**。</item>
-    /// <item>实现类 <c>Runtime/Core/Fsm.cs:70</c> 是 <c>internal class Fsm</c> ⇒ 跨程序集（<c>Cs16.asmdef</c>）**不可实例化**，
-    /// 引擎也没有"多实例工厂"（全仓 <c>IFsm|CreateFsm|NewFsm</c> 命中仅 <c>Game.cs</c> 的这一个属性与 <c>Fsm.cs</c> 的定义）。</item>
-    /// <item>若把 8 个 bot 的状态注册到那一份 <c>Game.Fsm</c> 上，8 个脑会**共用同一个 <c>Current</c>**、
-    /// 互相覆盖（`RegisterState` 同名还会告警覆盖回调）⇒ 结构上不成立。</item>
+    /// <item><c>Game.NewFsm()</c>（<c>Runtime/Core/Game.cs:194</c>）返回一棵**独立**的
+    /// <see cref="IFsm"/>：它有自己的 <c>_states/_transitions/_current</c>，与**应用级单例**
+    /// <see cref="Game.Fsm"/>（<c>Game.cs:172</c>，由 <c>Game.cs:910</c> 的 <c>Force("Launching")</c> 起步、
+    /// 由 <c>Game.Tick</c> 驱动）完全不共享。所以"每个 bot 各自一份状态"结构上成立：
+    /// 注册到单例上的做法会让 8 个脑共用同一个 <see cref="IFsm.Current"/> 并互相覆盖。</item>
+    /// <item>实现类 <c>Runtime/Core/Fsm.cs:100</c> 本轮已由 <c>internal</c> 提升为 <c>public</c> 并开放
+    /// <c>NewFsm()</c> 工厂 ⇒ 转换语义**只有一份实现**：自环忽略（<c>Fsm.cs:296</c> 的
+    /// <c>SwitchTo</c> + <c>:304</c> 的守卫 —— <c>Trigger</c> / <c>Force</c> 也走这条路）、回调内再转换排队补执行（<c>Fsm.cs:306-312</c>）、连锁转换上限 8
+    /// （<c>Fsm.cs:107</c> 的 <c>MaxChainedSwitches</c>，<c>Fsm.cs:327-334</c> 中止并报错）、
+    /// 未注册状态报 Error（<c>Fsm.cs:298-302</c>）、未注册触发器告警并忽略（<c>Fsm.cs:178-185</c>）、
+    /// OnTick / OnChange 异常隔离（<c>Fsm.cs:204-214</c> / <c>Fsm.cs:365-372</c>）。
+    /// ⛔ 本类不许再留第二份这五条语义。</item>
+    /// <item><see cref="IFsm.Reset"/>（<c>Fsm.cs:276</c>）清状态表 / 触发器表 / <c>Current</c> 与
+    /// "转换执行中 / 待补执行目标"标记（**不销毁实例**、**保留 OnChange 订阅**）—— 每回合复用同一棵树走它。</item>
     /// </list>
     ///
-    /// <para><b>因此本类的做法</b>：**实现引擎自己的 <see cref="IFsm"/> 接口**，并**逐条复刻引擎
-    /// <c>Runtime/Core/Fsm.cs</c> 的实现语义**（自环忽略 / 回调内再转换排队补执行 / 连锁转换上限 8 /
-    /// 未注册状态报 Error / 未注册触发器告警 / OnTick 异常隔离）——
-    /// 业务侧由此拿到"每个 bot 一份、语义与引擎一致"的状态机，而不是另造一套框架。
-    /// ⛔ 这不是行为树：本工程没有、也不需要行为树（全仓 <c>BehaviorTree|BehaviourTree|btree</c> = 0 命中）。</para>
+    /// <para><b>两条本类自己要保证的事</b>：</para>
+    /// <list type="bullet">
+    /// <item><b>初始状态</b>：引擎的 <see cref="IFsm"/> 注册完状态后 <see cref="IFsm.Current"/> 仍是
+    /// <c>null</c>（引擎自身用法 = 注册完再 <c>Force</c> 首状态，见 <c>Game.cs:896-910</c> 的
+    /// <c>InitFsm</c>）。本类把这步收进 <see cref="RegisterState"/>：首个注册的状态即为初始状态
+    /// （等价于旧实现那句 <c>if (_current == null) _current = state</c>，调用方 <c>CsBotBrain.InitFsm</c>
+    /// 只注册不 Force —— 换成引擎实例后必须补上这一步，否则 <c>Current</c> 一直是 null）。</item>
+    /// <item><b><see cref="TransitionCount"/></b>：引擎 <c>Fsm</c> **不提供**转换计数出口（只有
+    /// <see cref="IFsm.Current"/> 与 <see cref="IFsm.OnChange"/>）—— 这是裁决：由业务自己数。
+    /// 本类在构造时挂一个内部 <see cref="IFsm.OnChange"/> 计数器（每个真实状态切换恰好回调一次：
+    /// <c>Fsm.cs:347-357</c> 里 <c>ApplySwitch</c> 同状态直接 return、链式补执行也只对真实切换回调）。</item>
+    /// </list>
     ///
     /// <para><b>三层结构（语义 = 规格 <c>策划/策划案/CS1.6单机参考规格.md:117-131</c> 那条"行为树"）</b>：
     /// <code>
@@ -37,220 +50,79 @@ namespace Cs16.Module.Bot
     /// </summary>
     public sealed class CsBotFsm : IFsm
     {
-        /// <summary>一次外部转换调用允许的连锁转换上限（**逐值复刻** <c>Runtime/Core/Fsm.cs:77</c> 的
-        /// <c>MaxChainedSwitches = 8</c>）：回调链自激到此上限即报错停止，避免栈溢出。</summary>
-        private const int MaxChainedSwitches = 8;
-
-        private readonly Dictionary<string, StateInfo> _states = new Dictionary<string, StateInfo>(8);
-        private readonly Dictionary<string, string> _transitions = new Dictionary<string, string>(8);
-        private readonly List<Action<string, string>> _changeHandlers = new List<Action<string, string>>(1);
-        private readonly List<Action<string, string>> _changeBuffer = new List<Action<string, string>>(1);
-
-        private string _current;
-        private bool _switching;
-        private string _pendingState;
-        private bool _hasPending;
+        /// <summary>引擎提供的状态机实例（语义唯一真源；本类只转发 + 记初始状态 + 计数）。</summary>
+        private readonly IFsm _fsm;
 
         /// <summary>本状态机的名字（日志用；多实例时能分辨是哪一个 bot 的哪一层）。</summary>
         private readonly string _label;
 
-        /// <summary>累计转换次数（自检/日志用）。</summary>
+        /// <summary>累计转换次数（自检 / 日志用）。**引擎不提供该计数** ⇒ 本类自己数（见类注释）。</summary>
         public long TransitionCount { get; private set; }
 
         public CsBotFsm(string label)
         {
             _label = string.IsNullOrEmpty(label) ? "bot-fsm" : label;
+            _fsm = Game.NewFsm();
+
+            // 自己数转换次数：引擎 Fsm 只对外给 Current / OnChange（没有计数出口）。
+            // 传具名 lambda 常量？不需要 —— 这里只挂一次，且 OnChange 会挡住同一引用的重复注册。
+            _fsm.OnChange((from, to) => TransitionCount++);
         }
 
-        public string Current => _current;
+        /// <summary>本状态机的名字（日志用）。</summary>
+        public string Label => _label;
+
+        public string Current => _fsm.Current;
 
         public void RegisterState(string state, Action onEnter = null, Action<float> onTick = null, Action onExit = null)
         {
-            if (_states.ContainsKey(state))
-            {
-                Game.Logger?.Warn("Bot.Fsm",
-                    $"[{_label}] 状态 '{state}' 重复注册：旧 OnEnter/OnTick/OnExit 被整体替换（与引擎 Fsm.cs:109 同语义）");
-            }
+            _fsm.RegisterState(state, onEnter, onTick, onExit);
 
-            _states[state] = new StateInfo { OnEnter = onEnter, OnTick = onTick, OnExit = onExit };
-            if (_current == null) _current = state;   // 首个注册的状态即初始状态（引擎的 Game.InitFsm 也是先注册 Launching）
+            // 首个注册的状态即初始状态（等价旧实现；引擎侧需要显式 Force，见类注释与 Game.cs:896-910）。
+            // ⛔ 只做一次：Current 非 null 后不再 Force（重复 Force 会打日志/触发回调）。
+            if (_fsm.Current == null) _fsm.Force(state);
         }
 
         public void AddTransition(string trigger, string toState)
         {
-            _transitions[trigger] = toState;
+            _fsm.AddTransition(trigger, toState);
         }
 
         public void Transition(string toState)
         {
-            if (toState == _current) return;   // 自环忽略（引擎 Fsm.cs:139）
-            SwitchTo(toState);
+            _fsm.Transition(toState);
         }
 
         public void Trigger(string trigger)
         {
-            if (!_transitions.TryGetValue(trigger, out var toState))
-            {
-                // 与引擎 Fsm.cs:150 同语义：拼错触发器**告警并忽略**，不静默 return
-                Game.Logger?.Warn("Bot.Fsm",
-                    $"[{_label}] 未注册的触发器 '{trigger}' 被忽略；已注册：{string.Join(", ", _transitions.Keys)}");
-                return;
-            }
-
-            SwitchTo(toState);
+            _fsm.Trigger(trigger);
         }
 
         public void Force(string state)
         {
-            SwitchTo(state);
+            _fsm.Force(state);
         }
 
         public void Tick(float dt)
         {
-            if (_current == null || !_states.TryGetValue(_current, out var info)) return;
-
-            try
-            {
-                info.OnTick?.Invoke(dt);
-            }
-            catch (Exception ex)
-            {
-                // 与引擎 Fsm.cs:183 同语义：单个状态回调抛异常不许中断整个 Tick
-                Game.Logger?.Error("Bot.Fsm", $"[{_label}] OnTick 异常 [{_current}]：{ex.Message}", ex);
-            }
+            _fsm.Tick(dt);
         }
 
         public void OnChange(Action<string, string> handler)
         {
-            if (handler == null) return;
-            if (_changeHandlers.Contains(handler))
-            {
-                Game.Logger?.Warn("Bot.Fsm", $"[{_label}] 同一个 OnChange 回调重复注册被忽略");
-                return;
-            }
-
-            _changeHandlers.Add(handler);
+            _fsm.OnChange(handler);
         }
 
         public void OffChange(Action<string, string> handler)
         {
-            for (var i = _changeHandlers.Count - 1; i >= 0; i--)
-            {
-                if (_changeHandlers[i] == handler) _changeHandlers.RemoveAt(i);
-            }
+            _fsm.OffChange(handler);
         }
 
-        /// <summary>恢复到未初始化（回合开始/重开比赛时调用）：清空状态表，等调用方重新注册。</summary>
+        /// <summary>恢复到未初始化（回合开始/重开比赛时调用）：清空状态表与当前状态，等调用方重新注册。
+        /// 语义 = 引擎 <c>Fsm.Reset</c>（<c>Runtime/Core/Fsm.cs:276</c>：保留 OnChange 订阅、不销毁实例）。</summary>
         public void Reset()
         {
-            _states.Clear();
-            _transitions.Clear();
-            _current = null;
-            _switching = false;
-            _hasPending = false;
-            _pendingState = null;
-        }
-
-        /// <summary>
-        /// 状态转换唯一入口（Transition / Trigger / Force 与链式补执行共用）。
-        /// **逐条复刻**引擎 <c>Runtime/Core/Fsm.cs:229-277</c> 的 <c>SwitchTo</c>：未注册状态报 Error 并忽略、
-        /// 自环忽略、回调内再转换改为排队（最后意图为准）、连锁上限 8。
-        /// </summary>
-        private void SwitchTo(string toState)
-        {
-            if (toState != null && !_states.ContainsKey(toState))
-            {
-                Game.Logger?.Error("Bot.Fsm", $"[{_label}] 状态未注册：{toState}（转换被忽略）");
-                return;
-            }
-
-            if (toState == _current) return;
-
-            if (_switching)
-            {
-                _pendingState = toState;
-                _hasPending = true;
-                return;
-            }
-
-            _switching = true;
-            try
-            {
-                var target = toState;
-                var chained = 0;
-                while (true)
-                {
-                    ApplySwitch(target);
-                    TransitionCount++;
-
-                    if (!_hasPending) break;
-
-                    _hasPending = false;
-                    chained++;
-                    if (chained > MaxChainedSwitches)
-                    {
-                        Game.Logger?.Error("Bot.Fsm",
-                            $"[{_label}] 状态回调链超过 {MaxChainedSwitches} 次连锁转换，已中止" +
-                            $"（疑似回调自激）；待执行目标 '{_pendingState}' 被丢弃");
-                        break;
-                    }
-
-                    target = _pendingState;
-                }
-            }
-            finally
-            {
-                _switching = false;
-                _hasPending = false;
-                _pendingState = null;
-            }
-        }
-
-        private void ApplySwitch(string toState)
-        {
-            var from = _current;
-            if (toState == from) return;
-
-            _current = toState;
-            InvokeStateCallback(from, true);
-            InvokeStateCallback(toState, false);
-
-            _changeBuffer.Clear();
-            _changeBuffer.AddRange(_changeHandlers);
-            for (var i = 0; i < _changeBuffer.Count; i++)
-            {
-                try
-                {
-                    _changeBuffer[i]?.Invoke(from, toState);
-                }
-                catch (Exception ex)
-                {
-                    Game.Logger?.Error("Bot.Fsm", $"[{_label}] OnChange 回调异常：{ex.Message}", ex);
-                }
-            }
-        }
-
-        private void InvokeStateCallback(string state, bool onExit)
-        {
-            if (state == null || !_states.TryGetValue(state, out var info)) return;
-
-            try
-            {
-                if (onExit) info.OnExit?.Invoke();
-                else info.OnEnter?.Invoke();
-            }
-            catch (Exception ex)
-            {
-                Game.Logger?.Error("Bot.Fsm",
-                    $"[{_label}] {(onExit ? "OnExit" : "OnEnter")} 异常 [{state}]：{ex.Message}", ex);
-            }
-        }
-
-        private class StateInfo
-        {
-            public Action OnEnter;
-            public Action<float> OnTick;
-            public Action OnExit;
+            _fsm.Reset();
         }
     }
 

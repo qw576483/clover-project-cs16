@@ -274,6 +274,53 @@ def classify_anchor(ev):
     return (None, None)
 
 
+# R2 TIGHTENED 2026-09-24 (team-lead ruling): the set of extensions a `probe=<name>` value may be
+# completed with when the hit line names the probe WITHOUT a path (the real ledger's shape).  Kept
+# next to ART_EXT for the same reason: the extension list is part of "what counts as a judgement
+# asset", and that question must have ONE answer.
+PROBE_ASSET_EXT = ['.py', '.ps1', '.cs', '.sh', '.tsv', '.txt', '.md', '.json']
+PROBE_VAL_RE = re.compile(r'(?<![\w-])probe=(\S+)')
+
+
+def probe_asset(name):
+    """absolute path of the judgement asset a `probe=<name>` value names, or None.
+
+    Implements the R2 TIGHTENING (2026-09-24, team-lead ruling -- see `hit_quality`'s docstring
+    for WHY; in one line: `probe=` is the EVIDENCE POINTER and must be `ls`-hittable, otherwise a
+    hit line can carry a FABRICATED FINGERPRINT).
+    Generous about FORM, strict about EXISTENCE:
+      * a parenthesised qualifier `(...)` is a METHOD tag, not part of the asset name
+        (`probe=bwp-input-scan(static)` -> `tools/probes/bwp-input-scan.py`, the real ledger);
+      * a name with no extension is completed with PROBE_ASSET_EXT and resolved through the same
+        `resolve()` the anchor forms use (project root / plan dir / BASENAME_ROOTS);
+      * a bare name is matched by STEM over the probe roots, because a probe may legitimately be
+        cited without its path (same tolerance the bare-anchor form F3 already has).
+    Returns None when NOTHING on disk carries that name -- that is the only new red.
+    """
+    if not name:
+        return None
+    name = re.sub(r'\([^()]*\)\s*$', '', name.strip()).strip()
+    if not name:
+        return None
+    cands = [name]
+    if not os.path.splitext(name)[1]:
+        cands += [name + e for e in PROBE_ASSET_EXT]
+    for c in cands:
+        p = resolve(norm_path(c))
+        if p:
+            return p
+    want = set(os.path.basename(c).lower() for c in cands)
+    for root in [os.path.join(ROOT, 'tools', 'probes'), os.path.join(ROOT, '.ai-tmp', 'test')]:
+        if not os.path.isdir(root):
+            continue
+        for dp, dn, fn in os.walk(root):
+            dn[:] = [d for d in dn if d != '__pycache__']
+            for f in fn:
+                if f.lower() in want:
+                    return os.path.join(dp, f)
+    return None
+
+
 def hit_quality(dim, line):
     """-> (ok, why): does this hit line COUNT as a probe hit for this row?
 
@@ -295,6 +342,35 @@ def hit_quality(dim, line):
            the producer admitting it resolved nothing => NOT a hit.
            These rows are LEGITIMATELY RED until real probes exist; that red is the correct state,
            not a debt to be brought green by loosening this rule.
+        R2 TIGHTENED 2026-09-24 (team-lead ruling on the `coverage-hit` 103 forensics; this
+        NARROWS the rule, it does not widen it): the `probe=` VALUE must NAME something that is
+        ON DISK (`ls` can hit it).  WHY: `probe=` is the hit line's EVIDENCE POINTER -- it points
+        at the judgement asset that produced the measurement.  A value that names nothing (a plan
+        for an artifact that was never built, a probe that was never committed) is a FABRICATED
+        FINGERPRINT: the line then LOOKS sourced while the project side has zero product.  `run=`
+        is what describes HOW the probe ran / which case it exercised; `run=` is NOT the pointer.
+        Resolution is deliberately generous about FORM and strict about EXISTENCE: a parenthesised
+        qualifier is a METHOD tag, not part of the asset name (measured on the real ledger:
+        `probe=bwp-input-scan(static)` names `tools/probes/bwp-input-scan.py`), and a bare name is
+        matched against the probe roots by stem.  What is NOT tolerated is a name with NO file
+        behind it.  Failure reason `behaviour-probe-not-on-disk` (counted in `probe-not-on-disk`
+        AND in `behaviour-no-probe`, because such a row is by definition not hit).
+        REJECTED ALTERNATIVES (recorded so this does not get re-litigated):
+          * `probe=<name> run=contact-sheet-#F-04` where the contact sheet does not exist yet --
+            team-lead ruling: "probe= 是证据指针，必须指向盘上已存在的判据资产 ... 拿一个还没建的案
+            填 probe=，等于凭空生成指纹".  So a `run=` that NAMES a case can never rescue a
+            `probe=` that names nothing.  The override is one-way: `run=` may not substitute for
+            the pointer.
+          * requiring the value to be a full PATH -- rejected as a false red: the real ledger's
+            probe values are bare names, and demanding a path would turn legitimate probes red.
+        ⛔ CONSEQUENCE, MUST BE DONE IN THE SAME CHANGE: `tools/probes/gate-selftest.ps1:1225`
+        (section 16, the `coverage-hit` GOOD fixture) writes `probe=bw-a-fixture`, and no such file
+        exists -- measured 2026-09-24 with `find . -iname "*bw-a-fixture*"` (empty).  Under the
+        tightened rule that fixture goes red, i.e. the item's own POSITIVE CONTROL breaks and the
+        item would report a MISS that is this rule's fault, not the fixture's.  The fixture's
+        probe value must therefore be changed to a name that IS on disk.  A criterion whose own
+        two-way self-test is left red is indistinguishable from a broken criterion (see the
+        DECLARED-SHAPE CONVENTION note above: whenever a rule changes, its samples change with it).
         R3 enumeration-class rows (D1,D5) pass without `probe=`: the enumerator's OWN output is
            their legitimate ledger (`bytes=... lines=...` are measurements it really took).  (b)
            must not turn those 2674 rows red -- that would also be wrong, just in the other
@@ -321,7 +397,12 @@ def hit_quality(dim, line):
     if dim in BEH_DIMS:
         if unresolved:
             return (False, 'unresolved', lying)      # self-declared failure is never a hit
-        has_probe = re.search(r'(?<![\w-])probe=\S+', joined) is not None
+        has_probe = PROBE_VAL_RE.search(joined) is not None
+        # R2 TIGHTENED 2026-09-24: a `probe=` that names nothing on disk is NOT a pointer, so the
+        # row is not hit.  Checked BEFORE the has_meas test so the diagnosis says WHICH half failed
+        # (a missing measured value is a different defect from a fabricated probe name).
+        if has_probe and (probe_asset(PROBE_VAL_RE.search(joined).group(1)) is None):
+            return (False, 'behaviour-probe-not-on-disk', lying)
         has_meas = (re.search(r'(?<![\w-])measured=\S+', joined) is not None) or \
                    (re.search(r'(?<![\w-])run=\S+', joined) is not None)
         if not (has_probe and has_meas):
@@ -507,6 +588,7 @@ def main():
     echo_ids = set()
     echo_ex = []
     liar_ids = set()        # unresolved=1 on a line that HAS an anchor (the field is lying)
+    nodisk_ids = set()      # a `probe=` value that names NOTHING on disk (R2 tightening 2026-09-24)
     # --- AGGREGATE FIRST, JUDGE ONCE (caliber fix 2026-09-23) --------------------------------
     # TWO reasons, both load-bearing:
     #  (1) DOUBLE COUNT: the old loop added the row id to a bucket PER LINE.  A row can have
@@ -562,6 +644,8 @@ def main():
             saw_ok.add(rid)
         elif why == 'unresolved':
             saw_unres.add(rid)
+        elif why == 'behaviour-probe-not-on-disk':
+            nodisk_ids.add(rid)             # R2 tightening: the probe name names nothing on disk
     hit_ids = saw_ok
     unres_ids = saw_unres - saw_ok          # "its ONLY hits are unresolved" (unchanged at 5)
     # ROW-SET level, and computed over `rows` (NOT over hit_lines) on purpose: a behaviour row with
@@ -600,6 +684,12 @@ def main():
           '(the field is lying; unresolved=1 is legal ONLY on a "--" line)' % len(liar_ids))
     print('unresolved-only      = %d   row(s) whose only hits are unresolved=1 on a "--" line '
           '(the producer says it resolved nothing => not a hit)' % len(unres_ids))
+    # R2 TIGHTENED 2026-09-24 (observability only -- this line adds NO red condition: every row
+    # counted here is already inside `behaviour-no-probe`, whose counter the gate reads).
+    print('probe-not-on-disk    = %d   row(s) whose hit line writes probe=<name> where NOTHING on '
+          'disk carries that name (`ls` cannot hit it) -- `probe=` is the EVIDENCE POINTER, so a '
+          'value that names nothing is a FABRICATED FINGERPRINT and is not a hit; `run=` describes '
+          'HOW a probe ran and can never substitute for the pointer' % len(nodisk_ids))
 
     # ---- INVARIANTS (added with the aggregate-first fix 2026-09-23) ---------------------------
     # WHY: the numbers above are only meaningful if they PARTITION the behaviour class.  Two equal

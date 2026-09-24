@@ -106,8 +106,13 @@ namespace Cs16.EditorTools
             var level = new GameObject(Dust2Layout.LevelRoot);
             var visualRoot = NewChild(level, "Visual");
             var blockerRoot = NewChild(level, "Blockers");
-            var markerRoot = NewChild(level, "Markers");
             var lightingRoot = NewChild(level, "Lighting");
+
+            // ★ 标记点容器是**场景根对象**（⛔ 不是 Level 的子物体）：引擎烘焙器 MapBaker 按
+            //   `MapBakeOptions.MarkerRootName` 在**场景根对象列表**里按名字找它，找到后把该根下
+            //   每个子物体的"对象名 = 标记名、世界坐标 = 点位"写进 .bytes 的 FlagMarkers 段
+            //   （Engine: Editor/MapBake/MapBaker.cs:424-427 与 :418-457；参数见 Dust2Layout.MarkerRoot）。
+            var markerRoot = new GameObject(Dust2Layout.MarkerRoot);
 
             // ---- ① 真实几何（渲染 + MeshCollider）----
             BuildVisual(geo, visualRoot);
@@ -128,6 +133,9 @@ namespace Cs16.EditorTools
             // 否则 GroundMask 取到的是"只打 CsWorld"的掩码而世界在 Default ⇒ 贴地射线一个都打不到 ⇒
             // 角色一路下坠（另一种静默失效）。角色命中盒的层由 ActorView 在运行期按 bot/真人赋（同一套契约）。
             AssignWorldLayer(level);
+            // 标记点容器已不在 Level 子树下（见上），单独标一次 —— 它们没有碰撞体，
+            // 与 Level 同一层只是为了"层级语义一致"（原注释口径不变）。
+            AssignWorldLayer(markerRoot);
 
             if (!EditorSceneManager.SaveScene(scene, Dust2Layout.ScenePath))
             {
@@ -137,9 +145,11 @@ namespace Cs16.EditorTools
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
 
-            // ---- ⑤ 运行时标记表（从**场景里实际存在的标记对象名**导出，命名错了这里就会报）----
-            ExportMarkerResource(scene);
-
+            // ---- ⑤ 命名标记点**不再有独立旁路产物** ----
+            // 它们随 `de_dust2.bytes` 的 FlagMarkers 段一起导出：引擎烘焙器从**场景根对象**
+            // `Markers`（Dust2Layout.MarkerRoot）收集"对象名 = 标记名、世界坐标 = 点位"，
+            // 客户端用 `Game.Map.GetPoints(名字)` 取（见 MapBakeRunner 的 MarkerRootName）。
+            // ⛔ 旧的 `Resources/MapData/de_dust2_markers.bytes` 文本表与它的解析器已删除（本条替代它）。
             RegisterSceneInBuildSettings();
 
             Debug.Log($"{Tag} 完成：{Dust2Layout.ScenePath}｜几何 {geo.TotalTriangles} 三角面 / " +
@@ -151,21 +161,22 @@ namespace Cs16.EditorTools
         // ==================================================================
 
         /// <summary>
-        /// 把 <c>Level</c> 整棵子树标到 <see cref="PhysicsLayers.World"/>（层名由 <c>PhysicsLayerSetup</c> 建）。
+        /// 把 <paramref name="root"/> 整棵子树标到 <see cref="PhysicsLayers.World"/>（层名由 <c>PhysicsLayerSetup</c> 建）。
         /// <para>为什么整棵树都标：贴地/子弹/视线要打的是"世界几何"（Visual 的真实 MeshCollider +
-        /// Blockers 的格子盒）；Markers/Lighting 没有碰撞体，跟着一起标只是为了层级语义一致。</para>
+        /// Blockers 的格子盒）；Markers/Lighting 没有碰撞体，跟着一起标只是为了层级语义一致
+        /// （标记点容器是场景根对象，故单独调一次本方法）。</para>
         /// </summary>
-        private static void AssignWorldLayer(GameObject levelRoot)
+        private static void AssignWorldLayer(GameObject root)
         {
-            if (levelRoot == null)
+            if (root == null)
             {
-                Debug.LogError($"{Tag} Level 根为空 —— 物理层没标上（贴地射线会打不到世界几何）");
+                Debug.LogError($"{Tag} 物理层目标根为空 —— 物理层没标上（贴地射线会打不到世界几何）");
                 return;
             }
             var layer = PhysicsLayers.World;
-            var all = levelRoot.GetComponentsInChildren<Transform>(true);
+            var all = root.GetComponentsInChildren<Transform>(true);
             for (var i = 0; i < all.Length; i++) all[i].gameObject.layer = layer;
-            Debug.Log($"{Tag} 物理层：{Dust2Layout.LevelRoot} 下 {all.Length} 个对象 → " +
+            Debug.Log($"{Tag} 物理层：{root.name} 下 {all.Length} 个对象 → " +
                       $"「{PhysicsLayers.WorldName}」(层 {layer})");
         }
 
@@ -294,7 +305,7 @@ namespace Cs16.EditorTools
 
             // ★ 标记点先做「落阻挡格 ⇒ 吸附到最近可走格心」（见 SnapMarkerToWalkable 的长注释）：
             //   采样点落在箱子/台阶上时，运行时的 A*/CanStand 拿到的起点就是"站不住"的格。
-            //   这里改一次，**场景对象与运行时表**（ExportMarkerResource 走同一段逻辑）同时生效。
+            //   这里改一次就够：烘焙器直接读**场景对象的坐标**（不再有第二份"运行时表"要走同一段逻辑）。
             var blocked = geo.BuildBlockedBitmap();
 
             int total = 0, snapped = 0, notFound = 0;
@@ -560,158 +571,20 @@ namespace Cs16.EditorTools
         }
 
         // ==================================================================
-        //  运行时标记表（场景对象名 = 命名真源）
+        //  命名标记点（**随 .bytes 导出，⛔ 不再有独立旁路产物**）
         // ==================================================================
-
-        /// <summary>
-        /// 把场景 <c>Level/Markers</c> 下的标记对象导成运行时资源
-        /// （<c>Resources/MapData/de_dust2_markers.bytes</c>，文本：每行 <c>标记名 x y z</c>）。
-        ///
-        /// <para>为什么要有这份表：<c>CsMap.Points(marker)</c> 在运行时必须拿到点位，而 CloverMap
-        /// 位图里**没有名字**。表由场景对象名生成 ⇒ 名字写错 / 少摆标记，这里就会报 Error，
-        /// 不会出现"进图后机器人集体不动却没人知道为什么"。</para>
-        /// </summary>
-        public static void ExportMarkerResource(Scene scene)
-        {
-            var root = FindInScene(scene, Dust2Layout.MarkerRoot);
-            if (root == null)
-            {
-                Debug.LogError($"{Tag} 场景里没有 {Dust2Layout.MarkerRoot} → 无法导出运行时标记表");
-                return;
-            }
-
-            // ★ 与 DumpMarkers **同一段吸附逻辑**（本方法可能被 RefreshMarkerTable 在"未重建场景"时单独调用，
-            //   那时场景里的标记对象还是旧坐标 ⇒ 吸附必须在这里也做一遍，才能保证"运行时表 == 场景对象应有位置"）。
-            //   幂等：已经在可走格上的点 moved == 0，不会二次位移。
-            var geo = Dust2GeoData.Load(Dust2Layout.GeoFile);
-            var blocked = geo != null ? geo.BuildBlockedBitmap() : null;
-            if (geo == null)
-                Debug.LogWarning($"{Tag} 导出运行时标记表时读不到 {Dust2Layout.GeoFile} ⇒ " +
-                                 "**不做**「落阻挡格吸附」（表按场景对象原值导出，可能有标记点仍落在阻挡格上）");
-
-            var known = new HashSet<string>();
-            foreach (var req in Dust2Layout.RequiredMarkers) known.Add(req.Marker);
-
-            var order = new List<string>();
-            var table = new Dictionary<string, List<Vector3>>();
-            var unknown = new List<string>();
-            int snapped = 0, notFound = 0;
-
-            foreach (var t in root.GetComponentsInChildren<Transform>(true))
-            {
-                if (t == root.transform) continue;
-                string n = t.gameObject.name;
-                if (!known.Contains(n))
-                {
-                    if (!unknown.Contains(n)) unknown.Add(n);
-                    continue;
-                }
-                if (!table.TryGetValue(n, out var list))
-                {
-                    list = new List<Vector3>();
-                    table[n] = list;
-                    order.Add(n);
-                }
-
-                var src = t.position;
-                var pos = SnapMarkerToWalkable(geo, blocked, src, out var moved);
-                if (moved > 0)
-                {
-                    snapped++;
-                    Debug.LogWarning($"{Tag} 运行时表吸附：{n}[{list.Count}] ({src.x:F3},{src.y:F3},{src.z:F3}) → " +
-                                     $"({pos.x:F3},{pos.y:F3},{pos.z:F3})｜原格在阻挡盒内，已挪 {moved} 环到最近可走格心（只动 XZ）");
-                }
-                else if (moved < 0)
-                {
-                    notFound++;
-                    Debug.LogWarning($"{Tag} 运行时表吸附失败：{n}[{list.Count}] ({src.x:F3},{src.y:F3},{src.z:F3}) " +
-                                     $"在 {CsBotConst.PathSnapRadiusCells} 环内没有可走格（原因 {(moved == -2 ? "几何/位图不可用，无法判定" : "整片阻挡")}）" +
-                                     " ⇒ **保留原值**（不丢点；运行时会由 BotNavigator 跳过它）");
-                }
-                list.Add(pos);
-            }
-
-            if (unknown.Count > 0)
-                Debug.LogError($"{Tag} 标记对象名不在 CsMarkers 里（写错名字 = 消费方永远取不到）：" +
-                               string.Join("、", unknown));
-
-            var sb = new StringBuilder();
-            sb.Append("# clover cs16 markers v1 (marker x y z) —— 由 Dust2Builder.ExportMarkerResource 生成\n");
-            int total = 0;
-            foreach (var name in order)
-            {
-                foreach (var p in table[name])
-                {
-                    sb.Append(name).Append(' ')
-                      .Append(p.x.ToString("F3", CultureInfo.InvariantCulture)).Append(' ')
-                      .Append(p.y.ToString("F3", CultureInfo.InvariantCulture)).Append(' ')
-                      .Append(p.z.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
-                    total++;
-                }
-            }
-
-            var missing = new List<string>();
-            foreach (var req in Dust2Layout.RequiredMarkers)
-            {
-                if (!table.TryGetValue(req.Marker, out var list) || list.Count < req.MinCount)
-                    missing.Add($"{req.Marker}({((table.TryGetValue(req.Marker, out var l2) ? l2.Count : 0))}<{req.MinCount})");
-            }
-
-            string dir = Path.GetDirectoryName(Dust2Layout.MarkerResourceFile);
-            if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
-            File.WriteAllText(Dust2Layout.MarkerResourceFile, sb.ToString(), new UTF8Encoding(false));
-            AssetDatabase.ImportAsset(Dust2Layout.MarkerResourceFile);
-
-            if (missing.Count > 0)
-                Debug.LogError($"{Tag} 标记点数不足（机器人/包点/买枪区会失效）：{string.Join("、", missing)}");
-            Debug.Log($"{Tag} 运行时标记表：{Dust2Layout.MarkerResourceFile}（{order.Count} 类 / {total} 点）" +
-                      $"｜落阻挡格吸附 {snapped} 点 / 吸不到（保留原值）{notFound} 点（吸附半径 ≤ {CsBotConst.PathSnapRadiusCells} 格）");
-        }
-
-        /// <summary>
-        /// **重生成运行时标记表（不重建场景）**：读几何 → 打开已生成场景 → 重新走一遍
-        /// <see cref="ExportMarkerResource"/>。
-        ///
-        /// <para><b>为什么要有这条单独入口</b>：标记点的吸附口径改动只影响
-        /// <c>Resources/MapData/de_dust2_markers.bytes</c> 这一个产物；重跑整条生成链
-        /// （<see cref="GenerateFromCommandLine"/>）会连带重写全部网格 / 材质 / 贴图导入设置 —— 那是
-        /// 几百 MB 资产的无谓改写。这条入口只碰标记表，且**幂等**（吸附过的点在可走格上 ⇒ moved == 0，不再位移）。</para>
-        ///
-        /// <para>命令行：<c>unity command eval 'Cs16.EditorTools.Dust2Builder.RefreshMarkerTable();'</c></para>
-        /// </summary>
-        public static void RefreshMarkerTable()
-        {
-            var geo = Dust2GeoData.Load(Dust2Layout.GeoFile);
-            if (geo == null)
-            {
-                Debug.LogError($"{Tag} 重生成标记表中止：读不到 {Dust2Layout.GeoFile}");
-                return;
-            }
-
-            if (EditorApplication.isPlaying)
-            {
-                Debug.LogError($"{Tag} 正在 Play 模式：重生成标记表会切换场景，请先停止 Play 再执行");
-                return;
-            }
-
-            // 与 Generate() 同一个口径：**不许**弹「是否保存当前场景？」原生模态框（Pipeline 看不到、点不掉，
-            // 会把编辑器主线程连 AI 驱动一起卡死，见 skill P-5）。本入口只读场景里的标记对象，不改场景内容。
-            var activeScene = UnityEngine.SceneManagement.SceneManager.GetActiveScene();
-            if (!Application.isBatchMode && activeScene.isDirty)
-            {
-                Debug.LogWarning($"{Tag} 当前场景有未保存修改，重生成标记表会切换到 {Dust2Layout.ScenePath}" +
-                                 "（不做保存询问，以免卡死自动化驱动）");
-            }
-
-            if (!File.Exists(Dust2Layout.ScenePath))
-            {
-                Debug.LogError($"{Tag} 重生成标记表中止：场景不存在 {Dust2Layout.ScenePath}（先跑一次生成器）");
-                return;
-            }
-
-            var scene = EditorSceneManager.OpenScene(Dust2Layout.ScenePath, OpenSceneMode.Single);
-            ExportMarkerResource(scene);
-        }
+        // 本文件只负责把标记对象摆进场景根对象 `Markers`（见 Generate 里的 markerRoot 与
+        // Dust2Layout.MarkerRoot）；把它们写进 `de_dust2.bytes` 的 FlagMarkers 段由**引擎烘焙器**
+        // 完成 —— `MapBakeRunner` 把 `MapBakeOptions.MarkerRootName` 设成那个根对象名，
+        // 引擎 `Editor/MapBake/MapBaker.cs:418-457` 收集"对象名 = 标记名、世界坐标 = 点位"。
+        // 客户端取点：`Game.Map.GetPoints(名字)` / `TryGetPoint(名字, out pos)`（见 Module/Map/CsMap.cs）。
+        //
+        // ⛔ 已删除（本片 2026-09-24）：
+        //   · `ExportMarkerResource(Scene)` —— 它写 `Resources/MapData/de_dust2_markers.bytes`
+        //     文本表（每行 `标记名 x y z`），与引擎的标记点段**并存**等于同一份空间事实两份载体；
+        //   · `RefreshMarkerTable()` —— 只为重生成上面那张表而存在。
+        //   那两份的**吸附逻辑**（落阻挡格 ⇒ 挪到最近可走格心）仍在本文件里：
+        //   场景对象的坐标由 `DumpMarkers` 落定，烘焙器直接读场景，不再需要第二条导出路径。
 
         // ==================================================================
         //  贴图导入尺寸（非二次幂贴图**不许被缩放**）

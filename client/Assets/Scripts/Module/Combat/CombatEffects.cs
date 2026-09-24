@@ -9,6 +9,16 @@ namespace Cs16.Module.Combat
     /// <summary>
     /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
     ///
+    /// <para><b>2026-09-24 补（片 FX-MUZZLE，差异 #89）</b>：用户复查「枪口火焰没有效果」。
+    /// 根因**不是"没做"**（这条链一直在跑），是落点/尺寸两处口径错：
+    /// ① 落点旧值 `eye + dir*0.34 + right*0.13 + down*0.09` 把火焰放进**枪身内部**
+    ///    （视模型动画后包围盒 z 到 0.705）⇒ 被近端枪身几何深度盖掉；
+    /// ② 尺寸旧值 `Vector3.one * 0.30f` 把"米"当**倍率**写，64 px/PPU=100 的贴片实际只有 0.192 m。
+    /// 现在：落点走 <see cref="CsCombatTuning.MuzzleOffsetForward"/> 等三个**相机局部系**分量，
+    /// 尺寸走 <see cref="SpriteScaleForMeters"/>，并按武器选贴图（B51/M249 → 十字形
+    /// <see cref="ResPaths.FxMuzzleFlashCross"/>）。判据资产 = <c>tools/probes/probe-muzzleflash.cs</c>
+    /// + <c>.ai-tmp/drivers/bz-muzzle.sh</c>。</para>
+    ///
     /// <para><b>2026-09-23 补（片 FX-ALL，差异 #69 + #74）</b>：
     /// ① **弹痕从 1 张变 5 张**（原版 `decals.wad` 的 `{shot1..5`，5 张全解出、每次命中随机取一，
     /// 见 <see cref="PickBulletHole"/>）；
@@ -82,6 +92,8 @@ namespace Cs16.Module.Combat
 
         // ---- 贴图（异步加载；缺资源时只 Warn 一次并退化成"点光 + 无贴片"，⛔ 绝不退回黄色球）----
         private Sprite _sprFlash;
+        /// <summary>枪口火焰**十字形**变体（原版 `sprites/muzzleflash3.spr` 帧 0）—— 差异 #89：B51/M249 用它。</summary>
+        private Sprite _sprFlashCross;
         private Sprite _sprHole;
         private Sprite _sprSpark;
         /// <summary>弹痕**五变体**（原版 `decals.wad` 的 `{shot1..5`，key 表见 <see cref="ResPaths.FxBulletHoleKeys"/>）。</summary>
@@ -141,6 +153,7 @@ namespace Cs16.Module.Combat
             }
 
             res.LoadAsset<Sprite>(ResPaths.FxMuzzleFlash, s => _sprFlash = s);
+            res.LoadAsset<Sprite>(ResPaths.FxMuzzleFlashCross, s => _sprFlashCross = s);
             res.LoadAsset<Sprite>(ResPaths.FxBulletHole, s => _sprHole = s);
             res.LoadAsset<Sprite>(ResPaths.FxSpark, s => _sprSpark = s);
 
@@ -178,7 +191,11 @@ namespace Cs16.Module.Combat
             }
 
             // 只在"真的加载到的那几张"之间等概率取（缺资源时不会把概率压到空槽上）。
-            var pick = UnityEngine.Random.Range(0, have);
+            // 变体选择是**表现**（贴图好看与否，与命中判定无关），但**必须**走 CsRng：
+            // UnityEngine.Random 是全局静态流，这里每命中一次就抽一次，
+            // 用它会把玩法侧的散布/瞄准序列整体推位 ⇒ 同一局重放对不上。
+            // 单独一路 FxVariant ⇒ 表现抽多少次都不影响玩法流。
+            var pick = CsRng.Stream(CsRngStream.FxVariant).Next(0, have);
             for (var i = 0; i < pool.Length; i++)
             {
                 if (pool[i] == null) continue;
@@ -250,26 +267,47 @@ namespace Cs16.Module.Combat
 
 
         /// <summary>
-        /// 枪口火焰：**一张星形亮斑贴片**（面向相机）+ 一盏点光。
+        /// 枪口火焰：**一张原版亮斑贴片**（面向相机）+ 一盏点光。
         /// 点光是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
         /// ⛔ 不许退回"一颗球"（用户报的就是它）。
+        ///
+        /// <para><b>2026-09-24 修（差异 #89，用户报「枪口火焰没有效果」）</b>：</para>
+        /// <list type="number">
+        /// <item><b>落点</b>从"相机前方 0.34 m"改成 <see cref="CsCombatTuning.MuzzleOffsetForward"/>
+        /// （= 0.72 m）—— 旧值把火焰埋在**枪身内部**（视模型动画后包围盒 z 到 0.705），
+        /// 被近端枪身几何在深度测试里盖掉。三个分量都在 <c>CsCombatTuning</c> 里逐条带推导。</item>
+        /// <item><b>尺寸</b>改走 <see cref="SpriteScaleForMeters"/>：旧代码直接写
+        /// <c>Vector3.one * 0.30f</c>，而贴片 PPU=100、64 px 天生宽 0.64 世界单位 ⇒ 实际只画出
+        /// 0.192 m（小 3.1 倍）。同族坑见 <see cref="CsCombatTuning.DecalSize"/>。</item>
+        /// <item><b>逐武器贴图</b>：原版按武器选 <c>muzzleflash1..4</c>（B51/M249 是**十字形**，
+        /// 对应载体 <c>muzzleflash3.spr</c>）。映射出自引擎 <c>hw.dll</c>（不在盘）⇒ 只有
+        /// <c>m249 → 十字</c> 这一条有证据（用户实机 + 载体形态唯一匹配，见
+        /// <see cref="ResPaths.FxMuzzleFlashCross"/>），其余武器维持原贴图。</item>
+        /// </list>
         /// </summary>
-        public void MuzzleFlash(Vector3 eyePosition, Vector3 direction)
+        /// <param name="eyePosition">视点（相机世界坐标）</param>
+        /// <param name="viewRotation">相机世界旋转 —— 落点按**相机局部系**给（见 CsCombatTuning 的三个偏移），
+        /// ⛔ 不再用 world-up 叉乘算 right/up：那在俯仰接近 ±90° 时会退化。</param>
+        /// <param name="weaponId">当前武器 id（决定用哪张原版贴图；未知/为空走默认那张）</param>
+        public void MuzzleFlash(Vector3 eyePosition, Quaternion viewRotation, string weaponId)
         {
-            var dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
-            var right = Vector3.Cross(Vector3.up, dir).normalized;
-            // 落点 = 枪口稍前方（原版 viewmodel 的枪口就在这个位置附近：右下偏内）。
-            var pos = eyePosition + dir * 0.34f + right * 0.13f + Vector3.down * 0.09f;
+            var pos = eyePosition + viewRotation * new Vector3(
+                CsCombatTuning.MuzzleOffsetRight,
+                CsCombatTuning.MuzzleOffsetUp,
+                CsCombatTuning.MuzzleOffsetForward);
+
+            var sprite = PickMuzzleFlash(weaponId);
 
             var item = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.MuzzleFlashDuration);
             if (item == null) return;
 
             item.Tr.position = pos;
-            item.Sprite.sprite = _sprFlash;
-            item.Sprite.enabled = _sprFlash != null;
+            item.Sprite.sprite = sprite;
+            item.Sprite.enabled = sprite != null;
             item.Billboard = true;
-            item.Tr.localScale = Vector3.one * CsCombatTuning.MuzzleFlashSize;
-            if (_sprFlash == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
+            // ⛔ 必须按贴片自己的宽度反算倍率（见 SpriteScaleForMeters）：直接写米会小 1/PPU 倍。
+            item.Tr.localScale = Vector3.one * SpriteScaleForMeters(sprite, CsCombatTuning.MuzzleFlashSize);
+            if (sprite == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
 
             if (item.Light != null)
             {
@@ -279,6 +317,26 @@ namespace Cs16.Module.Combat
                 item.Light.range = 8f;
                 item.Light.intensity = 4f;
             }
+
+            _log.Info("shot.muzzle",
+                $"枪口火焰落在 {pos}（相机局部 {CsCombatTuning.MuzzleOffsetRight}/{CsCombatTuning.MuzzleOffsetUp}/" +
+                $"{CsCombatTuning.MuzzleOffsetForward} m）→ 武器 {weaponId ?? "-"} 贴图 " +
+                $"{(sprite != null ? sprite.name : "null")} 启用={item.Sprite.enabled} " +
+                $"世界宽={CsCombatTuning.MuzzleFlashSize:F3}m 缩放={item.Tr.localScale.x:F3}");
+        }
+
+        /// <summary>
+        /// 逐武器选枪口火焰贴图。原版按武器类别在**引擎**里选 <c>muzzleflash1..4</c>
+        /// （四张载体在盘、但选择表在 `hw.dll`，不在盘）⇒ 只有一条映射有证据：
+        /// <b>B51 / M249 用十字形</b>（用户 2026-09-24 实机记忆 + 四张载体里**只有**
+        /// <c>muzzleflash3.spr</c> 是十字/X 形，唯一匹配）。其余武器维持默认那张
+        /// （<see cref="ResPaths.FxMuzzleFlash"/> = <c>muzzleflash2.spr</c> 帧 0，旧版即如此）。
+        /// ⛔ 不许凭"哪张好看"给别的武器编映射 —— 缺口登记在 `策划/差异登记.tsv` #89。
+        /// </summary>
+        private Sprite PickMuzzleFlash(string weaponId)
+        {
+            if (weaponId == CsWeapons.M249 && _sprFlashCross != null) return _sprFlashCross;
+            return _sprFlash;
         }
 
         /// <summary>
@@ -306,11 +364,23 @@ namespace Cs16.Module.Combat
                 decal.Billboard = false;
 
                 // 可核对日志（字段是照着"看不见弹痕"的三个岔口设计的，见文件头）：
-                // 贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.075 ⇒ 尺寸口径坏了。
+                // 贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.128 ⇒ 尺寸口径坏了。
+                // 片FIX-4（2026-09-24，用户第 4 次报「弹痕还是没有」）：再补两个**可见性**字段 ——
+                // 「可见核心宽」= 整块 × 载体实测的核心占比（alpha≥160 只有 2~4 px / 256）——
+                // 并给出它在**当前这一发的实际距离**上的屏幕投影像素数。
+                // 判据 = 「可见核心投影 ≥ 6 px 且出现在画面内」，肉眼看不到时第一件事是核这一对数
+                // （不是去猜"贴没贴"）。距离用相机（弹痕的观察者恒是本地相机）。
+                var cam = Camera.main;
+                var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
+                var coreM = CsCombatTuning.DecalVisibleCoreMeters;
+                var corePx = dist > 0.0001f ? coreM * CsCombatTuning.ScreenPixelsPerMeter(dist) : 0f;
+
                 _log.Info("shot.decal",
                     $"弹痕落在 {point}（法线 {normal}）→ 贴图 {(sprite != null ? sprite.name : "null")}" +
                     $" 启用={decal.Sprite.enabled} 世界宽={CsCombatTuning.DecalSize:F3}m" +
-                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}");
+                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}" +
+                    $" 可见核心宽={coreM:F4}m（占比 {CsCombatTuning.DecalOpaqueCoreRatio:F2}）" +
+                    $" 本发距离={dist:F2}m ⇒ 核心投影 {corePx:F1}px");
             }
             else
             {

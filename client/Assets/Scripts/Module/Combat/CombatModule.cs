@@ -51,7 +51,9 @@ namespace Cs16.Module.Combat
         private bool _autoReload = true;
         private int _unmatchedShotCount;
 
-        /// <summary>切片K（D8）：上一次空仓击发音的时刻（秒，<c>Time.time</c>）——见 <see cref="CanFire"/>。</summary>
+        /// <summary>切片K（D8）：上一次空仓击发音的时刻（秒，<c>CsClock.Now</c>）——见 <see cref="CanFire"/>。
+        /// ⛔ 不许直接读 <c>Time.time</c>：它要跟模拟写下的绝对时间（<c>ReloadEndTime</c> 等）比，
+        /// 必须与模拟同一个时钟源（见 <c>Core/CsClock.cs</c> 的类注释）。</summary>
         private float _lastDryfireTime = -999f;
 
         // ---- 「上一把武器」（Q = 原版 lastinv）跟踪；纯本模块内部状态，不动任何契约 ----
@@ -208,7 +210,7 @@ namespace Cs16.Module.Combat
             else if (_autoReload && inputAllowed && def != null && def.Magazine > 0)
             {
                 var ammo = local.GetAmmo(def.Id);
-                if (ammo.inMag <= 0 && ammo.reserve > 0 && Time.time >= local.ReloadEndTime)
+                if (ammo.inMag <= 0 && ammo.reserve > 0 && CsClock.Now >= local.ReloadEndTime)
                 {
                     match.RequestReload();
                 }
@@ -282,7 +284,7 @@ namespace Cs16.Module.Combat
                 return false;
             }
 
-            var now = Time.time;
+            var now = CsClock.Now;
 
             // 射速限制：高频路径（自动武器每帧都会走到），静默 —— 模拟侧同样静默。
             if (now < local.NextFireTime) return false;
@@ -364,8 +366,8 @@ namespace Cs16.Module.Combat
         {
             if (local == null || !local.IsAlive) return 0f;
 
-            // 时间基准与模拟一致（CsMatch.Clock 默认 Time.time）。
-            var left = local.FlashEndTime - Time.time;
+            // 时间基准与模拟一致：两边都经 Core/CsClock（CsMatch.Clock 的默认值 = () => CsClock.Now）。
+            var left = local.FlashEndTime - CsClock.Now;
             if (left <= 0f) return 0f;
 
             return Mathf.Clamp01(left / CsConst.GrenadeFlashDuration);
@@ -505,7 +507,10 @@ namespace Cs16.Module.Combat
             }
             else if (def.Class != CsWeaponClass.Knife && def.Class != CsWeaponClass.Bomb)
             {
-                _fx.MuzzleFlash(eye, aim);
+                // 落点按**相机局部系**给（CsCombatTuning 的三个偏移，从视模型实测包围盒反推）
+                // ⇒ 这里传相机旋转而不是 aim：world-up 叉乘算 right 在俯仰 ±90° 会退化。
+                // weaponId 决定用哪张原版贴图（B51/M249 = 十字形，见 CombatEffects.PickMuzzleFlash）。
+                _fx.MuzzleFlash(eye, _view.transform.rotation, weaponId);
             }
 
             // ---- 刀 / 手雷 / C4：模拟内部已直接结算，这里绝不再射线 ----

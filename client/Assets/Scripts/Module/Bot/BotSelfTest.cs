@@ -33,6 +33,17 @@ namespace Cs16.Module.Bot
         private const float SecondsPerTier = 45f;
         private const float MoveSampleInterval = 0.5f;
 
+        /// <summary>
+        /// 离线自检的**固定随机种子**（片 sink4-cs16-random）。
+        ///
+        /// <para><b>为什么必须固定</b>：本自检的判据是"三档的命中率 / 击杀 / 位移 / 下包数"这类数字 ——
+        /// 若每次跑都换一条随机序列，同一份代码两次跑出的数字就会抖动，判据本身不再可信
+        /// （"这次刚好过阈值"无法复现）。固定种子 ⇒ 数字可复现、能拿两次输出做 diff。</para>
+        ///
+        /// <para>值本身没有出处（它不是原版数值，只是自检用的常量）；换它等于换一条受控序列。</para>
+        /// </summary>
+        private const int SelfTestSeed = 20260924;
+
         // ==================================================================
         //  ① 三档 4v4 快进对比
         // ==================================================================
@@ -59,9 +70,136 @@ namespace Cs16.Module.Bot
             ReportThreeTiers(results);
         }
 
-        private sealed class TierResult
+        // ==================================================================
+        //  ② 战术分工表（差异 #67，用户 2026-09-24：「机器人 ai 没有分工吗？」）
+        // ==================================================================
+        /// <summary>
+        /// 断言 <see cref="CsBotRoles"/> 这张纯函数表**真的分了工**，并把整张表打出来。
+        ///
+        /// <para>四条断言（每条都对应一个"没做到就算没分工"的可证伪命题）：</para>
+        /// <list type="number">
+        /// <item><b>队内不同角色</b>：同队 4 个槽位里**至少出现 2 种**角色（全一样 = 没分工）；</item>
+        /// <item><b>幂等/确定性</b>：同一个 <c>(阵营, id)</c> 连算 3 次结果一致，且 <c>id</c> 与 <c>id + 4k</c> 同角色
+        /// （否则"重开一局换一个人突破"，判据不可复现）；</item>
+        /// <item><b>倍率互不相同</b>：四个角色的守点倍率两两不同（否则"分工"在唯一可观测的量上是空的）；</item>
+        /// <item><b>守点角色唯一</b>：<see cref="CsBotRoles.StaysOnObjective"/> 恰好在守点角色上为 true
+        /// （它会把"守够就换目标"整段短路掉，多一个角色为 true 就等于多一队人杵在原地）。</item>
+        /// </list>
+        /// </summary>
+        [MenuItem("Clover/自检/机器人 战术分工表（差异 #67）")]
+        public static void RunRoleTable()
         {
-            public CsBotDifficulty Difficulty;
+            var failures = 0;
+
+            var all = new List<CsBotRole>();
+            foreach (var role in (CsBotRole[])Enum.GetValues(typeof(CsBotRole)))
+                if (!all.Contains(role)) all.Add(role);
+
+            // ---- 断言 ①②：队内至少两种角色 + 确定性 ----
+            foreach (var team in new[] { CsTeam.T, CsTeam.CT })
+            {
+                var seen = new List<CsBotRole>();
+                var line = new List<string>();
+                for (var slot = 0; slot < CsBotRoles.Slots; slot++)
+                {
+                    var role = CsBotRoles.For(team, slot);
+                    if (!seen.Contains(role)) seen.Add(role);
+                    line.Add($"{slot}→{CsBotRoles.Label(role)}");
+
+                    for (var k = 0; k < 3; k++)
+                    {
+                        if (CsBotRoles.For(team, slot) != role)
+                        {
+                            Emit($"[#67][角色] 失败：{team} 槽位 {slot} 连算不一致（第 {k + 2} 次不同）", true);
+                            failures++;
+                        }
+                    }
+
+                    if (CsBotRoles.For(team, slot + CsBotRoles.Slots * 7) != role)
+                    {
+                        Emit($"[#67][角色] 失败：{team} 槽位 {slot} 与 slot+{CsBotRoles.Slots * 7} 不同角色（不满足周期）", true);
+                        failures++;
+                    }
+                }
+
+                Emit($"[#67][角色] {team} 槽位表：{string.Join(" ", line.ToArray())}（队内角色种数={seen.Count}）");
+
+                if (seen.Count < 2)
+                {
+                    Emit($"[#67][角色] 失败：{team} 全队只有一个角色（{CsBotRoles.Label(seen[0])}）= 等于没分工", true);
+                    failures++;
+                }
+            }
+
+            // ---- 断言 ③：四个角色的守点倍率两两不同 ----
+            for (var i = 0; i < all.Count; i++)
+            {
+                Emit($"[#67][角色] {CsBotRoles.Label(all[i])}: 守点×{CsBotRoles.HoldScale(all[i]):F2} " +
+                     $"交火×{CsBotRoles.RangeScale(all[i]):F2} 守到底={CsBotRoles.StaysOnObjective(all[i])}");
+
+                for (var j = i + 1; j < all.Count; j++)
+                {
+                    if (Math.Abs(CsBotRoles.HoldScale(all[i]) - CsBotRoles.HoldScale(all[j])) < 0.0001f)
+                    {
+                        Emit($"[#67][角色] 失败：{CsBotRoles.Label(all[i])} 与 {CsBotRoles.Label(all[j])} " +
+                             "的守点倍率相同 ⇒ 这两个角色在「待多久」上不可区分", true);
+                        failures++;
+                    }
+                }
+            }
+
+            // ---- 断言 ④：守点角色唯一 ----
+            var stayers = 0;
+            for (var i = 0; i < all.Count; i++)
+                if (CsBotRoles.StaysOnObjective(all[i])) stayers++;
+
+            if (stayers != 1)
+            {
+                Emit($"[#67][角色] 失败：有 {stayers} 个角色会「守到底」（应当恰好 1 个）—— " +
+                     "多了会让多队人杵在包点不动，少了则没人守点", true);
+                failures++;
+            }
+
+            // ---- 具体一条（用户能直接看懂的那条）：Normal 档下 4 个角色的实际守点秒数 ----
+            var normal = CsBotProfile.For(CsBotDifficulty.Normal);
+            var baseline = Mathf.Max(CsBotConst.CampHoldSeconds, normal.RepathInterval * CsBotConst.ObjectiveHoldScale);
+            var secs = new List<string>();
+            for (var i = 0; i < all.Count; i++)
+                secs.Add($"{CsBotRoles.Label(all[i])}={baseline * CsBotRoles.HoldScale(all[i]):F1}s");
+            Emit($"[#67][角色] Normal 档守点时长实测：{string.Join(" ", secs.ToArray())}（基准 {baseline:F1}s，" +
+                 $"乘数表见 CsBotRoles.HoldScale）");
+
+            Emit(failures == 0
+                ? "[#67][角色] RESULT: PASS（队内有分工 + 确定性 + 倍率互异 + 守点角色唯一）"
+                : $"[#67][角色] RESULT: FAIL（{failures} 条断言不成立）", failures != 0);
+        }
+
+        // ==================================================================
+        //  ③ 路线计划表（差异 #67 的后半 —— 用户第三次投诉「路线都是相同的」）
+        // ==================================================================
+        /// <summary>
+        /// 断言 <see cref="CsBotPlans"/> 这张**4 槽位路线计划表**真的把同队 4 只 bot 岔开了，
+        /// 并且**判据本身可失败**（同一次跑正控 + 负控）。
+        ///
+        /// <para>为什么光有角色表不够：上一轮交付的是"角色名不同 + 守点秒数不同"（角色探针 PASS），
+        /// 而用户看到的仍是"每个机器人的操作、路线都是相同的" —— 角色差异**用户看不见**，
+        /// 路线的岔开才是看得见的那一半。</para>
+        /// </summary>
+        [MenuItem("Clover/自检/机器人 路线计划表（差异 #67 之路线）")]
+        public static void RunRoutePlanTable()
+        {
+            var report = CsBotPlans.SelfCheckWithNegativeControl();
+            Emit(report, report.Contains("RESULT-PLAN-NEGCTL: FAIL"));
+        }
+
+        /// <summary>给 <c>unity command eval_file</c> 用的**返回字符串**版本（同一次跑正控 + 负控）。</summary>
+        public static string RoutePlanReport()
+        {
+            return CsBotPlans.SelfCheckWithNegativeControl();
+        }
+
+        private sealed class TierResult
+        {            public CsBotDifficulty Difficulty;
             public int Shots;
             public int Hits;
             public int Kills;
@@ -81,6 +219,11 @@ namespace Cs16.Module.Bot
 
         private static TierResult RunTier(CsBotDifficulty difficulty)
         {
+            // 先把本档模拟的随机源钉在固定种子上（见 SelfTestSeed）：
+            // 下面的 match.Start(cfg) 里 CsRng.BeginMatch() 会消费这个注入值，
+            // 于是整档（出生朝向/C4 指派/瞄准误差/连发节奏/散布/买枪掷）都来自同一条受控序列。
+            CsRng.InjectSeed(SelfTestSeed);
+
             var result = new TierResult { Difficulty = difficulty };
 
             var spawned = new List<GameObject>();
@@ -518,7 +661,10 @@ namespace Cs16.Module.Bot
             {
                 var pts = Points(marker);
                 if (pts.Length == 0) { point = default; return false; }
-                point = pts[UnityEngine.Random.Range(0, pts.Length)];
+                // 自检自用（StubMap）：走 CsRng 的 MapMarkerPick 流。
+                // 这里是**自检**路径 ⇒ 依赖 RunTier 入口注入的固定种子（SelfTestSeed），
+                // 所以"哪一次调用拿到哪个点"每次都一样（自检数字才能两次 diff）。
+                point = pts[CsRng.Stream(CsRngStream.MapMarkerPick).Next(0, pts.Length)];
                 return true;
             }
         }

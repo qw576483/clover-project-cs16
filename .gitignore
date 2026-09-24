@@ -39,3 +39,9 @@ client/Packages/com.clover.unity-engine/
 __pycache__/
 *.pyc
 *.bak
+
+# ★ 历史取证目录已删除（skill §1.8 第 6 条：证据图只许落 .ai-tmp/screenshots/）
+#   2026-09-24 sink4-hygiene：client/Assets/_shots/（空目录）+ _shots.meta + 孤儿 Temp.meta 已清掉；
+#   原先只拦了 Screenshots/，这里补上 _shots，拦住它被误建 / 误提交回来
+client/Assets/_shots/
+client/Assets/_shots.meta
