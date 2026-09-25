@@ -126,6 +126,8 @@ namespace Cs16.Module.Bot
         private float _grenadeSwitchDeadline;
         /// <summary>投完一颗雷后是否还要主动换回主武器（同类雷还有剩余时模拟不会自动换，见 <see cref="TryThrowGrenade"/>）。</summary>
         private bool _grenadeReturnToWeapon;
+        /// <summary>"为什么没投掷"诊断已打过的 (回合, 原因) 组合（每回合每类原因最多一条，防刷屏）。</summary>
+        private readonly HashSet<string> _grenadeDiagKeys = new HashSet<string>();
 
         // ---- 守点 ----
         private float _campMoveUntil;
@@ -443,6 +445,7 @@ namespace Cs16.Module.Bot
             _grenadeThrows = 0;
             _nextGrenadeAt = 0f;
             _grenadeReturnToWeapon = false;
+            _grenadeDiagKeys.Clear();
             ClearGrenadeAttempt();
             _strafeFlipAt = 0f;
             _engageEvent = false;
@@ -1870,6 +1873,14 @@ namespace Cs16.Module.Bot
             // 正在下包/拆包时不许打断（一移动进度就清零，与模拟判定一致）；投满上限也不再投。
             if (self.UseProgress >= 0f || _grenadeThrows >= CsBotConst.GrenadeMaxPerRound)
             {
+                if (self.UseProgress >= 0f)
+                {
+                    NadeDiag(self, "在下包拆包", $"正在下包/拆包（进度 {self.UseProgress:P0}），本轮投掷让位");
+                }
+                else
+                {
+                    NadeDiag(self, "已投满", $"本回合已投 {_grenadeThrows} 颗（上限 {CsBotConst.GrenadeMaxPerRound}）");
+                }
                 ClearGrenadeAttempt();
                 return false;
             }
@@ -1882,6 +1893,7 @@ namespace Cs16.Module.Bot
                 {
                     RateWarn("nade.switch.timeout",
                         $"{_name} 切到 {_grenadePendingId} 超过 {CsBotConst.GrenadeSwitchTimeout:F1}s 仍未换手 → 放弃这次投掷");
+                    NadeDiag(self, "切雷超时", $"切到 {_grenadePendingId} 超过 {CsBotConst.GrenadeSwitchTimeout:F1}s 仍未换手");
                     _nextGrenadeAt = now + CsBotConst.GrenadeThrowSpacing;
                     ClearGrenadeAttempt();
                     return false;
@@ -1903,6 +1915,17 @@ namespace Cs16.Module.Bot
             // （CsInventory.TryDischarge 的 `now < a.SwitchEndTime`），所以这里要等换手完成。
             if (now < self.SwitchEndTime || AimAngle(self, _grenadeAim) > CsBotConst.GrenadeAimGateDegrees)
             {
+                // 等不出来的情况必须留痕并放弃：否则机器人会抱着手雷一直"等视角"，既不开枪也不移动。
+                if (now > _grenadeSwitchDeadline)
+                {
+                    NadeDiag(self, "视角未收敛",
+                        $"切到 {_grenadePendingId} 后视角 {AimAngle(self, _grenadeAim):F1}° 未收敛" +
+                        $"（门限 {CsBotConst.GrenadeAimGateDegrees:F0}°）→ 放弃本次投掷");
+                    _nextGrenadeAt = now + CsBotConst.GrenadeThrowSpacing;
+                    ClearGrenadeAttempt();
+                    return false;
+                }
+
                 intent.Fire = false;
                 return true;
             }
@@ -1926,7 +1949,11 @@ namespace Cs16.Module.Bot
         /// <summary>选出这一颗要投的雷与瞄点（成功即进入"切雷"阶段；理由写进日志）。</summary>
         private bool TryBeginGrenade(CsActor self, float now)
         {
-            if (now < _nextGrenadeAt) return false;
+            if (now < _nextGrenadeAt)
+            {
+                NadeDiag(self, "投掷间隔中", $"距下次允许投掷还有 {_nextGrenadeAt - now:F1}s");
+                return false;
+            }
 
             var prefs = CsBotRoles.PreferredGrenades(_role);
             var id = (string)null;
@@ -1934,7 +1961,11 @@ namespace Cs16.Module.Bot
             {
                 if (CountGrenade(self, prefs[i]) > 0) { id = prefs[i]; break; }
             }
-            if (id == null) return false;                        // 手上没有偏好表里的投掷物
+            if (id == null)
+            {
+                NadeDiag(self, "没有雷", $"手上没有偏好表里的投掷物（偏好 {CsBotRoles.GrenadeText(_role)}）");
+                return false;
+            }
 
             if (!TryPickGrenadeTarget(self, id, out var point, out var why)) return false;
 
@@ -1985,6 +2016,10 @@ namespace Cs16.Module.Bot
                 if (TryAimWithinReach(self, raw, min, baseWhy, out point, out why)) return true;
             }
 
+            NadeDiag(self, "没有目标",
+                $"没有投得出手的目标：敌人目标={(_targetId != 0 ? _targetId.ToString() : "无")}，" +
+                $"离最近包点标记 {siteDist:F1}m，本轮目标点=" +
+                (_goalValid ? Vector3.Distance(self.Position, _goalPos).ToString("F1") + "m" : "无"));
             return false;
         }
 
@@ -2037,6 +2072,17 @@ namespace Cs16.Module.Bot
         private static int CountGrenade(CsActor self, string grenadeId)
         {
             return self.Ammo.TryGetValue(grenadeId, out var v) ? v.inMag : 0;
+        }
+
+        /// <summary>
+        /// 投掷诊断：说明"为什么没投出去"。**按 (回合, 原因) 去重**（每回合每类原因最多一条）——
+        /// 只按回合去重会让"先因为没雷报一次"把后面真正的原因（切雷超时 / 视角没收敛 / 没有目标）永久吞掉。
+        /// ⛔ 不许静默：没这条就无法区分"没实现"与"条件没满足"。
+        /// </summary>
+        private void NadeDiag(CsActor self, string key, string message)
+        {
+            if (!_grenadeDiagKeys.Add(_match.RoundNumber + ":" + key)) return;
+            Game.Logger.Info(Tag, $"{_name}({self.Team}/{CsBotRoles.Label(_role)}) 未投掷[{key}]：{message}");
         }
 
         /// <summary>清掉"进行中的投掷"（不影响本回合已投颗数与下一次允许时刻）。</summary>

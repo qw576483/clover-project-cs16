@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Bot;   // 角色偏好主武器（CsBotRoles / CsBotPlans）
 using Cs16.Module.Map;
 using UnityEngine;
 
@@ -2557,20 +2558,24 @@ namespace Cs16.Module.Match
                 var team = a.Team;
                 if (team != CsTeam.T && team != CsTeam.CT) continue;
 
-                // 主武器：按档位挑冲锋枪/步枪里买得起的一把。
+                // 主武器：**先按角色偏好**（CsBotRoles.PreferredPrimary 的优先级里第一把"买得起 + 不超本档上限"的），
+                //   取不到才回落到原来的档位方案（冲锋枪 / 步枪里最便宜的那把，贵档取最贵的）。
                 if (string.IsNullOrEmpty(a.PrimaryWeapon))
                 {
-                    var cls = profile.BuyBudgetTier <= 0 ? CsWeaponClass.SMG : CsWeaponClass.Rifle;
-                    var pool = CsWeapons.BuyableByClass(cls, team);
-                    CsWeaponDef chosen = null;
-                    for (var k = 0; k < pool.Count; k++)
+                    var chosen = PickRolePreferredPrimary(a, team, profile.BuyBudgetTier);
+                    if (chosen == null)
                     {
-                        var d = pool[k];
-                        if (d.Price > a.Money) continue;
-                        if (chosen == null) { chosen = d; continue; }
-                        var cheaper = d.Price < chosen.Price;
-                        var better = d.Price > chosen.Price;
-                        if (profile.BuyBudgetTier >= 2 ? better : cheaper) chosen = d;
+                        var cls = profile.BuyBudgetTier <= 0 ? CsWeaponClass.SMG : CsWeaponClass.Rifle;
+                        var pool = CsWeapons.BuyableByClass(cls, team);
+                        for (var k = 0; k < pool.Count; k++)
+                        {
+                            var d = pool[k];
+                            if (d.Price > a.Money) continue;
+                            if (chosen == null) { chosen = d; continue; }
+                            var cheaper = d.Price < chosen.Price;
+                            var better = d.Price > chosen.Price;
+                            if (profile.BuyBudgetTier >= 2 ? better : cheaper) chosen = d;
+                        }
                     }
                     if (chosen != null)
                     {
@@ -2607,6 +2612,30 @@ namespace Cs16.Module.Match
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// 机器人**角色偏好**的主武器：<see cref="CsBotRoles.PreferredPrimary"/> 的优先级顺序里第一把
+        /// "买得起且价格不超过本档上限（<see cref="CsBotRoles.PrimaryPriceCap"/>）"的；取不到返回 null
+        /// （调用方回落到原来的档位方案）。
+        ///
+        /// <para>角色用 <c>(阵营, 队内序号)</c> 这个**纯函数**取（<see cref="CsBotPlans.TeamLocalOrdinal"/> +
+        /// <see cref="CsBotRoles.For"/>），与 <c>CsBotBrain</c> 走的是同一条口径 —— 否则"日志里写的角色"
+        /// 与"实际买到的枪"会对不上。</para>
+        /// </summary>
+        private CsWeaponDef PickRolePreferredPrimary(CsActor a, CsTeam team, int tier)
+        {
+            var ordinal = CsBotPlans.TeamLocalOrdinal(_actors, team, a.Id);
+            var prefs = CsBotRoles.PreferredPrimary(CsBotRoles.For(team, ordinal), team);
+            var cap = CsBotRoles.PrimaryPriceCap(tier);
+            for (var i = 0; i < prefs.Length; i++)
+            {
+                var d = CsWeapons.Get(prefs[i]);
+                if (d == null) continue;
+                if (d.Price > a.Money || d.Price > cap) continue;
+                return d;
+            }
+            return null;
         }
 
         private void ShiftAbsoluteTimes(float delta)
