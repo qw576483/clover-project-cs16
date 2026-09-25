@@ -86,6 +86,10 @@ namespace Cs16.Module.Bot
         private float _nextRepathAt;
         /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
         private float _nextPathFailLogAt;
+        /// <summary>本 bot 求路径成功的次数（写进 <see cref="PathLog"/> 那行，是"这条移动由 A* 给出"的计数）。</summary>
+        private int _replanCount;
+        /// <summary><see cref="PathLog"/> 的时间闸：路径每 <see cref="CsBotConst.PathReplanInterval"/> 秒可能重求一次，逐次打会刷屏。</summary>
+        private float _nextPathLogAt;
 
         /// <summary>
         /// 8 邻接的格偏移（与引擎 <see cref="AStar"/> 的邻接一致：4 正 + 4 斜）。只用于
@@ -114,6 +118,17 @@ namespace Cs16.Module.Bot
         private IMapData _heightCachedMap;
         /// <summary>"高度层这次为何没生效"的时间闸（同原因 <see cref="CsBotConst.StuckWarnCooldown"/> 内只报一条）。</summary>
         private float _nextHeightLogAt;
+
+        /// <summary>
+        /// <see cref="IsTrapCell"/> 的备忘（键 = 格；值 = 该格所在的位图连通分量是否 ≤
+        /// <see cref="CsBotConst.TrapComponentCells"/>）。格心查询是热路径（每帧 ≤ 24 个方向候选），
+        /// 而分量格数只需数一次。
+        /// </summary>
+        private readonly Dictionary<Vector2Int, bool> _trapCellCache = new Dictionary<Vector2Int, bool>(256);
+        /// <summary><see cref="_trapCellCache"/> 的条目上限（**内存护栏**，不是玩法阈值）：满了整表清空。</summary>
+        private const int TrapCellCacheCap = 4096;
+        /// <summary><see cref="_trapCellCache"/> 对应的地图（换图 ⇒ 缓存作废）。</summary>
+        private IMapData _trapCachedMap;
 
         /// <summary>
         /// **整格口径**的多点取样偏移（**格边长的比例**，升序；`0f` = 格心）。
@@ -759,7 +774,26 @@ namespace Cs16.Module.Bot
             _pathIndex = 0;
             _pathGoalCell = to;
             ClearPathFail();
+            PathLog(from, to, path);
             return true;
+        }
+
+        /// <summary>
+        /// 记一行"这条移动是引擎 A* 给出的路径"（按 <see cref="CsBotConst.PathLogInterval"/> 降频）：
+        /// 起点格 / 终点格 / 拉直后的节点数 / 首个拐点 / 本 bot 累计重求次数。
+        /// 它不是玩法逻辑，只回答"寻路层到底有没有在给方向"。
+        /// </summary>
+        private void PathLog(Vector2Int from, Vector2Int to, List<Vector2Int> path)
+        {
+            _replanCount++;
+            if (Time.time < _nextPathLogAt) return;
+            _nextPathLogAt = Time.time + CsBotConst.PathLogInterval;
+
+            var first = path.Count > 0 ? CellCenter(path[0]) : Vector3.zero;
+            Game.Logger.Info(Tag,
+                $"[A*] {_ownerName} 路径已求：起点格 {from} → 终点格 {to}，节点 {path.Count} 个" +
+                $"（引擎 AStar.FindSmoothed，含视线拉直），首个拐点 ({first.x:F1},{first.z:F1})，" +
+                $"路线 '{_marker ?? "无"}'，本 bot 累计重求 {_replanCount} 次");
         }
 
         /// <summary>
@@ -900,7 +934,7 @@ namespace Cs16.Module.Bot
         /// ⇒ 机器人贴面磨：运行时探针 1592 行 / 离线射线 754 行，全部是"落脚面高于脚底"，
         /// 其中 `wantTopDy`（命中面 y − 脚底 y）min 0.823 / p50 2.297 / max 3.193，
         /// 而 `CsConst.StepUpHeight` = 0.45 —— **100% 超过一个台阶**。复算脚本见
-        /// <c>tools/probes/height-consistent-predict.py</c>。</para>
+        /// </para>
         ///
         /// <para><b>判据出处（不另立定义、不新增阈值）</b>：与产品自己的台阶判据同源同式 ——
         /// <c>Module/Map/CsMap.cs:514-523</c> 的 <c>TryStepUp</c>：
@@ -1370,6 +1404,92 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
+        /// 沿 <paramref name="dir"/> 迈出**一格**是不是踏进"位图孤立格区"（判据 = <see cref="IsTrapCell"/>）。
+        ///
+        /// <para><b>只在"自己站在非孤立格区里"时判</b>：已经在孤立格区里的机器人若也被本层拦住，
+        /// 就连走回主分量的机会都没有（所以那时放行，让逃逸逻辑与物理去决定怎么出去）。</para>
+        ///
+        /// <para><b>为什么这一层必须存在</b>：位图是单层 2D 而几何是多层，位图说"可走"的地方在物理上可能是
+        /// 没有落脚面的缝（<see cref="CsBotConst.TrapComponentCells"/> 说明的小分量）。走进去以后
+        /// <c>CanReach</c> 对每一个候选目标都返回 false ⇒ 目标选择整条链（换路线 / 巡逻 / 出生点）全失败 ⇒
+        /// 机器人剩下整回合原地换向。"别走进去"是这一层唯一能做的事。</para>
+        /// </summary>
+        private bool StepsIntoTrap(Vector3 position, Vector3 dir)
+        {
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) return false;
+
+            var mine = CellOf(map, position);
+            if (IsTrapCell(mine)) return false;
+            return IsTrapCell(CellOf(map, position + dir * map.CellSize));
+        }
+
+        /// <summary>
+        /// 这一格所在位图连通分量是不是"孤立格区"（格数 ≤ <see cref="CsBotConst.TrapComponentCells"/>）。
+        /// 不可走的格返回 false —— 那种格由位图本身拦住，不属于本层。
+        /// </summary>
+        private bool IsTrapCell(Vector2Int cell)
+        {
+            var map = Game.Map;
+            if (map == null || !map.Loaded) return false;
+
+            if (!ReferenceEquals(_trapCachedMap, map))
+            {
+                _trapCachedMap = map;
+                _trapCellCache.Clear();
+            }
+
+            if (_trapCellCache.TryGetValue(cell, out var known)) return known;
+
+            //   数不出分量（不可走 / 数超上限）一律按"不是孤立格区"处理：本层只拦"确定知道的小分量"。
+            var size = FloodComponentSize(cell, CsBotConst.TrapComponentCells);
+            var trap = size > 0 && size <= CsBotConst.TrapComponentCells;
+
+            if (_trapCellCache.Count >= TrapCellCacheCap) _trapCellCache.Clear();
+            _trapCellCache[cell] = trap;
+            return trap;
+        }
+
+        /// <summary>
+        /// 从 <paramref name="cell"/> 数它所在连通分量的格数（4 正 + 4 斜、对角要求两侧可走 ——
+        /// 与引擎 <see cref="AStar"/> 的移动规则逐条一致，所以"分量"就是 A* 意义上的连通类）。
+        ///
+        /// <para>超过 <paramref name="limit"/> 立即返回 -1（"这是大连通区，不必数完"）；起点不可走返回 0。</para>
+        /// </summary>
+        private int FloodComponentSize(Vector2Int cell, int limit)
+        {
+            if (!WalkableCell(cell)) return 0;
+
+            var seen = new HashSet<Vector2Int> { cell };
+            var queue = new Queue<Vector2Int>();
+            queue.Enqueue(cell);
+
+            while (queue.Count > 0)
+            {
+                var cur = queue.Dequeue();
+                for (var k = 0; k < 8; k++)
+                {
+                    var sx = CellStepX[k];
+                    var sz = CellStepZ[k];
+                    var n = new Vector2Int(cur.x + sx, cur.y + sz);
+                    if (seen.Contains(n)) continue;
+                    if (!WalkableCell(n)) continue;
+                    if (sx != 0 && sz != 0)
+                    {
+                        if (!WalkableCell(new Vector2Int(cur.x + sx, cur.y))) continue;
+                        if (!WalkableCell(new Vector2Int(cur.x, cur.y + sz))) continue;
+                    }
+
+                    seen.Add(n);
+                    if (seen.Count > limit) return -1;
+                    queue.Enqueue(n);
+                }
+            }
+
+            return seen.Count;
+        }
+
+        /// <summary>
         /// "前方这一段能不能走"：**近端 + 远端两处都要可走**。
         ///
         /// <para>为什么不能只看远端：<see cref="ICsMap.WalkableAt"/> 是"这一格可不可走"的格子查询。
@@ -1380,6 +1500,10 @@ namespace Cs16.Module.Bot
         /// </summary>
         private bool WalkableAhead(Vector3 position, Vector3 dir)
         {
+            //   孤立格区一票否决：那里位图说可走、物理往往没有落脚面，且 **A\* 到不了任何目标**
+            //   （走进去 = 目标选择整条链全失败）⇒ 不许把这一帧的方向提交给它（见 StepsIntoTrap）。
+            if (StepsIntoTrap(position, dir)) return false;
+
             var near = position + dir * CsBotConst.ProbeClearance;
             var far = position + dir * CsBotConst.ProbeDistance;
             if (_map.WalkableAt(near.x, near.z) && _map.WalkableAt(far.x, far.z)) return true;
@@ -1412,6 +1536,10 @@ namespace Cs16.Module.Bot
         private float Runway(Vector3 position, Vector3 dir)
         {
             if (_map == null || !_map.IsLoaded) return CsBotConst.EscapeRunwayMax;
+
+            //   地形护栏与 <see cref="WalkableAhead"/> 同一份：逃逸 / 换向也不许把机器人送进孤立格区
+            //   （否则"卡住自恢复"自己就能把它推进去）。已经在里面时 <see cref="StepsIntoTrap"/> 放行。
+            if (StepsIntoTrap(position, dir)) return 0f;
 
             var run = 0f;
             for (var d = CsBotConst.EscapeRunwayStep; d <= CsBotConst.EscapeRunwayMax + 0.001f;

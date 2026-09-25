@@ -31,6 +31,11 @@ namespace Cs16.EditorTools
     {
         private const string Tag = "[MapBakeRunner]";
 
+        /// <summary>
+        /// 取样柱底面（**相对 <c>GroundTopY</c>** 的高度，米）—— 引擎 <c>MapBakeOptions.ProbeBottomY</c> 的默认值。
+        /// </summary>
+        private const float DefaultProbeBottomY = 0.2f;
+
         [MenuItem("Clover/CS16/烘焙 de_dust2（导出 .bytes）", false, 21)]
         public static void BakeDust2FromMenu()
         {
@@ -109,8 +114,13 @@ namespace Cs16.EditorTools
                     MapDepth = geo.Depth,
                     GroundTopY = geo.GroundTopY,
                     ObstacleMinHeight = geo.ObstacleMinHeight,
-                    ProbeBottomY = geo.ProbeBottomY,
-                    ProbeTopY = geo.ProbeTopY,
+                    // 单位换算：`de_dust2_geo.bin` 的 probeBottomY / probeTopY 是**绝对世界 Y**（与 groundTopY
+                    // 同一组，见 Dust2GeoData 的格式注释），而 `MapBakeOptions` 收的是**相对 GroundTopY 的高度**
+                    // （MapBakeOptions.cs:50-57；实际桩体 = GroundTopY + Probe*），且要求 ProbeBottomY 严格 > 0。
+                    // 顶面逐值换算 = geo.ProbeTopY - geo.GroundTopY（20 - (-10) = 30 ⇒ 绝对仍是 20）；
+                    // 底面的相对值算出来正好是 0（geo 写的就是"底面 = 地面顶面"），撞 `> 0` ⇒ 取引擎默认值。
+                    ProbeBottomY = DefaultProbeBottomY,
+                    ProbeTopY = geo.ProbeTopY - geo.GroundTopY,
                     ServerDir = Dust2Layout.ServerMapDir,
                     ClientDir = Dust2Layout.ClientMapDir,
                     SpawnMarkerPrefix = Dust2Layout.SpawnMarkerPrefix,

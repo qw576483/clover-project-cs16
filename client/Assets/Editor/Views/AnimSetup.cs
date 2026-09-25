@@ -157,6 +157,64 @@ namespace Cs16.EditorTools
         }
 
         // ==================================================================
+        //  静态模型预制体
+        // ==================================================================
+        /// <summary>
+        /// 生成一个**无骨骼**的静态预制体（<c>MeshFilter + MeshRenderer</c>，不加任何碰撞体）。
+        ///
+        /// <para>世界掉落物用的是原版 <c>models/w_*.mdl</c>，它们在 GoldSrc 里就是单骨骼静态网格
+        /// （本工程的 <c>.cs16anim</c> 里骨骼表为空、顶点已是绑定姿态世界坐标）⇒ 不需要
+        /// <c>SkinnedMeshRenderer</c>，直接当静态网格画。</para>
+        /// </summary>
+        internal static bool BuildStaticModelPrefab(Cs16AnimAsset a, string rel,
+            Dictionary<string, Material> mats, List<string> msg)
+        {
+            var root = new GameObject(Path.GetFileName(rel));
+            var count = 0;
+            for (var s = 0; s < a.Subs.Count; s++)
+            {
+                var sub = a.Subs[s];
+                if (sub.VertCount == 0 || sub.TriCount == 0) continue;
+
+                var go = new GameObject($"{SkinName}{s}");
+                go.transform.SetParent(root.transform, false);
+
+                var mesh = BuildSkinMesh(a.Key, s, sub, null);
+                EnsureFolder(MeshDir);
+                var meshPath = $"{MeshDir}/{a.Key}_{SkinName}{s}.asset";
+                // 幂等：网格内容完全由生成器决定，复用旧 .asset 会让"改了生成器却没生效"
+                if (File.Exists(meshPath)) AssetDatabase.DeleteAsset(meshPath);
+                AssetDatabase.CreateAsset(mesh, meshPath);
+
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var mr = go.AddComponent<MeshRenderer>();
+                mr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
+                mr.receiveShadows = true;
+                ApplyMaterial(mr, a, sub, mats, msg);
+                count++;
+            }
+
+            if (count == 0)
+            {
+                Debug.LogError($"[AnimSetup] {rel} 没有任何网格，预制体不生成");
+                Object.DestroyImmediate(root);
+                return false;
+            }
+
+            var path = $"Assets/Resources/Art/{rel}.prefab";
+            EnsureFolder(Path.GetDirectoryName(path).Replace('\\', '/'));
+            var saved = PrefabUtility.SaveAsPrefabAsset(root, path);
+            Object.DestroyImmediate(root);
+            if (saved == null)
+            {
+                Debug.LogError($"[AnimSetup] 世界模型预制体保存失败：{path}");
+                return false;
+            }
+            msg.Add($"✓ {path}（静态网格 {count} 块）");
+            return true;
+        }
+
+        // ==================================================================
         //  骨骼 / 蒙皮
         // ==================================================================
         /// <summary>按 mdl 的骨骼表建 Transform 层级（父骨骼的下标一定小于子骨骼 ⇒ 一趟到底）。</summary>
@@ -205,6 +263,7 @@ namespace Cs16.EditorTools
 
                 var mesh = BuildSkinMesh(a.Key, s, sub, bindposes);
                 if (mesh == null) continue;
+                // 说明：骨骼表为空的模型（原版 w_*.mdl 这类静态网格）不走这里，见 BuildStaticModelPrefab。
                 EnsureFolder(MeshDir);
                 var meshPath = $"{MeshDir}/{a.Key}_{SkinName}{s}.asset";
                 // 幂等：网格内容完全由生成器决定，复用旧 .asset 会让"改了生成器却没生效"
@@ -229,31 +288,44 @@ namespace Cs16.EditorTools
                 smr.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.On;
                 smr.receiveShadows = true;
 
-                var matName = Path.GetFileNameWithoutExtension(sub.Tex);
-                if (mats.TryGetValue(matName, out var mat) && mat != null) smr.sharedMaterial = mat;
-                else
-                {
-                    Debug.LogWarning($"[AnimSetup] {a.Key}/{matName} 找不到材质 —— 该网格会显示默认材质");
-                    msg.Add($"! 缺材质 {matName}");
-                }
+                ApplyMaterial(smr, a, sub, mats, msg);
                 count++;
             }
             return count;
         }
 
+        /// <summary>按贴图名取材质挂到渲染器上；取不到只告警（该网格显示默认材质）。</summary>
+        private static void ApplyMaterial(Renderer r, Cs16AnimAsset a, Cs16AnimSkin sub,
+            Dictionary<string, Material> mats, List<string> msg)
+        {
+            var matName = Path.GetFileNameWithoutExtension(sub.Tex);
+            if (mats.TryGetValue(matName, out var mat) && mat != null) r.sharedMaterial = mat;
+            else
+            {
+                Debug.LogWarning($"[AnimSetup] {a.Key}/{matName} 找不到材质 —— 该网格会显示默认材质");
+                msg.Add($"! 缺材质 {matName}");
+            }
+        }
+
+        /// <summary>
+        /// 建一块网格。<paramref name="bindposes"/> 为 <c>null</c> / 空 ⇒ 静态网格
+        /// （不写 <c>boneWeights</c> 与 <c>bindposes</c>；见 <see cref="BuildStaticModelPrefab"/>）。
+        /// </summary>
         private static Mesh BuildSkinMesh(string key, int index, Cs16AnimSkin sub, Matrix4x4[] bindposes)
         {
             var n = sub.VertCount;
             var verts = new Vector3[n];
             var uvs = new Vector2[n];
             var norms = new Vector3[n];
-            var weights = new BoneWeight[n];
-            var maxBone = bindposes.Length - 1;
+            var skinned = bindposes != null && bindposes.Length > 0;
+            var weights = skinned ? new BoneWeight[n] : null;
+            var maxBone = skinned ? bindposes.Length - 1 : 0;
             for (var i = 0; i < n; i++)
             {
                 verts[i] = new Vector3(sub.Verts[i * 3], sub.Verts[i * 3 + 1], sub.Verts[i * 3 + 2]);
                 uvs[i] = new Vector2(sub.Uvs[i * 2], sub.Uvs[i * 2 + 1]);
                 norms[i] = new Vector3(sub.Norms[i * 3], sub.Norms[i * 3 + 1], sub.Norms[i * 3 + 2]);
+                if (!skinned) continue;
                 var bi = Mathf.Clamp(sub.BoneIdx[i], 0, maxBone);
                 weights[i] = new BoneWeight { boneIndex0 = bi, weight0 = 1f };
             }
@@ -263,8 +335,11 @@ namespace Cs16.EditorTools
             mesh.vertices = verts;
             mesh.uv = uvs;
             mesh.normals = norms;
-            mesh.boneWeights = weights;
-            mesh.bindposes = bindposes;
+            if (skinned)
+            {
+                mesh.boneWeights = weights;
+                mesh.bindposes = bindposes;
+            }
             mesh.triangles = ExpandDoubleSided(sub.Tris);
             mesh.RecalculateBounds();
             return mesh;

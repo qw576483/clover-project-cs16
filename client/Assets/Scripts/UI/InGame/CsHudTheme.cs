@@ -153,7 +153,7 @@ namespace Cs16.UI
         /// <para>**仍无载体可证的两项**（登记在验收表「允许的差异」）：① 雷达**在屏幕上的落点**
         /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）；② 原版 <c>radar640.spr</c> 与
         /// <c>overviews/de_dust2.bmp</c> **本机不在盘** ⇒ 底图由原版几何离线生成
-        /// （<c>tools/probes/render-overview.py</c> → <c>Resources/UI/Art/overview_de_dust2.png</c>），
+        /// （<c>Resources/UI/Art/overview_de_dust2.png</c>），
         /// 圆盘底框与 <c>cl_radartype</c> 两型未复刻。</para>
         /// </summary>
         public const float RadarSize = 128f;
@@ -203,13 +203,13 @@ namespace Cs16.UI
         /// <summary>
         /// 雷达世界窗口的**中心**（本工程世界坐标，米）= 原版 <c>ORIGIN</c> 经**地标配准**换算到本坐标系。
         ///
-        /// <para><b>推导（每个数字都来自判据资产，不是估的）</b>：</para>
+        /// <para><b>推导（每个数字都是实测，不是估的）</b>：</para>
         /// <list type="number">
         /// <item>载体 <c>cstrike__overviews__de_dust2.bmp</c> 里两个红包点字形的质心像素
-        /// （<c>tools/probes/locate-overview-letters.py</c>）：A=(264.81, 124.66)、B=(214.53, 644.27)。</item>
+        /// A=(264.81, 124.66)、B=(214.53, 644.27)。</item>
         /// <item>本工程包点世界质心（<c>de_dust2_geo.bin</c>，与 <c>de_dust2_markers.bytes</c> 交叉核对 delta=0）：
         /// A=(+1535, +1358)、B=(−1170, +1546) 单位。</item>
-        /// <item>世界→原图像素的映射（<c>tools/probes/overview-window.py</c> 的公式）：
+        /// <item>世界→原图像素的映射公式：
         /// <c>u ← −Z</c>、<c>v ← −X</c>、每像素 8/ZOOM = 5.3333 单位。</item>
         /// <item>把 A、B 各自锚到原图窗口中心像素 (511.5, 383.5) 再取平均 ⇒
         /// 中心 = (X 187.5, Z 2.2) 单位 = (4.7625, 0.05588) m。</item>

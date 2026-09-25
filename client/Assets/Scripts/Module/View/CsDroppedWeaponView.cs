@@ -14,6 +14,9 @@ namespace Cs16.Module.View
     /// <para><b>为什么没有 <c>Update</c></b>：掉落物是**静止**的（不自转，理由见
     /// <see cref="CsDroppedWeapon"/> 的类注释）；位置只在 <see cref="Bind"/> 时对一次。</para>
     /// </summary>
+    /// <para><b>一个实例只许挂一个</b>：对象池归还时只 <c>SetActive(false)</c>、不摘组件，
+    /// 而视图是"每次掉落新建一份"的语义 ⇒ 多挂一个就会出现"旧组件仍绑着已拾取的那份数据"。</para>
+    [DisallowMultipleComponent]
     public sealed class CsDroppedWeaponView : MonoBehaviour
     {
         /// <summary>绑定的权威数据（只读；拾取后 <c>Consumed=true</c>，由 ViewModule 回收本视图）。</summary>

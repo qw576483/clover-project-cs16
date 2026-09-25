@@ -22,6 +22,9 @@ namespace Cs16.Module.Net
     /// **一行一条报文、以 <c>\n</c> 结束**，形如 <c>&lt;MAGIC&gt;|&lt;json&gt;</c>。
     /// <list type="bullet">
     /// <item>客户端 → 主机：<c>CS16-LAN-JOIN/1|{{"name":"…","proto":1}}</c></item>
+    /// <item>客户端 → 主机（每 0.05 s）：<c>CS16-LAN-INPUT/1|{{"id":&lt;actorId&gt;,"Move":{{"x":…,"y":…}},"Jump":…,"Crouch":…,"Walk":…,"Fire":…,"Zoom":…,"Attack2":…,"Yaw":…,"Pitch":…}}</c>
+    /// —— 键名**逐字** = <c>CsInputState</c> 的成员名（<c>Move</c> 是 <c>{{x,y}}</c>），
+    /// 多一个 <c>id</c> 指明这是谁的输入。</item>
     /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{"proto":1,"map":…,"host":…,"round":…,"phase":…,"players":…,"maxPlayers":…}}</c></item>
     /// <item>主机 → 客户端（每 <see cref="SnapInterval"/> 秒）：<c>CS16-LAN-SNAP/1|{{…"actors":[…]}}</c></item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{}}</c></item>
@@ -39,11 +42,13 @@ namespace Cs16.Module.Net
     /// <item>线程都是 <c>IsBackground = true</c> ⇒ 不拦编辑器关闭。</item>
     /// </list></para>
     ///
-    /// <para><b>本类到哪一步为止（登记在差异 #88，别当它没发生）</b>：
-    /// 能连上 / 能握手 / 能拿到开局信息 / 能持续收到世界快照（主机权威）。
-    /// <c>Module/View/CsLanRemoteView</c> 把 <c>actors[]</c> 画成场上的远端角色。**本类的线格式没动**。
-    /// **仍未做**：把客户端的 <c>CS16-LAN-INPUT/1</c> 应用到主机模拟（回合与世界的**远端输入驱动**，
-    /// 见 :484-488 的"只计数"注释）—— 那是"能开局"剩下的那一环，另开片。</para>
+    /// <para><b>本类到哪一步为止</b>：能连上 / 能握手 / 能拿到开局信息 / 能持续收到世界快照（主机权威）/
+    /// 能收到客户端的 <c>CS16-LAN-INPUT/1</c> 并**应用到主机模拟**（远端 actor 由对端的输入驱动）。
+    /// <c>Module/View/CsLanRemoteView</c> 把 <c>actors[]</c> 画成场上的远端角色。</para>
+    ///
+    /// <para><b>远端输入的线程/时机</b>：解析在**客户端会话线程**上做，只把结果写进待转交表；
+    /// 主线程每帧 <see cref="Pump"/> 出快照之前调一次 <see cref="ApplyRemoteInputs"/> 把它交给模拟 ——
+    /// 所以模拟只有主线程一个写入者，网络线程永远不碰 <see cref="ICsMatch"/>。</para>
     /// </summary>
     public static class CsLanGateway
     {
@@ -107,6 +112,24 @@ namespace Cs16.Module.Net
         private static long _snapshots;
         private static long _malformed;
         private static long _rejected;
+        private static long _inputBadFields;
+        private static long _appliedInputs;
+
+        /// <summary>一条待转交的远端输入（客户端会话线程写、主线程取走）。</summary>
+        private sealed class PendingInput
+        {
+            public int ActorId;
+            public CsInputState Input;
+            public string From = "-";
+        }
+
+        /// <summary>
+        /// 待转交给模拟的远端输入（键 = actorId，**同一 actor 只留最后一条**）。
+        /// <para>为什么按 actor 覆盖而不是排队：输入是"最新意图"，排队会让对端早先的意图在主机上迟到生效
+        /// （两个驾驶员抢同一具身体的效果）。</para>
+        /// </summary>
+        private static readonly Dictionary<int, PendingInput> PendingInputs = new Dictionary<int, PendingInput>();
+        private static readonly object InputLock = new object();
 
         // ---------------------------------------------------------------- 尽力而为路径的限频留痕
         //   自检脚本会把本区间整段剔除后再比对 ⇒
@@ -162,6 +185,12 @@ namespace Cs16.Module.Net
         public static long Malformed { get { return Interlocked.Read(ref _malformed); } }
         public static long Rejected { get { return Interlocked.Read(ref _rejected); } }
 
+        /// <summary>字段缺失/格式不对而被丢掉的 <see cref="InputMagic"/> 条数（键名必须与 <c>CsInputState</c> 逐字一致）。</summary>
+        public static long InputBadFields { get { return Interlocked.Read(ref _inputBadFields); } }
+
+        /// <summary>已经转交给模拟的远端输入次数（&gt;0 且 actor 的坐标在动 = 这条链真的通了）。</summary>
+        public static long AppliedInputs { get { return Interlocked.Read(ref _appliedInputs); } }
+
         /// <summary>已握手完成的客户端数。</summary>
         public static int WelcomedCount
         {
@@ -188,6 +217,7 @@ namespace Cs16.Module.Net
             if (!_running) return "对局网关未启动";
             return "对局网关 port=" + _port + " 连接=" + Connections + " 已握手=" + WelcomedCount +
                    "/" + ConnectionCount + " 收到 JOIN=" + Joins + " 收到 INPUT=" + Inputs +
+                   " 已转交模拟=" + AppliedInputs + " INPUT字段非法=" + InputBadFields +
                    " 推出快照=" + Snapshots + " 非法行=" + Malformed + " 拒绝=" + Rejected;
         }
 
@@ -258,6 +288,9 @@ namespace Cs16.Module.Net
             Interlocked.Exchange(ref _snapshots, 0);
             Interlocked.Exchange(ref _malformed, 0);
             Interlocked.Exchange(ref _rejected, 0);
+            Interlocked.Exchange(ref _inputBadFields, 0);
+            Interlocked.Exchange(ref _appliedInputs, 0);
+            lock (InputLock) PendingInputs.Clear();
 
             _running = true;
             _acceptThread = new Thread(AcceptLoop);
@@ -321,6 +354,10 @@ namespace Cs16.Module.Net
 
             if (match == null || !match.IsRunning) return;
 
+            // 出快照之前先把客户端的输入交给模拟：同一帧里"远端输入已生效"与"快照已反映它"对齐，
+            // 客户端看到的位移不会凭空晚一帧。
+            ApplyRemoteInputs(match);
+
             var line = BuildSnapshot(match);
             Interlocked.Increment(ref _snapshots);
 
@@ -331,6 +368,33 @@ namespace Cs16.Module.Net
                     var p = Peers[i];
                     if (p.Welcomed && !p.Closed) Enqueue(p, line);
                 }
+            }
+        }
+
+        /// <summary>
+        /// **主线程**：把客户端会话线程收到的 <see cref="InputMagic"/> 交给模拟（每帧最多一次，
+        /// 由 <see cref="Pump"/> 在出快照之前调）。
+        ///
+        /// <para>同一 actor 只转交**最后一条**（见 <see cref="PendingInputs"/>）：主线程 10 Hz 出快照、
+        /// 客户端 20 Hz 发输入 ⇒ 每次转交都是"这段窗口里的最新意图"。</para>
+        /// </summary>
+        public static void ApplyRemoteInputs(ICsMatch match)
+        {
+            if (match == null) return;
+
+            List<PendingInput> batch;
+            lock (InputLock)
+            {
+                if (PendingInputs.Count == 0) return;
+                batch = new List<PendingInput>(PendingInputs.Count);
+                foreach (var kv in PendingInputs) batch.Add(kv.Value);
+                PendingInputs.Clear();
+            }
+
+            for (var i = 0; i < batch.Count; i++)
+            {
+                match.SetRemoteInput(batch[i].ActorId, batch[i].Input);
+                Interlocked.Increment(ref _appliedInputs);
             }
         }
 
@@ -569,7 +633,35 @@ namespace Cs16.Module.Net
 
             if (magic == InputMagic)
             {
-                Interlocked.Increment(ref _inputs);
+                var n = Interlocked.Increment(ref _inputs);
+                int actorId;
+                CsInputState input;
+                if (!TryParseInput(json, out actorId, out input))
+                {
+                    // 非预期分支：线格式两端同值，解不出来就是有一端写错了 ⇒ 计数 + 前几条留痕（不静默）。
+                    var bad = Interlocked.Increment(ref _inputBadFields);
+                    if (bad <= 3)
+                    {
+                        Game.Logger.Warn(Tag,
+                            "收到 " + InputMagic + " 但字段解不出来（第 " + bad + " 条）：" + Truncate(json, 200) +
+                            "；键名必须与 CsInputState 的成员逐字一致，且 id / Move / Yaw / Pitch 与 6 个布尔键都要在");
+                    }
+                    return;
+                }
+
+                // 只登记意图：真正的"应用到模拟"在主线程 ApplyRemoteInputs 里做（线程模型见类注释）。
+                var e = new PendingInput { ActorId = actorId, Input = input, From = c.Endpoint };
+                lock (InputLock) PendingInputs[actorId] = e;
+
+                if (n == 1 || n % 200 == 0)
+                {
+                    Game.Logger.Info(Tag,
+                        "收到 " + InputMagic + "（第 " + n + " 条，来自 " + c.Endpoint + "）：actor=" + actorId +
+                        " move=(" + input.Move.x.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) +
+                        "," + input.Move.y.ToString("F2", System.Globalization.CultureInfo.InvariantCulture) +
+                        ") yaw=" + input.Yaw.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
+                        " jump=" + input.Jump + " fire=" + input.Fire);
+                }
                 return;
             }
 
@@ -650,6 +742,126 @@ namespace Cs16.Module.Net
             }
             sb.Append("]}");
             return sb.ToString();
+        }
+
+        /// <summary>
+        /// 解一行 <see cref="InputMagic"/> 的 JSON。键名**逐字** = <c>CsInputState</c> 的成员名
+        /// （<c>Move</c> 是 <c>{"x":…,"y":…}</c>），外加 <c>id</c>。
+        /// <para>缺任何一个键都算非法：线格式两端同值、字段是定死的 —— 静默按默认值补会让"客户端写错了"
+        /// 表现成"远端输入没反应"，而那种现象查不出原因。</para>
+        /// </summary>
+        private static bool TryParseInput(string json, out int actorId, out CsInputState input)
+        {
+            actorId = 0;
+            input = default(CsInputState);
+            if (string.IsNullOrEmpty(json)) return false;
+
+            float id;
+            if (!TryReadNumber(json, "id", out id)) return false;
+            actorId = (int)id;
+
+            var move = ReadObjectBody(json, "Move");
+            if (move == null) return false;
+            float mx, my;
+            if (!TryReadNumber(move, "x", out mx)) return false;
+            if (!TryReadNumber(move, "y", out my)) return false;
+
+            bool jump, crouch, walk, fire, zoom, attack2;
+            if (!TryReadBool(json, "Jump", out jump)) return false;
+            if (!TryReadBool(json, "Crouch", out crouch)) return false;
+            if (!TryReadBool(json, "Walk", out walk)) return false;
+            if (!TryReadBool(json, "Fire", out fire)) return false;
+            if (!TryReadBool(json, "Zoom", out zoom)) return false;
+            if (!TryReadBool(json, "Attack2", out attack2)) return false;
+
+            float yaw, pitch;
+            if (!TryReadNumber(json, "Yaw", out yaw)) return false;
+            if (!TryReadNumber(json, "Pitch", out pitch)) return false;
+
+            // 本文件不引 UnityEngine（其余部分与引擎无关）⇒ 这里显式写全名（Vector2 是纯结构体，后台线程可造）。
+            input.Move = new UnityEngine.Vector2(mx, my);
+            input.Jump = jump;
+            input.Crouch = crouch;
+            input.Walk = walk;
+            input.Fire = fire;
+            input.Zoom = zoom;
+            input.Attack2 = attack2;
+            input.Yaw = yaw;
+            input.Pitch = pitch;
+            return true;
+        }
+
+        /// <summary>找 <c>"key"</c> 后 <c>:</c> 之后的第一个非空白字符的位置；没有这个键返回 -1。</summary>
+        private static int ValueStart(string json, string key)
+        {
+            var k = "\"" + key + "\"";
+            var at = json.IndexOf(k, StringComparison.Ordinal);
+            if (at < 0) return -1;
+            var colon = json.IndexOf(':', at + k.Length);
+            if (colon < 0) return -1;
+            var p = colon + 1;
+            while (p < json.Length && (json[p] == ' ' || json[p] == '\t')) p++;
+            return p < json.Length ? p : -1;
+        }
+
+        /// <summary>读数字（整数 / 小数 / 负号；不认 NaN / Infinity —— 那些不是本协议的合法值）。</summary>
+        private static bool TryReadNumber(string json, string key, out float value)
+        {
+            value = 0f;
+            var start = ValueStart(json, key);
+            if (start < 0) return false;
+
+            var p = start;
+            if (json[p] == '-' || json[p] == '+') p++;
+            var digits = false;
+            while (p < json.Length)
+            {
+                var ch = json[p];
+                if (ch >= '0' && ch <= '9') { digits = true; p++; continue; }
+                if (ch == '.' || ch == 'e' || ch == 'E' || ch == '-' || ch == '+') { p++; continue; }
+                break;
+            }
+            if (!digits) return false;
+
+            return float.TryParse(json.Substring(start, p - start),
+                System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out value);
+        }
+
+        /// <summary>读布尔（只认 <c>true</c> / <c>false</c>；<c>1</c>/<c>0</c> 不算 —— 本协议两端同值）。</summary>
+        private static bool TryReadBool(string json, string key, out bool value)
+        {
+            value = false;
+            var start = ValueStart(json, key);
+            if (start < 0) return false;
+            if (json.Length - start >= 4 && string.CompareOrdinal(json, start, "true", 0, 4) == 0) { value = true; return true; }
+            if (json.Length - start >= 5 && string.CompareOrdinal(json, start, "false", 0, 5) == 0) { value = false; return true; }
+            return false;
+        }
+
+        /// <summary>取 <c>"key"</c> 对应的**对象字面量内部**文本（<c>{…}</c> 里那一截）；不是对象返回 null。</summary>
+        private static string ReadObjectBody(string json, string key)
+        {
+            var start = ValueStart(json, key);
+            if (start < 0 || json[start] != '{') return null;
+
+            var depth = 0;
+            for (var i = start; i < json.Length; i++)
+            {
+                if (json[i] == '{') depth++;
+                else if (json[i] == '}')
+                {
+                    depth--;
+                    if (depth == 0) return json.Substring(start + 1, i - start - 1);
+                }
+            }
+            return null;
+        }
+
+        private static string Truncate(string s, int max)
+        {
+            if (string.IsNullOrEmpty(s)) return string.Empty;
+            return s.Length <= max ? s : s.Substring(0, max) + "…";
         }
 
         private static string ReadString(string json, string key, string fallback)

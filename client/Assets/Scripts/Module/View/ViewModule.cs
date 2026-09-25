@@ -66,6 +66,12 @@ namespace Cs16.Module.View
         /// <summary>皮肤随机分配（CS 1.6 每个玩家在队内随机一个皮肤）；按 actorId 稳定。</summary>
         private readonly Dictionary<long, string> _skinOf = new Dictionary<long, string>(32);
 
+        /// <summary>本地玩家的 actorId（<see cref="EnsureView"/> 里记下）：只有它按「选兵种页选的兵种」取皮肤。</summary>
+        private long _localId;
+
+        /// <summary>已就「该兵种在本工程没有模型数据」告警过的兵种行号（只告一次，不刷屏）。</summary>
+        private readonly HashSet<int> _missingClassSkin = new HashSet<int>();
+
         private MatchModule _matchModule;
         private ICsMatch _match;
         private Transform _root;
@@ -207,13 +213,25 @@ namespace Cs16.Module.View
 
         private void EnsureDropView(CsDroppedWeapon d)
         {
-            var folder = d.Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
-            var path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + d.WeaponId;
+            // 地上的枪用**世界模型**（Art/world_<武器id>，原版 models/w_*.mdl）——第一人称模型
+            // （viewmodel_*）的原点与朝向是给相机用的，直接摆到地上会侧躺、且大半截埋进地面。
+            // 没有世界模型的武器（原版并非每把枪都有 w_*.mdl）退回首人称模型，至少"有把枪"。
+            var world = true;
+            var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + d.WeaponId;
             if (!_prefabs.TryGetValue(path, out var prefab) || prefab == null)
             {
                 // 首次走到这里时可能还在异步加载：发起一次，下一帧自动补上（与 EnsureView 同款）。
                 LoadPrefab(path, null);
-                return;
+                if (!_missing.Contains(path)) return;
+
+                world = false;
+                var folder = d.Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
+                path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + d.WeaponId;
+                if (!_prefabs.TryGetValue(path, out prefab) || prefab == null)
+                {
+                    LoadPrefab(path, null);
+                    return;
+                }
             }
 
             // 正是池的用途；它的生命周期终点也是池（Game.Pool.Despawn，见 DestroyDropView / ClearDropViews）。
@@ -233,18 +251,23 @@ namespace Cs16.Module.View
                 return;
             }
             go.name = "DroppedWeapon_" + d.WeaponId;
-            go.transform.localScale = Vector3.one * CsViewTuning.ViewModelScale;
+            go.transform.localScale = Vector3.one * (world ? CsViewTuning.WorldModelScale : CsViewTuning.ViewModelScale);
 
             // 世界物件绝不能参与射线（与 ViewModelRig 同款：生成器没加，这里再兜一层）。
             var cols = go.GetComponentsInChildren<Collider>(true);
             for (var i = 0; i < cols.Length; i++) Object.Destroy(cols[i]);
 
-            var view = go.AddComponent<CsDroppedWeaponView>();
+            // 池复用的实例身上**还挂着上一次的视图组件**（归还只 SetActive(false)，不摘组件）
+            // ⇒ 必须复用：直接 AddComponent 会在同一个 GameObject 上叠出第二个视图组件，
+            //    旧的仍绑着已被拾取的那份数据（场景里就出现"同一坐标两个视图"）。
+            var view = go.GetComponent<CsDroppedWeaponView>();
+            if (view == null) view = go.AddComponent<CsDroppedWeaponView>();
             view.Bind(d);
             _dropViews[d] = view;
 
             _log.Info("dropview.create",
-                $"{d.WeaponId} 的世界视图已生成（位置 ({d.Position.x:F2}, {d.Position.y:F2}, {d.Position.z:F2})，模型={path}）");
+                $"{d.WeaponId} 的世界视图已生成（位置 ({d.Position.x:F2}, {d.Position.y:F2}, {d.Position.z:F2})，" +
+                $"模型={path}，{(world ? "世界模型" : "降级用第一人称模型")}）");
         }
 
         private void DestroyDropView(CsDroppedWeapon d)
@@ -405,6 +428,7 @@ namespace Cs16.Module.View
         // ==================================================================
         private ActorView EnsureView(CsActor actor, long localId)
         {
+            _localId = localId;
             if (_views.TryGetValue(actor.Id, out var existing) && existing != null) return existing;
 
             var path = PrefabPathFor(actor);
@@ -507,6 +531,7 @@ namespace Cs16.Module.View
             }
             _views.Clear();
             _skinOf.Clear();
+            _missingClassSkin.Clear();
             if (_root == null) return;
             if (_viewModel != null)
             {
@@ -519,14 +544,41 @@ namespace Cs16.Module.View
         // ==================================================================
         //  预制体路径
         // ==================================================================
-        /// <summary>阵营 + 皮肤 → 模型预制体路径（<c>Art/{T|CT}/{skin}</c>）。</summary>
+        /// <summary>
+        /// 阵营 + 皮肤 → 模型预制体路径（<c>Art/{T|CT}/{skin}</c>）。
+        ///
+        /// <para><b>本地玩家</b>取选兵种页选的那个兵种（<see cref="CsPlayerClass"/> → <see cref="CsClassSkins"/>，
+        /// 原版 <c>joinclass N</c> 的语义：换皮肤）；其余角色（bot / LAN 远端）以及
+        /// "没选 / 选了自动 / 选的兵种本工程没有模型数据"仍按 actorId 稳定地挑一个
+        /// （CS 1.6 里每个玩家在队内随机一个皮肤，同一局内保持不变）。</para>
+        /// </summary>
         private string PrefabPathFor(CsActor actor)
         {
             var team = actor.Team == CsTeam.CT ? CsViewTuning.TeamFolderCT : CsViewTuning.TeamFolderT;
             var skins = actor.Team == CsTeam.CT ? CsViewTuning.SkinsCT : CsViewTuning.SkinsT;
             if (skins == null || skins.Length == 0) return CsViewTuning.ArtRoot + team + "/" + CsViewTuning.PlayerModelName;
 
-            if (!_skinOf.TryGetValue(actor.Id, out var skin) || string.IsNullOrEmpty(skin))
+            var picked = false;
+            var skin = (string)null;
+            if (actor.Id == _localId && CsPlayerClass.TryGet(actor.Team, out var joinClass))
+            {
+                skin = CsClassSkins.SkinKey(actor.Team, joinClass);
+                picked = !string.IsNullOrEmpty(skin);
+                if (picked)
+                {
+                    _log.Info("class.skin",
+                        $"本地玩家皮肤：兵种 {CsClassSkins.ClassName(actor.Team, joinClass)}（原版 joinclass {joinClass}）" +
+                        $"→ 皮肤键 {skin} → 预制体 {CsViewTuning.ArtRoot + team + "/" + skin}");
+                }
+                else if (_missingClassSkin.Add(joinClass))
+                {
+                    _log.Warn("class.skin.missing",
+                        $"兵种 {CsClassSkins.ClassName(actor.Team, joinClass)}（原版 joinclass {joinClass}）在本工程没有模型数据" +
+                        "（Assets/Editor/Views/ModelData 下无对应 player 模型）⇒ 回落到队内默认皮肤");
+                }
+            }
+
+            if (!picked && (!_skinOf.TryGetValue(actor.Id, out skin) || string.IsNullOrEmpty(skin)))
             {
                 // 按 actorId 稳定地挑一个皮肤（CS 1.6 里每个玩家在队内随机一个皮肤；这里同一局内保持不变）
                 var h = unchecked((ulong)actor.Id * 2654435761UL + 12345UL);

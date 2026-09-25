@@ -258,9 +258,12 @@ namespace Cs16.EditorTools
         private static void BuildBlockers(Dust2GeoData geo, GameObject blockerRoot)
         {
             var cell = geo.CellSize;
-            for (int i = 0; i < geo.Blockers.Length; i++)
+            // 位图说可走、但真几何在格心处没有任何朝上面（= 该格脚下没有地面）的格：
+            // 追加单格阻挡盒，让烘焙出来的位图判它不可走（依据与清单见 Dust2SealCells）。
+            var all = Dust2SealCells.AppendedTo(geo);
+            for (int i = 0; i < all.Length; i++)
             {
-                var b = geo.Blockers[i];
+                var b = all[i];
                 float w = (b.Ix1 - b.Ix0 + 1) * cell;
                 float d = (b.Iz1 - b.Iz0 + 1) * cell;
                 float h = b.YMax - b.YMin;
@@ -283,7 +286,8 @@ namespace Cs16.EditorTools
                 // 不挂 Renderer：不参与绘制、不投影阴影（否则整张图会被一排隐形高墙的黑影盖住）
                 GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
             }
-            Debug.Log($"{Tag} 阻挡体：{geo.Blockers.Length} 个轴对齐 BoxCollider（每格一个，合并过）");
+            Debug.Log($"{Tag} 阻挡体：{all.Length} 个轴对齐 BoxCollider（每格一个，合并过）" +
+                      $"｜其中封格 {Dust2SealCells.Cells.Length} 个（位图可走但真几何无地面，见 Dust2SealCells）");
         }
 
         // ==================================================================
@@ -303,6 +307,9 @@ namespace Cs16.EditorTools
             //   采样点落在箱子/台阶上时，运行时的 A*/CanStand 拿到的起点就是"站不住"的格。
             //   这里改一次就够：烘焙器直接读**场景对象的坐标**（不再有第二份"运行时表"要走同一段逻辑）。
             var blocked = geo.BuildBlockedBitmap();
+            // 封格必须一起算进"哪一格可走"：否则标记点会被吸附到那些**位图即将判为阻挡**的格上
+            //（吸附口径与烘焙产物必须同源，见 Dust2SealCells）。
+            Dust2SealCells.Apply(blocked, geo.Width, geo.Depth);
 
             int total = 0, snapped = 0, notFound = 0;
             foreach (var kv in geo.Markers)

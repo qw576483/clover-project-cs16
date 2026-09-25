@@ -296,6 +296,40 @@ namespace Cs16.Module.Match
         private bool _localUseHeld;
         private float _localNextJumpTime;
 
+        // ---- 远端输入（局域网对局：别的客户端控制的那具身体）----
+        /// <summary>远端 actor 的输入意图（键 = actorId）。由 <see cref="SetRemoteInput"/> 登记、Tick 消费。</summary>
+        private readonly Dictionary<long, RemoteInput> _remoteInputs = new Dictionary<long, RemoteInput>();
+
+        /// <summary>一条远端输入 + 它的**到达时刻**（模拟时钟 <see cref="Now"/>），用于判过期。</summary>
+        private struct RemoteInput
+        {
+            public CsInputState Input;
+            public float ReceivedAt;
+        }
+
+        /// <summary>
+        /// 远端输入的**有效期**（秒）：超过这么久没再收到同一条 actor 的新输入 ⇒ 该 actor 不再被远端驱动。
+        /// <para>为什么必须有：对端掉线 / 停发时，若"最后一次输入永远生效"，那个人物会在主机上一直往前走。</para>
+        /// </summary>
+        private const float RemoteInputTimeout = 0.6f;
+
+        /// <summary>远端驱动的位移留痕间隔（秒）——按这个间隔打"从哪走到哪"，⛔ 不逐帧刷。</summary>
+        private const float RemoteDriveLogInterval = 0.5f;
+
+        /// <summary>远端驱动中的 actor 的位移轨迹（首次应用时的起点 + 上次留痕时刻）。</summary>
+        private sealed class RemoteDriveTrace
+        {
+            public Vector3 StartPosition;
+            public float LastLogAt;
+            public int AppliedFrames;
+        }
+
+        private readonly Dictionary<long, RemoteDriveTrace> _remoteDriveTraces = new Dictionary<long, RemoteDriveTrace>();
+        private readonly List<long> _staleRemoteScratch = new List<long>(8);
+
+        /// <summary>"远端输入指了一个本机没有的 actorId"已留痕过的 id（每个 id 每局只报一次，⛔ 不刷屏）。</summary>
+        private readonly HashSet<long> _remoteInputUnknownActorLogged = new HashSet<long>();
+
         private int _spectateIndex = -1;
 
         private CsBotDifficulty _botDifficulty = CsBotDifficulty.Normal;
@@ -536,6 +570,9 @@ namespace Cs16.Module.Match
             _lastGroundY.Clear();
             ClearDroppedWeapons();
             _softFloorMisses.Clear();
+            _remoteInputs.Clear();
+            _remoteDriveTraces.Clear();
+            _remoteInputUnknownActorLogged.Clear();
             ResetBotShotStats();
             _nextActorId = 1;
             _botNameCursor = 0;
@@ -592,6 +629,9 @@ namespace Cs16.Module.Match
             _killFeed.Clear();
             _pendingShots.Clear();
             ResetBotShotStats();
+            _remoteInputs.Clear();
+            _remoteDriveTraces.Clear();
+            _remoteInputUnknownActorLogged.Clear();
             _local = null;
             _spectateIndex = -1;
 
@@ -622,6 +662,7 @@ namespace Cs16.Module.Match
             {
                 UpdateLocalPlayer(dt, now);
                 UpdateBots(dt, now);
+                UpdateRemoteActors(dt, now);
                 TickActorTimers(dt, now);
                 UpdateBuyZoneFlags();
             }
@@ -652,7 +693,8 @@ namespace Cs16.Module.Match
         /// <para>位置 = 掉落瞬间的持枪者位置；朝向 = 他当时的 <see cref="CsActor.Yaw"/>；
         /// 余弹一起带走（拾取后原样回到拾取者手上，不是"满弹"）。</para>
         /// </summary>
-        internal void SpawnDroppedWeapon(string weaponId, CsTeam team, Vector3 pos, float yaw, int mag, int reserve)
+        internal void SpawnDroppedWeapon(string weaponId, CsTeam team, long dropperActorId,
+            Vector3 pos, float yaw, int mag, int reserve)
         {
             if (string.IsNullOrEmpty(weaponId)) return;
 
@@ -670,6 +712,8 @@ namespace Cs16.Module.Match
             {
                 WeaponId = weaponId,
                 Team = team,
+                DropperActorId = dropperActorId,
+                DropperReleased = false,
                 Position = pos,
                 YawDeg = yaw,
                 MagAmmo = mag,
@@ -707,7 +751,18 @@ namespace Cs16.Module.Match
 
                     var v = a.Position - d.Position;
                     v.y = 0f;
-                    if (v.sqrMagnitude > CsMatchConst.PickupRadius * CsMatchConst.PickupRadius) continue;
+                    var near = v.sqrMagnitude <= CsMatchConst.PickupRadius * CsMatchConst.PickupRadius;
+
+                    // 掉落者当场就站在掉落点上 ⇒ 直接允许拾取会让他在下一帧把它捡回去（枪永远上不了地）。
+                    // 因此掉落者要先走出拾取半径（走出即开门，此后和任何人一样按半径自动拾取）。
+                    if (a.Id == d.DropperActorId && !d.DropperReleased)
+                    {
+                        if (near) continue;
+                        d.DropperReleased = true;
+                        continue;
+                    }
+
+                    if (!near) continue;
 
                     // 槽位满了就捡不起来（原版不会把手里那把枪挤掉）⇒ 换下一个人试。
                     if (!Inventory.PickupDropped(a, d)) continue;
@@ -945,6 +1000,123 @@ namespace Cs16.Module.Match
         {
             _localInput = input;
             _hasLocalInput = true;
+        }
+
+        /// <summary>
+        /// 登记一条**远端输入**（见 <see cref="ICsMatch.SetRemoteInput"/>）：只写意图表，真正的移动解算
+        /// 在 <see cref="UpdateRemoteActors"/> 里做（模拟只有一个写入者 = 本类）。
+        /// </summary>
+        public void SetRemoteInput(int actorId, CsInputState input)
+        {
+            _remoteInputs[actorId] = new RemoteInput { Input = input, ReceivedAt = Now };
+        }
+
+        /// <summary>
+        /// 让**收到远端输入的 actor** 走一遍移动解算（与 <see cref="UpdateLocalPlayer"/> 同一套：
+        /// 朝向 → 世界方向 → 速度 → <see cref="StepActorPhysics"/>）。
+        ///
+        /// <para><b>过期语义</b>：超过 <see cref="RemoteInputTimeout"/> 没再收到该 actor 的新输入 ⇒
+        /// 摘掉它（该 actor 交回本机：机器人恢复 AI，普通人则站住）—— 对端掉线不会让人物永远往前走。</para>
+        /// </summary>
+        private void UpdateRemoteActors(float dt, float now)
+        {
+            if (_remoteInputs.Count == 0) return;
+
+            _staleRemoteScratch.Clear();
+            foreach (var kv in _remoteInputs)
+            {
+                if (now - kv.Value.ReceivedAt > RemoteInputTimeout) _staleRemoteScratch.Add(kv.Key);
+            }
+            for (var i = 0; i < _staleRemoteScratch.Count; i++)
+            {
+                var id = _staleRemoteScratch[i];
+                _remoteInputs.Remove(id);
+                _remoteDriveTraces.Remove(id);
+                Game.Logger.Info(Tag,
+                    $"远端输入已过期（{RemoteInputTimeout:F1}s 内没再收到）：actor={id} 交回本机驱动" +
+                    "（机器人恢复 AI / 人物站住，停止替对端往前走）");
+            }
+            if (_remoteInputs.Count == 0) return;
+
+            foreach (var kv in _remoteInputs)
+            {
+                var a = Find(kv.Key);
+                if (a == null)
+                {
+                    if (_remoteInputUnknownActorLogged.Add(kv.Key))
+                    {
+                        Game.Logger.Warn(Tag,
+                            $"远端输入指向本机不存在的 actor={kv.Key} ⇒ 已忽略（本条对同一 id 只报一次；" +
+                            "说明对端按的快照 id 与本机当前这一局对不上）");
+                    }
+                    continue;
+                }
+                if (!a.IsAlive) continue;
+
+                var inp = kv.Value.Input;
+                a.Yaw = inp.Yaw;
+                a.Pitch = Mathf.Clamp(inp.Pitch, -CsMatchConst.PitchLimit, CsMatchConst.PitchLimit);
+                a.IsCrouching = inp.Crouch;
+                a.IsWalking = inp.Walk && !inp.Crouch;
+
+                if (Round.Phase != CsRoundPhase.Live)
+                {
+                    a.Velocity = new Vector3(0f, a.Velocity.y, 0f);
+                }
+                else
+                {
+                    var rad = a.Yaw * Mathf.Deg2Rad;
+                    var forward = new Vector3(Mathf.Sin(rad), 0f, Mathf.Cos(rad));
+                    var right = new Vector3(Mathf.Cos(rad), 0f, -Mathf.Sin(rad));
+
+                    var dir = right * inp.Move.x + forward * inp.Move.y;
+                    dir.y = 0f;
+                    if (dir.sqrMagnitude > 1f) dir.Normalize();
+
+                    var speed = CsInventory.MovementSpeed(a);
+                    a.Velocity = new Vector3(dir.x * speed, a.Velocity.y, dir.z * speed);
+
+                    if (inp.Jump && a.OnGround)
+                    {
+                        a.Velocity.y = CsConst.JumpSpeed;
+                        a.OnGround = false;
+                    }
+
+                    if (inp.Fire) Inventory.TryDischarge(a, now, out _, localPlayer: false);
+                }
+
+                StepActorPhysics(a, dt);
+                a.InBuyZone = IsInBuyZone(a.Position, a.Team);
+                TraceRemoteDrive(a, now, inp);
+            }
+        }
+
+        /// <summary>
+        /// 远端驱动的位移留痕：首次应用记起点，此后每 <see cref="RemoteDriveLogInterval"/> 秒报一条
+        /// 「从哪走到哪 + 水平净位移」—— 判据要的**主机侧位移原文**就是这一条。
+        /// </summary>
+        private void TraceRemoteDrive(CsActor a, float now, in CsInputState inp)
+        {
+            RemoteDriveTrace t;
+            if (!_remoteDriveTraces.TryGetValue(a.Id, out t))
+            {
+                t = new RemoteDriveTrace { StartPosition = a.Position, LastLogAt = now };
+                _remoteDriveTraces[a.Id] = t;
+                Game.Logger.Info(Tag,
+                    $"远端输入开始驱动 actor={a.Id}(\"{a.Name}\")：起点 ({a.Position.x:F2}, {a.Position.y:F2}, {a.Position.z:F2})" +
+                    $" move=({inp.Move.x:F2},{inp.Move.y:F2}) yaw={inp.Yaw:F1}");
+            }
+
+            t.AppliedFrames++;
+            if (now - t.LastLogAt < RemoteDriveLogInterval) return;
+            t.LastLogAt = now;
+
+            var delta = a.Position - t.StartPosition;
+            delta.y = 0f;
+            Game.Logger.Info(Tag,
+                $"远端输入驱动 actor={a.Id}(\"{a.Name}\")：现在 ({a.Position.x:F2}, {a.Position.y:F2}, {a.Position.z:F2})" +
+                $" 水平净位移={delta.magnitude:F2}m（已应用 {t.AppliedFrames} 帧；move=({inp.Move.x:F2},{inp.Move.y:F2})" +
+                $" yaw={inp.Yaw:F1} hp={a.Health} alive={a.IsAlive}）");
         }
 
         // ==================================================================
@@ -1925,6 +2097,10 @@ namespace Cs16.Module.Match
             // 射击（开枪后坐力/弹药由模拟扣，射线由 Module/Combat 负责）。
             if (inp.Fire) Inventory.TryDischarge(a, now, out _, localPlayer: true);
 
+            // 差异 #68：连发的续发由模拟按原版间隔自动补发（不需要继续按住左键）；
+            // 射线仍由 Module/Combat 消费本帧射击记录后打（它靠 BurstAutoShots 认出续发也是我打的）。
+            Inventory.TickBurst(a, now, out _);
+
             StepActorPhysics(a, dt);
 
             // 每帧把"是否按住 E"同步给炸弹系统（这样松开 E / 阵亡都能被检测到）。
@@ -2439,6 +2615,7 @@ namespace Cs16.Module.Match
             {
                 var a = _actors[i];
                 if (a.NextFireTime > 0f) a.NextFireTime += delta;
+                if (a.NextBurstShotTime > 0f) a.NextBurstShotTime += delta;   // 连发待发时刻同一时间源
                 if (a.ReloadEndTime > 0f) a.ReloadEndTime += delta;
                 if (a.SwitchEndTime > 0f) a.SwitchEndTime += delta;
                 if (a.FlashEndTime > 0f) a.FlashEndTime += delta;
@@ -2455,6 +2632,9 @@ namespace Cs16.Module.Match
             {
                 var a = _actors[i];
                 if (!a.IsBot || !a.IsAlive) continue;
+
+                // 这具身体正被远端输入驱动（局域网对端控制）⇒ 本机 AI 让位（一头身体不许两个驾驶员）。
+                if (_remoteInputs.ContainsKey(a.Id)) continue;
 
                 if (!_botIntents.TryGetValue(a.Id, out var intent)) continue;
 
@@ -2508,6 +2688,14 @@ namespace Cs16.Module.Match
                 if (intent.Fire && Round.Phase == CsRoundPhase.Live && a.IsAlive)
                 {
                     BotTryFire(a, profile, now, intent);
+                }
+
+                // ---- 差异 #68：连发的续发 ----
+                // 不要求 intent.Fire 继续为真（一次扣扳机打满一轮）；但必须仍在 Live（冻结期不许开枪）。
+                // 射线必须由这里接着打，否则续发只扣弹不结算（TryDischarge 的 localPlayer:true = 调用方负责射线）。
+                if (Round.Phase == CsRoundPhase.Live && Inventory.TickBurst(a, now, out var burstWeaponId))
+                {
+                    BotResolveShot(a, burstWeaponId, intent.AimPoint, profile);
                 }
             }
         }

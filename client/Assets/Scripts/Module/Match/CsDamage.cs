@@ -9,7 +9,8 @@ namespace Cs16.Module.Match
     /// <summary>
     /// 伤害模型与击杀结算。
     ///
-    /// <para>公式：<c>base = def.Damage</c> → × 部位倍率 → × 距离衰减
+    /// <para>公式：<c>base = CsWeapons.BaseDamage(def, 消音, 连发)</c>（差异 #68：USP 34/30、M4A1 32/33、
+    /// FAMAS 30/34）→ × 部位倍率 → × 距离衰减
     /// <c>(1 - def.FalloffPerMeter * dist)</c> → × 穿墙保留 → 护甲吸收
     /// <c>(1 - ArmorAbsorbRatio * (1 - def.ArmorPenetration))</c>，护甲损耗 <c>damage * ArmorDamageRatio</c>。
     /// 头盔只减免头部。</para>
@@ -73,7 +74,9 @@ namespace Cs16.Module.Match
             if (hitDir.sqrMagnitude < 0.000001f) hitDir = Vector3.down;   // 退化：没有射手（如环境）时按"血往下淌"
             _m.RaiseBulletHit(victim, point, hitDir.normalized, box == CsHitbox.Head);
 
-            var dmg = def.Damage * HitboxMultiplier(box);
+            // 差异 #68：基础伤害按射手当前的消音 / 连发状态取（取值口径与出处见 CsWeapons.BaseDamage）。
+            var dmg = CsWeapons.BaseDamage(def, shooter != null && shooter.Silenced,
+                shooter != null && shooter.BurstMode) * HitboxMultiplier(box);
 
             var falloff = 1f - def.FalloffPerMeter * Mathf.Max(0f, dist);
             if (falloff < 0f) falloff = 0f;

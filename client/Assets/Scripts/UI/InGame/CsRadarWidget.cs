@@ -13,9 +13,9 @@ namespace Cs16.UI
     /// <list type="number">
     /// <item><b>加上地图底图</b>：原版雷达不是"一个空框 + 几个点"，而是把地图**俯视图**半透明压在
     /// <c>overviews/de_dust2.bmp</c> 的逐像素 PNG**（1024×768；由
-    /// <c>tools/probes/import-original-overview.py</c> 从载体
+    /// 从载体
     /// <c>原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp</c> 无损转换，绿键色 → alpha 0；
-    /// 重解码自检 rgb/alpha mismatch = 0），不再是 <c>tools/probes/render-overview.py</c> 的几何栅格化
+    /// 重解码自检 rgb/alpha mismatch = 0），不再是几何栅格化
     /// 近似图。A/B 点字母是原版图自带的。</item>
     /// <item><b>尺寸落 1:1 真值</b>：<see cref="CsHudTheme.RadarSize"/> 由 200 → <b>128</b>
     /// （原版 <c>hud.txt:183</c> <c>radar 640 radar640 0 0 128 128</c> 的原生像素；
@@ -28,7 +28,7 @@ namespace Cs16.UI
     /// 屏幕右 ← 世界 <c>-Z</c>、屏幕上 ← 世界 <c>+X</c>（cs16-AO 由包点地标判据定下，见
     /// <see cref="Refresh"/> 里 scale 那段的注释）；世界 → 雷达的映射与底图**同一套窗口**（各向同性
     /// scale、中心 = 原版 ORIGIN 的地标配准值）⇒ 点必然落在底图对应像素上（判据见
-    /// <c>tools/probes/radar-window-check.py</c>：A/B 两处包点的偏差 1.17 radar px）。</item>
+    /// A/B 两处包点的偏差 1.17 radar px）。</item>
     /// </list>
     ///
     /// <para><b>数据源</b>是 <see cref="CsHudSnapshot.Radar"/>（比赛模拟每帧重填：自己 / 队友 /
@@ -252,7 +252,7 @@ namespace Cs16.UI
             //   ⇒ 点必然落在底图对应像素上（这就是"同尺度同原点"）。
             //
             // 依据 = 原版底图自带的两处包点标记：图上向量 vs 世界向量的角度残差 **1.55°**
-            // （旧轴对 88.45°），`tools/probes/locate-overview-letters.py` ⇒ 水平用 Z 跨度 h、
+            // （旧轴对 88.45°）⇒ 水平用 Z 跨度 h、
             // 竖直用 X 跨度 w。
             var scale = Mathf.Min(field.width / h, field.height / w);
             var cx = (minX + maxX) * 0.5f;

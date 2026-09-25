@@ -33,13 +33,13 @@
   本轮要复用的放 `.ai-tmp/drivers/`（交付前统一清），真一次性的放 `.ai-tmp/test/` 用完删。
 - **采集即冻结**：采完联络图后**不许再改代码**；若必须再改 ⇒ 只重采受影响的行，并在回报里写明"第几次重采"。
 - **能离线判的不许进 Play**：A1 的 FOV 换算、B1 的 miptex 尺寸、C1 的环代价、D1 的机位公式
-  **都要在离线先算/先断言**（`.ai-tmp/hosts/*check` 或直接脚本），Play 只用来采"表现类"。
+  **都要在离线先算/先断言**（离线自检宿主 `.ai-tmp/hosts/` 或直接脚本），Play 只用来采"表现类"。
 - **原版图仍缺**（原版客户端跑不起来）：需要原版图定案的三项（viewmodel 精确占比、天空盒 `up` 面朝向、UI 上屏色）
   ⇒ 如实标 `BLOCKED：需一张原版图`，⛔ 不许编。
 
 ## 3. 判据（自己跑，原始输出贴进回报）
 
-1. **一次编译**：`powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1` ⇒ `csc exit=0`；
+1. **一次编译**：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` ⇒ `csc exit=0`；
    编辑器侧 `recompile` + `recompile_status` 无错（编译失败 ⇒ 中止一切验证）；
 2. **离线预演**（各一条断言，给原文）：A1 换算反算回 90.0°±0.05°；B1 新贴图尺寸=原版 miptex；C1 环代价 ≈42.77；
    D1 机位距离=2.8448 m 且射线命中墙时收缩到 ≥0.762 m；

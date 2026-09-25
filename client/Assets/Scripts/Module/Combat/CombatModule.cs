@@ -48,6 +48,12 @@ namespace Cs16.Module.Combat
         private float _preNextFireTime;
         private string _preWeapon;
 
+        /// <summary>
+        /// 差异 #68：模拟的"连发自动补发"计数在本帧开始前的值（判"本帧这发是我的续发"用）。
+        /// 续发不由输入触发 ⇒ 不能只看 <c>_fireRequested</c>。
+        /// </summary>
+        private int _preBurstAutoShots;
+
         private bool _autoReload = true;
         private int _unmatchedShotCount;
 
@@ -155,6 +161,7 @@ namespace Cs16.Module.Combat
             _fireRequested = false;
             _preWeapon = null;
             _preNextFireTime = 0f;
+            _preBurstAutoShots = 0;
 
             var match = _match;
             var local = match != null ? match.LocalPlayer : null;
@@ -174,6 +181,7 @@ namespace Cs16.Module.Combat
             // 必须早于模拟 Tick：这是"这一发到底是不是我打的"的判据（见类注释）。
             _preWeapon = local.ActiveWeapon;
             _preNextFireTime = local.NextFireTime;
+            _preBurstAutoShots = local.BurstAutoShots;   // 差异 #68：连发续发的帧间差分
 
             // ---- 维护「上一把武器」：手持武器一变，就把变之前那一把记下来（供 Q = lastinv）----
             if (_lastSeenWeapon != null && _lastSeenWeapon != local.ActiveWeapon)
@@ -427,7 +435,11 @@ namespace Cs16.Module.Combat
             if (match == null) return;
 
             // ① 本帧模拟是否真的打出了"我的那一发"？（判据见 IsLocalShot）
-            var localFired = local != null && IsLocalShot(_fireRequested, _preNextFireTime, local.NextFireTime);
+            //   差异 #68：连发的续发不由输入触发（松手后模拟继续补发）⇒ 用模拟的补发计数差分认领，
+            //   否则续发只会"扣弹 + 播枪声"，打出伤害的那条射线永远不会发。
+            var localFired = local != null &&
+                (IsLocalShot(_fireRequested, _preNextFireTime, local.NextFireTime) ||
+                 local.BurstAutoShots > _preBurstAutoShots);
 
             // ② 把本帧的记录全部取走（模拟会警告"没人消费"），再挑出属于我的那一条。
             _drainedShots.Clear();

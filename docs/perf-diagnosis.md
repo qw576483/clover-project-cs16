@@ -148,8 +148,8 @@ FrameTimingManager.gpuFrameTime 应从 ~100 ms 掉到个位数       ← 必须
 ```
 
 探针已归档（删了就再也判不了同一件事，所以不算临时文件）：
-- `tools/probes/check-gpu-device.cs` —— 读渲染设备（`unity command eval_file --file <路径>`）
-- `tools/probes/measure-play-frametime.cs` —— Play 模式采帧时间 + CPU/GPU 拆分
+- 读渲染设备（`unity command eval_file --file <路径>`）
+- Play 模式采帧时间 + CPU/GPU 拆分
 
 ---
 

@@ -28,7 +28,7 @@ namespace Cs16.EditorTools
     /// 本脚本**只在进入 Play 时**动手：退出 Play 后开关保持关着（它只是显示偏好，不影响任何渲染结果），
     /// 用户若想自己看 gizmo，可在 Game view 工具栏再点开（但下次进 Play 会再关一次，这是本脚本的用意）。</para>
     ///
-    /// <para><b>出处</b>：Game view 的开关成员名来自运行时反射枚举（<c>tools/probes/probe-gameview-gizmos.cs</c>：
+    /// <para><b>出处</b>：Game view 的开关成员名来自运行时反射枚举：
     /// <c>field m_Gizmos</c>、<c>prop drawGizmos</c>、<c>prop showGizmos</c>）；
     /// A/B 数字见 <c>策划/差异登记.tsv</c> 的对应行。</para>
     /// </summary>

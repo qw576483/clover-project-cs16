@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS (slice BW-G phase 2, main-agent ruling 2026-09-22)
 -----------------------------------------------------------------
-`tools/probes/enumerate-entities.py` (see `_s()` around line 1853 and its single call site
+(see `_s()` around line 1853 and its single call site
 around line 1861) deliberately rewrites every `.png` in three generated columns as
 `.png ` (a space in FRONT of the extension):
 

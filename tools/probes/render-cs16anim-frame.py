@@ -41,8 +41,8 @@ Usage
     python tools/probes/render-cs16anim-frame.py --list
     python tools/probes/render-cs16anim-frame.py --model player_T --clips
     python tools/probes/render-cs16anim-frame.py --model player_T --clip idle1 --frame 0 \
-        --out .ai-tmp/test/ceside/player_T_idle1_f0
-    python tools/probes/render-cs16anim-frame.py --all-clips --model player_T --outdir .ai-tmp/test/ceside
+        --out .ai-tmp/test/player_T_idle1_f0
+    python tools/probes/render-cs16anim-frame.py --all-clips --model player_T --outdir .ai-tmp/test
 
 Exit code 0 = ok, 2 = bad args / unreadable data.
 """

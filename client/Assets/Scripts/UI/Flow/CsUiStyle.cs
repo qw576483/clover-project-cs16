@@ -631,8 +631,8 @@ namespace Cs16.UI
         // ═══════════ 原版勾选框的"勾"字形（**预渲染贴图**，不再是纯色方块）═══════════
         //
         // 出处链：原版 `clientscheme.res:483-492` 声明的符号字体 **Marlett**；勾 = 该字体 **gid 12**
-        //（可达码位 `U+F061`，判据资产 `tools/probes/marlett-glyphs.py` 定案）。载体 =
-        // `原版资源\cs16src\marlett.ttf`（27,724 B）⟶ 由 `tools/probes/make-check-glyph.py` **同口径**
+        //（可达码位 `U+F061`）。载体 =
+        // `原版资源\cs16src\marlett.ttf`（27,724 B）⟶ 由同一口径
         // 渲成带 alpha 的 PNG = `ResPaths.MenuCheckGlyph`（`Resources/UI/Art/menu_check.png`，132×140）。
         // 判据数字（`--size 300`）：`ink=7523 / bbox=132x140 / ratio=0.943 / comps=1 / vx=0.352 / arm=0.264`。
         //
@@ -734,7 +734,7 @@ namespace Cs16.UI
         ///
         /// <para>勾选框里的"勾" = 原版 **Marlett** 字体字形（scheme:483-492）的**预渲染贴图**
         /// （<see cref="ResPaths.MenuCheckGlyph"/>，勾 = 该字体 gid 12 / 可达码位 `U+F061`；
-        /// 渲染器 = 判据资产 `tools/probes/make-check-glyph.py`）。不再是一块纯色方块。</para>
+        /// 不再是一块纯色方块。</para>
         ///
         /// <para>方框边长（<see cref="CheckBoxSize"/>）与文案起点（<see cref="CheckTextIndent"/>）仍是
         /// **本项目新增**的量（原版由 Marlett 字模决定，无像素值可引）。</para>
@@ -762,7 +762,7 @@ namespace Cs16.UI
             CreateBoxRect("BorderBottom", holder, new Vector2(0f, boxTop - (CheckBoxSize - 2f)),
                 new Vector2(CheckBoxSize, 2f), BorderBright);
             // 勾 = 原版 Marlett gid 12 的**预渲染贴图**（`ResPaths.MenuCheckGlyph`，渲染器 =
-            // 判据资产 `tools/probes/make-check-glyph.py`，出处见本类「勾字形」段）。
+            // 出处见本类「勾字形」段）。
             // 位置 / 尺寸**沿用原值** `4f / boxTop-4f` + `CheckBoxSize-8f`：动它会波及 options
             //    面板的全部几何证据（8×8 的画框，贴图按 preserveAspect 缩进去画）。
             var mark = CreateBoxRect("Mark", holder,

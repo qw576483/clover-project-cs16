@@ -86,6 +86,20 @@ namespace Cs16.Module.Match
         /// <summary>每帧由 Module/Player 下发；模拟内部做移动解算（本地碰撞 + 台阶）。</summary>
         void SetLocalInput(in CsInputState input);
 
+        /// <summary>
+        /// **远端 actor**（局域网对局里别的客户端控制的那具身体）的输入意图，由 Module/Net 的
+        /// 对局网关转交。模拟内部按**同一套**移动解算驱动该 actor —— 与 <see cref="SetLocalInput"/>
+        /// 的区别只有"意图从哪来"。
+        ///
+        /// <para><b>调用约束</b>：只在主线程调（网关在每帧出快照之前统一转交一次）。
+        /// actorId 在模拟里不存在时忽略并限频留痕；该 actor 有**新鲜**远端输入期间，
+        /// 机器人 AI 不再驱动它（一头身体不许两个驾驶员）。</para>
+        ///
+        /// <para><b>为什么不是"收到就改 actor"</b>：模拟的写入者只有一个（实现类），
+        /// 网关只登记意图、由模拟在它自己的 Tick 里消费 —— 否则网络线程会与模拟帧抢同一具身体。</para>
+        /// </summary>
+        void SetRemoteInput(int actorId, CsInputState input);
+
         // ==================== 玩家动作 ====================
         /// <summary>换弹（R）。</summary>
         void RequestReload();

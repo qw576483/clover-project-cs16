@@ -207,7 +207,7 @@ namespace Cs16.Module.Combat
         /// 弹痕贴片**整块画布**的世界尺寸（米）= 0.128 m（= 16 px × <see cref="DecalMetersPerPixel"/>）。
         ///
         /// <para><b>复核（用户报「弹痕还是没有」）</b>——
-        /// 实测（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，读的就是进工程的同一批 PNG）：
+        /// 实测（读的就是进工程的同一批 PNG）：
         /// <c>fx_shot1..5</c> 是 16×16、RGB **纯黑 (0,0,0)**、alpha = 不透明度掩码，其中
         /// <b><c>alpha≥32</c> 只有 13~16 px / 256、<c>alpha≥160</c> 只有 2~4 px</b>
         /// ⇒ 真正"黑得看得见"的**核心只有约 4 px 宽 = 整块的 4/16</b>。</para>
@@ -232,7 +232,7 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 弹痕**可见墨迹**占整块画布宽度的比例 = 5/16 = 0.3125（实测 4~5 px 的上界取值）。
         ///
-        /// <para><b>出处 = 载体逐像素实测</b>（判据资产 <c>tools/probes/probe-decal-visibility.py</c>，
+        /// <para><b>出处 = 载体逐像素实测</b>（
         /// 读的就是进工程的同一批 PNG）：<c>decals.wad</c> 的 <c>{shot1..5</c> 是 16×16，RGB 纯黑、
         /// alpha = 不透明度掩码；其中
         /// <b><c>alpha≥32</c>（= 会真的改变屏幕像素的墨迹）的水平跨度 = 4~5 px</b>
@@ -295,13 +295,43 @@ namespace Cs16.Module.Combat
         public const int MaxBloodDecals = 24;
 
         /// <summary>
-        /// 命中瞬间的**血雾贴片**存活时长（秒）—— 这是 `sprites/bloodspray.spr` 的降级替身
-        /// （该 `.spr` 不在盘；载体缺口登记在 `client/资源欠缺清单.md`）。
+        /// 血雾贴片存活时长（秒）。出处：**本项目新增**（载体 `valve/sprites/bloodspray.spr` 给的是
+        /// 10 帧像素，**帧时长在引擎**里、载体没给 ⇒ 同 <see cref="MuzzleFlashDuration"/> 处置）。
         /// </summary>
         public const float BloodPuffDuration = 0.14f;
 
-        /// <summary>血雾贴片的世界尺寸（米）。按"命中点上一小团、不遮住对手"取 0.18m。</summary>
+        /// <summary>血雾贴片的世界尺寸（米）= 0.18（本项目新增；取"命中点上一小团、不遮住对手"）。
+        /// 载体是 64×64 贴图（PPU=100 ⇒ 天生 0.64 世界单位），调用点必须走
+        /// <c>CombatEffects.SpriteScaleForMeters</c> 换成倍率，⛔ 不能直接写米。</summary>
         public const float BloodPuffSize = 0.18f;
+
+        /// <summary>同一发命中里各张血雾贴片的散开半径（米）= 0.06（本项目新增：让一团血雾有厚度，
+        /// 否则多张贴片完全重合、画面与单张无差别）。</summary>
+        public const float BloodPuffSpread = 0.06f;
+
+        /// <summary>
+        /// 一发命中**至少**出几张血雾贴片 = 3。
+        ///
+        /// <para><b>出处 = 原版 CS 1.6 的 `mp.dll`</b>：血迹临时实体的数量字节是
+        /// <c>clamp(amount / 10, 3, 16)</c> —— 下界立即数 <c>3</c> 在 VA <c>0x1008f687</c>、
+        /// 上界立即数 <c>0x10</c>（=16）在 VA <c>0x1008f67b</c>，`/10` 由 <c>0x66666667</c> 魔数除法实现
+        /// （VA <c>0x1008f676</c>）。</para>
+        ///
+        /// <para><b>为什么本工程取的是**下界**</b>：公式的自变量 <c>amount</c> 来自受击者实体上的一个浮点
+        /// 场（`(int)pev->field_0x1e0`，读取点 VA <c>0x100395cf</c>），命中层的伤害值在
+        /// <c>Module/Match</c> 里、不在表现层可达 ⇒ 本层拿不到 `amount`，只能取有出处的下界 3。
+        /// 要按 <c>clamp(damage/10, 3, 16)</c> 分流 ⇒ 需要把伤害透传到 <c>ICsMatch.OnBulletHit</c>
+        /// （跨 Match 层，不在本片写入范围）。缺口登记在 `策划/差异登记.tsv` #74。</para>
+        /// </summary>
+        public const int BloodSprayMinCount = 3;
+
+        /// <summary>一发命中的血雾贴片**上限** = 16（出处见 <see cref="BloodSprayMinCount"/>：
+        /// 立即数 <c>0x10</c> 在 VA <c>0x1008f67b</c>）。本层因拿不到 `amount` 暂不使用，留作口径登记。</summary>
+        public const int BloodSprayMaxCount = 16;
+
+        /// <summary>每张血雾贴片对应的"量" = 10（出处见 <see cref="BloodSprayMinCount"/>：`clamp(amount/10,3,16)`）。
+        /// 同样因 `amount` 不可达而暂未参与计算，留作口径登记。</summary>
+        public const int BloodSprayAmountPerSprite = 10;
 
         /// <summary>
         /// 从**命中点**沿弹道方向继续找"能贴血迹的面"的最大距离（米）。

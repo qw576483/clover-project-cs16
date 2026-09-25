@@ -134,6 +134,8 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
+            a.BurstShotsLeft = 0;
+            a.NextBurstShotTime = 0f;
         }
 
         /// <summary>默认装备：刀恒有 + 阵营默认手枪（T=Glock18 / CT=USP）。</summary>
@@ -294,7 +296,7 @@ namespace Cs16.Module.Match
             // C4 不在这里生成 —— 它的世界掉落走 Bomb 链（CsBomb.OnCarrierLost + TryPickupDropped），
             //    两套并存会变成"同一次掉落能被捡两次"。
             if (weaponId != CsWeapons.C4)
-                _m.SpawnDroppedWeapon(weaponId, a.Team, a.Position, a.Yaw, dropMag, dropReserve);
+                _m.SpawnDroppedWeapon(weaponId, a.Team, a.Id, a.Position, a.Yaw, dropMag, dropReserve);
 
             if (a.ActiveWeapon == weaponId) SelectBestWeapon(a);
         }
@@ -437,6 +439,8 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
+            a.BurstShotsLeft = 0;        // 切枪打断连发：余下待发作废
+            a.NextBurstShotTime = 0f;
 
             Game.Logger.Info(Tag, $"{a.Name} 切换到 {def.DisplayName}（{SwitchTimeFor(def):F2}s 后可用）");
         }
@@ -495,6 +499,8 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
+            a.BurstShotsLeft = 0;        // 换弹打断连发：余下待发作废
+            a.NextBurstShotTime = 0f;
             // 唯一必须先确定的事实是"序号到底有没有推进"（表现层只认序号边沿）。
             // 不改任何判定，只是把已经存在的字段写进日志。
             Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）seq={a.ReloadSeq}");
@@ -509,8 +515,9 @@ namespace Cs16.Module.Match
         /// <para>切枪期间按右键**照样切**（与 <see cref="Reload"/> 不同）：原版的消音器拆装不受
         /// 切枪影响，硬拦反而会造出一个原版没有的规则。</para>
         ///
-        /// <para>本方法只改「状态」。**数值影响未落地**（消音后的伤害/散布、连发的发数与节奏都没有
-        /// 出处）⇒ 缺口留在 <c>策划/差异登记.tsv</c> #68，判据 = 离线断言（状态切换可观测）。</para>
+        /// <para>本方法只改「状态」；两态的**数值**由 <c>CsWeaponDef</c> 的新字段持有，取值一律走
+        /// <c>CsWeapons.BaseDamage</c> / <c>StaticSpreadFor</c> / <c>CycleTimeFor</c>
+        /// （出处 = <c>策划/武器右键数值出处.md</c>）。关掉连发模式时把待发的续发一并作废。</para>
         /// </summary>
         public void ToggleWeaponMode(CsActor a, float now)
         {
@@ -533,6 +540,8 @@ namespace Cs16.Module.Match
             if (def.CanBurst)
             {
                 a.BurstMode = !a.BurstMode;
+                a.BurstShotsLeft = 0;          // 切模式 ⇒ 上一梭的待发续发作废
+                a.NextBurstShotTime = 0f;
                 Game.Logger.Info(Tag,
                     $"{a.Name} 把 {def.DisplayName} 切到{(a.BurstMode ? "连发" : "单发")}（attack2 · 差异 #68）");
                 return;
@@ -626,7 +635,23 @@ namespace Cs16.Module.Match
                 a.SetAmmo(def.Id, ammo.inMag - 1, ammo.reserve);
             }
 
-            a.NextFireTime = now + def.SecondsPerShot;
+            // 差异 #68：连发档 = 一次扣扳机打满一轮。首发在这里打掉，其余发给 TickBurst 按原版间隔补发；
+            // 循环时间两档各自取（Glock18 连发 0.5 / 半自动 0.15；FAMAS 连发 0.55 / 普通 0.0825）。
+            var burstShots = CsWeapons.BurstShotsFor(def, a.BurstMode);
+            a.NextFireTime = now + CsWeapons.CycleTimeFor(def, burstShots > 0);
+            if (burstShots > 1)
+            {
+                a.BurstShotsLeft = burstShots - 1;
+                a.NextBurstShotTime = now + CsWeapons.BurstIntervalFor(def, 1);
+                _m.RateInfo("fire.burst." + def.Id,
+                    $"{a.Name} 以 {def.DisplayName} 连发：每梭 {burstShots} 发（首发 {CsWeapons.BurstIntervalFor(def, 1):F2}s / " +
+                    $"续发 {CsWeapons.BurstIntervalFor(def, 2):F2}s，循环 {CsWeapons.CycleTimeFor(def, true):F2}s）");
+            }
+            else
+            {
+                a.BurstShotsLeft = 0;
+            }
+
             a.ConsecutiveShots++;
             a.RecoilPitch += def.RecoilVert;
             // 后坐力水平偏移：**玩法**（逐发累积进 a.RecoilYaw，决定后续弹道往哪偏）。
@@ -648,7 +673,8 @@ namespace Cs16.Module.Match
             var origin = a.EyePosition;
             var baseDir = AimDirection(a);
 
-            var spread = def.Spread;
+            // 差异 #68：散布按当前的消音 / 连发状态取（M4A1 装消音 ×1.25、Glock18 连发 ×3）。
+            var spread = CsWeapons.StaticSpreadFor(def, a.Silenced, a.BurstMode);
             if (a.Velocity.x != 0f || a.Velocity.z != 0f) spread += def.MoveSpread;
             if (!a.OnGround) spread += def.MoveSpread;
 
@@ -662,6 +688,65 @@ namespace Cs16.Module.Match
                 if (victim == null) continue;
                 _m.Damage.ApplyHit(a, victim, def, hitbox, point, dist, false);
             }
+        }
+
+        /// <summary>
+        /// 差异 #68：连发的**续发**（"一次扣扳机打满一轮"里除首发以外的那些发）。
+        ///
+        /// <para>由模拟每帧对活着的角色调用一次（本地输入更新与机器人更新各一处）：到点就补发一发并按
+        /// 原版间隔排下一发，一轮打满即停。**不推进 <see cref="CsActor.NextFireTime"/>** ——
+        /// 那一格已被首发设成"连发循环时间"，再推进等于把循环时间叠加到每一发上。</para>
+        ///
+        /// <para>补发只扣弹 / 累后坐力 / 记一条"待表现"记录，**不做射线**：机器人的射线由调用方
+        /// （<c>CsMatch.BotResolveShot</c>）接着打，真人的射线由 <c>Module/Combat</c> 消费本帧记录后打
+        /// （与首发同一条路）。换弹 / 切枪 / 空仓 / 换了手上那把枪都会让这一梭作废。</para>
+        /// </summary>
+        /// <returns>真的补发了一发返回 true，<paramref name="weaponId"/> 为其武器 id。</returns>
+        public bool TickBurst(CsActor a, float now, out string weaponId)
+        {
+            weaponId = null;
+            if (a == null || !a.IsAlive || a.BurstShotsLeft <= 0) return false;
+
+            var def = a.ActiveDef;
+            if (def == null || !def.CanBurst || !a.BurstMode)
+            {
+                a.BurstShotsLeft = 0;
+                return false;
+            }
+            if (now < a.NextBurstShotTime) return false;
+            if (now < a.ReloadEndTime || now < a.SwitchEndTime)
+            {
+                a.BurstShotsLeft = 0;
+                return false;
+            }
+
+            if (def.Magazine > 0)
+            {
+                var ammo = a.GetAmmo(def.Id);
+                if (ammo.inMag <= 0)
+                {
+                    a.BurstShotsLeft = 0;
+                    _m.RateInfo("fire.burst.empty." + def.Id,
+                        $"{a.Name} 的 {def.DisplayName} 连发中途没子弹了（余下待发作废）");
+                    return false;
+                }
+                a.SetAmmo(def.Id, ammo.inMag - 1, ammo.reserve);
+            }
+
+            var shotIndex = def.BurstShots - a.BurstShotsLeft + 1;   // 本梭第几发（2 = 首发后的第 1 发续发）
+            a.BurstShotsLeft--;
+            a.BurstAutoShots++;
+            a.ConsecutiveShots++;
+            a.RecoilPitch += def.RecoilVert;
+            a.RecoilYaw += CsRng.Stream(CsRngStream.RecoilYaw).Range(-def.RecoilHoriz, def.RecoilHoriz);
+            a.NextBurstShotTime = a.BurstShotsLeft > 0 ? now + CsWeapons.BurstIntervalFor(def, shotIndex) : 0f;
+
+            weaponId = def.Id;
+            _m.RecordShotFired(def.Id);
+            _m.RateInfo("fire.burst.shot." + def.Id,
+                $"{a.Name} 的 {def.DisplayName} 连发第 {shotIndex}/{def.BurstShots} 发（余 {a.BurstShotsLeft} 发，" +
+                $"下一发 {(a.BurstShotsLeft > 0 ? CsWeapons.BurstIntervalFor(def, shotIndex).ToString("F2") + "s 后" : "无")}）");
+            return true;
         }
 
         private void FireKnife(CsActor a, CsWeaponDef def)

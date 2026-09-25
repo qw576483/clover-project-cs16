@@ -28,6 +28,7 @@ namespace Cs16.EditorTools
     /// Assets/Resources/Art/T/{player,leet,arctic,guerilla}.prefab
     /// Assets/Resources/Art/CT/{player,gsg9,sas,gign,vip}.prefab
     /// Assets/Resources/Art/{T,CT}/viewmodel_{武器id}.prefab
+    /// Assets/Resources/Art/world_{武器id}.prefab
     /// Assets/Resources/UI/WorldNameplate.prefab
     /// </code>
     ///
@@ -175,6 +176,18 @@ namespace Cs16.EditorTools
                     else ok = false;
                 }
 
+                // ---- 世界模型（躺在地上的枪：原版 w_*.mdl，无骨骼的静态网格）----
+                for (var i = 0; i < assets.Count; i++)
+                {
+                    var a = assets[i];
+                    if (!a.Key.StartsWith("w_")) continue;
+                    var weapon = a.Key.Substring(2);
+                    // 路径不带阵营子目录：原版世界模型两边共用一份（CsViewTuning.WorldModelPrefix）
+                    if (AnimSetup.BuildStaticModelPrefab(
+                            a, CsViewTuning.WorldModelPrefix + weapon, materials, msg)) _prefabCount++;
+                    else ok = false;
+                }
+
                 // ---- 头顶名牌 ----
                 if (white != null)
                 {
@@ -241,6 +254,16 @@ namespace Cs16.EditorTools
                 }
                 ok &= Report(File.Exists($"{AnimSetup.AnimDir}/{key}.controller"),
                     $"{AnimSetup.AnimDir}/{key}.controller");
+            }
+
+            // 每份世界模型数据都要有对应预制体（不要求每把武器都有：原版只有部分武器带 w_*.mdl）
+            var worldData = Directory.Exists(ModelDataDir)
+                ? Directory.GetFiles(ModelDataDir, "w_*.cs16anim") : new string[0];
+            for (var i = 0; i < worldData.Length; i++)
+            {
+                var weapon = Path.GetFileNameWithoutExtension(worldData[i]).Substring(2);
+                var p = $"Assets/Resources/Art/{CsViewTuning.WorldModelPrefix}{weapon}.prefab";
+                ok &= Report(File.Exists(p), p);
             }
 
             var sfxDir = "Assets/Resources/Sound/SFX/sfx";

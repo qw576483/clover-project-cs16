@@ -262,7 +262,7 @@ namespace Cs16.Module.Map
         /// 只按位图判会同时产生两个相反的错误：
         /// ① 箱子顶面是朝上的面 ⇒ 箱子所在格判成"可走" ⇒ 站在地面的角色**直接走进箱子**（用户报"箱子能穿"）；
         /// ② 矮障碍所在格判成"挡" ⇒ 跳起来也过不去（用户报"匪家楼梯扶手跳不过去"）。
-        /// 判据与对照数字见 <c>tools/probes/geom-check.py</c>。</para>
+        /// </para>
         /// </summary>
         public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius)
         {

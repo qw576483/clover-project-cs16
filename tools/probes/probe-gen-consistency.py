@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """判据资产｜生成器"只含**已声明**改动"的**内容式**断言 + 盘上产物是生成器不动点（只读 + 沙箱）。
 
-来源：片BW-E-R 的 `.ai-tmp/test/bwer-gencheck.py`（2026-09-23 team-lead 裁定搬入 `tools/probes/`；
+来源：片BW-E-R 的生成器一致性自检（2026-09-23 team-lead 裁定搬入 `tools/probes/` 定为本文件；
       理由 = 将来复核"生成器是否被人夹带改动"时会去跑它）。
 基线：`tools/probes/probe-gen-baseline-patch2.py`
-      （= 片BW-E 回退基线 271333 B / SHA256 9EB055AF…，原在 `.ai-tmp/test/bwe-gen-before-patch2.py`；
+      （= 片BW-E 回退基线 271333 B / SHA256 9EB055AF…；
        **它顶部的 `# |prov|` 行是来源注释**，本脚本比对前会剥掉它们 —— 否则 N 行注释会变成 N 个假 hunk）。
 
 判据（⛔ **不硬编码 hunk 总数**：写死个数 = "断言与实现脱节"，下次再改一处就又 FAIL）：
@@ -14,7 +14,7 @@
   ④ **不动点**：把真 `策划/验收表.md` 复制进沙箱跑一次 `--inject` ⇒ 沙箱产出的 5 件必须与真产物
      **哈希逐个相同**（ledger 只比**数据行**：首行声明的 plan 目录按设计不同）。
 ⛔ 全程**只读真产物**（沙箱用 `--out-dir=<.ai-tmp/test/…> --spec-path=<该目录副本>`；生成器按
-   `plan` 目录绑定 ⇒ 真 `策划/**` 与 `tools/probes/coverage-hits.tsv` 一个字节都不会动，脚本自断言）。
+   `plan` 目录绑定 ⇒ 真 `策划/**` 与 一个字节都不会动，脚本自断言）。
 """
 import difflib
 import hashlib
@@ -28,6 +28,10 @@ sys.dont_write_bytecode = True
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 GEN = os.path.join(ROOT, 'tools', 'probes', 'enumerate-entities.py')
 BASE = os.path.join(ROOT, 'tools', 'probes', 'probe-gen-baseline-patch2.py')
+if not (os.path.isfile(GEN) and os.path.isfile(BASE)):
+    sys.stderr.write('  [gen] ERROR missing required input: %s | %s\n' % (GEN, BASE))
+    sys.stderr.write('  [gen]        this script diffs GEN (current generator) against BASE; both must exist\n')
+    sys.exit(2)
 T = os.path.join(ROOT, '.ai-tmp', 'test')
 PLAN = os.path.join(ROOT, '\u7b56\u5212')
 SBX = os.path.join(T, 'probe-gen-consistency-sbx')
@@ -59,7 +63,7 @@ KNOWN = [
      (1330, 1445),
      ['\u7247BW-M', 'D12_ROWS', 'S2_ROWS', 'S2 state rows appended']),
     #      依据① **内容自述标记**（须出现在窗口内新增行里；复核命令：
-    #             `grep -n "首个证据路径\|decals.wad\|{blood\*" tools/probes/enumerate-entities.py`
+    #             `grep -n "首个证据路径\|decals.wad\|{blood\*" `
     #             ⇒ L2222 = #73 的"何时消除"新文本；L2226/2229/2230 = #74 的"为什么/出处/何时消除"）；
     #      只凭依据①**不算**成立（判据不做语义判断）；本窗口只覆盖 #73/#74 两行，
     #        **不含 #28**（#28 素材仍在重出 ⇒ 落地时必须再补一条，别复用本窗口）。
@@ -93,8 +97,8 @@ KNOWN = [
      (1940, 1968),
      ['cs16_anim.py', 'models/player']),
     #      依据① **内容自述标记**（复核命令，数字是实测的）：
-    #             `grep -c "fx-表现联络图.png" tools/probes/enumerate-entities.py` ⇒ 5
-    #             `grep -c "sliceFX-contact-sheet.manifest.tsv" tools/probes/enumerate-entities.py` ⇒ 2
+    #             `grep -c "fx-表现联络图.png" ` ⇒ 5
+    #             `grep -c "sliceFX-contact-sheet.manifest.tsv" ` ⇒ 2
     #             ⇒ 四个标记 = `fx-表现联络图.png` / `sliceFX-contact-sheet.manifest.tsv` /
     #             （start/end **同一命令内**配对）⇒ 生成器 mtime 落在该窗口内。
     #      只凭依据①**不算**成立（判据不做语义判断，人也不许单凭自述）。
@@ -111,7 +115,7 @@ KNOWN = [
      (1918, 1938),
      ['2026-09-24 复查仍报', '匪家的扶手', '机器人 ai 没有分工',
       '枪械的右键还是无效', '弹孔资源']),
-    #      依据① **内容自述标记**：`grep -n "必须支持局域网联机\|枪口火焰没有效果" tools/probes/enumerate-entities.py`
+    #      依据① **内容自述标记**：`grep -n "必须支持局域网联机\|枪口火焰没有效果" `
     #      本窗口 [2044..2046] 覆盖的 base 2045 行**同时**含更早切片对 #87 行的未登记措辞改动
     #         （HEAD 版即已 UNKNOWN）⇒ 合并归属，如实记录。
     ('片DOC-0924  DIF 新开 #88 局域网联机 / #89 枪口火焰（同行含 #87 早前改动，合并归属）',
@@ -119,7 +123,7 @@ KNOWN = [
      ['必须支持局域网联机', '枪口火焰没有效果', 'B51',
       '用户 2026-09-24 报的第 4 条', '用户 2026-09-24 报的第 8 条']),
 ]
-# 改出、但未在 KNOWN 里登记（复核命令：把生成器换成 `git show HEAD:tools/probes/enumerate-entities.py`
+# 改出、但未在 KNOWN 里登记（复核命令：把生成器换成 `git show HEAD:`
 # 残留 base 区间（按 base 1-based）：L45 / L1519 / L1521 / L1523 / L1540 / L1577 / L1708 / L1751 /
 #   L1768 / L1773 / L1864 / L1875 / L2004 / L2037。
 #    如实留作既存债。（其中 L45 = 生成器头部一段插入，与 DIF 无关。）

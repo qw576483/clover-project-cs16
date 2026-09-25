@@ -90,6 +90,16 @@ namespace Cs16.Module.Bot
         public const float PathReplanInterval = 1f;
 
         /// <summary>
+        /// "A* 路径已求"日志（<c>BotNavigator.PathLog</c>）的每 bot 最小间隔（秒）。
+        ///
+        /// <para>为什么不能逐次打：路径每 <see cref="PathReplanInterval"/> 秒就可能重求一次，8 个 bot ⇒ 每秒 8 行。
+        /// 5 s 一行的量级足以回答"寻路层在不在给方向"，又不会淹没其它日志。</para>
+        ///
+        /// <para>出处：**本项目新增**（日志降频参数；被降频的事件 = <c>AStar.FindSmoothed</c> 求路径成功）。</para>
+        /// </summary>
+        public const float PathLogInterval = 5f;
+
+        /// <summary>
         /// "起点/终点格不可走时"向外找最近可走格的半径（格）。
         ///
         /// <para>必要性：引擎 <c>AStar.Find</c> 对"起点不可走"直接返回 null ⇒ 机器人被挤进位图判阻挡的格子
@@ -113,6 +123,23 @@ namespace Cs16.Module.Bot
         /// 出处：**本项目新增**（护栏，不是玩法阈值；与 <c>CsConst.StepUpHeight</c> 无关）。</para>
         /// </summary>
         public const int HeightReachMaxCells = 20000;
+
+        /// <summary>
+        /// 位图里"**孤立格区**"的规模上限（格）：连通分量格数 ≤ 它 ⇒ 局部层当它不可走。
+        ///
+        /// <para>必要性：可走位图是**单层 2D**（多层几何上下重叠），de_dust2 有 53 个连通分量、非主分量 941 格
+        /// （17.7%）。小分量是"位图说可走、物理没有落脚面"的区域 —— 例如沿 <c>x=49</c> 的 11 格一条缝
+        /// （<c>z=27..37</c>，向下 15m 探不到任何世界面）。机器人走进去就出不来：目标选择里
+        /// <c>CanReach</c> 对路线点 / 巡逻点 / 出生点**全部**返回 false，此后整回合只能原地换向。</para>
+        ///
+        /// <para>取值理由：主分量 4369 格、次大分量 323 格（多层几何的合法区域，如 B 点南侧）；再往下是
+        /// 191 / 103 / 82 格，然后掉到 ≤ 24 格。取 32 ⇒ 只挡住 ≤ 32 格那一档，**不挡** 82 格以上的（挡住会让
+        /// 机器人走不进整片合法区域）。分量格数见离线分量表 <c>.ai-tmp/test/astar-markers/bitmap-connect.py</c>；
+        /// 消费方 = <see cref="BotNavigator"/> 的 <c>IsTrapCell</c>。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航护栏，不是玩法阈值；A 里没有 bot 导航）。</para>
+        /// </summary>
+        public const int TrapComponentCells = 32;
 
         /// <summary>
         /// "同一对端点上连续求不出路径几次" ⇒ 判为**终点格与起点格不连通**（位图连通性问题，不是偶发）。
@@ -158,7 +185,7 @@ namespace Cs16.Module.Bot
         /// <c>[BOTFLIP]</c> 的闸是 0.5s/条，而每条之间累计翻转数 +3~+5（实测 Darrell/Scuzzy）
         /// ⇒ 单次翻转间隔 ≈ 0.5/5 ≈ <b>0.1s</b>。取它 ⇒ 恰好覆盖**一个完整噪声周期**，
         /// 单帧抖动推不翻；而 0.1s × 实测行走速度 4.7m/s ≈ 0.47m &lt; 一格(1m)，真墙照样在半个格内被认出来。
-        /// 参数扫描（<c>tools/probes/bu-r3-avoid-replay.py</c> 第 4 节）显示 0~0.4s 全落在同一平台
+        /// 参数扫描（第 4 节）显示 0~0.4s 全落在同一平台
         /// （换向率 0.1 次/秒 不变）⇒ 0.1s 在平台**内部**，不是拐点上的刀锋值。</para>
         ///
         /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI；同族参数 = <see cref="ProbeHoldSeconds"/>）。</para>
@@ -474,6 +501,47 @@ namespace Cs16.Module.Bot
         /// <summary>Hard 档买 AWP 的概率（30%）。
         /// 规格 §2.4 的 Hard 行只写「会买最好枪」、未给概率 ⇒ 只能标"本项目新增"）。</summary>
         public const float AwpChanceTier2 = 0.30f;
+
+        // ==================== 投掷物（角色分工）====================
+        /// <summary>烟雾弹的最近投出距离（米）：比它更近就直接开枪，不扔。
+        /// 取值 = 烟雾球半径量级（<c>CsMatchConst.SmokeBlockRadius</c> 3.5m）稍下 —— 扔在脚下的烟只挡自己。
+        /// 出处：**本项目新增**（bot 投掷取舍阈值）。原版 mp.dll 的 bot 侧只留状态名 <c>GrenadeThrow</c>（0x1247BC）
+        /// 与购买序列（0x124AB0 的 <c>sgren/flash/hegren</c>），**没有任何距离阈值数据**。</summary>
+        public const float GrenadeMinRange = 3f;
+
+        /// <summary>
+        /// 会伤到自己的那两种投掷物（高爆 / 闪光）的最近投出距离（米）——
+        /// **等于爆心半径本身**（<c>CsConst.GrenadeHeRadius</c> 5.5m；<c>CsMatchConst.FlashRadius</c> 也取它）：
+        /// 站在半径之外才投 ⇒ 自己既不吃自己的 HE，也不会被自己的闪光照瞎
+        /// （<c>CsDamage.ApplyHeExplosion</c> / <c>ApplyFlash</c> 都不豁免投掷者本人，两者都按"距离 × 视线"给强度）。
+        /// </summary>
+        public const float GrenadeSelfSafeRange = CsConst.GrenadeHeRadius;
+
+        /// <summary>
+        /// 投出的最远距离（米）——**由投掷物理定出的上界，不是手感值**：
+        /// 投掷 = 沿瞄向给初速 <c>CsConst.GrenadeThrowForce</c>(12 m/s) + 重力 <c>CsConst.Gravity</c>(20.32 m/s²)
+        /// （<c>CsInventory.ThrowGrenade</c> 与 <c>CsInventory.TickProjectiles</c> 就是这套积分），
+        /// 45° 平射最远 = v²/g = 144/20.32 ≈ 7.09m。取 6.8m 留 0.29m 余量 ⇒ 低弧解算（见
+        /// <c>CsBotBrain.GrenadeAimPoint</c>）在这个窗口内恒有解（6.8m 处所需仰角 ≈ 35°）。
+        /// </summary>
+        public const float GrenadeMaxRange = 6.8f;
+
+        /// <summary>两次投掷之间的最小间隔（秒）：防"一回合把手上几颗雷连着一次性扔光"。
+        /// 出处：**本项目新增**。</summary>
+        public const float GrenadeThrowSpacing = 8f;
+
+        /// <summary>一回合最多投几颗。出处：**本项目新增**（原版口径只体现"一回合带得起 sgren/flash/hegren 各有限"，
+        /// 见 <c>CsMatchConst.MaxHeGrenades/MaxFlashbangs/MaxSmokes</c>）。</summary>
+        public const int GrenadeMaxPerRound = 2;
+
+        /// <summary>"切到手上那颗雷"的等待上限（秒）：切枪动作由模拟执行，这里只做超时兜底 ——
+        /// 超时就放弃这颗并进入下一个间隔，避免机器人抱着 SwitchTo 站着不动。
+        /// 出处：**本项目新增**（实现兜底；量级 = <c>CsConst.SwitchTime*</c> 两倍）。</summary>
+        public const float GrenadeSwitchTimeout = 1.6f;
+
+        /// <summary>切雷后允许扣扳机的朝向门限（度）：视角还没转到瞄点就投 = 扔到身后。
+        /// 出处：**本项目新增**（投掷实现参数）。</summary>
+        public const float GrenadeAimGateDegrees = 12f;
 
         // ==================== 统计 / 日志 ====================
         /// <summary>命中率统计日志间隔（秒）：验收表 B1~B3 要的就是这条。

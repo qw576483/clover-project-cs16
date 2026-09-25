@@ -44,5 +44,13 @@ namespace Cs16.Module.Match
 
         /// <summary>已被拾取。被拾取的项会**立刻从** <c>CsMatch.DroppedWeapons</c> 里摘掉。</summary>
         public bool Consumed;
+
+        /// <summary>丢掉它的那个角色（见 <see cref="DropperReleased"/>）。</summary>
+        public long DropperActorId;
+
+        /// <summary>掉落者是否已经走出过 <see cref="CsMatchConst.PickupRadius"/>。
+        /// <para>掉落点就在掉落者脚下，若一落地就允许他拾取，同一帧就会被他自己捡回去 ⇒
+        /// 枪永远上不了地。因此掉落者必须先离开拾取半径（走出即置 true），此后与其他人同口径。</para></summary>
+        public bool DropperReleased;
     }
 }

@@ -76,7 +76,7 @@
 
 ## 3. 判据（自己跑，原始输出贴进回报）
 
-1. **编译**：`powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1` ⇒ `csc exit=0`；
+1. **编译**：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` ⇒ `csc exit=0`；
 2. **闸门**：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\verify.ps1` ⇒ **`evidence-freshness` 转 PASS**（除 `HUMAN-ONLY` 外无 FAIL）；
 3. **生成器产物**：`.anim` / `.controller` / 预制体的**实际文件数与路径**（`Get-ChildItem` 计数，不是"命令返回 true"）；
 4. **联络图**：3 张图的文件名 + 每张覆盖的格号 + 你逐格读出的结论（一致 / 差在哪）；

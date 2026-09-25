@@ -35,14 +35,14 @@
 ### 1.3 收尾
 
 - 改完**必须重跑** `Clover/CS16/生成流程场景与面板`（`Editor/Flow/FlowSetup.cs` 的 `Generate()`）重建 `MainMenuPanel.prefab`。
-- 一次 Play 采主菜单帧（1920×1080，`<项目根>/.ai-tmp/screenshots/32_mainmenu.png`）+ 必要时拼进联络图。
+- 一次 Play 采主菜单帧（1920×1080）+ 必要时拼进联络图。
 - 验收表：更新主菜单相关行（M2 等）的证据列；**把本片新增的无出处项登记进「允许的差异」**（用 agent-31 已占用的序号之后的下一个号，⛔ 不许插在中间）。
 
 ## 2. 判据（自己跑，原始输出贴回报）
 
 1. **tga 头信息**：三张图的 `宽×高×位深×有无 alpha`（原始输出）；
 2. **对照表**：`.res`/`gameui_english.txt`/tga 尺寸 → 换算值 → 代码实际值（逐元素一行）；⛔ 只给结论不算；
-3. 编译：`.ai-tmp/test/compile-check.ps1`（本工程既有配方）⇒ `exit=0`；
+3. 编译：`tools/probes/compile-check.ps1`（本工程既有配方）⇒ `exit=0`；
 4. **一次 Play**：`32_mainmenu.png` + **运行时节点树**（每个按钮的实际坐标/尺寸/贴图名，证明与换算值一致）+ 悬停态截图（鼠标停在 New Game 上，证 `game_menu_mouseover` 生效）；
 5. `tools/verify.ps1` ⇒ FAIL=0（若某行证据受影响只重采那几行，写明第几次重采）。
 

@@ -18,7 +18,7 @@
 4. 现有运行时/生成器（**扩展它们，别另起炉灶**）：
    - 运行时：`client/Assets/Scripts/Module/View/{ActorView,ViewModule,ViewModelRig,CsViewTuning}.cs`
    - 生成器：`client/Assets/Editor/Views/{ArtSetup,Cs16ModelData,NameplatePrefabBuilder}.cs`（现在生成的是 **MeshFilter + MeshRenderer 的静态分块 mesh**）
-5. 离线编译入口：`.ai-tmp/test/compile-check.ps1`（本片的"编译通过"判据）
+5. 离线编译入口：`tools/probes/compile-check.ps1`（本片的"编译通过"判据）
 
 ## 1. 第①拍（**只读取证，⛔ 这一拍不许写实现代码**）
 
@@ -48,7 +48,7 @@
 
 ## 3. 第③拍：一次编译 + 预演
 
-- `powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1` ⇒ **`csc exit=0`**（贴原始输出）；
+- `powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` ⇒ **`csc exit=0`**（贴原始输出）；
 - 产出**预演报告**：逐项写清"已就绪、可实机采图"与"仍需编辑器（生成器未跑 / 资产未生成）"；
 - ⛔ 编译失败 ⇒ 停下修，不许继续。
 

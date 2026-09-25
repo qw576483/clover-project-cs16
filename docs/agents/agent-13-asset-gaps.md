@@ -8,7 +8,7 @@
 - `策划/对照表.md`：T-05 / T-06（贴图与天空盒）、U-06（雷达尺寸）、U-34（秒表图标）、BLOCKED-3
 - `原版资源/解包产物/原版HUD布局.md`：HUD 侧实测（含 `hud.txt` 行号、截图量化坐标）
 - `client/资源欠缺清单.md`：第 19 项（地图贴图回落）、第 17 项（字体）
-- 离线编译入口：`.ai-tmp/test/compile-check.ps1`
+- 离线编译入口：`tools/probes/compile-check.ps1`
 
 ## 1. 只做这四件
 
@@ -54,7 +54,7 @@
 2. 秒表：新 PNG 的尺寸 + 在工程内的引用路径（`文件:行`），以及"UI 生成器能产出它"的证据（编译通过 + 生成器代码路径）；
 3. `SOURCES.txt` 里每条路径 `Test-Path` 结果；
 4. 雷达：实测 bbox + 换算依据（或 BLOCKED）；
-5. 编译：`powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1` ⇒ `csc exit=0`（若本片动了 `.cs`）；
+5. 编译：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` ⇒ `csc exit=0`（若本片动了 `.cs`）；
 6. 若改了 `SOURCES.txt`/生成了新素材：**旧素材不要删**（§1.9：换素材 = 改源再复制一遍），在回报里说明新旧关系。
 
 ## 3. 不许

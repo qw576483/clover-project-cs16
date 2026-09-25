@@ -64,9 +64,9 @@ public static class Entry
     // Application.dataPath = <client>/Assets ⇒ 项目根（含 .ai-tmp 的那一层）要往上找，
     // 不能写死"上一级"（那是 client/，`.ai-tmp` 在 clover-project-cs16/ 下）。
     //
-    // 判据与 tools/probes/probe-ui-visibility.cs 的 FindProjectRoot() **逐字同口径**
+    // 判据（**逐字同一口径**）：
     // （不另造第二套）：项目根 = **同时**含 `client/` 与 `.ai-tmp/` 的那一层。
-    // `client/.ai-tmp/screenshots/bootd_shot.png` 曾存在（别的切片把相对路径写歪了）⇒
+    // 别的切片曾把相对路径写歪（截屏落到 `client/` 下而不是项目根）⇒
     // 这里是**防复发**，不是修当前故障。
     private static string FindProjectRoot()
     {

@@ -10,7 +10,7 @@
 #  CONCRETE defect it caught on this project (each item header says which one).
 #
 #  The previous 47-item version is preserved verbatim at
-#  .ai-tmp/test/sink4-verify-backup.ps1
+#  .ai-tmp/test/sink4-verify-backup-47items.ps1.txt
 #  (SHA256 88A0598938FEA5BC379834EF9FE580D9FF77E909110F836A783392C0198A1ACA).
 #
 #  ITEMS KEPT (6):

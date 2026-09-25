@@ -7,7 +7,7 @@ using UnityEngine;
 namespace Cs16.Module.View
 {
     /// <summary>
-    /// 一个 actor（真人/机器人）的**第三人称视图**外壳：位置/朝向跟随 + 蹲下压扁 + 死亡隐藏
+    /// 一个 actor（真人/机器人）的**第三人称视图**外壳：位置/朝向跟随 + 蹲下压扁 + 死亡留尸
     /// + 自身渲染隐藏 + 头顶名牌。
     ///
     /// <para><b>层级约定（与 <c>ArtSetup</c> 生成的 player.prefab 一致）</b>：</para>
@@ -558,6 +558,7 @@ namespace Cs16.Module.View
                 {
                     _deathPlayed = true;
                     PlayDeath();
+                    EnterCorpse();
                 }
                 // 尸体：确保可见（尸体不被"上一帧的隐藏"带走）+ 名牌/血条关掉（死人头顶不该有血条）。
                 if (_corpseHeld) EnsureCorpseShown();
@@ -617,18 +618,55 @@ namespace Cs16.Module.View
         // ==================================================================
         //  显隐
         // ==================================================================
-        /// <summary>显示/隐藏整个视图（含碰撞体与名牌）。死亡 → false，复活 → true。</summary>
+        /// <summary>
+        /// 显示/隐藏整个视图（含碰撞体与名牌）。死亡 → false，复活 → true。
+        ///
+        /// <para>自身渲染只在**活着的**本地玩家身上才藏（第一人称相机在他眼位）；尸体必须看得见
+        /// —— 尸体留场走的就是本方法，不判 <see cref="_alive"/> 的话每具本地尸体都会被这里藏掉。</para>
+        /// </summary>
         public void SetShown(bool shown)
         {
             IsShown = shown;
             if (gameObject.activeSelf != shown) gameObject.SetActive(shown);
             if (_plate != null) _plate.SetVisible(shown);
-            if (shown && _isLocal) HideOwnRenderers();
+            if (shown && _isLocal && _alive) HideOwnRenderers();
         }
 
         // ==================================================================
         //  尸体留场
         // ==================================================================
+        /// <summary>
+        /// 死亡当帧的收尾：**立刻剥掉碰撞体** + 本地玩家把自己的渲染还回来。
+        ///
+        /// <para><b>为什么不等倒地序列播完</b>：倒地序列要 1.3~1.9 s，这段时间里死人还带着碰撞体 ⇒
+        /// 子弹还能打中他（<c>CsHitboxProxy</c>）、活人还会被他挡住。尸体从"死"那一刻起就不该参与这两件事。</para>
+        ///
+        /// <para><b>为什么本地玩家要还渲染</b>：活着时藏自身模型是因为第一人称相机就在他头里；
+        /// 死后相机转去观战（<c>CsMatch.IsSpectating</c>，观战对象只取活人）⇒ 他的尸体该被看见。</para>
+        /// </summary>
+        private void EnterCorpse()
+        {
+            var off = DisableColliders();
+            if (_isLocal) ShowOwnRenderers();
+            _log.Info("corpse.enter",
+                $"角色视图「{name}」阵亡（本地={_isLocal}）：已关掉 {off}/{_colliders.Length} 个碰撞体" +
+                "（尸体不挡活人、也不再被子弹打中），随后播原版倒地序列");
+        }
+
+        /// <summary>关掉本视图全部碰撞体（尸体不挡人 / 不被子弹命中）。返回本次关掉的个数。</summary>
+        private int DisableColliders()
+        {
+            var off = 0;
+            for (var i = 0; i < _colliders.Length; i++)
+            {
+                var c = _colliders[i];
+                if (c == null || !c.enabled) continue;
+                c.enabled = false;
+                off++;
+            }
+            return off;
+        }
+
         /// <summary>
         /// 尸体留场：**确保可见 + 名牌关掉 + 姿态冻住 + 碰撞体全关**（每具尸体只做一次收尾）。
         ///
@@ -650,10 +688,7 @@ namespace Cs16.Module.View
             // 而引擎的完成回调与状态机回绕之间没有顺序保证 ⇒ 有可能冻在回绕后的第 0 帧（尸体半站着）。
             if (_anim != null && _deathState != null) _anim.Play(_deathState, 1f);
             if (_animator != null) _animator.speed = CsViewTuning.CorpseAnimSpeed;
-            for (var i = 0; i < _colliders.Length; i++)
-            {
-                if (_colliders[i] != null) _colliders[i].enabled = false;
-            }
+            DisableColliders();
             _log.Info("corpse.hold",
                 $"角色视图「{name}」倒地序列播完 ⇒ 尸体留场（姿态冻在最后一帧，关掉 {_colliders.Length} 个碰撞体）；" +
                 "回合重开复活时才清掉");
@@ -668,6 +703,25 @@ namespace Cs16.Module.View
             for (var i = 0; i < _colliders.Length; i++)
             {
                 if (_colliders[i] != null) _colliders[i].enabled = true;
+            }
+        }
+
+        /// <summary>把本地玩家自己的渲染开回来（阵亡后尸体要看得见；复活时由存活分支再藏回去）。</summary>
+        private void ShowOwnRenderers()
+        {
+            var back = 0;
+            for (var i = 0; i < _renderers.Length; i++)
+            {
+                var r = _renderers[i];
+                if (r == null || r.enabled) continue;
+                r.enabled = true;
+                back++;
+            }
+            if (back > 0)
+            {
+                _bodyHiddenLogged = false;      // 复活时"第一人称已隐藏"那条日志要能再报一次
+                _log.Info("corpse.local.shown",
+                    $"本地玩家阵亡：把自己模型的 {back} 个渲染开回来 —— 观战相机只跟活人，尸体不该被藏");
             }
         }
 

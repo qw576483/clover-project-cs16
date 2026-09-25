@@ -19,7 +19,7 @@ namespace Cs16.Module.View
     /// 路径 = <c>CsViewTuning.ArtRoot + {T|CT} + "/" + 皮肤名</c>（皮肤按 id 稳定挑，
     /// 与 <c>ViewModule.PrefabPathFor</c> 同口径），取资源走引擎对象池
     /// <c>Game.Pool.Spawn(key, …)</c>（引擎口径：角色**一律走池**，不裸 <c>Instantiate</c>）；
-    /// 实例上挂的仍是工程既有的 <see cref="ActorView"/> ⇒ 身高量测/贴地/骨骼动画/倒地留场
+    /// 实例上挂的仍是工程既有的 <see cref="ActorView"/> ⇒ 身高量测/贴地/骨骼动画
     /// 全部沿用既有实现，本类只补"数据从快照来"这一段。因此：
     /// <list type="bullet">
     /// <item><b>锚点仍传给 <see cref="ActorView.Apply"/>**一个 <c>CsActor</c> 载体**</b> ——
@@ -37,6 +37,8 @@ namespace Cs16.Module.View
     /// 因为远端角色在本机**没有权威**，让它们可被打中就会变成"打中一个没人结算的目标"。</item>
     /// <item>不挂头顶名牌：名牌的显隐口径（队友/敌人、距离、视线）挂在本机自己的阵营与视野上，
     /// 属于另一段；这里只到"看得见（位置/朝向/生死）"这一层。</item>
+    /// <item><b><c>alive=false</c> 的远端角色不画</b>：快照里没有"死亡姿态 / 死了多久"这两个字段，
+    /// 画不出"怎么倒的"；按活人姿势站着又是错的 ⇒ 直接隐去（视图留着，等 <c>alive=true</c> 再显示）。</item>
     /// <item>不做预测 / 插值：快照 10 Hz 直接落到位置上。原版客户端有插值（<c>view.cpp</c> 的回放缓冲），
     /// 但那需要"序号 + 时间戳"，而 <c>CS16-LAN-SNAP/1</c> **没有这两个字段** ⇒ 没有出处就不自己编一种。</item>
     /// </list></para>
@@ -121,6 +123,7 @@ namespace Cs16.Module.View
             _actor.Bind(a.Id, _team, false, false);   // isBot=false / isLocal=false：远端角色属于"别人"
             StripColliders();
             _actor.SnapTo(_shadow);
+            if (!a.Alive) HideDead();
 
             _lastSnapshotPos = _shadow.Position;
             _haveLastSnapshotPos = true;
@@ -147,11 +150,30 @@ namespace Cs16.Module.View
                 return;
             }
 
+            // 快照说这具是尸体 ⇒ **不画**。理由：快照里没有"死亡姿态 / 死了多久"这两个字段（⛔ 不编），
+            //   画不出"怎么倒的"；而按活人姿势站着更是错的。视图留在字典里，等 alive=true 再显示。
+            if (!a.Alive)
+            {
+                HideDead();
+                return;
+            }
+
             var now = Time.time;
             var dt = _lastApplyAt < 0f ? 0f : now - _lastApplyAt;
             FillShadow(a, dt);
             _actor.Apply(_shadow, false, false, now);   // 名牌不显示（见类注释第 2 条）
             _lastApplyAt = now;
+        }
+
+        /// <summary>隐去这具视图（快照说它已死）：只在"本来是显示的"时计一次数，避免每帧重复统计。</summary>
+        private void HideDead()
+        {
+            if (_actor == null) return;
+            if (_actor.IsShown)
+            {
+                _actor.SetShown(false);
+                HiddenDeadTotal++;
+            }
         }
 
         /// <summary>把实例**还回对象池**（不是销毁）。重复调用幂等。</summary>
@@ -250,6 +272,9 @@ namespace Cs16.Module.View
         /// <summary>累计销毁的 Collider 数（"不参与命中"的量化口径）。</summary>
         public static int StrippedCollidersTotal { get; private set; }
 
+        /// <summary>累计"快照说已死 ⇒ 视图已隐去"的具数（判据：<c>alive=false</c> 的角色不该看得见）。</summary>
+        public static int HiddenDeadTotal { get; private set; }
+
         /// <summary>累计"预制体缺失/池不可用"导致的建视图失败次数（失败必须留痕，不静默）。</summary>
         public static int CreateFailures { get { return _createFailures; } }
 
@@ -258,7 +283,7 @@ namespace Cs16.Module.View
         {
             return "远端视图 在场=" + Views.Count + " 累计新建=" + CreatedTotal +
                    " 累计回收=" + RecycledTotal + " 销毁Collider=" + StrippedCollidersTotal +
-                   " 建失败=" + _createFailures;
+                   " 隐去尸体=" + HiddenDeadTotal + " 建失败=" + _createFailures;
         }
 
         /// <summary>

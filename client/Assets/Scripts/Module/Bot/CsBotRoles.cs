@@ -141,5 +141,116 @@ namespace Cs16.Module.Bot
                 default: return "支援";
             }
         }
+
+        // ==================================================================
+        //  武器偏好 / 投掷物偏好（每队 4 个角色各不相同）
+        // ==================================================================
+        //
+        //  出处口径（逐段标清）：
+        //
+        //  ① **原版确实有"武器偏好"这件事**：原版 mp.dll 的 bot 侧自带属性表
+        //     `Aggression / Skill / Skin / Teamwork / Cost / VoicePitch / VoiceBank / WeaponPreference /
+        //      ReactionTime / AttackDelay / Difficulty / Team`（`原版资源/cs16src/cstrike/dlls/mp.dll`，
+        //      字符串区 0x121E94–0x121F20），难度档取值 `EASY / NORMAL / HARD / EXPERT`（0x121BC0），
+        //      并有一条 `Tried to buy preferred weapon %s.`（0x124A58）—— 即"机器人按偏好买枪"是原版行为。
+        //  ② **原版的候选武器池**（同一 mp.dll）：CT 0x124938 起 `xm1014 ump45 famas scout m4a1 sg550 m249
+        //     p228 deagle`；T 0x1249A0 起 `xm1014 mac10 ump45 galil ak47 scout sg552 g3sg1 m249 p228
+        //     deagle elites`；投掷物/装备购买序列 0x124AB0 `primammo vesthelm vest secammo
+        //     sgren flash hegren … defuser`（`sgren` = 烟雾、`flash` = 闪光、`hegren` = 高爆）。
+        //  ③ **本表（角色 → 顺序）与"档位价格上限"属本项目新增**：原版偏好的数值语义写在数据文件
+        //     `botprofile.db` 里，该文件不在盘（`原版资源/` 实测无 bot 相关文件），无法读出
+        //     "哪个数值 = 哪把枪"⇒ 只借原版的池与"按偏好买枪"这一行为，不谎称顺序也是原版。
+        //     登记见 `策划/差异登记.tsv` #68。
+
+        /// <summary>突破手的偏好主武器（近距：冲锋枪 / 霰弹优先，再退到步枪）。</summary>
+        private static readonly string[] PreferBreakerT = { CsWeapons.Mac10, CsWeapons.Ump45, CsWeapons.Xm1014, CsWeapons.Galil, CsWeapons.Ak47 };
+        /// <summary>突破手（CT 侧）。</summary>
+        private static readonly string[] PreferBreakerCT = { CsWeapons.Ump45, CsWeapons.Xm1014, CsWeapons.Famas, CsWeapons.M4A1 };
+
+        /// <summary>支援的偏好主武器（中距：步枪优先，再退到冲锋枪）。</summary>
+        private static readonly string[] PreferSupportT = { CsWeapons.Galil, CsWeapons.Ak47, CsWeapons.Sg552, CsWeapons.Ump45 };
+        /// <summary>支援（CT 侧）。</summary>
+        private static readonly string[] PreferSupportCT = { CsWeapons.Famas, CsWeapons.M4A1, CsWeapons.Aug, CsWeapons.Ump45 };
+
+        /// <summary>侦察（游走 / 拉远）的偏好主武器：狙击优先。角色已有的 <see cref="RangeScale"/> 就是"最远交火"。</summary>
+        private static readonly string[] PreferScoutT = { CsWeapons.Scout, CsWeapons.G3sg1, CsWeapons.Sg552, CsWeapons.Awp };
+        /// <summary>侦察（CT 侧）。</summary>
+        private static readonly string[] PreferScoutCT = { CsWeapons.Scout, CsWeapons.Sg550, CsWeapons.Aug, CsWeapons.Awp };
+
+        /// <summary>守点的偏好主武器：守点位上"一次交火定生死"，步枪 / 连狙优先。</summary>
+        private static readonly string[] PreferAnchorT = { CsWeapons.Ak47, CsWeapons.Galil, CsWeapons.G3sg1, CsWeapons.Awp };
+        /// <summary>守点（CT 侧）。</summary>
+        private static readonly string[] PreferAnchorCT = { CsWeapons.M4A1, CsWeapons.Famas, CsWeapons.Sg550, CsWeapons.Awp };
+
+        /// <summary>
+        /// 本角色偏好的主武器（**按优先级**；调用方取"档位上限内、且买得起"的第一把）。
+        /// <para>返回的是只读共享数组（本类内静态持有），调用方**不许改内容**。</para>
+        /// </summary>
+        public static string[] PreferredPrimary(CsBotRole role, CsTeam team)
+        {
+            var t = team == CsTeam.T;
+            switch (role)
+            {
+                case CsBotRole.Breaker: return t ? PreferBreakerT : PreferBreakerCT;
+                case CsBotRole.Scout: return t ? PreferScoutT : PreferScoutCT;
+                case CsBotRole.Anchor: return t ? PreferAnchorT : PreferAnchorCT;
+                default: return t ? PreferSupportT : PreferSupportCT;
+            }
+        }
+
+        /// <summary>
+        /// 主武器偏好的**档位价格上限**（元）：便宜档只允许冲锋枪/霰弹这一档，
+        /// 中档放开到 Scout（原版三档里"Normal 会买中档枪"），贵档不设限（Hard 会买最好枪）。
+        /// <para>出处：**本项目新增**（上限的**分档**是我方口径；被限的池 = 原版 mp.dll 的候选武器表，
+        /// 见本段开头 ②）。价格取 <c>Core/CsWeapons.cs</c> 的原版价。</para>
+        /// </summary>
+        public static float PrimaryPriceCap(int tier)
+        {
+            switch (tier)
+            {
+                case 0: return 1500f;                    // 上限 = UMP-45（1700）之下 ⇒ 只剩冲锋枪档
+                case 1: return 2750f;                    // 放开到 Scout（2750）
+                default: return float.MaxValue;          // 贵档不设限
+            }
+        }
+
+        /// <summary>突破手的投掷物偏好：先高爆（冲点前炸开），再闪光。</summary>
+        private static readonly string[] NadesBreaker = { CsWeapons.HeGrenade, CsWeapons.Flashbang };
+        /// <summary>支援的投掷物偏好：高爆 + 烟（封住对面视线给突破手让路）。</summary>
+        private static readonly string[] NadesSupport = { CsWeapons.HeGrenade, CsWeapons.SmokeGrenade };
+        /// <summary>侦察的投掷物偏好：闪光先行（拉远交火前的致盲），再烟。</summary>
+        private static readonly string[] NadesScout = { CsWeapons.Flashbang, CsWeapons.SmokeGrenade };
+        /// <summary>守点的投掷物偏好：烟（遮住守位视野口），再高爆。</summary>
+        private static readonly string[] NadesAnchor = { CsWeapons.SmokeGrenade, CsWeapons.HeGrenade };
+
+        /// <summary>
+        /// 本角色偏好的投掷物（按优先级）。三种各有限额，见 <c>CsMatchConst.MaxHeGrenades/MaxFlashbangs/MaxSmokes</c>。
+        /// <para>出处：**这三种都在原版的 bot 购买序列里**（mp.dll 0x124AB0 的 `sgren/flash/hegren`）；
+        /// **"哪个角色先拿哪一种"本项目新增**（原版把偏好写在不在盘的 `botprofile.db`）。</para>
+        /// </summary>
+        public static string[] PreferredGrenades(CsBotRole role)
+        {
+            switch (role)
+            {
+                case CsBotRole.Breaker: return NadesBreaker;
+                case CsBotRole.Scout: return NadesScout;
+                case CsBotRole.Anchor: return NadesAnchor;
+                default: return NadesSupport;
+            }
+        }
+
+        /// <summary>投掷物偏好的中文摘要（写进买枪决策日志，便于人眼核对分工）。</summary>
+        public static string GrenadeText(CsBotRole role)
+        {
+            var ids = PreferredGrenades(role);
+            var sb = new System.Text.StringBuilder(32);
+            for (var i = 0; i < ids.Length; i++)
+            {
+                if (i > 0) sb.Append(" → ");
+                var def = CsWeapons.Get(ids[i]);
+                sb.Append(def != null ? def.DisplayName : ids[i]);
+            }
+            return sb.ToString();
+        }
     }
 }

@@ -398,7 +398,7 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// **离线段言**（判据资产 = <c>tools/probes/probe-bot-routes.cs</c> 的离线半 + <c>BotSelfTest</c> 菜单）：
+        /// **离线段言**（离线半 + <c>BotSelfTest</c> 菜单）：
         /// 对每一队、每一个可能的持包序号，断言 4 个槽位的 (路线, 目标标记, 目标序号) **两两不同**；
         /// 并断言"路线标记只有 4 个、且恰好来自 4 条不同的路"。
         /// <para>这里判的是**构造性质**（"任意两只同队 bot 不可能同路同点"），不是某一局的抽样结果 ——
@@ -482,7 +482,7 @@ namespace Cs16.Module.Bot
 
                         line.Add($"序号{ord}→槽{p.Slot}:{p.RouteLabel}→{p.GoalLabel}#{p.GoalOrdinal}（{CsBotRoles.Label(p.Role)}）");
 
-                        // 机器可读行（给 tools/probes/bot-route-sequence-check.py 用：它拿这些**标记名**
+                        // 机器可读行（给离线序列自检用：它拿这些**标记名**
                         // 去 resources/MapData/de_dust2_markers.bytes 上算"整条路线序列"，做素材层的离线判据）。
                         sb.Append("\nPLANROW team=").Append(team)
                           .Append(" slot=").Append(p.Slot)

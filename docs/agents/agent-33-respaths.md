@@ -46,7 +46,7 @@
 1. `Test-Path` 证明 `Core/ResPaths.cs` 存在；
 2. `Select-String` 全项目搜 `"MapData/|"Sound/SFX/|"UI/Art/` ⇒ 命中**只应出现在 `ResPaths.cs`**（注释里提路径的除外，要逐条列明）；
 3. **路径字符串对照表**（改前 vs 改后，证明逐字相同）；
-4. 编译：`.ai-tmp/test/compile-check.ps1`（本工程既有配方）⇒ `exit=0`；
+4. 编译：`tools/probes/compile-check.ps1`（本工程既有配方）⇒ `exit=0`；
 5. `tools/verify.ps1` ⇒ **FAIL=0**（若因改动让某行证据过期，只重采受影响的行并在回报里写明第几次重采；⛔ **本片预计不涉及表现类证据**，因为纯重构不动视觉）。
 
 ## 3. 不许

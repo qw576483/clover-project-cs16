@@ -10,7 +10,7 @@
 | `原版资源/解包产物/原版数值表.md` | §1 cvar 默认值（含 `mp.dll:偏移`）· §1.1 两套口径 · §2 引擎 cvar · §3 武器表 25 条（含偏移）· §4 买枪期 · §5 差值表 · §6 BLOCKED |
 | `原版资源/解包产物/原版HUD布局.md` | HUD 侧 cvar 默认值（含 `client.dll:偏移`）· 原版截图量化的像素坐标 · BLOCKED-D1~D6 |
 | `策划/对照表.md` | §5.2 两套口径总表 · §5.3 武器弹匣/备弹（W-01~W-27）· U 系列（HUD）· G/M/N/P/T/W 各块 |
-| `.ai-tmp/test/compile-check.ps1` | **离线编译检查入口**（Unity 自带 Roslyn + `Cs16.csproj` 引用清单）—— 本片的"编译通过"判据 |
+| `tools/probes/compile-check.ps1` | **离线编译检查入口**（Unity 自带 Roslyn + `Cs16.csproj` 引用清单）—— 本片的"编译通过"判据 |
 
 ## 1. 数值口径（主 agent 已定，照做）
 
@@ -65,7 +65,7 @@
 
 ## 3. 判据（做完自己跑，原始输出贴进回报）
 
-1. **离线编译通过**：`powershell -NoProfile -ExecutionPolicy Bypass -File .ai-tmp\test\compile-check.ps1` ⇒ `csc exit=0`（把原始输出贴出来）；
+1. **离线编译通过**：`powershell -NoProfile -ExecutionPolicy Bypass -File tools\probes\compile-check.ps1` ⇒ `csc exit=0`（把原始输出贴出来）；
 2. **逐条对齐表**：`元素 | 原版值(出处) | 改前 | 改后`，覆盖 §2.1~§2.4 每一行；
 3. 改动文件清单（`文件:行`）—— 只许落在 `client/Assets/Scripts/**`（若被迫动 `Assets/Editor/**`，在回报里说明原因）。
 

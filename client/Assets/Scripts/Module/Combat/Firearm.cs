@@ -100,11 +100,12 @@ namespace Cs16.Module.Combat
         /// 与官方 CS 一致的三条手感：移动射击散、跳射更散、开镜极准、蹲下略准。</para>
         /// </summary>
         public static float ComputeSpread(CsWeaponDef def, float moveFactor, bool onGround, bool crouched,
-            int consecutiveShots, bool scopedAccurate)
+            int consecutiveShots, bool scopedAccurate, bool silenced = false, bool burst = false)
         {
             if (def == null) return 0f;
 
-            var spread = def.Spread;
+            // 差异 #68：基础散布按消音 / 连发档取（M4A1 装消音 ×1.25、Glock18 连发 ×3；口径见 CsWeapons.StaticSpreadFor）。
+            var spread = CsWeapons.StaticSpreadFor(def, silenced, burst);
             spread += def.MoveSpread * Mathf.Clamp01(moveFactor);
             if (!onGround) spread += def.MoveSpread * CsCombatTuning.AirSpreadScale;
 
@@ -124,7 +125,7 @@ namespace Cs16.Module.Combat
             if (shooter == null) return ComputeSpread(def, 0f, true, false, 0, scopedAccurate);
 
             return ComputeSpread(def, MoveFactor(shooter), shooter.OnGround, shooter.IsCrouching,
-                shooter.ConsecutiveShots, scopedAccurate);
+                shooter.ConsecutiveShots, scopedAccurate, shooter.Silenced, shooter.BurstMode);
         }
 
         /// <summary>按散布角给方向加随机偏移（与比赛模拟内部的 <c>ApplySpread</c> 同口径）。</summary>

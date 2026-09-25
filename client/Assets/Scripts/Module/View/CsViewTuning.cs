@@ -47,6 +47,11 @@ namespace Cs16.Module.View
         /// 原版第一人称模型文件名是 <c>models/v_&lt;武器&gt;.mdl</c>（见规格 §5）⇒ 前缀不同源）。</summary>
         public const string ViewModelPrefix = "viewmodel_";
 
+        /// <summary>世界掉落武器模型前缀（Art/world_{武器id}）。出处：**本项目新增**（本工程预制体命名；
+        /// 原版世界模型文件名是 <c>models/w_&lt;武器&gt;.mdl</c>（见规格 §5）⇒ 前缀不同源）。
+        /// 无阵营之分：原版世界模型两边共用一份。</summary>
+        public const string WorldModelPrefix = "world_";
+
         /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名（名牌放它外面，才不会被蹲下压扁）。
         /// 出处：**本项目新增**（预制体内部节点名 = 本工程命名）。</summary>
         public const string BodyNodeName = "Body";
@@ -180,6 +185,9 @@ namespace Cs16.Module.View
 
         /// <summary>武器模型的额外缩放（1 = 按 HL 单位换算后的真实尺寸）。</summary>
         public const float ViewModelScale = 1f;
+
+        /// <summary>世界掉落武器模型的额外缩放（1 = 按 HL 单位换算后的真实尺寸）。</summary>
+        public const float WorldModelScale = 1f;
 
         /// <summary>当前手持武器的视图预制体不存在时，退到哪里（避免"手上空着"）。</summary>
         public const string ViewModelFallbackWeapon = CsWeapons.Knife;

@@ -14,8 +14,7 @@ in-project PNGs can be refreshed from (or checked against) the original pixels.
 
 FORMAT PROVENANCE -- READ THIS BEFORE TRUSTING THE OFFSETS
 ----------------------------------------------------------
-An external spec could NOT be obtained in this slice (tried, all 404/403, logged in
-`.ai-tmp/test/spr-ref.tsv`):
+An external spec could NOT be obtained in this slice (tried, all 404/403):
   * `raw.githubusercontent.com/ValveSoftware/halflife/master/{utils/common,common,engine}/sprite.h`
   * `raw.githubusercontent.com/FWGS/xash3d-fwgs/master/engine/{client,common}/sprite.h`
   * GitHub tree API for FWGS/xash3d-fwgs, ValveSoftware/halflife, Solokiller/hlsdk-portable

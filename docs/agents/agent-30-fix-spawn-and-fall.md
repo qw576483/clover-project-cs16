@@ -55,7 +55,7 @@
    - 本地玩家 y ≈ **-3.15 ± 0.3**（CT，`Spawn_CT` 真脚底）且 `OnGround=True`；
    - **0 条** `fall.recover` / `掉出地图`；
    - ⛔ 不许编造：把探针原始输出（含 y 与 Warn 计数）贴进回报。
-3. 编译：`.ai-tmp/test/compile-check.ps1`（或等价 Roslyn，参考集用闸门最新 `csc-out\CloverEngine.*.dll`）⇒ `exit=0`。
+3. 编译：`tools/probes/compile-check.ps1`（或等价 Roslyn，参考集用闸门最新 `csc-out\CloverEngine.*.dll`）⇒ `exit=0`。
 4. `tools/verify.ps1` ⇒ 不许引入新 FAIL（若你的改动让某行证据过期，只重采**受影响那几行**并在回报里写明）。
 
 ## 3. 文档 / 注释

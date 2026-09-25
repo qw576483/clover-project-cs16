@@ -14,6 +14,11 @@ namespace Cs16.Module.Bot
     ///
     /// <para><b>档位</b>：<see cref="CsBotProfile.BuyBudgetTier"/>（0=便宜 / 1=中 / 2=贵），
     /// 数值只从 <see cref="CsBotProfile.For"/> 取，本文件不另写一套。</para>
+    ///
+    /// <para><b>角色偏好</b>：同档位下每个<b>战术角色</b>（<see cref="CsBotRoles"/>）买到的主武器与投掷物
+    /// 都不同 —— 偏好表与出处见 <see cref="CsBotRoles.PreferredPrimary"/> /
+    /// <see cref="CsBotRoles.PreferredGrenades"/>。枪走 <see cref="BuyPreferredPrimary"/>，
+    /// 投掷物走 <see cref="BuyGrenades"/>；两者都在基础方案之后执行，且都不许把护甲/拆弹器的钱花掉。</para>
     /// </summary>
     public sealed class BotBuyLogic
     {
@@ -50,7 +55,7 @@ namespace Cs16.Module.Bot
         /// 冻结期每 tick 调一次。买完后 <paramref name="switchTo"/> 给出"应该拿在手里的武器"
         /// （交给 <c>CsBotIntent.SwitchTo</c> 由模拟执行，AI 不自己换枪）。
         /// </summary>
-        public void Tick(ICsMatch match, CsActor self, in CsBotProfile profile, float now, out string switchTo)
+        public void Tick(ICsMatch match, CsActor self, in CsBotProfile profile, CsBotRole role, float now, out string switchTo)
         {
             switchTo = null;
             if (match == null || self == null) return;
@@ -84,14 +89,14 @@ namespace Cs16.Module.Bot
             }
             _nextAttemptAt = now + CsBotConst.BuyRetryInterval;
 
-            _done = RunPlan(match, self, profile.BuyBudgetTier, out switchTo);
+            _done = RunPlan(match, self, role, profile.BuyBudgetTier, out switchTo);
             if (_done) _round = match.RoundNumber;
         }
 
         // ==================================================================
         //  三档买枪计划
         // ==================================================================
-        private bool RunPlan(ICsMatch match, CsActor self, int tier, out string switchTo)
+        private bool RunPlan(ICsMatch match, CsActor self, CsBotRole role, int tier, out string switchTo)
         {
             switchTo = null;
             _ownerName = self.Name;
@@ -99,7 +104,8 @@ namespace Cs16.Module.Bot
             // 验收表 B5 的证据：每回合一次，说明"这一档想买什么"（金额/现有装备都记下来，
             //   便于事后核对"为什么他没买"）。所以即使后面全部买失败，这条决策日志也在。
             Game.Logger.Info(Tag,
-                $"{self.Name}({self.Team}) 冻结期买枪决策：tier={tier}（{TierName(tier)}）" +
+                $"{self.Name}({self.Team}) 冻结期买枪决策：tier={tier}（{TierName(tier)}）角色={CsBotRoles.Label(role)}" +
+                $" 偏好主武器={PreferredPrimaryText(role, self.Team, tier)} 偏好投掷物={CsBotRoles.GrenadeText(role)}" +
                 $" 现有主武器={self.PrimaryWeapon ?? "无"} 护甲={self.Armor} 拆弹器={self.HasDefuser} 余额=${self.Money}");
 
             switch (tier)
@@ -114,6 +120,10 @@ namespace Cs16.Module.Bot
                     break;
             }
 
+            // 投掷物（角色分工）先于"换更好的主武器" —— 手里已经有枪时，一颗雷的收益比把枪换成贵的更大。
+            BuyGrenades(match, self, role, tier);
+            BuyPreferredPrimary(match, self, role, tier);
+
             // 买完把主武器拿在手里（模拟执行 SwitchTo；GivePurchased 已经切过一次，这里是兜底）
             if (!string.IsNullOrEmpty(self.PrimaryWeapon) && self.ActiveWeapon != self.PrimaryWeapon)
             {
@@ -121,6 +131,134 @@ namespace Cs16.Module.Bot
             }
 
             return true;
+        }
+
+        // ==================================================================
+        //  角色偏好的主武器 / 投掷物
+        // ==================================================================
+        /// <summary>
+        /// 把主武器换成**本角色偏好**的那一把（偏好表见 <see cref="CsBotRoles.PreferredPrimary"/>）。
+        ///
+        /// <para><b>为什么会有"换枪"这一步</b>：冻结期开始时机器人手里**已经有**一把主武器
+        /// （模拟在回合开始时给机器人配枪）。角色偏好落在 <c>Module/Bot</c> 内，只能以"再买一把"兑现 ——
+        /// <c>ICsMatch.TryBuyFor</c> 对已有主武器的 actor 不设限，直接覆盖主武器槽。</para>
+        ///
+        /// <para><b>三条闸</b>（防"为了偏好把甲和雷的钱花光"）：
+        /// ① 手里那把已经在偏好表里 ⇒ 不动（不重复花钱）；② 价格必须 ≤ 本档上限
+        /// （<see cref="CsBotRoles.PrimaryPriceCap"/>）；③ 买完必须还剩得下"下一件该买的东西"的钱 ——
+        /// 护甲（含头盔，若还没买）与 CT 拆弹器的价格之和。</para>
+        /// </summary>
+        private void BuyPreferredPrimary(ICsMatch match, CsActor self, CsBotRole role, int tier)
+        {
+            var prefs = CsBotRoles.PreferredPrimary(role, self.Team);
+            var current = self.PrimaryWeapon;
+
+            for (var i = 0; i < prefs.Length; i++)
+            {
+                if (prefs[i] == current) return;              // 已经在用偏好里的枪
+            }
+
+            var cap = CsBotRoles.PrimaryPriceCap(tier);
+            var reserve = 0f;
+            if (self.Armor <= 0)
+            {
+                var vestHelm = CsWeapons.Get(CsWeapons.VestHelm);
+                var vest = CsWeapons.Get(CsWeapons.Vest);
+                reserve += (tier >= 2 && vestHelm != null ? vestHelm.Price : (vest != null ? vest.Price : 0f));
+            }
+            if (self.Team == CsTeam.CT && !self.HasDefuser)
+            {
+                var kit = CsWeapons.Get(CsWeapons.Defuser);
+                if (kit != null) reserve += kit.Price;
+            }
+
+            for (var i = 0; i < prefs.Length; i++)
+            {
+                var def = CsWeapons.Get(prefs[i]);
+                if (def == null)
+                {
+                    Game.Logger.Warn(Tag, $"{self.Name}(角色换枪) 偏好表里的 '{prefs[i]}' 不在武器表里 → 跳过");
+                    continue;
+                }
+                if (def.Price > cap) continue;                                  // 超出本档上限
+                if (self.Money < def.Price + reserve) continue;                 // 买完没钱买甲/拆弹器
+
+                Game.Logger.Info(Tag,
+                    $"{self.Name}({self.Team}/{CsBotRoles.Label(role)}) 按角色偏好换主武器：" +
+                    $"{current ?? "无"} → {def.DisplayName}（${def.Price}，留 ${reserve:F0} 给护甲/拆弹器，余额 ${self.Money}）");
+                if (Buy(match, self, def.Id, "角色偏好主武器")) return;
+
+                Game.Logger.Warn(Tag,
+                    $"{self.Name}({self.Team}/{CsBotRoles.Label(role)}) 偏好主武器 {def.DisplayName} 买入失败 → 继续试下一把");
+            }
+
+            Game.Logger.Info(Tag,
+                $"{self.Name}({self.Team}/{CsBotRoles.Label(role)}) 保持现有主武器 {current ?? "无"}" +
+                $"（偏好表里本档买得起且留得住护甲钱的一把都没有；余额 ${self.Money}）");
+        }
+
+        /// <summary>
+        /// 买**本角色偏好**的投掷物（表见 <see cref="CsBotRoles.PreferredGrenades"/>）：
+        /// 中档买 1 颗、贵档最多 2 颗（便宜档不买 —— 那一档连枪都只买得起冲锋枪档）。
+        /// 命中上限（<c>CsMatchConst.MaxHeGrenades</c> 等）或钱不够时，试偏好表里的下一颗。
+        /// </summary>
+        private void BuyGrenades(ICsMatch match, CsActor self, CsBotRole role, int tier)
+        {
+            var want = tier >= 2 ? 2 : (tier == 1 ? 1 : 0);
+            if (want <= 0) return;
+
+            var prefs = CsBotRoles.PreferredGrenades(role);
+            var bought = 0;
+            for (var round = 0; round < want; round++)
+            {
+                var ok = false;
+                for (var i = 0; i < prefs.Length; i++)
+                {
+                    var def = CsWeapons.Get(prefs[i]);
+                    if (def == null) continue;
+                    var have = CountGrenade(self, def.Id);
+                    var limit = def.Id == CsWeapons.Flashbang
+                        ? CsMatchConst.MaxFlashbangs
+                        : def.Id == CsWeapons.SmokeGrenade ? CsMatchConst.MaxSmokes : CsMatchConst.MaxHeGrenades;
+                    if (have >= limit) continue;                     // 这一类已经带满
+                    if (self.Money < def.Price) continue;            // 买不起 → 试下一类
+
+                    Game.Logger.Info(Tag,
+                        $"{self.Name}({self.Team}/{CsBotRoles.Label(role)}) 买投掷物 {def.DisplayName}" +
+                        $"（${def.Price}，手上 {have}/{limit}，余额 ${self.Money}）");
+                    if (Buy(match, self, def.Id, "角色偏好投掷物")) { ok = true; bought++; break; }
+                }
+
+                if (!ok) break;                                      // 这一轮没有一类能买 → 不再重复试
+            }
+
+            if (bought == 0)
+            {
+                Game.Logger.Info(Tag,
+                    $"{self.Name}({self.Team}/{CsBotRoles.Label(role)}) 本轮没买到投掷物" +
+                    $"（偏好 {CsBotRoles.GrenadeText(role)}；余额 ${self.Money}）");
+            }
+        }
+
+        /// <summary>手上这一类投掷物有几颗（模拟侧的唯一真源是 actor 弹药表，与 <c>CsInventory.GrenadeCount</c> 同读法）。</summary>
+        private static int CountGrenade(CsActor self, string grenadeId)
+        {
+            return self.Ammo.TryGetValue(grenadeId, out var v) ? v.inMag : 0;
+        }
+
+        /// <summary>本档实际会去买的第一把偏好主武器名（决策日志用；不买则给"无"）。</summary>
+        private static string PreferredPrimaryText(CsBotRole role, CsTeam team, int tier)
+        {
+            var prefs = CsBotRoles.PreferredPrimary(role, team);
+            var cap = CsBotRoles.PrimaryPriceCap(tier);
+            for (var i = 0; i < prefs.Length; i++)
+            {
+                var def = CsWeapons.Get(prefs[i]);
+                if (def == null) continue;
+                if (def.Price > cap) continue;
+                return $"{def.DisplayName}(${def.Price})";
+            }
+            return "无（本档价格上限内没有）";
         }
 
         /// <summary>tier 0（Easy）：优先 deagle → 不够就保持默认手枪（glock18/usp）+ 背心。</summary>
@@ -194,17 +332,7 @@ namespace Cs16.Module.Bot
 
             BuyVest(match, self, tier2: true);
             BuyDefuser(match, self);
-
-            var he = CsWeapons.Get(CsWeapons.HeGrenade);
-            if (he != null && self.Money >= he.Price)
-            {
-                Buy(match, self, CsWeapons.HeGrenade, "tier2 手雷");
-            }
-            else
-            {
-                Game.Logger.Info(Tag,
-                    $"{self.Name}({self.Team}/tier2) 余额 ${self.Money} < 手雷 ${he?.Price ?? 0} → 跳过高爆手雷");
-            }
+            // 高爆 / 闪光 / 烟由角色偏好那条路买（BuyGrenades）—— 本档只负责枪与护甲/拆弹器。
         }
 
         private static string TierName(int tier)
@@ -212,8 +340,8 @@ namespace Cs16.Module.Bot
             switch (tier)
             {
                 case 0: return "便宜档：deagle / 默认手枪 + 背心";
-                case 1: return "中档：mp5 → galil/famas + 背心 + 拆弹器";
-                case 2: return "贵档：awp(30%) / ak47 / m4a1 + 头盔 + 手雷 + 拆弹器";
+                case 1: return "中档：mp5 → galil/famas + 背心 + 拆弹器 + 1 颗角色偏好投掷物";
+                case 2: return "贵档：awp(30%) / ak47 / m4a1 + 头盔 + 拆弹器 + 最多 2 颗角色偏好投掷物";
                 default: return "未知档位（按便宜档处理）";
             }
         }

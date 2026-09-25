@@ -207,6 +207,10 @@ namespace Cs16.Module.Player
             // 下发本帧意图（模拟在它自己的 Update 里消费；本地模拟 = 零延迟）。
             match.SetLocalInput(cmd);
 
+            // 同一份意图也交给局域网客户端：连上主机后它按固定频率转成 CS16-LAN-INPUT/1 发出去
+            //（未连主机时只是一次赋值 —— 见 CsLanClient.SetLocalInput）。
+            Cs16.Module.Net.CsLanClient.SetLocalInput(cmd);
+
             UpdateCursor(blockLook);
         }
 

@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using CloverEngine;
+using Cs16.Module.Match;
 
 namespace Cs16.Module.Net
 {
@@ -22,19 +23,24 @@ namespace Cs16.Module.Net
     /// 一律 UTF-8、**一行一条报文、以 <c>\n</c> 结束**，形如 <c>&lt;MAGIC&gt;|&lt;json&gt;</c>：
     /// <list type="bullet">
     /// <item>客户端 → 主机：<c>CS16-LAN-JOIN/1|{{"name":"…","proto":1}}</c></item>
+    /// <item>客户端 → 主机（每 <see cref="InputSendIntervalMs"/> ms）：<c>CS16-LAN-INPUT/1|{{"id":…,"Move":{{"x":…,"y":…}},"Jump":…, …}}</c>
+    /// —— 键名逐字 = <c>CsInputState</c> 的成员名，<c>id</c> = **主机快照里与我同名的那具身体**。</item>
     /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{…}}</c></item>
     /// <item>主机 → 客户端（每 0.1 s）：<c>CS16-LAN-SNAP/1|{{…"actors":[{{…}}]}}</c></item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{…}}</c></item>
     /// </list>
     /// 单行上限 <see cref="MaxLineBytes"/>（与主机同值 4096；超了算非法行、丢弃，不按它分配内存）。
-    /// 本类**不发** <c>CS16-LAN-INPUT/1</c>：把远端输入接到主机模拟是"能开局"的下一段（见类末声明）。</para>
+    /// 本类**会发** <c>CS16-LAN-INPUT/1</c>：每 <see cref="InputSendIntervalMs"/> ms 把
+    /// <see cref="SetLocalInput"/> 喂进来的本地玩家输入发给主机（谁的身体 = 主机快照里与我同名的那个 actor）。</para>
     ///
     /// <para><b>线程模型（关键：主线程不碰 socket）</b>：
     /// <list type="number">
     /// <item><b>读线程（<see cref="_thread"/>，<c>IsBackground = true</c>）</b>：连接 → 发 JOIN →
-    /// 逐字节收行 → 解析。它就是本类**唯一**碰 socket 的地方。</item>
-    /// <item><b>主线程</b>：每帧调 <see cref="Pump"/> —— 只做两件事：发现"线程已死但状态还写着在跑"时纠偏留痕、
-    /// 以及（见 <see cref="IsRunning"/>）供视图层判断要不要画。主线程**一次 socket 都不读**。</item>
+    /// 逐字节收行 → 解析；**并且**是这一条链上唯一往 socket 写的地方（主线程只把
+    /// <c>CS16-LAN-INPUT/1</c> 行塞进 <see cref="OutQueue"/>，由它取出发出去）。</item>
+    /// <item><b>主线程</b>：每帧调 <see cref="Pump"/> —— 发现"线程已死但状态还写着在跑"时纠偏留痕、
+    /// 按 <see cref="InputSendIntervalMs"/> 把本地输入入队、以及（见 <see cref="IsRunning"/>）供视图层判断
+    /// 要不要画。主线程**一次 socket 都不碰**。</item>
     /// <item>为什么日志要绕一圈：读线程是后台线程，而 Unity 的 Console / 落盘 Logger 都该在主线程口径上写
     /// （与 <c>CsLanHost</c> 避开 <c>UnityEngine.Time</c> 同一类顾虑）⇒ 读线程把日志投给
     /// **引擎的后台→主线程派发器**（<c>Game.Dispatcher.Post</c>，由 <c>Game.Tick</c> 每帧 Flush），
@@ -42,9 +48,9 @@ namespace Cs16.Module.Net
     /// </list></para>
     ///
     /// <para><b>本类到哪一步为止</b>：
-    /// 能连上 / 能握手 / 能持续消费快照 / 能把最新一帧交给视图层。
-    /// **未做**：把客户端的输入（<c>CS16-LAN-INPUT/1</c>）发给主机、驱动主机侧模拟；
-    /// 以及"远端角色的预测/插值"（快照直接落到位置上，见 <c>CsLanRemoteView</c>）。</para>
+    /// 能连上 / 能握手 / 能持续消费快照 / 能把最新一帧交给视图层 / 能把本地输入发给主机
+    /// （主机侧按 <c>id</c> 应用到模拟，见 <see cref="CsLanGateway.ApplyRemoteInputs"/>）。
+    /// **未做**："远端角色的预测/插值"（快照直接落到位置上，见 <c>CsLanRemoteView</c>）。</para>
     /// </summary>
     public static class CsLanClient
     {
@@ -80,6 +86,33 @@ namespace Cs16.Module.Net
         private static long _welcomes;
         private static long _snapshots;
         private static long _malformed;
+        private static long _inputsSent;
+
+        // ---- 本地输入 → 主机（每 InputSendIntervalMs 一行 CS16-LAN-INPUT/1）----
+        /// <summary>本帧的本地玩家输入（<see cref="SetLocalInput"/> 写，主线程自己读写）。</summary>
+        private static CsInputState _localInput;
+
+        /// <summary>有没有人喂过输入（没人喂 ⇒ 不发 INPUT，⛔ 不凭空发一条"站着不动"的意图）。</summary>
+        private static bool _haveLocalInput;
+
+        /// <summary>本机在**主机快照**里对应的 actor id（按玩家名认出）；&lt;=0 = 还没认出来。</summary>
+        private static volatile int _myActorId = -1;
+
+        /// <summary>"快照里找不到与我同名的 actor"已留痕（只报一次，⛔ 不刷屏）。</summary>
+        private static volatile bool _myActorMissingLogged;
+
+        /// <summary>上次发 INPUT 的时刻（<see cref="Environment.TickCount"/>，毫秒）。</summary>
+        private static int _lastInputSentAt;
+
+        /// <summary>发 INPUT 的间隔（毫秒）⇒ 20 Hz；与主机 10 Hz 的快照频率错开，主机每次取到的是最新意图。</summary>
+        public const int InputSendIntervalMs = 50;
+
+        /// <summary>待发的 INPUT 行（主线程入队、读线程唯一出队并写 socket）。</summary>
+        private static readonly Queue<string> OutQueue = new Queue<string>();
+        private static readonly object OutLock = new object();
+
+        /// <summary>待发队列上限：满了丢**最旧**的（输入是"最新意图"，迟到的旧意图没有价值）。</summary>
+        private const int OutQueueMax = 64;
 
         /// <summary>最新一帧的远端角色（读线程写、主线程读 ⇒ 一切访问都在 <see cref="LatestLock"/> 下）。</summary>
         private static CsLanRemoteActor[] _latest = new CsLanRemoteActor[0];
@@ -157,6 +190,12 @@ namespace Cs16.Module.Net
         /// <summary>丢弃的非法行数（不是本协议 / 超长 / JSON 解析失败）。</summary>
         public static long Malformed { get { return Interlocked.Read(ref _malformed); } }
 
+        /// <summary>已发出的 <see cref="CsLanGateway.InputMagic"/> 条数。</summary>
+        public static long InputsSent { get { return Interlocked.Read(ref _inputsSent); } }
+
+        /// <summary>本机在主机快照里认出的自己（&lt;=0 = 还没认出来，此时不发 INPUT）。</summary>
+        public static int MyActorId { get { return _myActorId; } }
+
         /// <summary>最新一帧里的远端角色数（还没收到任何快照时为 0）。</summary>
         public static int RemoteActorCount
         {
@@ -172,7 +211,8 @@ namespace Cs16.Module.Net
             }
             return "局域网客户端 endpoint=" + _endpoint + " 状态=" + _phase +
                    " 收到WELCOME=" + Welcomes + " 快照=" + Snapshots + " 非法行=" + Malformed +
-                   " 远端角色=" + RemoteActorCount;
+                   " 远端角色=" + RemoteActorCount + " 我的actor=" + (_myActorId > 0 ? _myActorId.ToString() : "-") +
+                   " 已发INPUT=" + InputsSent;
         }
 
         // ---------------------------------------------------------------- 启停
@@ -220,9 +260,14 @@ namespace Cs16.Module.Net
             _joined = false;
             _remoteClosed = false;
             _phase = "连接中";
+            _myActorId = -1;
+            _myActorMissingLogged = false;
+            _lastInputSentAt = 0;
             Interlocked.Exchange(ref _welcomes, 0);
             Interlocked.Exchange(ref _snapshots, 0);
             Interlocked.Exchange(ref _malformed, 0);
+            Interlocked.Exchange(ref _inputsSent, 0);
+            lock (OutLock) OutQueue.Clear();
             lock (LatestLock) { _latest = new CsLanRemoteActor[0]; }
 
             _running = true;
@@ -307,6 +352,8 @@ namespace Cs16.Module.Net
             }
 
             _phase = "未启动";
+            _myActorId = -1;
+            lock (OutLock) OutQueue.Clear();
             ReportDroppedLogs();
             if (wasRunning)
             {
@@ -345,6 +392,9 @@ namespace Cs16.Module.Net
                     "现场：" + Describe());
             }
 
+            // 本地输入 → 主机（只拼字符串 + 入队；socket 写在读线程里）。
+            SendLocalInput();
+
             ReportDroppedLogs();
         }
 
@@ -371,6 +421,89 @@ namespace Cs16.Module.Net
                 if (frame[i] != null) into.Add(frame[i]);
             }
             return true;
+        }
+
+        // ---------------------------------------------------------------- 本地输入 → 主机
+
+        /// <summary>
+        /// **主线程**：喂入本帧的本地玩家输入（Module/Player 每帧调一次，与它喂给
+        /// <see cref="ICsMatch.SetLocalInput"/> 的是同一份意图）。
+        ///
+        /// <para>本方法**不碰 socket**、也不判有没有连上：它只把意图记下来；发不发、发给谁由
+        /// <see cref="Pump"/> 决定。没在跑的时候调用它只是一次赋值（廉价）。</para>
+        /// </summary>
+        public static void SetLocalInput(CsInputState input)
+        {
+            _localInput = input;
+            _haveLocalInput = true;
+        }
+
+        /// <summary>
+        /// 一行 <see cref="CsLanGateway.InputMagic"/> 报文：键名**逐字** = <c>CsInputState</c> 的成员名
+        /// （<c>Move</c> 是 <c>{"x":…,"y":…}</c>），外加 <c>id</c> = 这是谁的身体。
+        /// </summary>
+        private static string BuildInputLine(int actorId, in CsInputState i)
+        {
+            var inv = CultureInfo.InvariantCulture;
+            var sb = new StringBuilder(192);
+            sb.Append(CsLanGateway.InputMagic).Append('|');
+            sb.Append("{\"id\":").Append(actorId);
+            sb.Append(",\"Move\":{\"x\":").Append(i.Move.x.ToString("F3", inv));
+            sb.Append(",\"y\":").Append(i.Move.y.ToString("F3", inv)).Append('}');
+            sb.Append(",\"Jump\":").Append(i.Jump ? "true" : "false");
+            sb.Append(",\"Crouch\":").Append(i.Crouch ? "true" : "false");
+            sb.Append(",\"Walk\":").Append(i.Walk ? "true" : "false");
+            sb.Append(",\"Fire\":").Append(i.Fire ? "true" : "false");
+            sb.Append(",\"Zoom\":").Append(i.Zoom ? "true" : "false");
+            sb.Append(",\"Attack2\":").Append(i.Attack2 ? "true" : "false");
+            sb.Append(",\"Yaw\":").Append(i.Yaw.ToString("F1", inv));
+            sb.Append(",\"Pitch\":").Append(i.Pitch.ToString("F1", inv));
+            sb.Append('}');
+            return sb.ToString();
+        }
+
+        /// <summary>入队一行待发报文（满了丢最旧的；真正写 socket 的是读线程）。</summary>
+        private static void EnqueueOut(string line)
+        {
+            if (line == null) return;
+            lock (OutLock)
+            {
+                if (OutQueue.Count >= OutQueueMax) OutQueue.Dequeue();
+                OutQueue.Enqueue(line);
+            }
+        }
+
+        /// <summary>读线程：把队列里的报文写完（本类**唯一**写 socket 的地方）。</summary>
+        private static void DrainOut(NetworkStream stream)
+        {
+            while (true)
+            {
+                string text;
+                lock (OutLock)
+                {
+                    if (OutQueue.Count == 0) return;
+                    text = OutQueue.Dequeue();
+                }
+                WriteLine(stream, text);
+            }
+        }
+
+        /// <summary>
+        /// 主线程：按 <see cref="InputSendIntervalMs"/> 把本地输入发给主机。
+        ///
+        /// <para>三道闸门：已握手 / 有人喂过输入 / 已在主机快照里认出自己（<see cref="_myActorId"/>）。
+        /// 任一没满足都不发 —— 不知道"这具身体是谁"时乱编一个 id 只会落到别人的 actor 上。</para>
+        /// </summary>
+        private static void SendLocalInput()
+        {
+            if (!_joined || !_haveLocalInput || _myActorId <= 0) return;
+
+            var now = Environment.TickCount;
+            if (unchecked(now - _lastInputSentAt) < InputSendIntervalMs) return;
+            _lastInputSentAt = now;
+
+            EnqueueOut(BuildInputLine(_myActorId, _localInput));
+            Interlocked.Increment(ref _inputsSent);
         }
 
         // ---------------------------------------------------------------- 读线程
@@ -433,6 +566,9 @@ namespace Cs16.Module.Net
                 var consecutiveIoErrors = 0;
                 while (_running)
                 {
+                    // 先把手上的输入发出去：主线程只入队，写 socket 的只有这一个线程。
+                    DrainOut(stream);
+
                     int n;
                     try
                     {
@@ -569,7 +705,7 @@ namespace Cs16.Module.Net
                 }
 
                 lock (LatestLock) { _latest = frame; }
-                Interlocked.Increment(ref _snapshots);
+                RecognizeSelf(frame, Interlocked.Increment(ref _snapshots));
                 return;
             }
 
@@ -592,6 +728,53 @@ namespace Cs16.Module.Net
             _lastError = message;
             _phase = "失败";
             PostLog(true, message);
+        }
+
+        /// <summary>
+        /// **读线程**：在最新一帧快照里按玩家名认出"我在这台主机上的身体"（<see cref="_myActorId"/>）。
+        ///
+        /// <para>为什么按名字认：WELCOME 里没有"你的 actor id"这个字段（线格式定死，⛔ 不自己加），
+        /// 而 JOIN 时已经把玩家名给了主机 ⇒ 快照里与我同名的那个 actor 就是我这具身体。</para>
+        ///
+        /// <para>认不出来时留痕一次（否则"主机上我不动"没有任何线索）：主机得先按这个名字建出我的
+        /// actor，认出来了才开始发 <see cref="CsLanGateway.InputMagic"/>。</para>
+        /// </summary>
+        private static void RecognizeSelf(CsLanRemoteActor[] frame, long snapshotIndex)
+        {
+            var mine = _myActorId;
+            if (mine > 0)
+            {
+                for (var i = 0; i < frame.Length; i++)
+                {
+                    if (frame[i] != null && frame[i].Id == mine) return;   // 还在，身份不变
+                }
+                // 换局 / 重生后快照里换了 id ⇒ 重新认一次
+                _myActorId = -1;
+                _myActorMissingLogged = false;
+            }
+
+            for (var i = 0; i < frame.Length; i++)
+            {
+                var a = frame[i];
+                if (a == null) continue;
+                if (!string.Equals(a.Name, _playerName, StringComparison.Ordinal)) continue;
+
+                _myActorId = a.Id;
+                _myActorMissingLogged = false;
+                PostLog(false,
+                    "已在主机快照里认出自己：playerName=\"" + _playerName + "\" ⇒ actor=" + a.Id +
+                    "（此后每 " + InputSendIntervalMs + " ms 发一行 " + CsLanGateway.InputMagic +
+                    "，主机按这个 id 应用到模拟）");
+                return;
+            }
+
+            if (!_myActorMissingLogged && snapshotIndex >= 3)
+            {
+                _myActorMissingLogged = true;
+                PostLog(true,
+                    "主机快照里没有叫 \"" + _playerName + "\" 的 actor（已收到 " + snapshotIndex + " 帧、" +
+                    frame.Length + " 个角色）⇒ 本地输入暂不发出：主机要先按这个名字建出我的身体");
+            }
         }
 
         // ---------------------------------------------------------------- 解析

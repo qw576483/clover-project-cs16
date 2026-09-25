@@ -7,33 +7,24 @@ using UnityEngine;
 namespace Cs16.Module.Combat
 {
     /// <summary>
-    /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的**程序化**表现（不依赖预制体；贴图走 <c>Resources/UI/Art/fx_*</c>）。
+    /// 枪口火焰 / 弹道 / 弹痕 / 血迹 / 爆炸的表现（不依赖预制体；贴图一律走 <c>Resources/UI/Art/fx_*</c>，
+    /// 名字与载体出处集中在 <see cref="ResPaths"/>）。
     ///
-    /// <para><b>2026-09-24 补（差异 #89）</b>：用户复查「枪口火焰没有效果」。
-    ///    （视模型动画后包围盒 z 到 0.705）⇒ 被近端枪身几何深度盖掉；
-    /// 现在：落点走 <see cref="CsCombatTuning.MuzzleOffsetForward"/> 等三个**相机局部系**分量，
-    /// 尺寸走 <see cref="SpriteScaleForMeters"/>，并按武器选贴图（B51/M249 → 十字形
-    /// <see cref="ResPaths.FxMuzzleFlashCross"/>）。判据资产 = <c>tools/probes/probe-muzzleflash.cs</c>。</para>
+    /// <para><b>贴图都是原版载体解出的像素</b>：枪口火焰 ← <c>sprites/muzzleflash*.spr</c>、
+    /// 弹痕 ← <c>decals.wad</c> 的 <c>{shot1..5</c>、血迹贴花 ← <c>decals.wad</c> 的 <c>{blood1..6</c>、
+    /// 血雾 ← <c>valve/sprites/bloodspray.spr</c>（64×64×10 帧）；只有 <c>fx_spark</c> 一张是本项目生成
+    /// （原版击中火星没有独立载体，登记在 <c>client/资源欠缺清单.md</c>）。
+    /// 换素材是**同名覆盖 PNG**，本类一行不用改。</para>
     ///
-    /// <para><b>2026-09-23 补（差异 #69 + #74）</b>：
-    /// ① **弹痕从 1 张变 5 张**（原版 `decals.wad` 的 `{shot1..5`，5 张全解出、每次命中随机取一，
-    /// 见 <see cref="PickBulletHole"/>）；
-    /// ② **新增血迹**（<see cref="BloodImpact"/>）：子弹命中角色时"命中点出血雾 + 在后面的面上贴
-    /// `{blood1..6` 血迹贴花"，载体与名表出处写在该方法自己的注释里。
-    /// 两张新族都由 `tools/probes/wad3-extract.py` 从**已在盘**的 `decals.wad` 解出
-    /// （逐张落盘比对过）⇒ 不是程序化替身。</para>
+    /// <para><b>尺寸 / 朝向的两条硬口径</b>：① <c>localScale</c> 是**倍率不是米** —— 一张贴片天生多宽
+    /// 由它自己的导入 PPU 决定，凡是"米"都必须经 <see cref="SpriteScaleForMeters"/> 反算
+    /// （见该方法的注释）；② 贴到面上的四元数必须用 <see cref="SurfaceUp"/> 给参考上向 ——
+    /// 命中地面时 <c>-normal</c> 与 <c>Vector3.up</c> 平行，<c>LookRotation</c> 会退化。</para>
     ///
-    /// <para><b>2026-09-20 修正（用户报"开枪有黄色球 / 墙上没有弹痕"）</b>：
-    /// 枪口火焰不能用 <c>CreatePrimitive(Sphere)</c> + 黄色 <see cref="Color"/> ⇒ 画面上就是**一颗黄球**
-    /// （原版是一张 <c>sprites/muzzleflash*.spr</c> 星形亮斑）；而且**完全没有弹痕**（原版打在墙上会留
-    /// <c>decals.wad</c> 的 <c>{shot*</c> 弹痕）。现在：</para>
-    /// <list type="bullet">
-    /// <item>枪口火焰 = <see cref="SpriteRenderer"/> 星形亮斑（面向相机）+ 一盏点光；</item>
-    /// <item>命中墙 = **弹痕贴片**（按命中法线贴面）+ 一记小火星；</item>
-    /// <item>贴图是**本项目程序化生成**的（原版 <c>.spr</c> / <c>decals.wad</c> 载体不在本仓库、
-    /// archive.org 又连不上 ⇒ 按载体降级链退一格，登记在 <c>client/资源欠缺清单.md</c>，
-    /// 拿到原版素材后**只换文件**，本类一行都不用改）。</item>
-    /// </list>
+    /// <para><b>枪口火焰 = 贴片 + 点光</b>：原版是一张 <c>sprites/muzzleflash*.spr</c> 亮斑（不是球体），
+    /// 落点按**相机局部系**给（<see cref="CsCombatTuning.MuzzleOffsetRight"/> 等三个分量，从视模型
+    /// 动画后包围盒的最前端反推），贴片用 <c>SpriteRenderer</c>；逐武器贴图见
+    /// <see cref="PickMuzzleFlash"/>。点光是第一人称里最有效的"开枪了"读感（墙面会被照亮）。</para>
     ///
     /// <para><b>为什么不用引擎对象池（<c>Game.Pool</c>）</b>：引擎的对象池是"按预制体 key 实例化"
     /// （内部走 <c>Resources.Load&lt;GameObject&gt;(key)</c>），而本模块的产出路径里没有、也不该有预制体
@@ -96,13 +87,35 @@ namespace Cs16.Module.Combat
         private readonly Sprite[] _sprShots = new Sprite[ResPaths.FxBulletHoleVariants];
         /// <summary>血迹**六变体**（原版 `decals.wad` 的 `{blood1..6`，key 表见 <see cref="ResPaths.FxBloodKeys"/>）。</summary>
         private readonly Sprite[] _sprBlood = new Sprite[ResPaths.FxBloodVariants];
+        /// <summary>血雾**十帧**（原版 `valve/sprites/bloodspray.spr`，key 表见 <see cref="ResPaths.FxBloodSprayKeys"/>）。</summary>
+        private readonly Sprite[] _sprBloodSpray = new Sprite[ResPaths.FxBloodSprayVariants];
         private bool _spritesRequested;
         private bool _spriteWarned;
         private bool _bloodWarned;
+        private bool _bloodSprayWarned;
+
+        /// <summary>本发血雾用到的帧名（复用，只喂 <c>blood.spray</c> 日志，避免每次命中产生垃圾）。</summary>
+        private readonly List<string> _puffFrames = new List<string>(CsCombatTuning.BloodSprayMinCount);
 
         // ---- 颜色 ----
         /// <summary>枪口点光色（原版 spr 是暖白偏黄，照亮近处墙面）。</summary>
         private static readonly Color FlashColor = new Color(1f, 0.93f, 0.62f, 1f);
+
+        /// <summary>
+        /// 血雾贴片的染色 = 原版血液载体的基色 **#8B0000 (139,0,0)**。
+        ///
+        /// <para><b>为什么需要染色</b>：`valve/sprites/bloodspray.spr` 的像素是**灰阶**（调色板
+        /// 0..254 是纯灰、255 是透明标记 (0,0,255)）⇒ 红色由渲染时的染色给出；原版也是这条链
+        /// （`mp.dll` 的血迹临时实体里写着血色的字节 `BLOOD_COLOR_RED = 0xF7`，见
+        /// <c>策划/差异登记.tsv</c> #74）。</para>
+        ///
+        /// <para><b>色值出处</b>：`valve/sprites/blooddrop.spr` 调色板第 255 项 = `(139,0,0)` ——
+        /// 同一批原版血液载体里**唯一显式给出的血红基色**（`spr-extract.py` 的调色板 dump）。
+        /// ⚠️ 引擎把 `BLOOD_COLOR_RED(0xF7)` 映射成 RGB 的那一步在 `hw.dll` 里未定位到
+        /// （`hw.dll` 无 `float 247.0` 常量、血量临时实体的处理器未找到）⇒ 本值是**载体侧**出处，
+        /// 引擎侧映射作为缺口登记。</para>
+        /// </summary>
+        private static readonly Color BloodSprayTint = new Color(139f / 255f, 0f, 0f, 1f);
         private static readonly Color TracerColor = new Color(1f, 0.97f, 0.78f, 1f);
         private static readonly Color BlastColor = new Color(1f, 0.58f, 0.20f, 1f);
         private static readonly Color NadeColor = new Color(0.30f, 0.34f, 0.26f, 1f);
@@ -166,6 +179,13 @@ namespace Cs16.Module.Combat
             {
                 var slot = i;
                 res.LoadAsset<Sprite>(ResPaths.FxBloodKeys[i], s => _sprBlood[slot] = s);
+            }
+
+            // 血雾十帧（原版 bloodspray.spr）：同上，走字面量表。
+            for (var i = 0; i < ResPaths.FxBloodSprayKeys.Length; i++)
+            {
+                var slot = i;
+                res.LoadAsset<Sprite>(ResPaths.FxBloodSprayKeys[i], s => _sprBloodSpray[slot] = s);
             }
         }
 
@@ -262,17 +282,14 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 枪口火焰：**一张原版亮斑贴片**（面向相机）+ 一盏点光。
         /// 点光是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
-        /// 不许退回"一颗球"（用户报的就是它）。
         ///
         /// <list type="number">
-        /// <item><b>落点</b>从"相机前方 0.34 m"改成 <see cref="CsCombatTuning.MuzzleOffsetForward"/>
-        /// 被近端枪身几何在深度测试里盖掉。三个分量都在 <c>CsCombatTuning</c> 里逐条带推导。</item>
-        /// <item><b>尺寸</b>改走 <see cref="SpriteScaleForMeters"/>：旧代码直接写
-        /// 0.192 m（小 3.1 倍）。同族坑见 <see cref="CsCombatTuning.DecalSize"/>。</item>
-        /// <item><b>逐武器贴图</b>：原版按武器选 <c>muzzleflash1..4</c>（B51/M249 是**十字形**，
-        /// 对应载体 <c>muzzleflash3.spr</c>）。映射出自引擎 <c>hw.dll</c>（不在盘）⇒ 只有
-        /// <c>m249 → 十字</c> 这一条有证据（用户实机 + 载体形态唯一匹配，见
-        /// <see cref="ResPaths.FxMuzzleFlashCross"/>），其余武器维持原贴图。</item>
+        /// <item><b>落点</b> = <c>相机局部系</c>的三个分量（<see cref="CsCombatTuning.MuzzleOffsetRight"/> 等）。
+        /// 落点若落在视模型几何之内，就会被近端枪身/手臂在深度测试里盖掉（贴片走透明队列但**开**深度测试）
+        /// ⇒ 表现上等于"没有枪口火焰"。三个分量都在 <c>CsCombatTuning</c> 里逐条带推导。</item>
+        /// <item><b>尺寸</b>必须走 <see cref="SpriteScaleForMeters"/>：贴片导入 PPU=100，
+        /// 直接写米会把 0.30 m 画成 0.192 m。同族坑见 <see cref="CsCombatTuning.DecalSize"/>。</item>
+        /// <item><b>逐武器贴图</b>：见 <see cref="PickMuzzleFlash"/>（本工程只接了有一条证据的那一条映射）。</item>
         /// </list>
         /// </summary>
         /// <param name="eyePosition">视点（相机世界坐标）</param>
@@ -316,10 +333,23 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 逐武器选枪口火焰贴图。原版按武器类别在**引擎**里选 <c>muzzleflash1..4</c>
-        /// （四张载体在盘、但选择表在 `hw.dll`，不在盘）⇒ 只有一条映射有证据：
-        /// <c>muzzleflash3.spr</c> 是十字/X 形，唯一匹配）。其余武器维持默认那张
-        /// 不许凭"哪张好看"给别的武器编映射 —— 缺口登记在 `策划/差异登记.tsv` #89。
+        /// 逐武器选枪口火焰贴图。本工程只接了**有一条证据**的那条映射：<c>m249 → 十字形</c>
+        /// （<see cref="ResPaths.FxMuzzleFlashCross"/>）；其余武器一律走默认那张。
+        ///
+        /// <para><b>为什么其余武器一条都没有</b>（引擎侧的硬事实，`hw.dll` 在盘、已逐条查过）：
+        /// 引擎 `hw.dll` 只 precache **三张**（`sprites/muzzleflash1/2/3.spr`，串在文件偏移
+        /// <c>0x16d780 / 0x16d79c / 0x16d7b8</c>，precache 序列在 <c>0x2e090</c>–<c>0x2e0c7</c>，
+        /// 句柄存进全局 <c>0x2CD3D70 / 74 / 78</c>；`muzzleflash4.spr` 引擎**根本不引用**），
+        /// 选哪一张由调用方传进来的**一个整数**决定 —— 选择例程在 VA <c>0x1D30BF0</c>：
+        /// <c>idx = (arg % 10) % 3</c>（<c>0x1D30C0A</c>–<c>0x1D30C14</c>）+ 缩放 <c>(arg / 10) * K</c>，
+        /// 表基址 <c>[ebx*4 + 0x2CD3D70]</c>（<c>0x1D30C55</c>）。</para>
+        ///
+        /// <para>而该例程在 `hw.dll` 里**没有任何直接调用点**（`call rel32` 0 处、
+        /// `call [0x1E825C4]` 0 处），它只作为**函数指针表的第 19 项**存在（表首 VA <c>0x1E82578</c>，
+        /// 该项文件偏移 <c>0x1825c4</c>，表首地址仅被 <c>0x166be4</c> 的一处引用取走 = 交给游戏 DLL）
+        /// ⇒ **逐武器映射不在 `hw.dll`，是调用方（游戏/客户端 DLL）传进来的整数**，
+        /// 本机盘上拿不到那张表。其余武器因此维持默认贴图，⛔ 不许凭"哪张好看"编映射。
+        /// 缺口逐武器列名登记在 `策划/差异登记.tsv` #89。</para>
         /// </summary>
         private Sprite PickMuzzleFlash(string weaponId)
         {
@@ -387,15 +417,17 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// **子弹打中角色**：命中点上一小团血雾 + 在**后面的那个面**上贴一张血迹贴花。
+        /// **子弹打中角色**：命中点上一团血雾 + 在**后面的那个面**上贴一张血迹贴花。
         ///
-        /// <para><b>口径（差异 #74，片 FX-ALL 2026-09-23）</b>：原版受击的载体证据两层 ——
-        /// ① 贴花载体 `<c>decals.wad</c>` 里有 `{blood1..6`（红）与 `{yblood1..6`（黄，`violence_ablood`），
-        /// 在 `mp.dll` 的贴花名表里是连续两项（索引 13..18 / 19..24）；
-        /// ② `mp.dll` 里另有 `sprites/bloodspray.spr`、`sprites/blood.spr` 两个串 —— **这两个 `.spr` 不在盘**。
-        /// 所以：**血迹贴花用真载体**（六变体随机），**血雾只能用替身**（缺载体，登记在 `client/资源欠缺清单.md`）。</para>
+        /// <para><b>两层都走原版载体</b>（两者是同一条原版消息里的两个模型索引）：
+        /// ① 血雾 = <c>valve/sprites/bloodspray.spr</c> 的十帧（<see cref="ResPaths.FxBloodSprayKeys"/>）；
+        /// ② 血迹贴花 = <c>decals.wad</c> 的 <c>{blood1..6</c>（<see cref="ResPaths.FxBloodKeys"/>；
+        /// 红/黄分组由 cvar <c>violence_hblood</c> / <c>violence_ablood</c> 选，人类角色恒红）。
+        /// 两族都出自 <c>mp.dll</c> 自己的 precache（<c>sprites/bloodspray.spr</c> 串在文件偏移
+        /// <c>0x933a6</c> → 全局 <c>0x101aeddc</c>；<c>decals.wad</c> 的 <c>{blood*</c> 名表见
+        /// <c>策划/差异登记.tsv</c> #74）。</para>
         ///
-        /// <para><b>为什么从命中点再往前打一条射线</b>：原版是"在角色**后面的墙**上贴血迹"，
+        /// <para><b>为什么从命中点再往前打一条射线</b>：原版是在角色**后面的墙**上贴血迹，
         /// 不是贴在角色身上（贴角色身上会随它动，原版没有这种表现）。
         /// 追不到面时**只出血雾、不贴贴花**（不硬塞到空气里）。</para>
         /// </summary>
@@ -409,16 +441,37 @@ namespace Cs16.Module.Combat
 
             var dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
 
-            // ---- ① 血雾：命中点上一小团（`sprites/bloodspray.spr` 的降级替身，用真血迹贴图染色）----
-            var puff = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.BloodPuffDuration);
-            if (puff != null)
+            // ---- ① 血雾：命中点上一小团，**原版载体**的十帧里随机取一（每张各取一次）----
+            // 张数取原版公式 clamp(amount/10, 3, 16) 的**下界**（自变量 amount 在受击者实体上，
+            // 表现层拿不到伤害 ⇒ 只能取下界；出处与缺口见 CsCombatTuning.BloodSprayMinCount）。
+            WarnBloodSprayOnce();
+            var sprayRng = CsRng.Stream(CsRngStream.FxVariant);
+            _puffFrames.Clear();
+            for (var i = 0; i < CsCombatTuning.BloodSprayMinCount; i++)
             {
-                puff.Tr.position = point;
-                puff.Tr.localScale = Vector3.one * CsCombatTuning.BloodPuffSize;
-                puff.Sprite.sprite = PickRandom(_sprBlood);
-                puff.Sprite.enabled = puff.Sprite.sprite != null;
+                // 染色走池子的 key（同色才复用），不在取到物件后再改色 —— 否则会把同池的白贴片一起染红。
+                var puff = AcquireSprite(Shape.Sprite, BloodSprayTint, CsCombatTuning.BloodPuffDuration);
+                if (puff == null) break;
+
+                var frame = PickRandom(_sprBloodSpray);
+                var spread = CsCombatTuning.BloodPuffSpread;
+                puff.Tr.position = point + new Vector3(
+                    sprayRng.Range(-spread, spread),
+                    sprayRng.Range(-spread, spread),
+                    sprayRng.Range(-spread, spread));
+                puff.Tr.localScale = Vector3.one * SpriteScaleForMeters(frame, CsCombatTuning.BloodPuffSize);
+                puff.Sprite.sprite = frame;
+                puff.Sprite.enabled = frame != null;
                 puff.Billboard = true;
+                _puffFrames.Add(frame != null ? frame.name : "null");
             }
+
+            // 可核对日志：张数 = clamp 下界；帧名逐个列出（看"是不是真的十帧都在用"）；
+            // 世界宽从 CsCombatTuning.BloodPuffSize（米）经 SpriteScaleForMeters 反算。
+            _log.Info("blood.spray",
+                $"命中 {point}（爆头={headshot}）→ 血雾 {_puffFrames.Count} 张" +
+                $"[{string.Join(",", _puffFrames)}] 世界宽={CsCombatTuning.BloodPuffSize:F3}m" +
+                $"（载体帧数={ResPaths.FxBloodSprayVariants}）");
 
             // ---- ② 血迹贴花：从命中点继续向前找"后面的面" ----
             WarnBloodOnce();
@@ -464,7 +517,24 @@ namespace Cs16.Module.Combat
             _log.Warn("fx.blood.missing",
                 $"血迹贴图一张都没加载到：Resources/{ResPaths.FxBloodKeys[0]}.png … " +
                 $"{ResPaths.FxBloodKeys[ResPaths.FxBloodKeys.Length - 1]}.png" +
-                "（受击只出无贴图的雾点）—— 用 tools/probes/wad3-extract.py 从 decals.wad 解出后重跑");
+                "（受击时血雾照出、墙上不留血）");
+        }
+
+        /// <summary>血雾十帧一张都没加载到时只 Warn 一次（高频路径，绝不每帧刷屏）。</summary>
+        private void WarnBloodSprayOnce()
+        {
+            if (_bloodSprayWarned) return;
+            var have = 0;
+            for (var i = 0; i < _sprBloodSpray.Length; i++)
+            {
+                if (_sprBloodSpray[i] != null) have++;
+            }
+            if (have > 0) return;
+            _bloodSprayWarned = true;
+            _log.Warn("fx.bloodspray.missing",
+                $"血雾贴图一张都没加载到：Resources/{ResPaths.FxBloodSprayKeys[0]}.png … " +
+                $"{ResPaths.FxBloodSprayKeys[ResPaths.FxBloodSprayKeys.Length - 1]}.png" +
+                "（受击时命中点没有血雾）");
         }
 
         /// <summary>弹道（一条细长的亮条，从枪口到终点）。</summary>

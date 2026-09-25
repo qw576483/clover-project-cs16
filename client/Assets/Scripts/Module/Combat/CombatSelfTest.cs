@@ -58,6 +58,7 @@ namespace Cs16.Module.Combat
             CheckRaycastHitsHitboxProxy();
             CheckMatchFastForward();
             CheckDroppedWeaponWorldEntity();
+            CheckAttack2Values();
 
             var sb = new StringBuilder();
             sb.AppendLine("========== 第一人称操作与射击 自检报告 ==========");
@@ -105,6 +106,37 @@ namespace Cs16.Module.Combat
             {
                 sb.AppendLine($">>> 结论: FAIL（{Failures.Count} 项未达标）");
                 for (var i = 0; i < Failures.Count; i++) sb.AppendLine("   ✗ " + Failures[i]);
+            }
+            sb.AppendLine("=============================================================");
+
+            var text = sb.ToString();
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>
+        /// **只跑差异 #68 的数值判据**并返回报告 —— 供 <c>unity command eval_file</c> 调用
+        /// （与 <see cref="RunDropOnly"/> 同理由：只跑一组、秒级返回，避开 eval_file 的主线程 5 s 上限）。
+        /// </summary>
+        public static string RunAttack2Only()
+        {
+            Failures.Clear();
+            Notes.Clear();
+            CheckAttack2Values();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("========== 差异 #68 「右键两态数值与连发节奏」数值自检 ==========");
+            for (var i = 0; i < Notes.Count; i++) sb.AppendLine("· " + Notes[i]);
+            if (Failures.Count == 0)
+            {
+                sb.AppendLine(">>> 结论: PASS");
+                sb.AppendLine("RESULT: PASS");
+            }
+            else
+            {
+                sb.AppendLine($">>> 结论: FAIL（{Failures.Count} 项未达标）");
+                for (var i = 0; i < Failures.Count; i++) sb.AppendLine("   ✗ " + Failures[i]);
+                sb.AppendLine("RESULT: FAIL");
             }
             sb.AppendLine("=============================================================");
 
@@ -497,8 +529,8 @@ namespace Cs16.Module.Combat
                 // ================= 差异 #68：attack2（右键）—— 切换型输入 =================
                 // 判据分三块：① 能力表（哪几把武器有出处的"可切状态"）；② **一次按下只切一次**（必须
                 // 判沿：电平型/黏住的输入不许每帧翻转）；③ 切枪期间照样可切、没出处的武器一律不动状态。
-                // 数值影响（消音后的伤害/散布、连发的发数与节奏）**不在本段**：没有出处，见差异 #68 的
-                //    「仍未证」段 —— 本段只判"状态可切换 + 可观测"。
+                // 两态的**数值**（消音后的伤害/散布、连发的发数与节奏）由 CheckAttack2Values 单独判
+                //   （出处 = `策划/武器右键数值出处.md`）；本段只判"状态可切换 + 可观测"。
                 Assert(CsWeapons.Get(CsWeapons.Usp).CanSilence, "USP 的 attack2 能力表没打上 CanSilence（差异 #68）");
                 Assert(CsWeapons.Get(CsWeapons.M4A1).CanSilence, "M4A1 的 attack2 能力表没打上 CanSilence（差异 #68）");
                 Assert(CsWeapons.Get(CsWeapons.Glock18).CanBurst, "Glock18 的 attack2 能力表没打上 CanBurst（差异 #68）");
@@ -620,6 +652,15 @@ namespace Cs16.Module.Combat
         private static void Fail(string message)
         {
             Failures.Add(message);
+        }
+
+        /// <summary>数值断言：差值超过容差即失败（帧量化误差走 <paramref name="tolerance"/>）。</summary>
+        private static void ExpectNear(string what, float actual, float expected, float tolerance)
+        {
+            if (Mathf.Abs(actual - expected) > tolerance)
+            {
+                Fail($"{what}: 实测 {actual:F4} ≠ 期望 {expected:F4}（容差 {tolerance:F4}）");
+            }
         }
 
         // ==================================================================
@@ -794,6 +835,270 @@ namespace Cs16.Module.Combat
                 CsMatch.Clock = prevClock;
                 if (match != null) match.Stop();
             }
+        }
+
+        // ==================================================================
+        //  ⑦ 差异 #68：attack2 两态数值 + 连发节奏（数值类判据，**离线跑，不进 Play**）
+        // ==================================================================
+        /// <summary>
+        /// 差异 #68 的**数值**判据。出处 = <c>策划/武器右键数值出处.md</c>（载体 = 原版 <c>mp.dll</c>，
+        /// 该文件逐条给了 VA / 文件偏移 / 反汇编）：
+        /// ① 逐武器「装 / 不装消音」「连发 / 普通」取到的伤害与射程修正 == 出处表（AK47 = 36 当校验锚）；
+        /// ② 静止站散布按原版两态系数之比（M4A1 装消音 ×1.25、Glock18 连发 ×3、FAMAS 与 USP 不变）；
+        /// ③ 连发一轮**恰好 3 发**，首发 / 续发间隔与循环时间 == 出处表；
+        /// ④ 状态位为假（或该武器没有这一档出处）时取到的仍是普通档；
+        /// ⑤ **负控**：把一处期望值故意改错 ⇒ 同一个校验器必须报出差异（证明断言不是恒真）。
+        /// </summary>
+        private static void CheckAttack2Values()
+        {
+            // ---- ①②④⑤：纯数据表 + 负控 ----
+            var table = CollectAttack2Mismatches(0);
+            Assert(table.Count == 0,
+                $"差异 #68 数值表与出处不一致（{table.Count} 处）：" + string.Join("；", table));
+            if (table.Count == 0)
+            {
+                Notes.Add("差异 #68 数值表：伤害 USP 34/30 · M4A1 32/33 · FAMAS 30/34 · Glock18 25（两态同）· " +
+                          "AK47 36（校验锚）；射程修正 USP 0.79/0.79 · M4A1 0.97/0.95 · FAMAS 0.96 · Glock18 0.75" +
+                          "（射程距离 8192）；连发 3 发（Glock18 首发/续发 0.1/0.1 · 循环 0.5，" +
+                          "FAMAS 0.05/0.1 · 循环 0.55/普通 0.0825）；静止站散布比 M4A1 ×1.25 · Glock18 连发 ×3" +
+                          " ⇒ 逐条 == 出处表");
+            }
+
+            var negative = CollectAttack2Mismatches(1);
+            Assert(negative.Count > 0,
+                "差异 #68 负控失效：把 USP 装消音伤害的期望值故意改成 31，校验器居然没报出差异" +
+                "（说明这条断言恒真、判据无意义）");
+            if (negative.Count > 0)
+            {
+                Notes.Add("差异 #68 负控 FAIL（预期）：" + negative[0] + " ⇒ 同一个校验器会红，断言不是恒真");
+            }
+
+            // ---- ③ 连发节奏：真模拟 + 假时钟 ----
+            CheckBurstCadence();
+        }
+
+        /// <summary>
+        /// 连发节奏（差异 #68）：真模拟 + 假时钟，逐帧记"这一帧模拟打出了几发、落在哪一刻"。
+        /// 三次扣扳机：① 第 1 帧（打满一轮）；② 循环时间未到的 t0+0.30（**必须打不出来**）；
+        /// ③ 循环时间到点后按住一小段（必须重新打满一轮）。
+        /// </summary>
+        private static void CheckBurstCadence()
+        {
+            var prevClock = CsMatch.Clock;
+            var simTime = 0f;
+            CsMatch match = null;
+
+            try
+            {
+                match = new CsMatch(new SelfTestMap());
+                var cfg = new CsMatchConfig
+                {
+                    MapName = "attack2-selftest",
+                    // 两队都要有人：一边空着回合会立刻判结束（进不了 Live）。自检里没有 bot 大脑
+                    // （_botIntents 无条目）⇒ 机器人不会开火，队列里仍然只会有"我"的射击记录。
+                    BotsPerTeam = 1,
+                    PlayerTeam = CsTeam.CT,
+                    PlayerName = "Attack2SelfTest",
+                    RoundsPerHalf = 1,
+                    RoundTime = 60f,
+                    FreezeTime = 0.2f,
+                    HalfTimeSwap = false,
+                };
+
+                CsMatch.Clock = () => simTime;
+                match.Start(cfg);
+
+                var local = match.LocalPlayer;
+                if (local == null)
+                {
+                    Fail("差异 #68 连发节奏：开局后拿不到 LocalPlayer");
+                    match.Stop();
+                    return;
+                }
+
+                // 非本地 actor 挪远：对手出生点就在本地附近，而本用例只数"我"打出的发数。
+                void KeepBotsAway()
+                {
+                    var list = match.Actors;
+                    for (var i = 0; i < list.Count; i++)
+                    {
+                        var other = list[i];
+                        if (!ReferenceEquals(other, local)) other.Position = new Vector3(100f, 0f, 100f);
+                    }
+                }
+
+                var idle = default(CsInputState);
+                for (var i = 0; i < 300 && match.Phase != CsRoundPhase.Live; i++)
+                {
+                    match.SetLocalInput(idle);
+                    KeepBotsAway();
+                    match.Tick(FrameDt);
+                    simTime += FrameDt;
+                }
+                if (match.Phase != CsRoundPhase.Live)
+                {
+                    Fail($"差异 #68 连发节奏：快进 300 帧后仍未进 Live（实际 {match.Phase}）");
+                    match.Stop();
+                    return;
+                }
+
+                // 一次扣扳机 = 一轮；[holdFrom, holdFrom+holdFrames) 内一直按住（验"循环时间到点才能再扣"）。
+                List<float> Drive(string weaponId, int holdFromFrame, int holdFrames, int totalFrames)
+                {
+                    local.PrimaryWeapon = weaponId;
+                    local.SecondaryWeapon = null;
+                    local.ActiveWeapon = weaponId;
+                    local.SetAmmo(weaponId, 30, 90);
+                    local.BurstMode = true;
+                    local.Silenced = false;
+                    local.BurstShotsLeft = 0;
+                    local.NextBurstShotTime = 0f;
+                    local.NextFireTime = 0f;
+                    local.SwitchEndTime = 0f;
+                    local.ReloadEndTime = 0f;
+                    local.ConsecutiveShots = 0;
+
+                    var times = new List<float>();
+                    for (var i = 0; i < totalFrames; i++)
+                    {
+                        var tBefore = simTime;      // 模拟 Tick 内的 now 就是这个值（假时钟）
+                        var cmd = default(CsInputState);
+                        cmd.Fire = i == 0 || i == 18 || (i >= holdFromFrame && i < holdFromFrame + holdFrames);
+                        match.SetLocalInput(cmd);
+                        KeepBotsAway();
+                        match.Tick(FrameDt);
+                        simTime += FrameDt;
+                        while (match.ConsumeShotFired(out _)) times.Add(tBefore);
+                    }
+                    return times;
+                }
+
+                var glock = Drive(CsWeapons.Glock18, 30, 6, 90);     // 循环 0.5 ⇒ 0.50~0.583 按住
+                AssertBurst("Glock18", glock, 0.1f, 0.1f, 0.5f);
+
+                var famas = Drive(CsWeapons.Famas, 33, 6, 100);     // 循环 0.55 ⇒ 0.55~0.633 按住
+                AssertBurst("FAMAS", famas, 0.05f, 0.1f, 0.55f);
+
+                match.Stop();
+            }
+            catch (Exception ex)
+            {
+                Fail($"差异 #68 连发节奏自检抛异常：{ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                CsMatch.Clock = prevClock;
+                if (match != null) match.Stop();
+            }
+        }
+
+        /// <summary>连发节奏判据：两次扣扳机 ⇒ 6 发，间隔与循环时间逐条对齐出处表（容差 1.5 帧）。</summary>
+        private static void AssertBurst(string name, List<float> times, float firstInterval, float secondInterval,
+            float cycleTime)
+        {
+            var tol = FrameDt * 1.5f + 0.0005f;
+            if (times.Count != 6)
+            {
+                Fail($"差异 #68 连发节奏（{name}）：扣两次扳机（第 2 次在循环时间未到、第 3 次按住）应共 6 发，" +
+                     $"实测 {times.Count} 发（落点 {Describe(times)}s）");
+                return;
+            }
+
+            ExpectNear($"{name} 首发 → 第 2 发间隔", times[1] - times[0], firstInterval, tol);
+            ExpectNear($"{name} 第 2 发 → 第 3 发间隔", times[2] - times[1], secondInterval, tol);
+            ExpectNear($"{name} 一轮打满到下一轮首发的循环时间（含 t0+0.30 那次打不出来的间隔）",
+                times[3] - times[0], cycleTime, tol);
+            ExpectNear($"{name} 第 2 轮首发 → 第 2 发间隔", times[4] - times[3], firstInterval, tol);
+            ExpectNear($"{name} 第 2 轮第 2 发 → 第 3 发间隔", times[5] - times[4], secondInterval, tol);
+            Notes.Add($"差异 #68 连发节奏（{name}）：一轮 3 发 · 首发 {firstInterval:F2}s + 续发 {secondInterval:F2}s · " +
+                      $"循环 {cycleTime:F2}s（落点 {Describe(times)}s；t0+0.30 那次扣扳机打不出来）");
+        }
+
+        private static string Describe(List<float> times)
+        {
+            var sb = new StringBuilder();
+            for (var i = 0; i < times.Count; i++)
+            {
+                if (i > 0) sb.Append(", ");
+                sb.Append(times[i].ToString("F3"));
+            }
+            return sb.ToString();
+        }
+
+        /// <summary>
+        /// 差异 #68 的数值表校验器：逐档取值与出处表比对，返回不一致的条目。
+        /// <paramref name="uspSilencedDamageBias"/> 只给**负控**用（把一条期望值故意改错）。
+        /// </summary>
+        private static List<string> CollectAttack2Mismatches(int uspSilencedDamageBias)
+        {
+            var bad = new List<string>();
+            const float tol = 0.0001f;
+
+            void Expect(string what, float actual, float expected)
+            {
+                if (Mathf.Abs(actual - expected) > tol)
+                    bad.Add($"{what}: 实测 {actual} ≠ 期望 {expected}");
+            }
+
+            var usp = CsWeapons.Get(CsWeapons.Usp);
+            var m4 = CsWeapons.Get(CsWeapons.M4A1);
+            var famas = CsWeapons.Get(CsWeapons.Famas);
+            var glock = CsWeapons.Get(CsWeapons.Glock18);
+            var ak = CsWeapons.Get(CsWeapons.Ak47);
+            if (usp == null || m4 == null || famas == null || glock == null || ak == null)
+            {
+                bad.Add("武器表里缺 usp / m4a1 / famas / glock18 / ak47 中的一把，数值表无法校验");
+                return bad;
+            }
+
+            // ---- 伤害（出处 §3；AK47 = 36 是"这一对字段就是伤害"的校验锚）----
+            Expect("USP 伤害·未装消音", CsWeapons.BaseDamage(usp, false, false), 34f);
+            Expect("USP 伤害·装消音", CsWeapons.BaseDamage(usp, true, false), 30f + uspSilencedDamageBias);
+            Expect("M4A1 伤害·未装消音", CsWeapons.BaseDamage(m4, false, false), 32f);
+            Expect("M4A1 伤害·装消音", CsWeapons.BaseDamage(m4, true, false), 33f);
+            Expect("FAMAS 伤害·普通", CsWeapons.BaseDamage(famas, false, false), 30f);
+            Expect("FAMAS 伤害·连发", CsWeapons.BaseDamage(famas, false, true), 34f);
+            Expect("Glock18 伤害（连发不改伤害）", CsWeapons.BaseDamage(glock, false, true), 25f);
+            Expect("AK47 伤害（校验锚）", CsWeapons.BaseDamage(ak, false, false), 36f);
+
+            // ---- 状态位为假 / 该武器没有这一档出处 ⇒ 仍取普通档 ----
+            Expect("Glock18 未切连发 ⇒ 仍 25", CsWeapons.BaseDamage(glock, false, false), 25f);
+            Expect("M4A1 未装消音 ⇒ 仍 32", CsWeapons.BaseDamage(m4, false, false), 32f);
+            Expect("AK47 带着消音/连发状态位 ⇒ 仍 36（没出处不许改它）", CsWeapons.BaseDamage(ak, true, true), 36f);
+
+            // ---- 射程修正（出处 §4.1；射程距离各枪同为 8192）----
+            Expect("USP 射程修正·未装", CsWeapons.RangeModifierFor(usp, false), 0.79f);
+            Expect("USP 射程修正·装", CsWeapons.RangeModifierFor(usp, true), 0.79f);
+            Expect("M4A1 射程修正·未装", CsWeapons.RangeModifierFor(m4, false), 0.97f);
+            Expect("M4A1 射程修正·装", CsWeapons.RangeModifierFor(m4, true), 0.95f);
+            Expect("FAMAS 射程修正（两态同 0.96）", CsWeapons.RangeModifierFor(famas, true), 0.96f);
+            Expect("Glock18 射程修正（两态同 0.75）", CsWeapons.RangeModifierFor(glock, true), 0.75f);
+            Expect("射程修正的距离（各枪 8192）", m4.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+
+            // ---- 静止站散布（出处 §4.2）：原版是"系数 × acc"口径，本工程只能用两态系数之比 ----
+            Expect("M4A1 静止站散布比·装消音（0.025 / 0.02）",
+                CsWeapons.StaticSpreadFor(m4, true, false) / m4.Spread, 0.025f / 0.02f);
+            Expect("M4A1 静止站散布·未装（原值）", CsWeapons.StaticSpreadFor(m4, false, false), m4.Spread);
+            Expect("Glock18 静止站散布比·连发（0.3 / 0.1）",
+                CsWeapons.StaticSpreadFor(glock, false, true) / glock.Spread, 3f);
+            Expect("Glock18 静止站散布·半自动（原值）", CsWeapons.StaticSpreadFor(glock, false, false), glock.Spread);
+            Expect("FAMAS 连发静止站散布与普通同档", CsWeapons.StaticSpreadFor(famas, false, true), famas.Spread);
+            Expect("USP 散布两态相同", CsWeapons.StaticSpreadFor(usp, true, false), usp.Spread);
+
+            // ---- 连发（出处 §5）----
+            Expect("Glock18 连发发数", CsWeapons.BurstShotsFor(glock, true), 3f);
+            Expect("FAMAS 连发发数", CsWeapons.BurstShotsFor(famas, true), 3f);
+            Expect("AK47 没有连发档", CsWeapons.BurstShotsFor(ak, true), 0f);
+            Expect("Glock18 首发间隔", CsWeapons.BurstIntervalFor(glock, 1), 0.1f);
+            Expect("Glock18 续发间隔", CsWeapons.BurstIntervalFor(glock, 2), 0.1f);
+            Expect("FAMAS 首发间隔", CsWeapons.BurstIntervalFor(famas, 1), 0.05f);
+            Expect("FAMAS 续发间隔", CsWeapons.BurstIntervalFor(famas, 2), 0.1f);
+            Expect("Glock18 连发循环时间", CsWeapons.CycleTimeFor(glock, true), 0.5f);
+            Expect("Glock18 半自动循环时间", CsWeapons.CycleTimeFor(glock, false), 0.15f);
+            Expect("FAMAS 连发循环时间", CsWeapons.CycleTimeFor(famas, true), 0.55f);
+            Expect("FAMAS 普通循环时间", CsWeapons.CycleTimeFor(famas, false), 0.0825f);
+
+            return bad;
         }
 
         private sealed class SelfTestMap : Cs16.Module.Map.ICsMap

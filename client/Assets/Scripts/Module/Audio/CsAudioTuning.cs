@@ -52,7 +52,7 @@ namespace Cs16.Module.Audio
         //  原版是**时间制**：`PM_ReduceTimers` 每帧 `flTimeStepSound -= cmd.msec`，
         //  `PM_UpdateStepSound` 在冷却归零后重新装填冷却并放音 ⇒ 跑得越快步幅越大。
         //  同一速度下两者步频差约 1.8 倍 ⇒ 本工程按原版取时间制（下面三条即口径）。
-        //  实测（`tools/probes/step-sound-probe.py` 的 S1，v=SpeedRifle 4.4 m/s）：3.40 Hz；
+        //  实测（S1，v=SpeedRifle 4.4 m/s）：3.40 Hz；
         //  步幅制口径下同速是 6.00 Hz（比 1.76 x —— 步幅被钉在 0.62 m、又被 0.16 s 地面限流）。
         //  出处：`原版资源/hlsdk/pm_shared/pm_shared.c:500-639`（PM_UpdateStepSound）、
         //  `:2400-2410`（PM_ReduceTimers，递减在 `:2404`）、调用点 `:2493`（PM_PlayerMove 内、PM_Duck 之后）。

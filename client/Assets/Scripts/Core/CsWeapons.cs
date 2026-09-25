@@ -58,6 +58,52 @@ namespace Cs16.Core
         /// </summary>
         public bool CanBurst;
 
+        // ==================================================================
+        //  差异 #68：attack2 两态的**数值**（0 = 该武器没有这一档的出处 ⇒ 一律不接）
+        //  出处 = 原版 `mp.dll`（基址 0x10000000）的字段常量与分支，逐条见
+        //  `策划/武器右键数值出处.md`；消费点见 `CsWeapons.BaseDamage` /
+        //  `CsWeapons.StaticSpreadFor` / `CsWeapons.CycleTimeFor` 的调用处。
+        // ==================================================================
+
+        /// <summary>装消音后的基础伤害（原版武器对象 +0x148/+0x14c 那份；0 = 两态同值或没出处）。</summary>
+        public int DamageSilenced;
+
+        /// <summary>连发档的基础伤害（原版 Famas 的 +0x148 那份；0 = 两态同值或没出处）。</summary>
+        public int DamageBurst;
+
+        /// <summary>原版 <c>flRangeModifier</c>：伤害随距离衰减的底数（0 = 没出处）。</summary>
+        public float RangeModifier;
+
+        /// <inheritdoc cref="RangeModifier"/>
+        public float RangeModifierSilenced;
+
+        /// <summary>原版开火时传的射程距离（世界单位，四把枪同为 8192）。</summary>
+        public float RangeModifierMaxDistance;
+
+        /// <summary>原版静止站散布系数（未装消音 / 半自动档）。</summary>
+        public float StaticSpreadFactor;
+
+        /// <summary>原版静止站散布系数（装消音档；0 = 与未装同档）。</summary>
+        public float StaticSpreadFactorSilenced;
+
+        /// <summary>原版静止站散布系数（连发档；0 = 与普通同档）。</summary>
+        public float StaticSpreadFactorBurst;
+
+        /// <summary>连发一轮的发数（0 = 不可连发）。</summary>
+        public int BurstShots;
+
+        /// <summary>连发首发 → 第 2 发的间隔（秒）。</summary>
+        public float BurstIntervalFirst;
+
+        /// <summary>连发的后续续发间隔（秒）。</summary>
+        public float BurstInterval;
+
+        /// <summary>连发模式的循环时间（秒）：一轮打满后到下一轮扣扳机的最短间隔。</summary>
+        public float BurstCycleTime;
+
+        /// <summary>非连发档的循环时间（秒）；0 = 用 <see cref="Rpm"/> 推出来的 <see cref="SecondsPerShot"/>。</summary>
+        public float CycleTime;
+
         public bool HasSlot => (int)Slot > 0;
         public float SecondsPerShot => Rpm > 0 ? 60f / Rpm : 0f;
     }
@@ -121,7 +167,8 @@ namespace Cs16.Core
             W(Galil, "Galil", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 2000, 30, 0.70f, 666, 35, 90, 3.0f, 0.50f, 1.60f, 1.30f, 0.50f, 1, 45f, 0.01f, 300, true, CsTeamLimit.TerroristOnly), // mp.dll:0x10f868 2000 / 35 / 90（W-11）
             W(Famas, "FAMAS", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 2250, 30, 0.70f, 666, 25, 90, 3.0f, 0.50f, 1.60f, 1.30f, 0.50f, 1, 45f, 0.01f, 300, true, CsTeamLimit.CounterTerroristOnly), // mp.dll:0x10f888 2250 / 25 / 90（W-12）
             W(Ak47, "AK-47", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 2500, 36, 0.775f, 600, 30, 90, 3.0f, 0.45f, 2.00f, 1.90f, 0.70f, 1, 50f, 0.01f, 300, true, CsTeamLimit.TerroristOnly), // mp.dll:0x10f9e8 2500 / 30 / 90（W-23）
-            W(M4A1, "M4A1", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 3100, 33, 0.70f, 666, 30, 90, 3.0f, 0.40f, 1.80f, 1.50f, 0.60f, 1, 50f, 0.01f, 300, true, CsTeamLimit.CounterTerroristOnly), // mp.dll:0x10f948 3100 / 30 / 90（W-18）
+            // 伤害 32 = 原版"未装消音"档（另一档 33 见 ApplyAttack2Values 的 DamageSilenced）。
+            W(M4A1, "M4A1", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 3100, 32, 0.70f, 666, 30, 90, 3.0f, 0.40f, 1.80f, 1.50f, 0.60f, 1, 50f, 0.01f, 300, true, CsTeamLimit.CounterTerroristOnly), // mp.dll:0x10f948 3100 / 30 / 90（W-18）
             W(Sg552, "SG-552", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 3500, 33, 0.70f, 666, 30, 90, 3.0f, 0.50f, 1.80f, 1.60f, 0.60f, 1, 45f, 0.01f, 300, true, CsTeamLimit.TerroristOnly), // mp.dll:0x10f9c8 3500 / 30 / 90（W-22）
             W(Aug, "AUG", CsWeaponClass.Rifle, CsWeaponSlot.Primary, 3500, 32, 0.70f, 666, 30, 90, 3.0f, 0.50f, 1.80f, 1.60f, 0.60f, 1, 45f, 0.01f, 300, true, CsTeamLimit.CounterTerroristOnly), // mp.dll:0x10f7c8 3500 / 30 / 90（W-06）
 
@@ -151,7 +198,7 @@ namespace Cs16.Core
         static CsWeapons()
         {
             foreach (var w in _all) _byId[w.Id] = w;
-            MarkAttack2Capabilities();
+            ApplyAttack2Values();
         }
 
         /// <summary>
@@ -162,7 +209,7 @@ namespace Cs16.Core
         ///
         /// <para><b>出处</b>（降级链第 2 级「可执行里的常量/串」；载体 = 原版 <c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>，
         /// 1,093,128 B，**已在盘**）。下列为字符串级证据，括号内是**文件偏移**（可复算：
-        /// <c>tools/probes/attack2-probe.py</c> 会在该偏移处逐字重取一遍）：</para>
+        /// 判据会在该偏移处逐字重取一遍）：</para>
         /// <list type="bullet">
         /// <item><c>weapons/usp_silencer_off.wav</c> (0x0e3804) · <c>weapons/usp_silencer_on.wav</c> (0x0e3824)</item>
         /// <item><c>weapons/m4a1_silencer_off.wav</c> (0x0e308c) · <c>weapons/m4a1_silencer_on.wav</c> (0x0e30ac)</item>
@@ -173,11 +220,14 @@ namespace Cs16.Core
         /// <para>⇒ 可证的语义只有两句：「**USP / M4A1 有一个消音器 on/off 状态**」「**Glock18 / FAMAS 有可切换的
         /// 连发模式**」，而 attack2 就是切换它们的那条输入。</para>
         ///
-        /// <para><b>仍未证</b>（不许凭观感补）：消音后伤害/散布的**具体数值**、连发的**发数与节奏**、
-        /// 以及逐武器的判定分支本身（要反汇编 <c>client.dll</c> 才定得下来）⇒ 本工程只落地
-        /// 「状态可切换 + 切换可观测」，数值影响留缺口在 <c>策划/差异登记.tsv</c> #68。</para>
+        /// <para><b>两态数值的出处</b>（载体 = 原版 <c>原版资源/cs16src/cstrike/dlls/mp.dll</c>，
+        /// 逐字节 + 公开源码逐字交叉验证；逐条的 VA/文件偏移/反汇编见
+        /// <c>策划/武器右键数值出处.md</c>）：伤害写在武器对象的 <c>+0x148</c>/<c>+0x14c</c> 双字段里、
+        /// 开火时按 <c>+0x128</c> 的位（0x04 消音 · 0x02/0x10 连发）二选一；射程修正与静止站散布系数是
+        /// <c>PrimaryAttack</c> 内联常量；连发 = 共享的 <c>FireRemaining</c> 上限 3 发 + 每类续发时间戳。
+        /// 数值全部落在 <see cref="CsWeaponDef"/> 的新字段上（0 = 该武器没有这一档的出处）。</para>
         /// </summary>
-        private static void MarkAttack2Capabilities()
+        private static void ApplyAttack2Values()
         {
             void Set(string id, bool silence, bool burst)
             {
@@ -190,6 +240,135 @@ namespace Cs16.Core
             Set(M4A1, silence: true, burst: false);
             Set(Glock18, silence: false, burst: true);
             Set(Famas, silence: false, burst: true);
+
+            CsWeaponDef Def(string id) => _byId.TryGetValue(id, out var d) ? d : null;
+
+            // USP：装消音只改伤害（34 → 30）；射程修正两态共用 0.79。
+            var usp = Def(Usp);
+            if (usp != null)
+            {
+                usp.DamageSilenced = 30;
+                usp.RangeModifier = 0.79f;
+                usp.RangeModifierSilenced = 0.79f;
+                usp.RangeModifierMaxDistance = RangeMaxDistance;
+            }
+
+            // M4A1：装消音伤害 32 → 33、射程修正 0.97 → 0.95、静止站散布系数 0.02 → 0.025。
+            var m4 = Def(M4A1);
+            if (m4 != null)
+            {
+                m4.DamageSilenced = 33;
+                m4.RangeModifier = 0.97f;
+                m4.RangeModifierSilenced = 0.95f;
+                m4.RangeModifierMaxDistance = RangeMaxDistance;
+                m4.StaticSpreadFactor = 0.02f;
+                m4.StaticSpreadFactorSilenced = 0.025f;
+            }
+
+            // FAMAS：连发伤害 30 → 34、射程修正两态共用 0.96、静止站散布两档同系数 0.02；
+            // 连发 = 3 发，首发间隔 0.05 s / 续发 0.1 s，循环 0.55 s（普通档 0.0825 s）。
+            var famas = Def(Famas);
+            if (famas != null)
+            {
+                famas.DamageBurst = 34;
+                famas.RangeModifier = 0.96f;
+                famas.RangeModifierSilenced = 0.96f;
+                famas.RangeModifierMaxDistance = RangeMaxDistance;
+                famas.StaticSpreadFactor = 0.02f;
+                famas.StaticSpreadFactorBurst = 0.02f;
+                famas.BurstShots = 3;
+                famas.BurstIntervalFirst = 0.05f;
+                famas.BurstInterval = 0.1f;
+                famas.BurstCycleTime = 0.55f;
+                famas.CycleTime = 0.0825f;
+            }
+
+            // Glock18：伤害两态同为 25（连发不改伤害）、射程修正两态共用 0.75；
+            // 静止站散布系数半自动 0.1 / 连发 0.3（原版是 × (1 − acc) 口径）；
+            // 连发 = 3 发，首发/续发均 0.1 s，循环 0.5 s（半自动档 0.15 s）。
+            var glock = Def(Glock18);
+            if (glock != null)
+            {
+                glock.RangeModifier = 0.75f;
+                glock.RangeModifierSilenced = 0.75f;
+                glock.RangeModifierMaxDistance = RangeMaxDistance;
+                glock.StaticSpreadFactor = 0.1f;
+                glock.StaticSpreadFactorBurst = 0.3f;
+                glock.BurstShots = 3;
+                glock.BurstIntervalFirst = 0.1f;
+                glock.BurstInterval = 0.1f;
+                glock.BurstCycleTime = 0.5f;
+                glock.CycleTime = 0.15f;
+            }
+        }
+
+        /// <summary>原版开火时传入的射程距离（世界单位，逐字节：<c>mp.dll</c> <c>0x101422c0</c> = 8192.0）。</summary>
+        public const float RangeMaxDistance = 8192f;
+
+        // ==================================================================
+        //  差异 #68：两态取值的唯一入口（模拟 / 表现 / 自检共用，避免各写一份分支）
+        // ==================================================================
+        /// <summary>
+        /// 本发的基础伤害：连发档优先（Famas 34），其次消音档（USP 30 / M4A1 33），否则 <c>Damage</c>。
+        /// <para>两态参数只在**该武器确有这一档出处**时生效（<c>CanBurst</c>/<c>CanSilence</c> + 字段非 0）——
+        /// 角色身上的状态位不随切枪清零，不判武器就可能把上一把枪的模式带到这一把上。</para>
+        /// </summary>
+        public static int BaseDamage(CsWeaponDef def, bool silenced, bool burst)
+        {
+            if (def == null) return 0;
+            if (burst && def.CanBurst && def.DamageBurst > 0) return def.DamageBurst;
+            if (silenced && def.CanSilence && def.DamageSilenced > 0) return def.DamageSilenced;
+            return def.Damage;
+        }
+
+        /// <summary>本发用的射程修正（<c>flRangeModifier</c>）；0 = 该武器没有出处。</summary>
+        public static float RangeModifierFor(CsWeaponDef def, bool silenced)
+        {
+            if (def == null) return 0f;
+            if (silenced && def.CanSilence && def.RangeModifierSilenced > 0f) return def.RangeModifierSilenced;
+            return def.RangeModifier;
+        }
+
+        /// <summary>
+        /// 静止站基础散布：以 <see cref="CsWeaponDef.Spread"/> 为基准，乘上**原版两态系数之比**
+        /// （<c>StaticSpreadFactorSilenced|Burst / StaticSpreadFactor</c>）。
+        /// <para>为什么只能用比值：原版该系数是 <c>系数 × m_flAccuracy</c> 口径的**无量纲系数**，
+        /// 与本工程的"散布（度）"不同量纲 ⇒ 绝对值代进来会把 0.025 当成 0.025 度。比值与量纲无关，
+        /// 且"有出处的那一档变差/不变"这件事照样是可判的（M4A1 静止站 ×1.25、Glock18 连发 ×3）。</para>
+        /// </summary>
+        public static float StaticSpreadFor(CsWeaponDef def, bool silenced, bool burst)
+        {
+            if (def == null) return 0f;
+
+            var factor = 0f;
+            if (burst && def.CanBurst) factor = def.StaticSpreadFactorBurst;
+            else if (silenced && def.CanSilence) factor = def.StaticSpreadFactorSilenced;
+
+            if (factor <= 0f || def.StaticSpreadFactor <= 0f) return def.Spread;
+            return def.Spread * (factor / def.StaticSpreadFactor);
+        }
+
+        /// <summary>连发一轮的发数（非连发模式 / 没出处 ⇒ 0）。</summary>
+        public static int BurstShotsFor(CsWeaponDef def, bool burst)
+        {
+            if (def == null || !burst || !def.CanBurst) return 0;
+            return def.BurstShots > 0 ? def.BurstShots : 0;
+        }
+
+        /// <summary>连发续发间隔（秒）：<paramref name="followUpIndex"/> 从 1 起（1 = 首发→第 2 发）。</summary>
+        public static float BurstIntervalFor(CsWeaponDef def, int followUpIndex)
+        {
+            if (def == null) return 0f;
+            if (followUpIndex <= 1) return def.BurstIntervalFirst;
+            return def.BurstInterval > 0f ? def.BurstInterval : def.BurstIntervalFirst;
+        }
+
+        /// <summary>本档的循环时间（秒）：连发模式取 <c>BurstCycleTime</c>，否则 <c>CycleTime</c>，都没有则按 <c>Rpm</c> 推。</summary>
+        public static float CycleTimeFor(CsWeaponDef def, bool burst)
+        {
+            if (def == null) return 0f;
+            if (burst && def.CanBurst && def.BurstCycleTime > 0f) return def.BurstCycleTime;
+            return def.CycleTime > 0f ? def.CycleTime : def.SecondsPerShot;
         }
 
         public static IReadOnlyList<CsWeaponDef> All => _all;

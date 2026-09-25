@@ -82,6 +82,21 @@ namespace Cs16.Module.Match
         /// <summary>差异 #68：当前武器是否处于**连发模式**（只对 <c>CsWeaponDef.CanBurst</c> 的武器有意义）。</summary>
         public bool BurstMode;
 
+        /// <summary>
+        /// 差异 #68：连发模式下**本梭还差几发**没打（0 = 没有待发的续发）。
+        /// 一次扣扳机只打首发，其余由 <c>CsInventory.TickBurst</c> 按原版时间戳补发。
+        /// </summary>
+        public int BurstShotsLeft;
+
+        /// <summary>差异 #68：连发下一发的时刻（假时钟口径，与 <see cref="NextFireTime"/> 同一时间源）。</summary>
+        public float NextBurstShotTime;
+
+        /// <summary>
+        /// 差异 #68：模拟**自动补发**的累计发数（每补发一发 +1）。
+        /// 表现层据此认出"这一发也是我打的"—— 续发不由输入触发，不能靠"本帧按了左键"判断。
+        /// </summary>
+        public int BurstAutoShots;
+
         public float SwitchEndTime;
         public int ConsecutiveShots;    // 连发计数（后坐力累积）
         public float RecoilPitch;       // 当前后坐力抬升（度）

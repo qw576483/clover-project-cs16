@@ -102,8 +102,8 @@ namespace Cs16.Core
         /// 这两份载体**在本机不在盘**（<c>原版资源/{cs16src,cs109,cs16-maps,解包产物}</c> 为空，
         /// 见 <c>原版资源/清单.md</c>）。按载体降级链退到**级①原始数据**：由工程内的
         /// <c>Assets/ThirdParty/Dust2/de_dust2_geo.bin</c>（= 原版 de_dust2 BSP 的几何）离线俯视
-        /// 栅格化而成，生成器 = <c>tools/probes/render-overview.py</c>
-        /// （判据资产，随仓库提交；口径 = 逐三角面按自身法线分"可站立面/竖直面/陡面"，
+        /// 栅格化而成
+        /// （随仓库提交；口径 = 逐三角面按自身法线分"可站立面/竖直面/陡面"，
         /// 俯视投影后按高度着色，A/B 点字母打在原版 <c>func_bomb_target</c> 的标记点质心上）。</para>
         ///
         /// <para>不是手绘近似图、也不是网格截图；像素 100% 来自原版几何。拿到原版
@@ -132,8 +132,8 @@ namespace Cs16.Core
         /// 原版 **Marlett** 字体 <c>gid 12</c> 的预渲染件（可达码位 <c>U+F061</c>）。
         ///
         /// <para><b>载体</b>：<c>原版资源\cs16src\marlett.ttf</c>（27,724 B，本机
-        /// <c>C:\Windows\Fonts\marlett.ttf</c> 的字节副本）；**渲染器** = <c>tools/probes/make-check-glyph.py</c>
-        /// （判据资产，与 <c>tools/probes/marlett-glyphs.py</c> 同口径：补一张 (3,1) cmap → FreeType 光栅化 →
+        /// <c>C:\Windows\Fonts\marlett.ttf</c> 的字节副本）
+        /// （同口径：补一张 (3,1) cmap → FreeType 光栅化 →
         /// 裁到紧致 ink 框）。**未拉伸、未自绘**：尺寸 = 判据 <c>bbox</c>，逐像素来自原版字形。</para>
         ///
         /// <para><b>判据数字</b>（<c>--size 300</c>，与 <c>marlett-glyphs.py</c> 同一量法）：
@@ -161,7 +161,7 @@ namespace Cs16.Core
         //  程序化特效贴图 —— 落在 Resources/UI/Art/
         // ==================================================================
         //
-        // `fx_spark` 一张是**本项目程序化生成**的（`tools/probes/make-fx-sprites.py`，登记在
+        // `fx_spark` 一张是**本项目程序化生成**的（登记在
         // `client/资源欠缺清单.md`）：原版击中火星没有独立载体。另两张（枪口火焰 / 弹痕）已由
         // **原版载体**解出同名覆盖（枪口火焰 ← `sprites/muzzleflash2.spr`，工具 `tools/probes/spr-extract.py`；
         // 弹痕/血迹 ← `decals.wad` 的 `{shot*` / `{blood*`，工具 `tools/probes/wad3-extract.py`）。
@@ -177,19 +177,21 @@ namespace Cs16.Core
         /// （<c>原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash2.spr</c>，64×64×3 帧，
         /// 由 <c>tools/probes/spr-extract.py</c> 解出）。这是**默认**那张（多数武器用它）。</para>
         ///
-        /// <para>原版**逐武器**选 <c>muzzleflash1..4</c>，而选择表在引擎 <c>hw.dll</c>（不在盘）——
-        /// 见 <see cref="FxMuzzleFlashCross"/> 与 <c>策划/差异登记.tsv</c> #89。</para></summary>
+        /// <para>原版**逐武器**选 <c>muzzleflash1..3</c>（引擎 <c>hw.dll</c> 只 precache 这三张，
+        /// 选哪一张由一个**调用方传入的整数**决定，见 <c>CombatEffects.PickMuzzleFlash</c> 的注释与
+        /// <c>策划/差异登记.tsv</c> #89）。</para></summary>
         public const string FxMuzzleFlash = "UI/Art/fx_muzzleflash";
 
         /// <summary>
         /// 枪口火焰**十字形**变体（真实文件 <c>Resources/UI/Art/fx_muzzleflash3.png</c>，72×72）
         /// —— 原版 <c>sprites/muzzleflash3.spr</c> 的帧 0。
         ///
-        /// <para><b>为什么单独立一条 key</b>：原版按武器选 1..4，本工程只落**有一条证据**的那条映射 ——
-        /// ② 四张载体解帧后**只有** <c>muzzleflash3.spr</c> 是十字/X 形（其余三张是星芒/圆团），
-        /// 唯一匹配。其余武器**不编**映射（缺口在 <c>策划/差异登记.tsv</c> #89）。</para>
+        /// <para><b>为什么单独立一条 key</b>：引擎只给"三张里选一张"的机制、不给武器表，
+        /// 本工程只落**有一条证据**的那条映射 —— 原版 <c>muzzleflash3.spr</c> 是十字/X 形
+        /// （另外两张是星芒/圆团），与 B51（M249）的形态唯一匹配。其余武器**不编**映射
+        /// （缺口逐武器列名在 <c>策划/差异登记.tsv</c> #89）。</para>
         ///
-        /// <para>帧数：载体是 72×72×**3 帧**，本工程只落帧 0（逐帧播放的时长无出处 —— 引擎不在盘）。</para>
+        /// <para>帧数：载体是 72×72×**3 帧**，本工程只落帧 0（帧时长在引擎里、载体没给）。</para>
         /// </summary>
         public const string FxMuzzleFlashCross = "UI/Art/fx_muzzleflash3";
 
@@ -197,7 +199,7 @@ namespace Cs16.Core
         /// 与 <c>fx_shot1</c> 同源：原版 <c>decals.wad</c> 的 `{shot1`（口径 = 灰阶不透明度 +
         /// <c>palette[255]</c> 基色），只在 5 张变体**全都**加载不到时才被用
         /// （<c>CombatEffects.PickBulletHole</c>），见 <see cref="FxBulletHoleKeys"/>。
-        /// 用户看到的就是「弹痕是一个白点」（差异 #69，2026-09-24 复查）。</summary>
+        /// ⛔ 不许退回"一块纯白方块"——那正是"墙上只有一个白点"的成因。</summary>
         public const string FxBulletHole = "UI/Art/fx_bullethole";
 
         /// <summary>
@@ -252,9 +254,46 @@ namespace Cs16.Core
         public static int FxBloodVariants => FxBloodKeys.Length;
 
         // 大口径弹痕（原版 `decals.wad` 的 `{bigshot1` … `{bigshot5`，mp.dll 名表索引 28..32）
-        //    本工程**刻意不落盘、不接**：原版"哪种武器用大口径弹痕"的选择逻辑在**引擎**里
-        //    （`hw.dll` 不在盘）⇒ 映射无出处。落盘 = 立刻变成"文件在盘上但无人读"的 T0 不一致
-        //    ⇒ 不落，等拿到出处再落。
+        //    本工程**刻意不落盘、不接**：原版"哪种武器/哪种命中用大口径弹痕"的选择在调用方
+        //    （同枪口火焰：引擎只提供机制、表在游戏 DLL）⇒ 映射无出处。落盘 = 立刻变成
+        //    "文件在盘上但无人读"的不一致 ⇒ 不落，等拿到出处再落。缺口登记在 `策划/差异登记.tsv` #69。
+
+        /// <summary>
+        /// **血雾**十变体 key 表：真实文件 <c>Resources/UI/Art/fx_bloodspray1.png</c> … <c>fx_bloodspray10.png</c>
+        /// （各 64×64）。
+        ///
+        /// <para><b>载体</b>：原版 <c>valve/sprites/bloodspray.spr</c>（41,970 B，64×64×**10 帧**，
+        /// <c>texFormat=3</c> ALPHATEST / <c>synctype=1</c>；两条恒等式见 <c>tools/probes/spr-extract.py --info</c>）。
+        /// 原版 CS 1.6 自己 precache 它 —— <c>mp.dll</c> 的 `push "sprites/bloodspray.spr"` 在文件偏移
+        /// <c>0x933a6</c>，模型索引存进全局 <c>0x101aeddc</c>，随后在血迹临时实体里以
+        /// `movsx eax, word ptr [0x101aeddc]` 读出（VA <c>0x1008f653</c>）。</para>
+        ///
+        /// <para><b>为什么是 10 张而不是 1 张</b>：载体头 <c>synctype=1</c>（RAND）⇒ 每张精灵**随机取一帧**，
+        /// 十帧都可达；逐帧播放的**帧时长**在引擎里、载体没给 ⇒ 不做逐帧播放。
+        /// 同样逐条字面量（理由见 <see cref="FxBulletHoleKeys"/>）。</para>
+        /// </summary>
+        public static readonly string[] FxBloodSprayKeys =
+        {
+            "UI/Art/fx_bloodspray1",
+            "UI/Art/fx_bloodspray2",
+            "UI/Art/fx_bloodspray3",
+            "UI/Art/fx_bloodspray4",
+            "UI/Art/fx_bloodspray5",
+            "UI/Art/fx_bloodspray6",
+            "UI/Art/fx_bloodspray7",
+            "UI/Art/fx_bloodspray8",
+            "UI/Art/fx_bloodspray9",
+            "UI/Art/fx_bloodspray10",
+        };
+
+        /// <summary>血雾贴图帧数（= <see cref="FxBloodSprayKeys"/> 的长度）。</summary>
+        public static int FxBloodSprayVariants => FxBloodSprayKeys.Length;
+
+        // `valve/sprites/blood.spr`（16×16×9 帧）与 `valve/sprites/blooddrop.spr`（16×16×2 帧）
+        //    两张载体都在盘（`--info` 两条恒等式 OK），**刻意不落盘**：`mp.dll` 的血迹临时实体给的是
+        //    **两个**模型索引（`0x101aeddc` 血雾 + `0x101aedd8` 血滴，VA 0x1008f653 / 0x1008f661）
+        //    加**一个**数量字节，而"这一条消息里两个模型各画几张"的规则在引擎 `hw.dll`（未解出）
+        //    ⇒ 落盘即"文件在盘上但无人读"。缺口登记在 `策划/差异登记.tsv` #74。
 
         /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
         public const string FxSpark = "UI/Art/fx_spark";
@@ -278,7 +317,7 @@ namespace Cs16.Core
         /// （<c>原版资源\cs16src\marlett.ttf</c>）；本机 <c>C:\Windows\Fonts\marlett.ttf</c> 与它
         /// 只把**被引用的那一个文件**复制进工程。</para>
         ///
-        /// <para><b>码位出处</b>：判据资产 <c>tools/probes/marlett-glyphs.py</c>（<c>--size 300</c>）
+        /// <para><b>码位出处</b>（<c>--size 300</c>）：
         /// 与决定性读图（勾 = <c>U+F061</c>，gid12）。</para>
         ///
         /// <para>本常量保留为登记（字体文件仍在 <c>Resources/UI/Fonts/marlett.ttf</c>，是那份 PNG 的载体出处）—— 不要删它。</para>

@@ -109,6 +109,24 @@ namespace Cs16.Module.Bot
         private float _strafeSign = 1f;
         private float _strafeFlipAt;
 
+        // ---- 投掷物（角色分工；偏好表见 CsBotRoles.PreferredGrenades）----
+        /// <summary>本回合已经投出的颗数（上限 <see cref="CsBotConst.GrenadeMaxPerRound"/>）。</summary>
+        private int _grenadeThrows;
+        /// <summary>下一次允许开始投掷的时刻（两颗之间至少 <see cref="CsBotConst.GrenadeThrowSpacing"/> 秒）。</summary>
+        private float _nextGrenadeAt;
+        /// <summary>正在切 / 待投的那颗雷（null = 没有进行中的投掷）。</summary>
+        private string _grenadePendingId;
+        /// <summary>进行中投掷的瞄点（世界坐标；低弧解算的结果，见 <see cref="GrenadeAimPoint"/>）。</summary>
+        private Vector3 _grenadeAim;
+        /// <summary>进行中投掷的目标水平距离（米，写进日志）。</summary>
+        private float _grenadeRange;
+        /// <summary>进行中投掷的选择理由（写进日志）。</summary>
+        private string _grenadeWhy;
+        /// <summary>切到那颗雷的等待上限时刻（超时放弃，见 <see cref="CsBotConst.GrenadeSwitchTimeout"/>）。</summary>
+        private float _grenadeSwitchDeadline;
+        /// <summary>投完一颗雷后是否还要主动换回主武器（同类雷还有剩余时模拟不会自动换，见 <see cref="TryThrowGrenade"/>）。</summary>
+        private bool _grenadeReturnToWeapon;
+
         // ---- 守点 ----
         private float _campMoveUntil;
         private float _campPickAt;
@@ -422,6 +440,10 @@ namespace Cs16.Module.Bot
             _holdSiteMarker = null;
             _holdSwapCount = 0;
             _switchCooldownUntil = 0f;
+            _grenadeThrows = 0;
+            _nextGrenadeAt = 0f;
+            _grenadeReturnToWeapon = false;
+            ClearGrenadeAttempt();
             _strafeFlipAt = 0f;
             _engageEvent = false;
             _state = CsBotState.Idle;
@@ -799,6 +821,7 @@ namespace Cs16.Module.Bot
             if (TryRouteObjective(self, reason, now)) return true;
             if (!preferPatrol && TryPatrolObjective(self, reason, now)) return true;
             if (TrySpawnObjective(self, reason, now)) return true;
+            if (TryLastResortObjective(self, reason, now)) return true;
 
             RateWarn("replan.exhausted",
                 $"{_name} 重新选目标失败（{reason}）：路线 / 巡逻点 / 出生点都取不到可走的目标点 → 原地警戒。" +
@@ -1019,6 +1042,63 @@ namespace Cs16.Module.Bot
             return true;
         }
 
+        /// <summary>
+        /// 兜底目标：路线 / 巡逻 / 出生点**全部**没过 <see cref="BotNavigator.CanReach"/> 时的最后一条出路 ——
+        /// 在这三组标记点里取"站得住（<c>CanStand</c>）且离自己最近"的一个当目标，**不再问可达性**。
+        ///
+        /// <para><b>为什么必须兜这一层</b>：可达性判据建立在位图上，而位图是**单层 2D**（多层几何上下重叠），
+        /// 它会把一些物理上走得通的地方判成走不到。全 false 时的既有行为是"原地警戒"
+        /// （本帧 <c>intent.Move = zero</c>）—— 机器人剩下整回合一动不动、净位移 0。</para>
+        ///
+        /// <para>候选只用**已有的**地图标记点（本回合路线标记 / 巡逻线 / 本方出生点），不新增目标坐标。</para>
+        /// </summary>
+        private bool TryLastResortObjective(CsActor self, string reason, float now)
+        {
+            if (_map == null || !_map.IsLoaded) return false;
+
+            var markers = new[]
+            {
+                _planRoute,
+                CsMarkers.Patrol,
+                self.Team == CsTeam.T ? CsMarkers.SpawnT : CsMarkers.SpawnCT,
+            };
+
+            var bestDist = -1f;
+            var bestMarker = (string)null;
+            var bestPoint = Vector3.zero;
+
+            for (var i = 0; i < markers.Length; i++)
+            {
+                var marker = markers[i];
+                if (string.IsNullOrEmpty(marker)) continue;
+
+                var pts = _map.Points(marker);
+                if (pts == null) continue;
+
+                for (var k = 0; k < pts.Length; k++)
+                {
+                    if (!_map.CanStand(pts[k])) continue;
+
+                    var d = pts[k] - self.Position;
+                    d.y = 0f;
+                    var dist = d.magnitude;
+                    if (bestDist >= 0f && dist >= bestDist) continue;
+
+                    bestDist = dist;
+                    bestMarker = marker;
+                    bestPoint = pts[k];
+                }
+            }
+
+            if (bestDist < 0f) return false;
+
+            _nav.ClearRoute();
+            ApplyObjective(self, bestMarker, bestPoint, false,
+                $"可达性判据对路线 / 巡逻 / 出生点**全部**为 false ⇒ 兜底取标记 '{bestMarker}' 上站得住且离自己" +
+                $"最近的点（{bestDist:F1}m，不问可达性；{reason}）", now);
+            return true;
+        }
+
         /// <summary>把新目标落进 brain 并打一条 Info（换目标是低频事件，不降频）。</summary>
         private void ApplyObjective(CsActor self, string routeMarker, Vector3 goal, bool isSite, string why, float now)
         {
@@ -1179,7 +1259,7 @@ namespace Cs16.Module.Bot
         // ==================================================================
         private CsBotIntent ThinkFreeze(CsActor self, CsBotIntent intent, float now)
         {
-            _buy.Tick(_match, self, _profile, now, out var switchTo);
+            _buy.Tick(_match, self, _profile, _role, now, out var switchTo);
 
             SetState(CsBotState.Idle, now);
             intent.State = CsBotState.Idle;
@@ -1203,6 +1283,10 @@ namespace Cs16.Module.Bot
 
             // ⓪ 上一 tick 导航报了"卡住" → 连续卡住就换目标（放在最前面，好让本 tick 的决策直接用上新目标）
             HandleStuck(self, now);
+
+            // ⓪.5 投掷物（角色分工）：该用的时候先扔一颗 —— 扔雷要"切雷 → 转视角 → 扣扳机"，
+            //     飞行 / 引信 / 伤害全部由模拟结算（CsInventory.ThrowGrenade），这里只提交意图。
+            if (TryThrowGrenade(self, ref intent, now)) return intent;
 
             // ① 提交顶层战术决策（守卫见 CommitTacticalDecision），本 tick 的分支**由状态机给**：
             //    Engage → 交战；Objective → 炸弹任务；Patrol → 推进。
@@ -1738,6 +1822,232 @@ namespace Cs16.Module.Bot
         }
 
         // ==================================================================
+        //  投掷物（角色分工）
+        // ==================================================================
+        /// <summary>
+        /// 本 tick 是否提交"投掷"意图（true = 已被投掷占用，调用方直接返回该意图）。
+        ///
+        /// <para><b>为什么放在顶层分支之前</b>：投掷要么用来"开打前先炸/闪"，要么在推进途中朝目标点投
+        /// （到点封烟、冲点前清角）—— 只挂在交战分支里会漏掉后一种，只挂在推进里会漏掉前一种。</para>
+        ///
+        /// <para><b>投什么</b>：按角色偏好表（<see cref="CsBotRoles.PreferredGrenades"/>）取**手上有的**第一种：
+        /// 突破 = 高爆 → 闪光，支援 = 高爆 → 烟，侦察 = 闪光 → 烟，守点 = 烟 → 高爆。
+        /// 出处分段见 <see cref="CsBotRoles.PreferredGrenades"/>（三种雷都在原版 mp.dll 的 bot 购买序列里，
+        /// "哪个角色先拿哪一种"本项目新增）。</para>
+        ///
+        /// <para><b>该不该投</b>：目标（敌人 / 包点 / 本轮目标点）的水平距离必须 ≥ 该类型的下界，
+        /// 落点取 <c>min(距离, GrenadeMaxRange)</c>（见 <see cref="TryAimWithinReach"/>）——
+        /// 投掷在本工程里是"沿瞄向给初速 <c>CsConst.GrenadeThrowForce</c>(12m/s) + 重力"，45° 最远 ≈ 7.09m，
+        /// 更远的目标物理上扔不到 ⇒ 落在朝它方向的最远处；
+        /// 下界按类型取（烟雾 = <see cref="CsBotConst.GrenadeMinRange"/>，
+        /// 高爆/闪光 = <see cref="CsBotConst.GrenadeSelfSafeRange"/>，即"自己不在爆心半径里"）。</para>
+        ///
+        /// <para><b>切雷与转视角都要等</b>：切枪、引信、爆炸都在模拟里，本类只能"等换手（
+        /// <see cref="GrenadeSwitchTimeout"/> 兜底）→ 等视角转到瞄点（<see cref="CsBotConst.GrenadeAimGateDegrees"/>）
+        /// → 扣扳机"。</para>
+        /// </summary>
+        private bool TryThrowGrenade(CsActor self, ref CsBotIntent intent, float now)
+        {
+            // 手上还剩同一种雷时，投完那一颗模拟不会自动换回枪（CsInventory.ThrowGrenade 只在"这一类归零"时
+            //   才 SelectBestWeapon）⇒ 这里补一次"换回主武器"，否则机器人抱着手雷站着不开枪。
+            if (_grenadeReturnToWeapon)
+            {
+                var back = !string.IsNullOrEmpty(self.PrimaryWeapon) ? self.PrimaryWeapon : self.KnifeWeapon;
+                if (string.IsNullOrEmpty(back) || self.ActiveWeapon == back)
+                {
+                    _grenadeReturnToWeapon = false;
+                }
+                else
+                {
+                    intent.SwitchTo = back;
+                    intent.Fire = false;
+                    intent.Move = Vector3.zero;
+                    intent.AimPoint = _goalValid ? WithEyeHeight(_goalPos) : LookAhead(self);
+                    return true;
+                }
+            }
+
+            // 正在下包/拆包时不许打断（一移动进度就清零，与模拟判定一致）；投满上限也不再投。
+            if (self.UseProgress >= 0f || _grenadeThrows >= CsBotConst.GrenadeMaxPerRound)
+            {
+                ClearGrenadeAttempt();
+                return false;
+            }
+
+            if (_grenadePendingId == null && !TryBeginGrenade(self, now)) return false;
+
+            if (!string.IsNullOrEmpty(_grenadePendingId) && self.ActiveWeapon != _grenadePendingId)
+            {
+                if (now > _grenadeSwitchDeadline)
+                {
+                    RateWarn("nade.switch.timeout",
+                        $"{_name} 切到 {_grenadePendingId} 超过 {CsBotConst.GrenadeSwitchTimeout:F1}s 仍未换手 → 放弃这次投掷");
+                    _nextGrenadeAt = now + CsBotConst.GrenadeThrowSpacing;
+                    ClearGrenadeAttempt();
+                    return false;
+                }
+
+                intent.SwitchTo = _grenadePendingId;
+                intent.Fire = false;
+                intent.Move = Vector3.zero;
+                intent.AimPoint = _grenadeAim;
+                return true;
+            }
+
+            intent.SwitchTo = null;
+            intent.Move = Vector3.zero;
+            intent.Crouch = false;
+            intent.AimPoint = _grenadeAim;
+
+            // 切枪动作由模拟执行：ActiveWeapon 立即变成那颗雷，但 SwitchEndTime 之前扣扳机会被拒
+            // （CsInventory.TryDischarge 的 `now < a.SwitchEndTime`），所以这里要等换手完成。
+            if (now < self.SwitchEndTime || AimAngle(self, _grenadeAim) > CsBotConst.GrenadeAimGateDegrees)
+            {
+                intent.Fire = false;
+                return true;
+            }
+
+            intent.Fire = true;
+            _grenadeThrows++;
+            _nextGrenadeAt = now + CsBotConst.GrenadeThrowSpacing;
+            // 这一颗投出去后手上还剩同类雷（如闪光弹上限 2 颗）⇒ 下一 tick 要主动换回主武器。
+            _grenadeReturnToWeapon = CountGrenade(self, _grenadePendingId) - 1 > 0;
+
+            var def = CsWeapons.Get(_grenadePendingId);
+            Game.Logger.Info(Tag,
+                $"{_name}({self.Team}/{CsBotRoles.Label(_role)}) 投掷 {def?.DisplayName ?? _grenadePendingId}" +
+                $"（{_grenadeWhy}，距目标 {_grenadeRange:F1}m，本回合第 {_grenadeThrows} 颗，" +
+                $"剩余 {Mathf.Max(0, CountGrenade(self, _grenadePendingId) - 1)} 颗）");
+
+            ClearGrenadeAttempt();
+            return true;
+        }
+
+        /// <summary>选出这一颗要投的雷与瞄点（成功即进入"切雷"阶段；理由写进日志）。</summary>
+        private bool TryBeginGrenade(CsActor self, float now)
+        {
+            if (now < _nextGrenadeAt) return false;
+
+            var prefs = CsBotRoles.PreferredGrenades(_role);
+            var id = (string)null;
+            for (var i = 0; i < prefs.Length; i++)
+            {
+                if (CountGrenade(self, prefs[i]) > 0) { id = prefs[i]; break; }
+            }
+            if (id == null) return false;                        // 手上没有偏好表里的投掷物
+
+            if (!TryPickGrenadeTarget(self, id, out var point, out var why)) return false;
+
+            _grenadeAim = GrenadeAimPoint(self, point, out var range);
+            _grenadePendingId = id;
+            _grenadeWhy = why;
+            _grenadeRange = range;
+            _grenadeSwitchDeadline = now + CsBotConst.GrenadeSwitchTimeout;
+            return true;
+        }
+
+        /// <summary>
+        /// 投掷目标点，按优先级：① 记忆期内的敌人（此时才叫"该炸"）；② 最近的包点标记
+        /// （进点封烟 / 冲点前清角，与下包/拆包同用 <see cref="NearestBombsitePoint"/> 的口径）；
+        /// ③ 本轮目标点（巡逻点 / 守位）。
+        ///
+        /// <para>下界按类型：烟雾 <see cref="CsBotConst.GrenadeMinRange"/>（3m，别扔在脚下）、
+        /// 高爆/闪光 <see cref="CsBotConst.GrenadeSelfSafeRange"/>（= 爆心半径 5.5m，自己不吃自己的雷）。</para>
+        /// </summary>
+        private bool TryPickGrenadeTarget(CsActor self, string grenadeId, out Vector3 point, out string why)
+        {
+            point = Vector3.zero;
+            why = null;
+
+            var min = grenadeId == CsWeapons.SmokeGrenade
+                ? CsBotConst.GrenadeMinRange
+                : CsBotConst.GrenadeSelfSafeRange;
+
+            var target = _targetId != 0 ? _match.Find(_targetId) : null;
+            if (target != null && target.IsAlive && target.Team != self.Team)
+            {
+                var raw = target.Position + Vector3.up * (target.Height * CsBotConst.ChestHeightRatio);
+                if (TryAimWithinReach(self, raw, min, _visibleNow ? "交战投掷" : "朝刚丢视野的目标位置投", out point, out why))
+                    return true;
+            }
+
+            var site = NearestBombsitePoint(self.Position, out var siteDist, out var siteName);
+            if (siteDist < float.MaxValue && siteName != null)
+            {
+                var raw = site + Vector3.up * CsConst.EyeHeight;
+                if (TryAimWithinReach(self, raw, min, $"{siteName} 进点投掷", out point, out why)) return true;
+            }
+
+            if (_goalValid)
+            {
+                var raw = _goalPos + Vector3.up * CsConst.EyeHeight;
+                var baseWhy = _goalIsSite ? "目标点投掷" : "朝本轮目标点投";
+                if (TryAimWithinReach(self, raw, min, baseWhy, out point, out why)) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 把"想投的地方"折算成**投得出去**的落点：水平距离 &lt; <paramref name="min"/>（贴脸 / 脚下）⇒ 不投；
+        /// 否则落在 <c>min(距离, GrenadeMaxRange)</c> 处 —— 目标更远时，雷落在**朝它方向的最远处**
+        /// （"朝那个方向扔一颗"，预炸 / 预封，落点仍在投掷物理能达到的范围内）。
+        /// </summary>
+        private static bool TryAimWithinReach(CsActor self, Vector3 raw, float min, string baseWhy,
+            out Vector3 point, out string why)
+        {
+            point = Vector3.zero;
+            why = null;
+
+            var flat = raw - self.EyePosition;
+            flat.y = 0f;
+            var d = flat.magnitude;
+            if (d < min || d < 0.01f) return false;
+
+            var reach = d <= CsBotConst.GrenadeMaxRange ? d : CsBotConst.GrenadeMaxRange;
+            point = self.EyePosition + flat.normalized * reach;
+            why = d <= CsBotConst.GrenadeMaxRange
+                ? baseWhy
+                : $"{baseWhy}（超出投掷距离 {d:F1}m → 落在朝该方向的 {CsBotConst.GrenadeMaxRange:F1}m 处）";
+            return true;
+        }
+
+        /// <summary>
+        /// 低弧解算：把瞄点抬到"按这个仰角投出，正好落在目标点水平距离上"的位置。
+        /// 解的就是本工程投掷用的那套运动（<c>CsInventory.ThrowGrenade</c> 给初速
+        /// <c>CsConst.GrenadeThrowForce</c>、之后只受 <c>CsConst.Gravity</c>）：
+        /// 平抛落点 d = v²·sin(2θ)/g ⇒ sin(2θ) = d·g/v²，取低弧那一支（近弹道、飞行时间短、不易被墙挡）。
+        /// </summary>
+        private static Vector3 GrenadeAimPoint(CsActor self, Vector3 point, out float range)
+        {
+            var flat = point - self.EyePosition;
+            flat.y = 0f;
+            var d = flat.magnitude;
+            range = d;
+            if (d < 0.01f) return point;
+
+            var v2 = CsConst.GrenadeThrowForce * CsConst.GrenadeThrowForce;
+            var s = Mathf.Clamp(d * CsConst.Gravity / v2, 0f, 0.98f);
+            var pitch = 0.5f * Mathf.Asin(s);
+
+            return self.EyePosition + flat.normalized * d + Vector3.up * (d * Mathf.Tan(pitch));
+        }
+
+        /// <summary>手上这类投掷物有几颗（与 <c>CsInventory.GrenadeCount</c> 同读法：弹药表的弹匣位）。</summary>
+        private static int CountGrenade(CsActor self, string grenadeId)
+        {
+            return self.Ammo.TryGetValue(grenadeId, out var v) ? v.inMag : 0;
+        }
+
+        /// <summary>清掉"进行中的投掷"（不影响本回合已投颗数与下一次允许时刻）。</summary>
+        private void ClearGrenadeAttempt()
+        {
+            _grenadePendingId = null;
+            _grenadeWhy = null;
+            _grenadeRange = 0f;
+        }
+
+        // ==================================================================
         //  炸弹任务
         // ==================================================================
         /// <summary>
@@ -1857,6 +2167,30 @@ namespace Cs16.Module.Bot
                 intent.State = CsBotState.Plant;
                 intent.Move = _nav.ComputeMove(self.Position, aim, CsBotConst.PlantStopRadius, now);
                 intent.AimPoint = LookPoint(self, WithEyeHeight(_nav.CurrentTarget(self.Position, aim)));
+
+                // 求出的方向是零向量 = 本帧不动。两种情况：
+                //   ① 已经到了停步半径（合法，交回调用方按"到了"处理）；
+                //   ② **目标点与自身重合**（包点标记缺失时 NearestBombsitePoint 返回 pos 本身，
+                //      TryGetPlantAim 也退化成 pos）⇒ 停在 Plant 态一动不动、下包永远起不来。
+                // ② 必须留痕并交回推进分支（路线推进 + 卡住自恢复都在那里），不许静默冻结。
+                if (intent.Move.sqrMagnitude < 0.0004f)
+                {
+                    var dAim = aim - self.Position;
+                    dAim.y = 0f;
+                    if (dAim.magnitude < CsBotConst.PlantStopRadius)
+                    {
+                        if (now >= _lastUseLogAt)
+                        {
+                            _lastUseLogAt = now + CsBotConst.StateLogMinInterval;
+                            Game.Logger.Warn(Tag,
+                                $"[C4] {_name} 持包但本帧求不出可走方向：下包目标 ({aim.x:F1},{aim.z:F1}) " +
+                                $"与自身距离 {dAim.magnitude:F2}m ≤ 停步半径 {CsBotConst.PlantStopRadius:F1}m，" +
+                                $"但离最近包点标记 {zoneDist:F2}m > {CsBotConst.SiteRadius:F0}m" +
+                                "（标记缺失或目标坐标退化）→ 本帧交回推进分支，不停在原地");
+                        }
+                        return false;
+                    }
+                }
 
                 if (now >= _lastUseLogAt)
                 {

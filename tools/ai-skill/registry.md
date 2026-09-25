@@ -70,7 +70,7 @@
 
 | 约束 | 为什么 | 出处 |
 | --- | --- | --- |
-| ⛔ 驱动**不得无条件**调 `Cs16Drv.Entry.StartBots()` / `EmitLaunch` | New Game 面板**默认已 4v4**（L3 `bots/队=4`）⇒ 二次 `LaunchMatch` 走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ **掐掉正在跑的回合**（实测该回合只活 **22.5 s**，而配置 ≥114 s = `FreezeTime 4` + `RoundTime 105` + `RoundEndTime 5`）⇒ 所有"回合内位移 / 下包 / 驻留"数字**全部失真** | `.ai-tmp/test/bu-r2-round-truth.tsv`；`client/Assets/Scripts/Module/Match/CsMatch.cs` 的 `Start` 契约 |
+| ⛔ 驱动**不得无条件**调 `Cs16Drv.Entry.StartBots()` / `EmitLaunch` | New Game 面板**默认已 4v4**（L3 `bots/队=4`）⇒ 二次 `LaunchMatch` 走 `CsMatch.Start` 的"重复调用 = 先 Stop 再 Start"契约 ⇒ **掐掉正在跑的回合**（实测该回合只活 **22.5 s**，而配置 ≥114 s = `FreezeTime 4` + `RoundTime 105` + `RoundEndTime 5`）⇒ 所有"回合内位移 / 下包 / 驻留"数字**全部失真** | `client/Assets/Scripts/Module/Match/CsMatch.cs` 的 `Start` 契约 |
 | 用 `Cs16Drv.Entry.StartBotsIfNeeded`（`BotCount ≥ 8` 就不补 Launch） | 同上 | `.ai-tmp/drivers/bu-r2-play.ps1` |
 | 采集窗口以"探针检到 `phase=RoundEnd`"为准（硬上限 165 s），⛔ 不用固定秒数 | 固定 93 s 窗口会把"回合被掐"误读成"回合时长 ≈31 s"（93/3 的算术平均），进而误导出"要下调验收阈值"的错误结论 | 同上 |
 | 进 Play 后断言 `Application.isPlaying == true`；采到空数据（`no local/no match`）**立刻作废该帧** | 同机并发改 `.cs` ⇒ Unity 域重载 ⇒ 掐掉别人正在跑的 Play | `patterns/multi-agent.md`（"同机并发撞车"） |
