@@ -22,9 +22,12 @@ namespace Cs16.Module.Combat
     /// 命中地面时 <c>-normal</c> 与 <c>Vector3.up</c> 平行，<c>LookRotation</c> 会退化。</para>
     ///
     /// <para><b>枪口火焰 = 贴片 + 点光</b>：原版是一张 <c>sprites/muzzleflash*.spr</c> 亮斑（不是球体），
-    /// 落点按**相机局部系**给（<see cref="CsCombatTuning.MuzzleOffsetRight"/> 等三个分量，从视模型
-    /// 动画后包围盒的最前端反推），贴片用 <c>SpriteRenderer</c>；逐武器贴图见
-    /// <see cref="PickMuzzleFlash"/>。点光是第一人称里最有效的"开枪了"读感（墙面会被照亮）。</para>
+    /// 落点按**相机局部系**给（<see cref="CsCombatTuning.MuzzleOffsetRight"/> 等横向 / 竖直两个分量 +
+    /// **逐武器**的轴向距离 <see cref="CsCombatTuning.MuzzleForward"/>，后者取自该武器视模型实测的枪口
+    /// 轴向距离，表见 <see cref="CsCombatTuning.MuzzleAxial"/>），贴片用 <c>SpriteRenderer</c>；
+    /// 逐武器贴图见 <see cref="PickMuzzleFlash"/>，逐武器尺寸 / 时长见
+    /// <see cref="CsCombatTuning.MuzzleFlashSize"/> / <see cref="CsCombatTuning.MuzzleFlashDuration"/>。
+    /// 点光是第一人称里最有效的"开枪了"读感（墙面会被照亮）。</para>
     ///
     /// <para><b>为什么不用引擎对象池（<c>Game.Pool</c>）</b>：引擎的对象池是"按预制体 key 实例化"
     /// （内部走 <c>Resources.Load&lt;GameObject&gt;(key)</c>），而本模块的产出路径里没有、也不该有预制体
@@ -32,8 +35,12 @@ namespace Cs16.Module.Combat
     /// 高频路径上等于刷屏；所以这里自带一个极小特效池（<c>SetActive</c> 复用），语义与对象池一致。</para>
     ///
     /// <para><b>几何来源</b>：球/方块走 <c>GameObject.CreatePrimitive</c>（Unity 内置网格），
-    /// 贴片走 <c>SpriteRenderer</c>（着色器是 Unity 内置的 <c>Sprites/Default</c>，**一定**被打进包，
-    /// 不像 <c>Shader.Find</c> 那样有"打包后找不到、画面全空"的静默风险）。
+    /// 贴片走 <c>SpriteRenderer</c>。贴片的着色器有两档，两档都保证"一定被打进包"
+    /// （⛔ 不用 <c>Shader.Find</c> —— 那有"打包后找不到、画面全空"的静默风险）：
+    /// 默认一档是 Unity 内置的 <c>Sprites/Default</c>（贴片自带）；**墙上的弹痕**一档换成
+    /// <see cref="ResPaths.DecalAlphaClipShader"/>，它相对 <c>Sprites/Default</c> 只多一步
+    /// <c>clip(c.a - 0.25)</c>（原版贴花绘制时开着 <c>GL_ALPHA_TEST</c> 且阈值继承
+    /// <c>gl_alphamin</c> = 0.25，出处见 <see cref="CsCombatTuning.DecalAlphaCutoff"/>）。
     /// 自建物件上的 <c>Collider</c> 立刻 <c>DestroyImmediate</c> 掉：否则特效自己会被射线打中。</para>
     /// </summary>
     internal sealed class CombatEffects
@@ -48,6 +55,8 @@ namespace Cs16.Module.Combat
             Sphere = 0,
             Cube = 1,
             Sprite = 2,
+            /// <summary>自带网格的实体（弹壳）：它的几何来自 <see cref="CsShellModels"/>，不是程序化建形状。</summary>
+            Mesh = 3,
         }
 
         private sealed class EffectItem
@@ -56,6 +65,8 @@ namespace Cs16.Module.Combat
             public Transform Tr;
             public MeshRenderer Renderer;
             public SpriteRenderer Sprite;
+            /// <summary>网格类特效（弹壳）的网格槽：每次抛出时换成该武器那种壳的网格。</summary>
+            public MeshFilter Mesh;
             public Light Light;
             public Shape Shape;
             public Color Color;
@@ -71,6 +82,13 @@ namespace Cs16.Module.Combat
 
             /// <summary>是不是**血迹**贴花（与墙上弹痕分开计数、分开上限，见 <see cref="AcquireDecal"/>）。</summary>
             public bool Blood;
+
+            /// <summary>是不是飞行中的弹壳（每帧积分速度/自旋，撞到世界面反弹，见 <see cref="TickShell"/>）。</summary>
+            public bool Shell;
+            /// <summary>弹壳速度（米/秒）。</summary>
+            public Vector3 Velocity;
+            /// <summary>弹壳自旋（度/秒，绕本地三轴）。</summary>
+            public Vector3 Spin;
         }
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
@@ -83,6 +101,10 @@ namespace Cs16.Module.Combat
         private Sprite _sprFlashCross;
         private Sprite _sprHole;
         private Sprite _sprSpark;
+        /// <summary>弹壳贴图·步枪族 / 手枪族（原版 mdl 内嵌 bmp 解出，key 见 <see cref="ResPaths"/>）。</summary>
+        private Texture2D _texShellRifle;
+        private Texture2D _texShellPistol;
+        private bool _shellWarned;
         /// <summary>弹痕**五变体**（原版 `decals.wad` 的 `{shot1..5`，key 表见 <see cref="ResPaths.FxBulletHoleKeys"/>）。</summary>
         private readonly Sprite[] _sprShots = new Sprite[ResPaths.FxBulletHoleVariants];
         /// <summary>血迹**六变体**（原版 `decals.wad` 的 `{blood1..6`，key 表见 <see cref="ResPaths.FxBloodKeys"/>）。</summary>
@@ -93,6 +115,20 @@ namespace Cs16.Module.Combat
         private bool _spriteWarned;
         private bool _bloodWarned;
         private bool _bloodSprayWarned;
+
+        /// <summary>
+        /// 墙上的贴花（弹痕 / 血迹）共用的材质：由 <see cref="ResPaths.DecalAlphaClipShader"/> 现造一次，
+        /// <c>_Cutoff</c> = <see cref="CsCombatTuning.DecalAlphaCutoff"/>。着色器取不到时为 null
+        /// ⇒ 贴花退回 <c>Sprites/Default</c>（不裁切、软晕也画出来）。
+        /// </summary>
+        private Material _decalMat;
+        private bool _decalMatWarned;
+
+        /// <summary>
+        /// 贴片"自带"的那份材质（<c>AddComponent&lt;SpriteRenderer&gt;</c> 时 Unity 给的默认件，
+        /// 名为 <c>Sprites-Default</c> / 着色器 <c>Sprites/Default</c>）：贴片每次从池里借出都复位成它。
+        /// </summary>
+        private Material _spriteMat;
 
         /// <summary>本发血雾用到的帧名（复用，只喂 <c>blood.spray</c> 日志，避免每次命中产生垃圾）。</summary>
         private readonly List<string> _puffFrames = new List<string>(CsCombatTuning.BloodSprayMinCount);
@@ -146,6 +182,12 @@ namespace Cs16.Module.Combat
                 Object.Destroy(_root.gameObject);
                 _root = null;
             }
+
+            // 贴花材质是本类现造的 ⇒ 随本实例销毁；同时把"贴图已请求"的标记复位，让同一个实例
+            // 被再次 Init 时会重新请求（否则 _decalMat 会永远停在 null，弹痕再也不会裁切）。
+            if (_decalMat != null) Object.Destroy(_decalMat);
+            _decalMat = null;
+            _spritesRequested = false;
         }
 
         /// <summary>三张特效精灵异步取一次（缺资源时只 Warn 一次，绝不每帧刷屏）。</summary>
@@ -165,6 +207,12 @@ namespace Cs16.Module.Combat
             res.LoadAsset<Sprite>(ResPaths.FxMuzzleFlashCross, s => _sprFlashCross = s);
             res.LoadAsset<Sprite>(ResPaths.FxBulletHole, s => _sprHole = s);
             res.LoadAsset<Sprite>(ResPaths.FxSpark, s => _sprSpark = s);
+            res.LoadAsset<Texture2D>(ResPaths.FxShellRifle, t => _texShellRifle = t);
+            res.LoadAsset<Texture2D>(ResPaths.FxShellPistol, t => _texShellPistol = t);
+
+            // 贴花材质：着色器走 Resources（不是 Shader.Find —— 那有"打包后被剥掉"的静默失败），
+            // 材质在这里现造一次并设死 _Cutoff，之后所有墙上的贴花共用它。
+            res.LoadAsset<Shader>(ResPaths.DecalAlphaClipShader, s => _decalMat = BuildDecalMaterial(s));
 
             // 弹痕五变体：按 ResPaths 的**字面量 key 表**逐个加载（不拼串：拼出来的 key
             // 在静态扫描里看不见 ⇒ 闸门 coverage-diff/D1 会把这些贴图判成"文件在盘上但无人读"）。
@@ -187,6 +235,46 @@ namespace Cs16.Module.Combat
                 var slot = i;
                 res.LoadAsset<Sprite>(ResPaths.FxBloodSprayKeys[i], s => _sprBloodSpray[slot] = s);
             }
+        }
+
+        /// <summary>
+        /// 现造贴花材质：<c>_Cutoff</c> = <see cref="CsCombatTuning.DecalAlphaCutoff"/>
+        /// （原版 <c>gl_alphamin</c> 默认值，出处见该常量）。
+        /// </summary>
+        private Material BuildDecalMaterial(Shader shader)
+        {
+            if (shader == null)
+            {
+                WarnDecalMaterialOnce(
+                    $"贴花着色器缺失：Resources/{ResPaths.DecalAlphaClipShader}.shader（弹痕退回不裁切）");
+                return null;
+            }
+            var mat = new Material(shader);
+            mat.SetFloat("_Cutoff", CsCombatTuning.DecalAlphaCutoff);
+            return mat;
+        }
+
+        /// <summary>
+        /// 把墙上的贴花切到带 alpha 裁切的材质。材质不可用（着色器缺失 / 尚未加载完）时退回
+        /// <c>Sprites/Default</c> —— 表现与不裁切一致，只 Warn 一次。
+        /// </summary>
+        private void ApplyDecalMaterial(SpriteRenderer sprite)
+        {
+            if (sprite == null) return;
+            if (_decalMat == null)
+            {
+                WarnDecalMaterialOnce(
+                    $"贴花材质不可用 ⇒ 本条弹痕不裁切（Resources/{ResPaths.DecalAlphaClipShader}）");
+                return;
+            }
+            sprite.sharedMaterial = _decalMat;
+        }
+
+        private void WarnDecalMaterialOnce(string message)
+        {
+            if (_decalMatWarned) return;
+            _decalMatWarned = true;
+            _log.Warn("fx.decal.material", message);
         }
 
         /// <summary>从一组贴图里**均匀随机**取一张非空的（原版是五变体随机；不用"最旧的一张"之类的假随机）。</summary>
@@ -243,9 +331,8 @@ namespace Cs16.Module.Combat
         /// <para><b>为什么不能直接写 <c>Vector3.one * meters</c>（实测的坑）</b>：
         /// <c>localScale</c> 是**倍率**，不是米 —— 一张贴片"天生"多宽由它自己的导入 PPU
         /// （<c>spritePixelsToUnits</c>）决定。本工程的 <c>Resources/UI/Art/fx_*.png</c> 是 Unity
-        /// 自动导入的默认值 <b>PPU=100</b>，所以 16x16 的弹痕天生只有 0.16 世界单位宽；那一行
-        /// <c>Vector3.one * 0.075f</c> 实际画出的是 <b>1.2 cm</b>（本应 7.5 cm，小了 6.25 倍），
-        /// 2 m 外不足 5 px ⇒ 截图与肉眼都"看不见"，表现上等于**没贴**。
+        /// 自动导入的默认值 <b>PPU=100</b>，所以 16x16 的弹痕天生只有 0.16 世界单位宽；
+        /// 直接把它当米写就少乘 1/PPU 倍（0.4064 m 会画成 6.5 cm），远看就是没贴上。
         /// 用贴片自己的 <c>bounds</c> 反算成倍率后，<c>meters</c> 才真的是米，
         /// 且换任何 PPU / 任何像素宽的贴图都不会再错（不必依赖"meta 里的 PPU 别写错"这种共识 ——
         /// 重导一次就静默回退）。</para>
@@ -284,28 +371,32 @@ namespace Cs16.Module.Combat
         /// 点光是第一人称里最有效的"开枪了"读感（墙与敌人会被照亮）。
         ///
         /// <list type="number">
-        /// <item><b>落点</b> = <c>相机局部系</c>的三个分量（<see cref="CsCombatTuning.MuzzleOffsetRight"/> 等）。
+        /// <item><b>落点</b> = <c>相机局部系</c>，**三个分量都随武器**：横向 <see cref="CsCombatTuning.MuzzleLateral"/>、
+        /// 竖直 <see cref="CsCombatTuning.MuzzleVertical"/>、轴向 <see cref="CsCombatTuning.MuzzleForward"/>。
         /// 落点若落在视模型几何之内，就会被近端枪身/手臂在深度测试里盖掉（贴片走透明队列但**开**深度测试）
-        /// ⇒ 表现上等于"没有枪口火焰"。三个分量都在 <c>CsCombatTuning</c> 里逐条带推导。</item>
+        /// ⇒ 表现上等于"没有枪口火焰"。</item>
         /// <item><b>尺寸</b>必须走 <see cref="SpriteScaleForMeters"/>：贴片导入 PPU=100，
         /// 直接写米会把 0.30 m 画成 0.192 m。同族坑见 <see cref="CsCombatTuning.DecalSize"/>。</item>
         /// <item><b>逐武器贴图</b>：见 <see cref="PickMuzzleFlash"/>（本工程只接了有一条证据的那一条映射）。</item>
         /// </list>
         /// </summary>
         /// <param name="eyePosition">视点（相机世界坐标）</param>
-        /// <param name="viewRotation">相机世界旋转 —— 落点按**相机局部系**给（见 CsCombatTuning 的三个偏移），
+        /// <param name="viewRotation">相机世界旋转 —— 落点按**相机局部系**给（见 CsCombatTuning 的偏移口径），
         /// 不再用 world-up 叉乘算 right/up：那在俯仰接近 ±90° 时会退化。</param>
-        /// <param name="weaponId">当前武器 id（决定用哪张原版贴图；未知/为空走默认那张）</param>
+        /// <param name="weaponId">当前武器 id（决定轴向距离 / 尺寸 / 时长，以及用哪张原版贴图；未知/为空走默认档）</param>
         public void MuzzleFlash(Vector3 eyePosition, Quaternion viewRotation, string weaponId)
         {
-            var pos = eyePosition + viewRotation * new Vector3(
-                CsCombatTuning.MuzzleOffsetRight,
-                CsCombatTuning.MuzzleOffsetUp,
-                CsCombatTuning.MuzzleOffsetForward);
+            var radial = CsCombatTuning.MuzzleLateral(weaponId);
+            var vertical = CsCombatTuning.MuzzleVertical(weaponId);
+            var forward = CsCombatTuning.MuzzleForward(weaponId);
+            var sizeMeters = CsCombatTuning.MuzzleFlashSize(weaponId);
+            var duration = CsCombatTuning.MuzzleFlashDuration(weaponId);
+
+            var pos = eyePosition + viewRotation * new Vector3(radial, vertical, forward);
 
             var sprite = PickMuzzleFlash(weaponId);
 
-            var item = AcquireSprite(Shape.Sprite, Color.white, CsCombatTuning.MuzzleFlashDuration);
+            var item = AcquireSprite(Shape.Sprite, Color.white, duration);
             if (item == null) return;
 
             item.Tr.position = pos;
@@ -313,7 +404,7 @@ namespace Cs16.Module.Combat
             item.Sprite.enabled = sprite != null;
             item.Billboard = true;
             // 必须按贴片自己的宽度反算倍率（见 SpriteScaleForMeters）：直接写米会小 1/PPU 倍。
-            item.Tr.localScale = Vector3.one * SpriteScaleForMeters(sprite, CsCombatTuning.MuzzleFlashSize);
+            item.Tr.localScale = Vector3.one * SpriteScaleForMeters(sprite, sizeMeters);
             if (sprite == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
 
             if (item.Light != null)
@@ -325,11 +416,13 @@ namespace Cs16.Module.Combat
                 item.Light.intensity = 4f;
             }
 
+            // 可核对字段（判据 = flashAxial / flashSize / flashDur 逐武器**不恒定**、且 flashAxial 不小于
+            // 该武器枪口轴向距离）：落点落在枪身几何之内时"没有火焰"，只看得见这三个数。
             _log.Info("shot.muzzle",
-                $"枪口火焰落在 {pos}（相机局部 {CsCombatTuning.MuzzleOffsetRight}/{CsCombatTuning.MuzzleOffsetUp}/" +
-                $"{CsCombatTuning.MuzzleOffsetForward} m）→ 武器 {weaponId ?? "-"} 贴图 " +
-                $"{(sprite != null ? sprite.name : "null")} 启用={item.Sprite.enabled} " +
-                $"世界宽={CsCombatTuning.MuzzleFlashSize:F3}m 缩放={item.Tr.localScale.x:F3}");
+                $"武器 {weaponId ?? "-"} 贴图 {(sprite != null ? sprite.name : "null")} 启用={item.Sprite.enabled}" +
+                $" flashAxial={forward:F4} flashLat={radial:F4}" +
+                $" flashUp={vertical:F4} flashSize={sizeMeters:F3}" +
+                $" flashDur={duration:F3} 落点={pos} 缩放={item.Tr.localScale.x:F3}");
         }
 
         /// <summary>
@@ -358,6 +451,132 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
+        /// 抛壳：从抛壳窗甩出一枚**原版弹壳模型**（逐武器一种，见 <see cref="CsShellModels.KindFor"/>），
+        /// 之后受重力、撞世界面反弹、自旋（见 <see cref="TickShell"/>）。
+        ///
+        /// <list type="number">
+        /// <item><b>几何与贴图全来自载体</b>：顶点/法线/UV/三角形 = 原版 <c>models/{rshell,pshell,rshell_big}.mdl</c>
+        /// 逐点搬运（<see cref="CsShellModels"/>）；贴图 = 该 mdl 内嵌 bmp 解出的 PNG。</item>
+        /// <item><b>落点与初速都在相机局部系</b>：抛壳口的三项偏移与初速的三个分量逐条来自原版
+        /// <c>mp.dll</c> 的 EjectBrassLate（常量与地址见 <see cref="CsCombatTuning"/> 弹壳段）。</item>
+        /// <item><b>初速还要叠上玩家自身速度</b>：原版是 <c>vecShellVelocity = pev-&gt;velocity + …</c>，
+        /// 所以跑动中开枪时弹壳会跟着人走。</item>
+        /// <item><b>没有点光</b>：枪口那一盏在 <see cref="MuzzleFlash"/> 里，弹壳自己不发亮。</item>
+        /// <item><b>霰弹枪不抛</b>：原版抛 <c>models/shotgunshell.mdl</c>，该件在本机可取的载体里不存在
+        /// ⇒ <see cref="CsShellModels.KindFor"/> 返回 <c>None</c>，本方法直接返回。</item>
+        /// </list>
+        /// </summary>
+        /// <param name="eyePosition">视点（相机世界坐标）</param>
+        /// <param name="viewRotation">相机世界旋转（落点与初速都在相机局部系里给）</param>
+        /// <param name="weaponId">当前武器 id（决定用哪种壳模型）</param>
+        /// <param name="shooterVelocity">射击者的世界速度（米/秒），原版初速里加的那一项</param>
+        public void ShellEject(Vector3 eyePosition, Quaternion viewRotation, string weaponId,
+            Vector3 shooterVelocity)
+        {
+            var model = CsShellModels.Get(CsShellModels.KindFor(weaponId));
+            if (model == null) return;
+
+            var item = Acquire(Shape.Mesh, Color.white, CsCombatTuning.ShellLife);
+            if (item == null) return;
+            if (item.Light != null) item.Light.enabled = false;
+
+            var port = new Vector3(
+                CsCombatTuning.ShellPortLateral,
+                CsCombatTuning.ShellPortVertical,
+                CsCombatTuning.ShellPortForward);
+            item.Tr.position = eyePosition + viewRotation * port;
+            item.Tr.rotation = viewRotation;
+            // 网格坐标已经是米（CsShellModels 按 0.0254 m/unit 搬），localScale 必须是 1 ——
+            // 写成别的值就是同族的"米当倍率"错（见 SpriteScaleForMeters 的类注释）。
+            item.Tr.localScale = Vector3.one;
+
+            var tex = model.Texture == ResPaths.FxShellPistol ? _texShellPistol : _texShellRifle;
+            if (item.Mesh != null) item.Mesh.sharedMesh = model.Mesh;
+            if (item.Renderer != null)
+            {
+                var mat = item.Renderer.material;
+                if (mat != null)
+                {
+                    mat.mainTexture = tex;
+                    mat.color = Color.white;
+                }
+            }
+            if (tex == null)
+            {
+                WarnShellOnce($"弹壳贴图缺失：Resources/{model.Texture}.png（弹壳会是一枚纯白小柱）");
+            }
+
+            // 初速与自旋是**表现**（弹壳飞哪去不影响命中）⇒ 走单独一路 FxVariant：
+            // UnityEngine.Random 是全局静态流，用它抽会把玩法侧的散布/瞄准序列整体推位。
+            var rng = CsRng.Stream(CsRngStream.FxVariant);
+            item.Velocity = shooterVelocity + viewRotation * new Vector3(
+                rng.Range(CsCombatTuning.ShellSpeedRightMin, CsCombatTuning.ShellSpeedRightMax),
+                rng.Range(CsCombatTuning.ShellSpeedUpMin, CsCombatTuning.ShellSpeedUpMax),
+                CsCombatTuning.ShellSpeedForward);
+            item.Spin = new Vector3(
+                rng.Range(CsCombatTuning.ShellSpinXMin, CsCombatTuning.ShellSpinXMax),
+                rng.Range(CsCombatTuning.ShellSpinYMin, CsCombatTuning.ShellSpinYMax),
+                rng.Range(CsCombatTuning.ShellSpinZMin, CsCombatTuning.ShellSpinZMax));
+            item.Shell = true;
+
+            _log.Info("shell.eject",
+                $"弹壳 {model.SourceName}（{model.Size.x:F3}x{model.Size.y:F3}x{model.Size.z:F3} m）" +
+                $" 出现点={item.Tr.position} 初速={item.Velocity.magnitude:F2} m/s" +
+                $" 贴图={(tex != null ? tex.name : "null")} 寿命={CsCombatTuning.ShellLife:F2}s");
+        }
+
+        /// <summary>弹壳贴图缺失时只 Warn 一次（每发一壳，绝不每帧刷屏）。</summary>
+        private void WarnShellOnce(string message)
+        {
+            if (_shellWarned) return;
+            _shellWarned = true;
+            _log.Warn("fx.shell.missing", message);
+        }
+
+        /// <summary>
+        /// 弹壳的一帧：重力积分 + 撞到世界面就反射（速度按法线反射并衰减）+ 自旋。
+        ///
+        /// <para><b>为什么用一条从上一帧位置打到这一帧位置的射线</b>：弹壳 3 cm 量级、每帧位移可达
+        /// 2 cm 以上，靠"下一帧位置是否在面内"判会直接穿过去（真空中穿掉地板）。
+        /// 命中即把位置贴到命中点抬起一个壳半径，避免陷进面里。</para>
+        ///
+        /// <para>重力取 <see cref="CsConst.Gravity"/>（= 原版 <c>sv_gravity 800</c> × 0.0254）
+        /// —— 弹壳与人物、手雷落的是同一条重力。</para>
+        /// </summary>
+        private void TickShell(EffectItem item, float dt)
+        {
+            var v = item.Velocity;
+            v.y -= CsConst.Gravity * dt;
+
+            var delta = v * dt;
+            var len = delta.magnitude;
+            var pos = item.Tr.position;
+
+            if (len > 0.0001f &&
+                Physics.Raycast(pos, delta / len, out var hit, len + CsCombatTuning.ShellRadius,
+                    ~0, QueryTriggerInteraction.Ignore))
+            {
+                var n = hit.normal.sqrMagnitude > 0.0001f ? hit.normal.normalized : Vector3.up;
+                pos = hit.point + n * CsCombatTuning.ShellRadius;
+                v = Vector3.Reflect(v, n) * CsCombatTuning.ShellBounceDamping;
+                if (v.sqrMagnitude < CsCombatTuning.ShellRestSpeed * CsCombatTuning.ShellRestSpeed)
+                {
+                    // 弹壳太小：反弹后速度低于阈值就"躺下"（否则会在面上反复弹、看着在抖）。
+                    v = Vector3.zero;
+                    item.Spin = Vector3.zero;
+                }
+            }
+            else
+            {
+                pos += delta;
+            }
+
+            item.Tr.position = pos;
+            item.Velocity = v;
+            if (item.Spin != Vector3.zero) item.Tr.Rotate(item.Spin * dt, Space.Self);
+        }
+
+        /// <summary>
         /// 命中墙：**弹痕**（五变体随机、按命中面法线贴上去的贴片）+ 一记小火星。
         /// <paramref name="normal"/> 必须是世界法线（<c>RaycastHit.normal</c>）。
         /// </summary>
@@ -366,27 +585,27 @@ namespace Cs16.Module.Combat
             if (normal.sqrMagnitude < 0.0001f) normal = Vector3.up;
             normal.Normalize();
 
-            // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸按原版 decal 的观感（~7cm）----
+            // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸 = 原版 16 单位（见 CsCombatTuning.DecalSize）----
             var sprite = PickBulletHole();
             var decal = AcquireDecal(blood: false);
             if (decal != null)
             {
                 decal.Tr.position = point + normal * 0.01f;
                 decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
-                // 尺寸 = 7.5 cm（口径见 CsCombatTuning）—— 必须按贴片自己的宽度反算倍率，
-                // 不能直接写 `Vector3.one * DecalSize`：那等于把 7.5 cm 画成 1.2 cm（见 SpriteScaleForMeters）。
+                // 尺寸 = CsCombatTuning.DecalSize（整块 0.4064 m）—— 必须按贴片自己的宽度反算倍率，
+                // 不能直接写 `Vector3.one * DecalSize`：那少乘 1/PPU 倍（见 SpriteScaleForMeters）。
                 var scale = SpriteScaleForMeters(sprite, CsCombatTuning.DecalSize);
                 decal.Tr.localScale = Vector3.one * scale;
                 decal.Sprite.sprite = sprite;
                 decal.Sprite.enabled = sprite != null;
                 decal.Billboard = false;
+                // 裁掉软晕、只画硬核（原版贴花绘制时开 GL_ALPHA_TEST + gl_alphamin=0.25）。
+                ApplyDecalMaterial(decal.Sprite);
 
-                // 可核对日志（字段是照着"看不见弹痕"的三个岔口设计的，见文件头）：
-                // 贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.128 ⇒ 尺寸口径坏了。
-                // 「可见核心宽」= 整块 × 载体实测的核心占比（alpha≥160 只有 2~4 px / 256）——
-                // 并给出它在**当前这一发的实际距离**上的屏幕投影像素数。
-                // 判据 = 「可见核心投影 ≥ 6 px 且出现在画面内」，肉眼看不到时第一件事是核这一对数
-                // （不是去猜"贴没贴"）。距离用相机（弹痕的观察者恒是本地相机）。
+                // 可核对日志：贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.406 ⇒ 尺寸口径坏了。
+                // 「可见核心宽」= 整块 × 载体实测的核心占比（alpha≥32 的墨迹水平跨度 4~5 texel / 16）——
+                // 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
+                // （口径：0.127 m 的墨迹在 5 m 处约 24 px）。距离用相机（弹痕的观察者恒是本地相机）。
                 var cam = Camera.main;
                 var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
                 var coreM = CsCombatTuning.DecalVisibleCoreMeters;
@@ -410,7 +629,7 @@ namespace Cs16.Module.Combat
             if (spark == null) return;
             spark.Tr.position = point + normal * 0.02f;
             spark.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
-            spark.Tr.localScale = Vector3.one * CsCombatTuning.SparkSize;
+            spark.Tr.localScale = Vector3.one * SpriteScaleForMeters(_sprSpark, CsCombatTuning.SparkSize);
             spark.Sprite.sprite = _sprSpark;
             spark.Sprite.enabled = _sprSpark != null;
             spark.Billboard = true;
@@ -495,7 +714,7 @@ namespace Cs16.Module.Combat
             decal.Billboard = false;
 
             var px = spr != null ? (int)spr.rect.width : 48;
-            // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 0.225 m、64 px -> 0.30 m；口径见 CsCombatTuning）。
+        // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 1.219 m、64 px -> 1.626 m；口径见 CsCombatTuning）。
             decal.Tr.localScale = Vector3.one * SpriteScaleForMeters(spr, CsCombatTuning.BloodDecalSize(px));
 
             _log.Info("blood.decal",
@@ -625,6 +844,8 @@ namespace Cs16.Module.Combat
                     continue;
                 }
 
+                if (item.Shell) TickShell(item, dt);
+
                 if (item.EndScale > item.StartScale)
                 {
                     var t = 1f - Mathf.Clamp01(item.Life / item.MaxLife);
@@ -661,6 +882,12 @@ namespace Cs16.Module.Combat
             target.Billboard = false;
             target.Decal = false;
             target.Blood = false;
+            target.Shell = false;
+            target.Velocity = Vector3.zero;
+            target.Spin = Vector3.zero;
+            // 贴片池是按"形状 + 颜色"复用的（火焰 / 火星 / 弹痕同池）⇒ 每次借出都先把材质复位，
+            // 否则一枚用过的弹痕被复用成枪口火焰时会带着弹痕的裁切材质（火焰软晕被切掉一片）。
+            if (target.Sprite != null && _spriteMat != null) target.Sprite.sharedMaterial = _spriteMat;
             if (target.Light != null) target.Light.enabled = shape != Shape.Sprite;
             target.Go.SetActive(true);
             return target;
@@ -738,6 +965,7 @@ namespace Cs16.Module.Combat
             GameObject go;
             MeshRenderer renderer = null;
             SpriteRenderer sprite = null;
+            MeshFilter filter = null;
 
             if (shape == Shape.Sprite)
             {
@@ -745,6 +973,21 @@ namespace Cs16.Module.Combat
                 sprite = go.AddComponent<SpriteRenderer>();
                 sprite.color = color;
                 sprite.enabled = false;                // 贴图到位前不显示（绝不画成白块）
+                // 记下贴片自带的材质，池复用回非贴花用途时复位成它（见 Acquire）。
+                if (_spriteMat == null) _spriteMat = sprite.sharedMaterial;
+            }
+            else if (shape == Shape.Mesh)
+            {
+                // 弹壳：几何来自 CsShellModels（原版 mdl 逐点搬运），网格由调用方每次换上。
+                go = new GameObject("FX_Shell");
+                filter = go.AddComponent<MeshFilter>();
+                renderer = go.AddComponent<MeshRenderer>();
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+                // 新建 MeshRenderer 自带的内置 Default-Material（Standard，**一定**被打进包）——
+                // 取一次 .material 得到本实例的克隆，之后换贴图不会影响别的物件。
+                var shellMat = renderer.material;
+                if (shellMat != null) shellMat.color = Color.white;
             }
             else
             {
@@ -795,6 +1038,7 @@ namespace Cs16.Module.Combat
                 Tr = go.transform,
                 Renderer = renderer,
                 Sprite = sprite,
+                Mesh = filter,
                 Light = light,
                 Shape = shape,
                 Color = color,

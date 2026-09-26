@@ -79,6 +79,30 @@ namespace Cs16.Module.View
         private bool _ready;
         private bool _wasRunning;
 
+        /// <summary>当前活着的视图模块（装配点唯一；取不到就是 null，取用方自己判空并留痕）。</summary>
+        public static ViewModule Instance { get; private set; }
+
+        /// <summary>读条预热的在途加载数。</summary>
+        private int _warmupPending;
+        /// <summary>读条预热的等待者：全部预制体落定（进缓存 / 确认缺失）后一次性回调。</summary>
+        private readonly List<System.Action> _warmupWaiters = new List<System.Action>(4);
+        private readonly List<string> _warmupPaths = new List<string>(16);
+        /// <summary>逐帧实例化预热：待做队列 / 已热过的路径 / 宿主节点 / 游标。</summary>
+        private readonly List<string> _warmQueue = new List<string>(16);
+        private readonly HashSet<string> _warmInstances = new HashSet<string>();
+        private GameObject _warmRoot;
+        private int _warmIndex;
+        private float _warmT0;
+
+        /// <summary>预热总预算（秒）：从 <see cref="WarmUpMatchPrefabs"/> 发起那一刻起算，到点立即收尾放行。</summary>
+        private const float WarmupDeadlineSeconds = 14f;
+
+        /// <summary>预热阶段：<c>0</c> = 空闲；<c>1</c> = 逐帧实例化；<c>2</c> = 渲染预热（见 <see cref="CsRenderWarmup"/>）。</summary>
+        private int _warmPhase;
+
+        /// <summary>本次预热整体起点（实例化段 + 渲染段共用同一份预算）。</summary>
+        private float _warmupT0;
+
         /// <summary>射线只被**世界几何**遮挡（排除角色层，否则目标自己就把视线挡了）。</summary>
         private int _worldOnlyMask;
 
@@ -124,12 +148,14 @@ namespace Cs16.Module.View
             // 实例化在 AttachNameplate 里走引擎对象池，按 CsViewTuning.NameplatePath 这个 key 取。
             LoadPrefab(CsViewTuning.NameplatePath, null);
 
+            Instance = this;
             _ready = true;
             _log.Always($"视图模块就绪：角色模型 Art/{{T|CT}}/player，武器视图 viewmodel_*，名牌 {CsViewTuning.NameplatePath}");
         }
 
         private void OnDestroy()
         {
+            if (Instance == this) Instance = null;
             ClearViews();
             if (_root != null) Object.Destroy(_root.gameObject);
             _root = null;
@@ -140,6 +166,7 @@ namespace Cs16.Module.View
         // ==================================================================
         private void LateUpdate()
         {
+            WarmTick();
             // 门面可能为空（见 PlayerModule.Update 的同款注释）——不判就是每帧一条 NRE。
             if (!_ready || _match == null) return;
 
@@ -299,10 +326,9 @@ namespace Cs16.Module.View
             var eye = local != null ? local.EyePosition : Vector3.zero;
             var haveEye = local != null && local.IsAlive;
 
-            // 观战中：相机就贴在被观察者的眼睛上（第一人称观战）⇒ 他那块**世界空间**名牌
-            // （Canvas + 血条 + 名字）正对镜头，屏幕上就是一条巨大的血条糊满全屏。
-            // 与"藏掉被观察者的模型"（FirstPersonCamera.ApplyHiddenBody）同一个道理：
-            // 相机正在看他身体内部，他的名牌同样不该被这台相机看见。
+            // 观战中：藏掉被观察者的**世界空间**名牌（Canvas + 血条 + 名字）。
+            // 那台相机正对着他 —— 观战机位是第三人称（见 Module/CameraRig/FirstPersonCamera.cs 的
+            // ResolveChaseDistance：机位在目标身后 CsConst.ChaseDistance 处），名牌会顶在镜头前糊住画面。
             var spectateTargetId = ResolveSpectateTargetId();
 
             _seen.Clear();
@@ -415,8 +441,8 @@ namespace Cs16.Module.View
                     // 用 Always（不降频）：本方法本就在"目标真的换了"时才走到这里（一局十几次），
                     // 是"换观战目标时名牌为什么不见了"的唯一证据；用降频版会把它吞掉（实测第 2 次起就没了）。
                     _log.Always(
-                        $"观战目标是 {target.Name}(id={id})：相机就贴在他眼位（第一人称观战），" +
-                        $"已隐藏他的头顶名牌 —— 否则那块世界空间血条+名字会糊满整个屏幕");
+                        $"观战目标是 {target.Name}(id={id})：已隐藏他的头顶名牌" +
+                        $"（那台相机正对着他，世界空间血条+名字会顶在镜头前糊住画面）");
                 }
                 _lastSpectateTargetId = id;
             }
@@ -630,6 +656,212 @@ namespace Cs16.Module.View
                 _missing.Remove(path);
                 onLoaded?.Invoke(go);
             });
+        }
+
+        // ==================================================================
+        //  读条预热
+        // ==================================================================
+        /// <summary>
+        /// 把本局可能用到的角色预制体（两个阵营的全部兵种皮肤 + 名牌）提前发起加载，
+        /// 让"首次加载"发生在读条期而不是开局那一帧：全部落定（进缓存 / 确认缺失）后回调一次。
+        ///
+        /// <para>⛔ **绝不把人钉在读条屏**：模块未就绪、资源后端不可用、或本次一个都没发起加载时，
+        /// 立即回调（把"已就绪"交给调用方，代价只是退回原来那种"开局那一帧加载"的行为）。</para>
+        ///
+        /// <para>路径拼法与 <see cref="PrefabPathFor"/> 同源（<c>Art/{T|CT}/{skin}</c>）。</para>
+        /// </summary>
+        public void WarmUpMatchPrefabs(System.Action onDone)
+        {
+            if (onDone != null) _warmupWaiters.Add(onDone);
+            _warmupT0 = Time.realtimeSinceStartup;
+
+            if (!_ready || Game.Res == null)
+            {
+                _log.Warn("warmup.skip",
+                    $"读条预热跳过（视图模块未就绪或资源后端不可用：ready={_ready}）；" +
+                    "角色预制体仍会在开局那一帧首次加载");
+                if (_warmupPending == 0) FlushWarmupWaiters();
+                return;
+            }
+
+            CollectMatchPrefabPaths(_warmupPaths);
+            var started = 0;
+            for (var i = 0; i < _warmupPaths.Count; i++)
+            {
+                var p = _warmupPaths[i];
+                if (_prefabs.ContainsKey(p) || _missing.Contains(p) || _pending.Contains(p)) continue;
+                _warmupPending++;
+                started++;
+                LoadPrefab(p, _ => OnWarmupOneDone());
+            }
+
+            _log.Always($"读条预热：本局角色预制体 {_warmupPaths.Count} 个，本次发起加载 {started} 个" +
+                        $"（已在缓存 / 已在途 {_warmupPaths.Count - started} 个）");
+            if (_warmupPending == 0) FlushWarmupWaiters();
+        }
+
+        private void OnWarmupOneDone()
+        {
+            if (_warmupPending > 0) _warmupPending--;
+            if (_warmupPending > 0) return;
+            _log.Always("读条预热完成：本局角色预制体已全部落定（进缓存或确认缺失）");
+
+            // 预制体"进缓存"并不等于"能用得快"：每个**不同**预制体的**首次 Instantiate** 要 1.1~1.4 s
+            // （同一预制体第 2 次起 1 ms）；本局 9 具角色涉及约 8 个不同预制体 ⇒ 约 9.6 s，
+            // 正是"选完人进游戏"那一帧的长帧来源。实例化本身就是代价所在（不需要渲染、不需要相机），
+            // 所以在读条期把它们各实例化一具并保留，开局时引擎再实例化就落在 1 ms 量级。
+            BuildWarmQueue();
+        }
+
+        /// <summary>把"已进缓存、本次还没热过"的预制体排进逐帧预热队列。</summary>
+        private void BuildWarmQueue()
+        {
+            _warmQueue.Clear();
+            _warmIndex = 0;
+            for (var i = 0; i < _warmupPaths.Count; i++)
+            {
+                var p = _warmupPaths[i];
+                if (_warmInstances.Contains(p)) continue;
+                if (!_prefabs.TryGetValue(p, out var prefab) || prefab == null) continue;
+                _warmQueue.Add(p);
+            }
+
+            if (_warmQueue.Count == 0)
+            {
+                BeginRenderWarm();
+                return;
+            }
+
+            _warmRoot = new GameObject("CsActorViewsWarmup");
+            _warmRoot.transform.SetParent(_root, false);
+            _warmRoot.transform.localPosition = new Vector3(0f, -5000f, 0f);
+            _warmPhase = 1;
+            _log.Always($"读条预热：开始逐帧实例化 {_warmQueue.Count} 个不同预制体（每帧 1 具，读条画面不被长帧卡住）");
+        }
+
+        /// <summary>
+        /// 预热泵（每帧一次，由 <c>LateUpdate</c> 驱动）：按阶段分发，并在超出
+        /// <see cref="WarmupDeadlineSeconds"/> 时**就地收尾放行** —— 未预热的部分退回"开局那一帧付代价"，
+        /// 绝不让玩家钉在读条屏。
+        /// </summary>
+        private void WarmTick()
+        {
+            if (_warmPhase == 0) return;
+
+            if (Time.realtimeSinceStartup - _warmupT0 > WarmupDeadlineSeconds)
+            {
+                _log.Warn("warmup.deadline",
+                    $"读条预热超出 {WarmupDeadlineSeconds:F0}s 预算（第 {_warmPhase} 段未做完：实例化 " +
+                    $"{_warmIndex}/{_warmQueue.Count}）⇒ 就此收尾放行，剩余代价落到开局那一帧");
+                EndWarm();
+                return;
+            }
+
+            if (_warmPhase == 1) { WarmInstancesTick(); return; }
+            WarmRenderTick();
+        }
+
+        /// <summary>
+        /// 逐帧实例化预热（每帧只做 1 具）。一口气做完会阻塞约 12 s，读条画面会像卡死；
+        /// 全部做完后才继续下一段。宿主节点远在地图外，只付实例化代价、不进任何相机。
+        /// </summary>
+        private void WarmInstancesTick()
+        {
+            if (_warmIndex >= _warmQueue.Count)
+            {
+                _log.Always($"读条预热完成：{_warmInstances.Count} 个预制体已各实例化一具并保留" +
+                            $"（耗时 {(Time.realtimeSinceStartup - _warmT0) * 1000f:F0} ms）");
+                BeginRenderWarm();
+                return;
+            }
+
+            if (_warmIndex == 0) _warmT0 = Time.realtimeSinceStartup;
+
+            var path = _warmQueue[_warmIndex];
+            var t0 = Time.realtimeSinceStartup;
+            var go = Object.Instantiate(_prefabs[path], _warmRoot.transform);
+            go.name = "Warm" + _warmIndex + "_" + path.Replace('/', '_');
+            _warmInstances.Add(path);
+            _warmIndex++;
+            _log.Info("warmup.inst." + path,
+                $"读条预热：{path} 首次实例化 {(Time.realtimeSinceStartup - t0) * 1000f:F0} ms" +
+                $"（{_warmIndex}/{_warmQueue.Count}）");
+        }
+
+        /// <summary>实例化段做完 → 排到渲染段（下一帧才做，让读条画面先拿到一帧）。</summary>
+        private void BeginRenderWarm()
+        {
+            if (CsRenderWarmup.Enabled)
+            {
+                _warmPhase = 2;
+                _log.Always("读条预热：接着做渲染预热（着色器变体 → Canvas 网格 → 离屏绘制一帧）");
+                return;
+            }
+
+            _log.Always("读条预热：渲染预热已关闭（CsRenderWarmup.Enabled=false），直接结束读条");
+            EndWarm();
+        }
+
+        /// <summary>
+        /// 渲染预热段：着色器变体 → Canvas 网格 → 离屏绘制一帧（见 <see cref="CsRenderWarmup"/>）。
+        /// 三段各自到点即跳，做完就放行"读条可以结束"。
+        /// </summary>
+        private void WarmRenderTick()
+        {
+            _warmPhase = 0;
+
+            CsRenderWarmup.WarmInUseVariants(_warmupT0);
+            CsRenderWarmup.WarmCanvases(_warmupT0);
+
+            if (!CsRenderWarmup.OverBudget(_warmupT0))
+            {
+                var anchor = _warmRoot != null ? _warmRoot.transform : null;
+                CsRenderWarmup.WarmOffscreen("本局角色实例", anchor, _warmupT0);
+            }
+
+            _log.Always($"读条预热完成（含渲染预热，共 {(Time.realtimeSinceStartup - _warmupT0) * 1000f:F0} ms）");
+            FlushWarmupWaiters();
+        }
+
+        /// <summary>收尾：关泵、放行等待者（不丢回调 —— 丢了就是永远进不去）。</summary>
+        private void EndWarm()
+        {
+            _warmPhase = 0;
+            FlushWarmupWaiters();
+        }
+
+        private void FlushWarmupWaiters()
+        {
+            for (var i = 0; i < _warmupWaiters.Count; i++) _warmupWaiters[i]?.Invoke();
+            _warmupWaiters.Clear();
+        }
+
+        /// <summary>本局可能出现的角色预制体路径（去重）。</summary>
+        private static void CollectMatchPrefabPaths(List<string> into)
+        {
+            into.Clear();
+            AddTeamPaths(into, CsViewTuning.TeamFolderCT, CsViewTuning.SkinsCT);
+            AddTeamPaths(into, CsViewTuning.TeamFolderT, CsViewTuning.SkinsT);
+            AddPath(into, CsViewTuning.NameplatePath);
+        }
+
+        private static void AddTeamPaths(List<string> into, string teamFolder, string[] skins)
+        {
+            if (skins == null || skins.Length == 0)
+            {
+                AddPath(into, CsViewTuning.ArtRoot + teamFolder + "/" + CsViewTuning.PlayerModelName);
+                return;
+            }
+
+            for (var i = 0; i < skins.Length; i++)
+            {
+                if (!string.IsNullOrEmpty(skins[i])) AddPath(into, CsViewTuning.ArtRoot + teamFolder + "/" + skins[i]);
+            }
+        }
+
+        private static void AddPath(List<string> into, string path)
+        {
+            if (!string.IsNullOrEmpty(path) && !into.Contains(path)) into.Add(path);
         }
 
         // ==================================================================

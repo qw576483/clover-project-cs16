@@ -72,6 +72,11 @@ $probesDir = Join-Path $root 'tools\probes'
 # Evidence shots are ONE-OFF artifacts: they live under .ai-tmp/screenshots/.
 $shotDir   = Join-Path $root '.ai-tmp\screenshots'
 $tmpRoot   = Join-Path $root '.ai-tmp'
+# Evidence archive: judged shots that are no longer part of the live working set may be moved OUT of
+# .ai-tmp (200 MB budget) into a sibling directory, so citations stay REVIEWABLE without blowing the
+# size gate.  Resolving through this root is NOT a relaxation: the file must still exist on disk, and
+# archive resolutions are counted and printed separately ("by archive"), never silently.
+$arcRoot   = Join-Path (Split-Path $root -Parent) '_cs16-evidence'
 $logPath   = Join-Path $root '.ai-tmp\test\dispatch-log.tsv'
 $wsRoot    = Split-Path $root -Parent
 $cut24     = (Get-Date).AddHours(-24)
@@ -478,7 +483,7 @@ function Invoke-Checks {
       if ($assetNames.ContainsKey([string]$b)) { $exempt += $t } else { $pngs += $t }
     }
     $pngs = @($pngs | Sort-Object -Unique)
-    $byPathN = 0; $byBaseN = 0
+    $byPathN = 0; $byBaseN = 0; $byArcN = 0
     $missShot = @(); $hintShot = @()
     foreach ($p in $pngs) {
       $rel = ($p -replace '/', '\')
@@ -492,6 +497,7 @@ function Invoke-Checks {
         # match-anything lookup, so it only runs for plain file names.
         if ($bn -match '^[0-9A-Za-z_\.\-]+$') {
           $hitBn = @(Get-ChildItem $tmpRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue | Select-Object -First 1)
+          if ($hitBn.Count -eq 0 -and (Test-Path -LiteralPath $arcRoot)) { $hitArc = @(Get-ChildItem $arcRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue | Select-Object -First 1); if ($hitArc.Count -gt 0) { $byArcN++; $ok = $true } }
           if ($hitBn.Count -gt 0) { $byBaseN++; $ok = $true }
         }
       }
@@ -504,7 +510,7 @@ function Invoke-Checks {
       if ($vars.Count -gt 0) { $hintShot += ('shot: ' + $bn2 + '  HINT: a same-name copy exists under .ai-tmp/screenshots (' + ($vars -join ', ') + ') -- cite the copy that is meant') }
       else { $missShot += $p }
     }
-    $resNote = '; resolution = ' + $byPathN + ' by the cited path / ' + $byBaseN + ' by basename under .ai-tmp'
+    $resNote = '; resolution = ' + $byPathN + ' by the cited path / ' + $byBaseN + ' by basename under .ai-tmp / ' + $byArcN + ' by archive'
     $exNote = ''
     if ($exempt.Count -gt 0) {
       $exNote = '; ' + $exempt.Count + ' cited name(s) exempt as asset names registered in the entity list'

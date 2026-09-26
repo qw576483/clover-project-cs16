@@ -427,6 +427,51 @@ namespace Cs16.UI
         /// </summary>
         public static readonly Color StopwatchTint = new Color32(0xAF, 0xAF, 0x30, 0xFF);
 
+        // ═══════════════════════ 买枪区图标（对照表 U-30）═══════════════════════
+        //
+        // **原版买枪期提示是一张位图，不是文字**：`sprites/hud.txt:131`
+        //   `buyzone  640  640hud7  96  148  32  32`
+        // ⇒ 源矩形 = `640hud7.spr` 的 (96,148,32,32)；该 sprite 的调色板是 0..255 纯灰阶
+        // （与秒表/血量图标同一支加性遮罩，理由见 StopwatchTint 的注释）。
+        // 像素由 `tools/probes/spr-extract.py --rect 96,148,32,32` 解出，落到
+        // `Resources/UI/Art/hud_buyzone.png`（32×32 RGBA，编码 = RGB 白 + alpha 索引；
+        // 该编码器对既有 `stopwatch.png` 复现 576/576 像素逐点相同）。
+        // 屏幕落点**无载体**（原版写在 cl_dlls/client.dll 里，未反汇编；项目内带 HUD 的实机帧
+        // 都是交战期 / 旁观机位，画面里没有买枪期图标）⇒ 见 U-30 与验收表「允许的差异」。
+
+        /// <summary>买枪区图标绘制尺寸 = 原版 <c>hud.txt:131</c> 的 640 档源矩形 <b>32×32</b>（1:1 绘制）。</summary>
+        public const float BuyZoneIconSizePx = 32f;
+
+        // ═══════════════════════ 底部左侧 `Time Left: … min. Next Map: …` 行 ═══════════════════════
+        //
+        // 出处 = `原版资源/参照物/hud/hud_ingame_1024x768.jpg`（1024×768 实机帧）逐像素实测
+        // （金色墨迹掩膜 = 原版 HUD 文字色 (255,176,0)±45）：
+        //   `Time Left: 4:15 min. Next Map: de_dust2`  ink bbox = x[11..304] y[602..613]（ink 高 12）
+        //   视口 = y[8..741]（上下黑边 y[0..7] / y[742..767]）⇒ 视口 1024×734
+        // 该帧与项目内 31 张 1920×1080 载体的 HUD **不是同一尺度**（同族问题见 F-01 一节），
+        // 所以这里只用**同图内的无量纲比例**换算，不把它的绝对像素当 1080p 真值：
+        //   左缘 11 / 1024 = 1.074%  ⇒ 1920 × 1.074%  = 20.6 ≈ **21**
+        //   下缘 (741 − 613) = 128 / 734 = 17.44% ⇒ 1080 × 17.44% = 188.2 ≈ **188**
+        // 文字格式逐字取自同一帧：`"Time Left: "` + `M:SS` + `" min. Next Map: "` + 地图名。
+
+        /// <summary>底部左侧 `Time Left: …` 行的左缘距屏幕左边的距离（px）= 1920 × 11/1024 ≈ 21。</summary>
+        public const float TimeLeftInsetPx = 21f;
+
+        /// <summary>该行下缘距屏幕底边的距离（px）= 1080 × 128/734 ≈ 188。</summary>
+        public const float TimeLeftBottomInsetPx = 188f;
+
+        /// <summary>该行文本框高（与右上角比分同一口径的 ink 高，文本垂直居中）。</summary>
+        public const float TimeLeftBoxHeightPx = ScoreLineHeightPx;
+
+        /// <summary>文本框宽（仅作容器，文本左对齐 ⇒ 宽度不影响落点）。</summary>
+        public const float TimeLeftBoxWidthPx = 420f;
+
+        /// <summary>该行的固定前缀（原版逐字 <c>"Time Left: "</c>）。</summary>
+        public const string TimeLeftLabelPrefix = "Time Left: ";
+
+        /// <summary>地图名之前的固定中缀（原版逐字 <c>" min. Next Map: "</c>）。</summary>
+        public const string TimeLeftNextMapInfix = " min. Next Map: ";
+
         // ═══════════════════════ 文本 ═══════════════════════
 
         /// <summary>带黑色投影的 HUD 文本（压在 3D 画面上，没有投影会在亮场景里糊掉）。</summary>
@@ -598,6 +643,12 @@ namespace Cs16.UI
             var total = Mathf.Max(0, Mathf.RoundToInt(seconds));
             return $"{total / 60}:{total % 60:00}";
         }
+
+        /// <summary>
+        /// 底部左侧 `Time Left: …` 行的整串文本（格式逐字见上面那一节：`Time Left: M:SS min. Next Map: 地图名`）。
+        /// </summary>
+        public static string TimeLeftText(float seconds, string mapName) =>
+            TimeLeftLabelPrefix + FormatClock(seconds) + TimeLeftNextMapInfix + mapName;
 
         /// <summary>血量取色（规格 H1：&lt;25 红）。</summary>
         public static Color HealthColor(int health)

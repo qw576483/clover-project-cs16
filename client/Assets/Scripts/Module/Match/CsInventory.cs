@@ -22,6 +22,19 @@ namespace Cs16.Module.Match
     {
         public Vector3 Position;
         public float TimeLeft;
+        /// <summary>已存在时长（秒）——决定当前遮挡半径：<c>Age / CsMatchConst.SmokeGrowSeconds</c> 线性长到满。</summary>
+        public float Age;
+
+        /// <summary>当前遮挡半径：从 0 线性长到 <see cref="CsMatchConst.SmokeBlockRadius"/>。</summary>
+        public float Radius
+        {
+            get
+            {
+                var grow = CsMatchConst.SmokeGrowSeconds;
+                var t = grow <= 0f ? 1f : Mathf.Clamp01(Age / grow);
+                return CsMatchConst.SmokeBlockRadius * t;
+            }
+        }
     }
 
     /// <summary>
@@ -56,7 +69,14 @@ namespace Cs16.Module.Match
         // ==================================================================
         //  速度
         // ==================================================================
-        /// <summary>按当前手持武器给移动速度（官方 CS1.6 的 Knife/Pistol/Rifle/AWP 四档）。</summary>
+        /// <summary>
+        /// 按当前手持武器给移动速度（m/s）。逐武器的值一律取 <see cref="CsWeaponDef.MaxSpeed"/>；
+        /// 该类在原版**未覆盖** <c>GetMaxSpeed</c> 时（刀 / 手雷 / C4 / 装备）退回
+        /// <see cref="CsConst.SpeedDefault"/>。
+        ///
+        /// <para>出处 = 原版 <c>mp.dll</c> 各武器类 <c>GetMaxSpeed</c>（vftable 槽 78）的返回值，
+        /// 逐类的取值函数 VA / vtable 起点见 <c>策划/手感参数对照.md</c> §5.4。</para>
+        /// </summary>
         public static float MovementSpeed(CsActor a)
         {
             var def = a.ActiveDef;
@@ -64,7 +84,11 @@ namespace Cs16.Module.Match
             float speed;
             if (def == null)
             {
-                speed = CsConst.SpeedPistol;
+                speed = CsConst.SpeedDefault;
+            }
+            else if (def.MaxSpeed > 0f)
+            {
+                speed = def.MaxSpeed;
             }
             else
             {
@@ -73,26 +97,15 @@ namespace Cs16.Module.Match
                     case CsWeaponClass.Knife:
                     case CsWeaponClass.Grenade:
                     case CsWeaponClass.Bomb:
-                        speed = CsConst.SpeedKnife;
-                        break;
                     case CsWeaponClass.Pistol:
                     case CsWeaponClass.Equipment:
-                        speed = CsConst.SpeedPistol;
-                        break;
-                    case CsWeaponClass.Sniper:
-                        // AWP 最慢；Scout/连狙按步枪档（CsConst 只给了 SpeedAWP 这一档）。
-                        speed = def.Id == CsWeapons.Awp ? CsConst.SpeedAWP : CsConst.SpeedRifle;
-                        break;
-                    case CsWeaponClass.SMG:
-                    case CsWeaponClass.Rifle:
-                    case CsWeaponClass.Shotgun:
-                    case CsWeaponClass.MachineGun:
-                        speed = CsConst.SpeedRifle;
+                        // 原版这几类没有自己的 GetMaxSpeed，走基类默认 250 unit/s。
+                        speed = CsConst.SpeedDefault;
                         break;
                     default:
                         // 本方法是 static（CsMatch 也直接调用它），故不经过 _m 的降频器。
-                        Game.Logger.Warn(Tag, $"未知武器大类 {def.Class}，移动速度按步枪档处理");
-                        speed = CsConst.SpeedRifle;
+                        Game.Logger.Warn(Tag, $"{def.Id}（大类 {def.Class}）没有 MaxSpeed 出处，移动速度按默认档处理");
+                        speed = CsConst.SpeedDefault;
                         break;
                 }
             }
@@ -102,6 +115,17 @@ namespace Cs16.Module.Match
 
             return speed;
         }
+
+        /// <summary>
+        /// 移动散布 / 视点晃动的**满幅基准速度**（m/s）= 当前手持武器的最大移动速度
+        /// （<see cref="CsWeaponDef.MaxSpeed"/>；该武器没有出处时退 <see cref="CsConst.SpeedDefault"/>）。
+        ///
+        /// <para><b>为什么不能用一个固定常量当基准</b>：武器档速度是逐武器不同的（原版 210~260 unit/s）。
+        /// 固定基准会让所有比它快的武器归一化后都饱和到 100%（走路的 AK 和走路的刀一样抖），
+        /// 移动散布就失去区分度；原版这两个量本来就是速度驱动的线性量。</para>
+        /// </summary>
+        public static float MoveReferenceSpeed(CsWeaponDef def)
+            => def != null && def.MaxSpeed > 0f ? def.MaxSpeed : CsConst.SpeedDefault;
 
         public static float SwitchTimeFor(CsWeaponDef def)
         {
@@ -134,6 +158,7 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
+            a.RecoilDir = 1;
             a.BurstShotsLeft = 0;
             a.NextBurstShotTime = 0f;
         }
@@ -252,6 +277,36 @@ namespace Cs16.Module.Match
                     _m.RateWarn("buy.slot.unknown", $"{def.DisplayName} 没有可装备的槽位（{a.Name}）");
                     break;
             }
+        }
+
+        /// <summary>
+        /// 买弹药落地：给已持有的 <paramref name="weaponId"/> 备用弹匣加上 <paramref name="box"/> 发，
+        /// 上限 = <see cref="CsWeaponDef.ReserveAmmo"/>（原版 <c>BuyAmmo</c> 的"已满就不卖"口径）。
+        /// 价格已由调用方（<c>CsMatch.TryBuyAmmoFor</c>）扣掉。
+        /// </summary>
+        /// <returns>实际加进去的发数（0 = 已经满了 / 武器不认得）。</returns>
+        public int GivePurchasedAmmo(CsActor a, string weaponId, int box)
+        {
+            if (a == null || string.IsNullOrEmpty(weaponId) || box <= 0) return 0;
+
+            var def = CsWeapons.Get(weaponId);
+            if (def == null)
+            {
+                _m.RateWarn("buyammo.nodef." + weaponId, $"{a.Name} 买弹药时武器表里没有 {weaponId}");
+                return 0;
+            }
+            if (def.ReserveAmmo <= 0)
+            {
+                _m.RateWarn("buyammo.nocap." + weaponId, $"{def.DisplayName} 没有备弹上限的定义，买弹药被忽略");
+                return 0;
+            }
+
+            var ammo = a.GetAmmo(weaponId);
+            var add = Mathf.Min(box, def.ReserveAmmo - ammo.reserve);
+            if (add <= 0) return 0;
+
+            a.SetAmmo(weaponId, ammo.inMag, ammo.reserve + add);
+            return add;
         }
 
         public void DropWeapon(CsActor a, string weaponId)
@@ -439,6 +494,7 @@ namespace Cs16.Module.Match
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
+            a.RecoilDir = 1;             // 换了一把枪 ⇒ 水平方向位从 +1 起（原版方向位是**每把枪**的成员）
             a.BurstShotsLeft = 0;        // 切枪打断连发：余下待发作废
             a.NextBurstShotTime = 0f;
 
@@ -488,7 +544,7 @@ namespace Cs16.Module.Match
             }
             if (ammo.reserve <= 0)
             {
-                Game.Logger.Warn(Tag, $"{a.Name} 换弹失败：{def.DisplayName} 备弹为 0");
+                _m.RateWarn("reload.noreserve." + def.Id, $"{a.Name} 换弹失败：{def.DisplayName} 备弹为 0");
                 return;
             }
 
@@ -653,11 +709,8 @@ namespace Cs16.Module.Match
             }
 
             a.ConsecutiveShots++;
-            a.RecoilPitch += def.RecoilVert;
-            // 后坐力水平偏移：**玩法**（逐发累积进 a.RecoilYaw，决定后续弹道往哪偏）。
-            // 独立一路 RecoilYaw —— 不与散布流共用：散布每发抽 2 次（yaw/pitch），
-            // 后坐力每发抽 1 次，混在一起会让"改散布"悄悄改掉后坐力序列。
-            a.RecoilYaw += CsRng.Stream(CsRngStream.RecoilYaw).Range(-def.RecoilHoriz, def.RecoilHoriz);
+            // 后坐力：逐发累加 + 按上限夹住 + 水平方向位翻转（原版 KickBack 的机制形状，解算见 CsRecoil）。
+            AccumulateRecoil(a, def);
 
             weaponId = def.Id;
             _m.RecordShotFired(def.Id);
@@ -737,8 +790,7 @@ namespace Cs16.Module.Match
             a.BurstShotsLeft--;
             a.BurstAutoShots++;
             a.ConsecutiveShots++;
-            a.RecoilPitch += def.RecoilVert;
-            a.RecoilYaw += CsRng.Stream(CsRngStream.RecoilYaw).Range(-def.RecoilHoriz, def.RecoilHoriz);
+            AccumulateRecoil(a, def);
             a.NextBurstShotTime = a.BurstShotsLeft > 0 ? now + CsWeapons.BurstIntervalFor(def, shotIndex) : 0f;
 
             weaponId = def.Id;
@@ -747,6 +799,22 @@ namespace Cs16.Module.Match
                 $"{a.Name} 的 {def.DisplayName} 连发第 {shotIndex}/{def.BurstShots} 发（余 {a.BurstShotsLeft} 发，" +
                 $"下一发 {(a.BurstShotsLeft > 0 ? CsWeapons.BurstIntervalFor(def, shotIndex).ToString("F2") + "s 后" : "无")}）");
             return true;
+        }
+
+        /// <summary>
+        /// 本发累计后坐力。首发（<see cref="TryDischarge"/>）与连发续发（<see cref="TickBurst"/>）**共用**这一个入口 ——
+        /// 累加规则在 <see cref="CsRecoil"/>，这里只负责取随机数与写回。
+        ///
+        /// <para>随机数走独立一路 <c>CsRngStream.RecoilYaw</c>：不与散布流共用，否则"改散布"会悄悄改掉后坐力序列。</para>
+        /// </summary>
+        private void AccumulateRecoil(CsActor a, CsWeaponDef def)
+        {
+            var rng = CsRng.Stream(CsRngStream.RecoilYaw);
+            var st = new CsRecoilState { Pitch = a.RecoilPitch, Yaw = a.RecoilYaw, Direction = a.RecoilDir };
+            st = CsRecoil.Apply(st, def, a.ConsecutiveShots, rng.Range(0f, 1f), rng.Range(-1f, 1f));
+            a.RecoilPitch = st.Pitch;
+            a.RecoilYaw = st.Yaw;
+            a.RecoilDir = st.Direction;
         }
 
         private void FireKnife(CsActor a, CsWeaponDef def)
@@ -906,10 +974,69 @@ namespace Cs16.Module.Match
                 }
             }
 
+            ResolveProjectileCollisions();
+
             for (var i = _smokes.Count - 1; i >= 0; i--)
             {
                 _smokes[i].TimeLeft -= dt;
+                _smokes[i].Age += dt;
                 if (_smokes[i].TimeLeft <= 0f) _smokes.RemoveAt(i);
+            }
+        }
+
+        /// <summary>
+        /// 投掷物之间互撞：两颗雷的球心距小于 <c>2 * CsMatchConst.GrenadeCollisionRadius</c> 时沿球心连线
+        /// 各推开一半、并交换**法向**速度分量（切向不动）。
+        ///
+        /// <para>弹性系数与质量**未取证**（原版手雷是 <c>MOVETYPE_BOUNCE</c> 实体、互撞在 <c>mp.dll</c> 里，
+        /// 载体不在盘）⇒ 取最小行为：等质量、完全弹性的法向分量交换。切开看就是"互推 + 反弹"，
+        /// 不做能量损失、不加自旋。</para>
+        /// </summary>
+        private void ResolveProjectileCollisions()
+        {
+            if (_grenades.Count < 2) return;
+
+            var contact = CsMatchConst.GrenadeCollisionRadius * 2f;
+
+            for (var i = 0; i < _grenades.Count - 1; i++)
+            {
+                var a = _grenades[i];
+                for (var j = i + 1; j < _grenades.Count; j++)
+                {
+                    var b = _grenades[j];
+
+                    var delta = b.Position - a.Position;
+                    var dist = delta.magnitude;
+                    if (dist >= contact) continue;
+
+                    Vector3 n;
+                    if (dist > 0.0001f)
+                    {
+                        n = delta / dist;
+                    }
+                    else
+                    {
+                        // 球心完全重合（同一帧从同一眼位投出）：退化为沿相对速度方向分开；
+                        // 相对速度也为零时取世界 X 轴，保证 n 是单位向量。
+                        var rel = b.Velocity - a.Velocity;
+                        n = rel.sqrMagnitude > 0.000001f ? rel.normalized : Vector3.right;
+                    }
+
+                    var push = (contact - dist) * 0.5f;
+                    a.Position -= n * push;
+                    b.Position += n * push;
+
+                    var va = Vector3.Dot(a.Velocity, n);
+                    var vb = Vector3.Dot(b.Velocity, n);
+                    if (vb - va >= 0f) continue;   // 沿法向正在分离，速度不用改
+
+                    a.Velocity += n * (vb - va);
+                    b.Velocity += n * (va - vb);
+
+                    _m.RateInfo("nade.hit.nade",
+                        $"投掷物互撞（nade-hit-nade）：{a.WeaponId} 与 {b.WeaponId} " +
+                        $"交换法向速度分量（球心距 {dist:F3}m）");
+                }
             }
         }
 
@@ -944,7 +1071,9 @@ namespace Cs16.Module.Match
                         Position = g.Position,
                         TimeLeft = CsConst.GrenadeSmokeDuration,
                     });
-                    Game.Logger.Info(Tag, $"烟雾弹起雾于 {g.Position}（持续 {CsConst.GrenadeSmokeDuration:F1}s）");
+                    Game.Logger.Info(Tag,
+                        $"烟雾弹起雾于 {g.Position}（持续 {CsConst.GrenadeSmokeDuration:F1}s，" +
+                        $"遮挡半径在 {CsMatchConst.SmokeGrowSeconds:F1}s 内长到 {CsMatchConst.SmokeBlockRadius:F1}m）");
                     break;
                 default:
                     _m.RateWarn("nade.unknown." + def.Id, $"未知手雷类型 {def.Id}，无爆炸效果");
@@ -961,14 +1090,17 @@ namespace Cs16.Module.Match
             var len = d.magnitude;
             if (len <= Mathf.Epsilon) return false;
             var dir = d / len;
-            var r2 = CsMatchConst.SmokeBlockRadius * CsMatchConst.SmokeBlockRadius;
 
             for (var i = 0; i < _smokes.Count; i++)
             {
+                // 用**当前**半径（刚爆开的烟球还很小，遮挡范围随 Age 长起来）。
+                var r = _smokes[i].Radius;
+                if (r <= 0f) continue;
+
                 var oc = _smokes[i].Position - from;
                 var t = Mathf.Clamp(Vector3.Dot(oc, dir), 0f, len);
                 var closest = from + dir * t;
-                if ((closest - _smokes[i].Position).sqrMagnitude <= r2) return true;
+                if ((closest - _smokes[i].Position).sqrMagnitude <= r * r) return true;
             }
             return false;
         }

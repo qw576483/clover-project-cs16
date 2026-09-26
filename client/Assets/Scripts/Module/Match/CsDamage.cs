@@ -11,7 +11,8 @@ namespace Cs16.Module.Match
     ///
     /// <para>公式：<c>base = CsWeapons.BaseDamage(def, 消音, 连发)</c>（差异 #68：USP 34/30、M4A1 32/33、
     /// FAMAS 30/34）→ × 部位倍率 → × 距离衰减
-    /// <c>(1 - def.FalloffPerMeter * dist)</c> → × 穿墙保留 → 护甲吸收
+    /// <c>pow(rangeModifier, dist_in_units / 弹种分母)</c>（<see cref="CsWeapons.DistanceFalloff"/>）
+    /// → × 穿墙保留 → 护甲吸收
     /// <c>(1 - ArmorAbsorbRatio * (1 - def.ArmorPenetration))</c>，护甲损耗 <c>damage * ArmorDamageRatio</c>。
     /// 头盔只减免头部。</para>
     ///
@@ -78,9 +79,9 @@ namespace Cs16.Module.Match
             var dmg = CsWeapons.BaseDamage(def, shooter != null && shooter.Silenced,
                 shooter != null && shooter.BurstMode) * HitboxMultiplier(box);
 
-            var falloff = 1f - def.FalloffPerMeter * Mathf.Max(0f, dist);
-            if (falloff < 0f) falloff = 0f;
-            dmg *= falloff;
+            // 距离衰减 = 原版 pow(rangeModifier, dist_in_units / 弹种分母)；
+            // 弹种 / 射程修正未取到的武器回落到旧的线性衰减（见 CsWeapons.DistanceFalloff）。
+            dmg *= CsWeapons.DistanceFalloff(def, shooter != null && shooter.Silenced, dist);
 
             ApplyDamage(shooter, victim, def, box, dmg, throughWall);
         }
@@ -100,9 +101,13 @@ namespace Cs16.Module.Match
             }
         }
 
-        /// <summary>统一的伤害落地：队友伤害判定 → 穿墙衰减 → 护甲吸收 → 扣血 → 事件 → 致死结算。</summary>
+        /// <summary>
+        /// 统一的伤害落地：队友伤害判定 → 穿墙衰减 → 护甲吸收 → 扣血 → 事件 → 致死结算。
+        /// <paramref name="ignoreArmor"/> = true ⇒ 跳过护甲这一层（坠落伤害专用，见
+        /// <see cref="ApplyFallDamage"/>）。
+        /// </summary>
         private void ApplyDamage(CsActor attacker, CsActor victim, CsWeaponDef def, CsHitbox box,
-            float rawDamage, bool throughWall)
+            float rawDamage, bool throughWall, bool ignoreArmor = false)
         {
             if (victim == null || !victim.IsAlive) return;
             if (rawDamage <= 0f) return;
@@ -125,7 +130,8 @@ namespace Cs16.Module.Match
             var armorPen = def != null ? def.ArmorPenetration : 0f;
 
             // 头盔只减免头部：头部命中且无头盔时护甲不生效。
-            var armorApplies = victim.Armor > 0 && (box != CsHitbox.Head || victim.HasHelmet);
+            var armorApplies = !ignoreArmor && victim.Armor > 0 &&
+                               (box != CsHitbox.Head || victim.HasHelmet);
             var armorLoss = 0;
             if (armorApplies)
             {
@@ -149,6 +155,18 @@ namespace Cs16.Module.Match
             RecordDamage(attacker, victim, final);
             WriteLocalDamageIndicator(attacker, victim);
 
+            // 自己被打中的受击音：有甲走 bhit_kevlar、无甲走 bhit_flesh（原版两条采样，
+            // 短名与出处见 CsAudioTuning.HitFlesh / HitKevlar）。
+            // 只在**本地玩家**受击时放 —— 这是"我挨了这一枪"的听感；别人的受击由脚步声 / 死亡声那条路给。
+            // def == null 是坠落这类环境伤害（没有受击音）。
+            if (victim == _m.Local && def != null)
+            {
+                var clip = armorApplies ? CsAudioTuning.HitKevlar : CsAudioTuning.HitFlesh;
+                _sfx.Play(clip);
+                _m.RateInfo("sfx.hitme",
+                    $"本地玩家受击音 {clip}（护甲生效={armorApplies}，伤害 {final}，剩余 HP {Mathf.Max(0, victim.Health)}）");
+            }
+
             _m.RateInfo($"damage.hit.{box}",
                 $"{NameOf(attacker)} → {victim.Name} [{(def != null ? def.Id : "world")}/{box}] " +
                 $"伤害 {final}（原始 {rawDamage:F1}，穿墙={throughWall}，护甲损耗 {armorLoss}，" +
@@ -157,6 +175,41 @@ namespace Cs16.Module.Match
             _m.RaiseDamaged(victim, final, headshot, lethal);
 
             if (lethal) Kill(attacker, victim, def, headshot);
+        }
+
+        // ==================================================================
+        //  坠落落地（原版 DMG_FALL）
+        // ==================================================================
+        /// <summary>
+        /// 落地伤害。原版口径（出处 <c>原版资源/hlsdk/pm_shared/pm_shared.c:124-126</c>）：
+        /// <c>伤害 = (落地瞬间的下坠速率 − 580 unit/s) × 100/(1024 − 580)</c> —— 速率不高于安全速
+        /// 无伤，达到致死速时公式恰好给出 100 点（满血即死）。速率按米制换算与公式见
+        /// <see cref="CsFallDamage.DamageFor"/>。
+        ///
+        /// <para>走 <see cref="ApplyDamage"/> 这条统一通路（扣血 / 事件 / 致死结算 / 记分全在那一处），
+        /// 但 <c>ignoreArmor: true</c>、命中部位取 <see cref="CsHitbox.Generic"/>：<b>护甲不吸收坠落伤害</b>。</para>
+        ///
+        /// <para>⚠️ <b>「护甲不吸收坠落伤害」这一条没有 file:line，是按口径实现的</b>：承载它的原版
+        /// <c>dlls/player.cpp</c> 不在盘（<c>原版资源/hlsdk/</c> 下只有 <c>pm_shared/pm_shared.c</c>、
+        /// <c>dlls/weapons.cpp</c> 与 <c>cl_dll/*</c>），<c>mp.dll</c> 里对应分支也尚未定位。
+        /// 有原版出处可引的只有阈值与系数那一段（<c>原版资源/hlsdk/pm_shared/pm_shared.c:124-126</c>）。</para>
+        ///
+        /// <para>调用点只有一处 —— <c>CsMatch.StepActorPhysics</c> 的落地边沿（<c>OnGround</c> 由假变真
+        /// 的那一帧），所以同一次下坠只结算一次。</para>
+        /// </summary>
+        public void ApplyFallDamage(CsActor victim, float impactFallSpeed)
+        {
+            if (victim == null || !victim.IsAlive) return;
+
+            var dmg = Mathf.RoundToInt(CsFallDamage.DamageFor(impactFallSpeed));
+            if (dmg <= 0) return;
+
+            _m.RateInfo("fall.damage",
+                $"{victim.Name} 落地：下坠速率 {impactFallSpeed:F2} m/s" +
+                $"（原版 {impactFallSpeed / CsConst.UnitToMeter:F0} unit/s）" +
+                $"⇒ 坠落伤害 {dmg}（安全速 {CsConst.FallSafeSpeed:F2} / 致死速 {CsConst.FallFatalSpeed:F2} m/s）");
+
+            ApplyDamage(null, victim, null, CsHitbox.Generic, dmg, false, ignoreArmor: true);
         }
 
         private static string NameOf(CsActor a)
@@ -270,6 +323,11 @@ namespace Cs16.Module.Match
         public void ApplyHeExplosion(Vector3 center, CsActor owner, CsTeam ownerTeam)
         {
             _explosionHit.Clear();
+
+            // 挂在"手雷确实炸了"这一处（<c>CsInventory</c> 的 HE 分支调用本函数），与"有没有伤到人"无关：
+            // 原版爆炸音对附近所有人响，命中 0 个碰撞体时也响。
+            _sfx.PlayAt(CsAudioTuning.GrenadeExplode, center);
+            _m.RateInfo("sfx.grenade_explode", $"手雷爆炸音 grenade_explode @ {center}");
 
             var radius = CsConst.GrenadeHeRadius;
             var count = Physics.OverlapSphereNonAlloc(center, radius, _overlap, ~0, QueryTriggerInteraction.Ignore);

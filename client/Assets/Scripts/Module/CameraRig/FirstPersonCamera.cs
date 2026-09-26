@@ -419,8 +419,11 @@ namespace Cs16.Module.CameraRig
 
             // ---- 喂 rig ③：开镜 FOV（水平口径；垂直换算与平滑在引擎里）----
             var zoomed = _match.IsZoomed;
+            var scopeLevel = zoomed ? _match.ScopeLevel : 0;
             _zoomHeldTime = zoomed ? _zoomHeldTime + dt : 0f;
-            _rig.FovX = zoomed ? CsConst.ZoomFov : _baseFov;
+            // 逐档 FOV：第 1 档 40°，第 2 档 AWP 10° / 其余（Scout·SG550·G3SG1）15°
+            // （出处 策划/手感参数对照.md §5.2，取值走 CsConst.ScopeFovFor）。
+            _rig.FovX = zoomed ? CsConst.ScopeFovFor(target.ActiveDef, scopeLevel) : _baseFov;
 
             // ---- 喂 rig ④：视点晃动（引擎件 ViewBob 的输出缝）----
             var speedXZ = new Vector2(target.Velocity.x, target.Velocity.z).magnitude;

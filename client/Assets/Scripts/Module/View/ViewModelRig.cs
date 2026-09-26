@@ -155,10 +155,14 @@ namespace Cs16.Module.View
                 return;
             }
 
-            if (match.IsSpectating || !local.IsAlive)
+            if (match.IsSpectating || !local.IsAlive || match.IsZoomed)
             {
-                // 观战 / 死亡：把枪收起来（CS 里观战没有第一人称武器）
-                DiagReload(match, local, $"闸门C IsSpectating={match.IsSpectating} IsAlive={local.IsAlive}");
+                // 观战 / 死亡：把枪收起来（CS 里观战没有第一人称武器）。
+                // 开镜（狙击枪）：原版开镜后**根本不画视模型** —— 画面里只有镜筒遮罩与十字线
+                //（出处：原版开镜实机原图 原版资源/参照物/viewmodel/viewmodel_awp_scoped.png，
+                // 画面内没有任何枪身）⇒ 这里同样收起，遮罩另由 UI/InGame/CsScopeOverlayWidget 画。
+                DiagReload(match, local,
+                    $"闸门C IsSpectating={match.IsSpectating} IsAlive={local.IsAlive} IsZoomed={match.IsZoomed}");
                 SetModelVisible(false);
                 ResetSnapshot(local);
                 return;
@@ -168,6 +172,7 @@ namespace Cs16.Module.View
             SyncModel(local);
             DiagReload(match, local, "运行");
             UpdateAnim(local);
+            ApplyBob(local);
             ProbeReloadAnim();
             SettleReload();
         }
@@ -775,6 +780,69 @@ namespace Cs16.Module.View
             _modelRoot.localPosition = CsViewTuning.ViewModelLocalPosition;
             _modelRoot.localRotation = Quaternion.Euler(CsViewTuning.ViewModelLocalEuler);
             _modelRoot.localScale = Vector3.one;
+        }
+
+        // ==================================================================
+        //  走动摆动（原版 V_CalcBob + 视模型自己的那几项）
+        // ==================================================================
+        /// <summary>一个 bob 周期的时长（秒）。出处：原版 cvar <c>cl_bobcycle</c> 默认 <c>"0.8"</c>
+        /// （<c>原版资源/hlsdk/cl_dll/view.cpp:1686</c>）。</summary>
+        private const float BobCycle = 0.8f;
+
+        /// <summary>速度驱动系数（unit/s → unit）。出处：原版 cvar <c>cl_bob</c> 默认 <c>"0.01"</c>
+        /// （<c>view.cpp:1687</c>）。</summary>
+        private const float BobAmount = 0.01f;
+
+        /// <summary>周期前段占比（前半段映射到 0→π）。出处：原版 cvar <c>cl_bobup</c> 默认 <c>"0.5"</c>
+        /// （<c>view.cpp:1688</c>）。</summary>
+        private const float BobUp = 0.5f;
+
+        /// <summary>bob 的下限（unit）。出处：<c>V_CalcBob</c> 的 <c>bob = max(bob, -7)</c>（<c>view.cpp:217</c>）。</summary>
+        private const float BobMin = -7f;
+
+        /// <summary>bob 的上限（unit）。出处：<c>V_CalcBob</c> 的 <c>bob = min(bob, 4)</c>（<c>view.cpp:216</c>）。</summary>
+        private const float BobMax = 4f;
+
+        /// <summary>已累计的 bob 时钟（秒）——原版是 <c>static bobtime</c> + 逐帧 <c>+= frametime</c>（<c>view.cpp:196</c>）。</summary>
+        private float _bobTime;
+
+        /// <summary>
+        /// 把<b>视模型自己</b>的走动摆动写进模型根变换。原版这一段与相机的 bob 是**同一个 bob 值**：
+        /// <c>view->origin[i] += bob*0.4*forward[i]</c>、<c>view->angles[YAW] -= bob*0.5</c>、
+        /// <c>[ROLL] -= bob*1</c>、<c>[PITCH] -= bob*0.3</c>（<c>原版资源/hlsdk/cl_dll/view.cpp:648-663</c>），
+        /// bob 本体 = 速度驱动的 <c>V_CalcBob</c>（<c>view.cpp:178-220</c>：<c>bob = |simvel.xy|·cl_bob</c>，
+        /// 再 <c>bob·0.3 + bob·0.7·sin(cycle)</c>，clamp 到 [−7,+4] unit）。
+        ///
+        /// <para><b>为什么竖直那一项不写</b>：原版同时给<b>相机</b>和视模型各加一次 <c>+bob</c>
+        /// （<c>view.cpp:526</c> 与 <c>:659</c>）⇒ 相对相机为 0；本工程的相机 bob 是另一套自定曲线
+        /// （已按 <c>策划/差异登记.tsv</c> 登记），这里只落"相对相机"的那部分，不叠加第二份竖直位移。</para>
+        ///
+        /// <para><b>符号口径</b>：<c>view.cpp:371-372</c> 只把**俯仰**写成实体角
+        /// （<c>viewent-&gt;angles[PITCH] = -viewangles[PITCH]</c>）而偏航是同号
+        /// （<c>= +viewangles[YAW]</c>）⇒ 相对相机的俯仰增量要取反、偏航同号；
+        /// 横滚在 GoldSrc 实体角里正方向 = 顶端向左倾，与 Unity 的 <c>euler.z</c> 正方向一致 ⇒ 直接取负。</para>
+        /// </summary>
+        private void ApplyBob(CsActor local)
+        {
+            if (_modelRoot == null || local == null) return;
+
+            _bobTime += Time.deltaTime;
+            var cycle = _bobTime - Mathf.Floor(_bobTime / BobCycle) * BobCycle;
+            cycle /= BobCycle;
+            cycle = cycle < BobUp
+                ? Mathf.PI * cycle / BobUp
+                : Mathf.PI + Mathf.PI * (cycle - BobUp) / (1f - BobUp);
+
+            var v = local.Velocity;
+            var speedUnits = new Vector2(v.x, v.z).magnitude / CsConst.UnitToMeter;
+            var bob = speedUnits * BobAmount;
+            bob = bob * 0.3f + bob * 0.7f * Mathf.Sin(cycle);
+            bob = Mathf.Clamp(bob, BobMin, BobMax);
+
+            _modelRoot.localPosition =
+                CsViewTuning.ViewModelLocalPosition + Vector3.forward * (bob * 0.4f * CsConst.UnitToMeter);
+            _modelRoot.localRotation =
+                Quaternion.Euler(bob * 0.3f, bob * 0.5f, -bob);
         }
     }
 }

@@ -26,6 +26,9 @@ namespace Cs16.Module.Match
         public bool IsWalking;          // Shift 慢走（无脚步声）
         public float Height => IsCrouching ? CsConst.CrouchHeight : CsConst.StandHeight;
         public Vector3 EyePosition => Position + new Vector3(0f, EyeHeight, 0f);
+
+        /// <summary>眼位高（米）：站姿取 <c>CsConst.EyeHeight</c>（1.62 = 原版 64 unit），
+        /// 蹲姿取既有比例 <c>0.72</c>（**本项目既有值，原版蹲姿眼位的出处未取到** ⇒ 不换算、不改）。</summary>
         public float EyeHeight => IsCrouching ? CsConst.EyeHeight * 0.72f : CsConst.EyeHeight;
 
         // ---- 生存 ----
@@ -101,6 +104,9 @@ namespace Cs16.Module.Match
         public int ConsecutiveShots;    // 连发计数（后坐力累积）
         public float RecoilPitch;       // 当前后坐力抬升（度）
         public float RecoilYaw;
+
+        /// <summary>后坐力水平偏移当前往哪一侧累加（原版 <c>m_iDirection</c>）：+1 / -1。</summary>
+        public int RecoilDir = 1;
         public float FlashEndTime;      // 被闪光弹致盲的结束时间
         public float UseProgress;       // 下包/拆包进度 0~1
 

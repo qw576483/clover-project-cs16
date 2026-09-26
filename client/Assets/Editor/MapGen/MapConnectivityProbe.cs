@@ -173,6 +173,16 @@ namespace Cs16.EditorTools
 
             bool[] sceneBlocked = RasterizeBlockersFromScene(scene, geo);
 
+            // 产物位图在烘焙后被 Dust2WalkSeal 收敛成**单一连通分量**（封非主分量 + 开门格）。
+            // 逐格比对必须用**同一份变换**，否则比的是两个不同的口径（会报出上千格"不一致"）。
+            var sceneWalkable = new bool[geo.Width * geo.Depth];
+            for (int i = 0; i < sceneWalkable.Length; i++) sceneWalkable[i] = !sceneBlocked[i];
+            sceneWalkable = Dust2WalkSeal.Transform(sceneWalkable, geo.Width, geo.Depth,
+                                                    out int sealedCells, out int openedCells);
+            for (int i = 0; i < sceneWalkable.Length; i++) sceneBlocked[i] = !sceneWalkable[i];
+            Debug.Log($"{Tag} 位图后处理（单连通收敛）：封 {sealedCells} 格 / 开 {openedCells} 格 " +
+                      $"—— 与产物逐格比对用同一份变换（Dust2WalkSeal）");
+
             // ---------- ② 产物侧：读 .bytes ----------
             string clientPath = $"{Dust2Layout.ClientMapDir}/{CsConst.MapDust2}.bytes";
             string serverPath = $"{Dust2Layout.ServerMapDir}/{CsConst.MapDust2}.bytes";

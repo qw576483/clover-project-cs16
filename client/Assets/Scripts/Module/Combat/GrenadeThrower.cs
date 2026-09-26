@@ -31,6 +31,7 @@ namespace Cs16.Module.Combat
             public string WeaponId;
             public bool Landed;
             public float SmokeLeft;      // 烟雾弹：爆炸后残留烟雾的剩余时间
+            public float SmokeAge;       // 烟雾弹：爆开后已过的时长（决定当前半径）
             public GameObject Smoke;
         }
 
@@ -85,7 +86,20 @@ namespace Cs16.Module.Combat
                 if (f.SmokeLeft > 0f)
                 {
                     f.SmokeLeft -= dt;
-                    if (f.SmokeLeft <= 0f) DestroyFlight(f);
+                    f.SmokeAge += dt;
+
+                    // 与模拟的烟球同一半径、同一生长时长：直径 = 2 × SmokeRadius × 生长系数。
+                    if (f.Smoke != null)
+                    {
+                        f.Smoke.transform.localScale =
+                            Vector3.one * (2f * Match.CsMatchConst.SmokeRadius * SmokeGrow(f.SmokeAge));
+                    }
+
+                    if (f.SmokeLeft <= 0f)
+                    {
+                        DestroyFlight(f);
+                        _flights.RemoveAt(i);
+                    }
                     continue;
                 }
 
@@ -118,13 +132,10 @@ namespace Cs16.Module.Combat
 
                 if (f.WeaponId == CsWeapons.SmokeGrenade)
                 {
-                    // 烟雾弹：保留一团淡灰球（视觉），持续时间与模拟的烟雾体积一致。
-                    if (f.Go != null)
-                    {
-                        f.Go.transform.localScale = Vector3.one * (CsMatchSmokeRadius * 2f);
-                        f.Smoke = f.Go;
-                        f.Go = null;
-                    }
+                    // 烟雾弹：飞行体就地变成烟球（视觉），残留时长与模拟的烟雾体积一致。
+                    f.Smoke = f.Go;
+                    f.Go = null;
+                    f.SmokeAge = 0f;
                     f.SmokeLeft = CsConst.GrenadeSmokeDuration;
                     continue;
                 }
@@ -134,8 +145,12 @@ namespace Cs16.Module.Combat
             }
         }
 
-        /// <summary>与模拟的烟雾体积半径保持一致（<c>CsMatchConst.SmokeRadius</c> 是 internal，故本地重述）。</summary>
-        private const float CsMatchSmokeRadius = 3.5f;
+        /// <summary>烟雾球生长系数 0~1：<c>SmokeAge / CsMatchConst.SmokeGrowSeconds</c> 线性，与模拟同一条曲线。</summary>
+        private static float SmokeGrow(float smokeAge)
+        {
+            var grow = Match.CsMatchConst.SmokeGrowSeconds;
+            return grow <= 0f ? 1f : Mathf.Clamp01(smokeAge / grow);
+        }
 
         public void Dispose()
         {

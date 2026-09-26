@@ -91,6 +91,16 @@ namespace Cs16.Module.View
         /// <summary>站/蹲缩放平滑时间常数（秒）。</summary>
         public const float CrouchBlendTau = 0.08f;
 
+        /// <summary>
+        /// 逐帧脚底贴地对齐量的上限（米）。超过它说明包围盒或姿态异常（例如最低点根本不是脚），
+        /// 宁可按上限对齐也不把整具模型拉飞。
+        ///
+        /// <para>量级参照：本工程角色模型 <c>idle1 / walk / crouch_idle</c> 各自需要的对齐量实测都在
+        /// <b>±0.04 m</b> 内（行走途中双脚同时离地最大约 3.5 cm、蹲静止悬空约 1.1 cm）；原版这些姿态的
+        /// 脚底校正由引擎按骨骼做，其数值载体不在盘 ⇒ 本上限是**本项目新增**的防御性封顶值。</para>
+        /// </summary>
+        public const float FootAlignLimit = 0.12f;
+
         /// <summary>一次位置跳变超过它（米）就直接吸附，不做插值（出生 / 复活 / 传送）。</summary>
         public const float TeleportSnapDistance = 2.5f;
 
@@ -169,13 +179,16 @@ namespace Cs16.Module.View
         /// GoldSrc 也把原点直接放在相机原点 ⇒ x/z 不加偏移。不许自己编 x/z。</para>
         ///
         /// <para><b>原版那段 <c>viewsize</c> 补偿不用管（已核实为"不生效"）</b>：
-        /// <c>view.cpp:667-684</c> 只给 110→+1 / 100→+2 / 90→+1 / 80→+0.5 unit 四档做补偿，
+        /// <c>view.cpp:669</c> 的 <c>view->origin[2] -= 1</c> 之后，<c>view.cpp:673-687</c> 只给
+        /// 110→+1 / 100→+2 / 90→+1 / 80→+0.5 unit 四档做补偿，
         /// 而原版 <c>viewsize</c> 的**出厂默认值实测 = <c>120</c></b>
-        /// （出处：<c>原版资源/cs16src/cs16game/app/hw.dll</c> 偏移 <c>0x177684</c> 的 cvar 字面量区，
+        /// （出处：<c>原版资源/cs16src/hw.dll</c> 的 cvar 字面量区 —— <c>viewsize</c> 串在 <c>@1537468</c>
+        /// 与 <c>@1537668</c>（= <c>0x177684</c>，同一处字面量区的两份副本、**不是两个地址**），
+        /// 各自的 <c>120</c> 在 <c>@1537480</c> / <c>@1537680</c>；
         /// 实测片段 <c>…"30" "viewsize" "120" "viewsize" …</c>；HLSDK 里 <c>viewsize</c> 只是
         /// <c>common/ref_params.h:50</c> 的一个字段、**没有注册**它 ⇒ 默认值由引擎填）——
         /// <c>120</c> **不落在那四档里** ⇒ 走**无补偿**分支
-        /// ⇒ 原版净偏移就是 <c>view.cpp:665</c> 的 <b>−1 unit = −0.0254 m</b>，与本字段完全一致
+        /// ⇒ 原版净偏移就是 <c>view.cpp:669</c> 的 <b>−1 unit = −0.0254 m</b>，与本字段完全一致
         /// （<c>策划/对照表.md</c> A-06 差值 = 0）。</para>
         /// </summary>
         public static readonly Vector3 ViewModelLocalPosition = new Vector3(0f, -0.0254f, 0f);
@@ -210,13 +223,29 @@ namespace Cs16.Module.View
         /// </summary>
         public const float AnimMoveSpeedEpsilon = 0.15f;
 
+        /// <summary>
+        /// 判定"跑步档"的最小水平速度（米/秒）——速度不高于它 = 走路档。
+        ///
+        /// <para><b>出处</b>：原版 <c>cstrike/dlls/mp.dll</c> 的 <c>CBasePlayer::SetAnimation</c> ——
+        /// <c>0x100673DE</c> 的 <c>fld dword ptr [0x101421B0]</c> 取的常量实测 = <c>135.0f</c>（unit/s），
+        /// 紧随的 <c>0x100673E4</c> 用它和本帧速度比较：<b>速度 &gt; 135 ⇒ 序列 4、否则序列 3</b>
+        /// （<c>terror.mdl</c> seq[3] = <c>walk</c> fps30/33帧、seq[4] = <c>run</c> fps60/37帧）。
+        /// 135 unit/s × <see cref="CsConst.UnitToMeter"/> = <b>3.429 m/s</b>。</para>
+        ///
+        /// <para>原版这一步**不看 Shift 标志**：按下 Shift 只是把期望速度乘到 0.42 ⇒ 实际速度自然落到
+        /// 阈值以下，动画随之转 <c>walk</c>。反过来，减速到停的过程中速度从 250 一路降到 0，
+        /// 落到阈值以下的那一段也必须转 <c>walk</c> —— 按 Shift 标志切档就会在整段减速里一直播
+        /// 为 250 u/s 设计的 <c>run</c>（60fps 循环）⇒ 腿在飞、人在挪。</para>
+        /// </summary>
+        public const float AnimRunSpeedThreshold = 135f * CsConst.UnitToMeter;
+
         /// <summary>角色静止（站）。</summary>
         public static readonly string[] PStateIdle = { "idle1", "idle" };
 
-        /// <summary>角色慢走（Shift）。</summary>
+        /// <summary>角色走路档（水平速度不高于 <see cref="AnimRunSpeedThreshold"/>）。</summary>
         public static readonly string[] PStateWalk = { "walk", "run" };
 
-        /// <summary>角色跑。</summary>
+        /// <summary>角色跑步档（水平速度高于 <see cref="AnimRunSpeedThreshold"/>）。</summary>
         public static readonly string[] PStateRun = { "run", "walk" };
 
         /// <summary>角色蹲静止。</summary>
@@ -232,6 +261,26 @@ namespace Cs16.Module.View
         /// 角色死亡（原版 3 条，按 actorId 选一条 —— 与 CS 里"每次死亡的倒地姿势不同"一致）。
         /// </summary>
         public static readonly string[] PStateDeath = { "death1", "death2", "death3" };
+
+        /// <summary>
+        /// 蹲姿死亡。出处：<c>mp.dll</c> <c>0x100676F7</c> 的
+        /// <c>test dword ptr [ecx+0x1A4], 0x4000</c>（<c>0x4000</c> = GoldSrc 的 <c>FL_DUCKING</c>；
+        /// <c>ecx</c> = <c>[this+4]</c> = <c>pev</c>），命中即 <c>0x10067703</c> 的
+        /// <c>SetSequenceByName("crouch_die")</c>（字符串在 <c>0x10118AA8</c>）。
+        /// 实测 <c>crouch_die</c> = fps30/31帧；原版模型里**没有**蹲姿的 death1..3，
+        /// 所以蹲着死只有这一条正解（候选表只放它，缺状态时由 <see cref="PStateDeath"/> 兜底）。
+        /// </summary>
+        public static readonly string[] PStateDeathCrouch = { "crouch_die" };
+
+        /// <summary>
+        /// 受击抖动（中弹**未死**）：原版在同一分支里用 <c>RANDOM(0,1)</c> 二选一。出处：
+        /// <c>mp.dll</c> <c>0x10067439</c>（<c>push 1; push 0; call RANDOM</c>，返回值在 <c>eax</c>）——
+        /// <c>test eax,eax / je</c> 为假（= 1）走 <c>0x1006744C</c> 引用 <c>0x10118A68</c>
+        /// （<c>"head_flinch"</c>）、为真（= 0）走 <c>0x10067453</c> 引用 <c>0x10118A74</c>
+        /// （<c>"gut_flinch"</c>）。两条实测均 fps30/2帧（约 67 ms），播完接回位移状态。
+        /// </summary>
+        public static readonly string[] PStateFlinchHead = { "head_flinch" };
+        public static readonly string[] PStateFlinchGut = { "gut_flinch" };
 
         /// <summary>
         /// 倒地序列播完后，把 Animator 冻住的速度（**0 = 停在最后一帧**）。

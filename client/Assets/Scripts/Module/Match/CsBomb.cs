@@ -23,9 +23,14 @@ namespace Cs16.Module.Match
         private long _defusingId;
         private float _plantProgress;
         private float _defuseProgress;
-        private float _beepTimer;
-        private bool _beepFast;
-        private bool _beepFastLogged;
+
+        // ---- 蜂鸣（节奏 = 每响一次间隔 ×0.9 + 档位每响 +1，档位 0..BombBeepTierCount-1）----
+        private float _beepTimer;      // 距离下一次蜂鸣还有多久
+        private float _beepInterval;   // 当前间隔（每响一次 ×CsConst.BombBeepIntervalDecay）
+        private float _beepGap;        // 最近一响排下的等待 = 该次用的未衰减间隔
+        private int _beepSerial;       // 本次安放已经响过几次
+        private int _beepTier;         // 最近一响用的档位
+        private int _beepTierLogged = -1;
 
         internal CsBomb(CsMatch m)
         {
@@ -56,6 +61,17 @@ namespace Cs16.Module.Match
         /// <summary>下包/拆包进度 0~1（-1 = 未在进行）。</summary>
         public float ActiveUseProgress { get; private set; } = -1f;
 
+        /// <summary>本次安放已经响过的蜂鸣次数（下包瞬间清零；未安放 = 0）。
+        /// 表现层按它判断"哪一帧该响一声"，因此不必再自带一份蜂鸣计时器。</summary>
+        public int BeepSerial => _beepSerial;
+
+        /// <summary>最近一响用的档位 0..<see cref="CsConst.BombBeepTierCount"/>-1（决定放哪一支采样）；
+        /// 从未响过时为 0。最后一档之后恒为最后一档。</summary>
+        public int BeepTier => _beepTier;
+
+        /// <summary>最近一响排下的等待（秒）= 该次排期时用的未衰减间隔。</summary>
+        public float BeepGap => _beepGap;
+
         public void Reset()
         {
             Planted = false;
@@ -69,10 +85,27 @@ namespace Cs16.Module.Match
             _defusingId = 0;
             _plantProgress = 0f;
             _defuseProgress = 0f;
-            _beepTimer = 0f;
-            _beepFast = false;
-            _beepFastLogged = false;
+            ResetBeepState();
             _useHeld.Clear();
+        }
+
+        /// <summary>蜂鸣状态归零（未安放 / 收尾都走这里）。</summary>
+        private void ResetBeepState()
+        {
+            _beepTimer = 0f;
+            _beepInterval = CsConst.BombBeepIntervalInitial;
+            _beepGap = 0f;
+            _beepSerial = 0;
+            _beepTier = 0;
+            _beepTierLogged = -1;
+        }
+
+        /// <summary>开始蜂鸣：首响等一个 <see cref="CsConst.BombBeepIntervalInitial"/>。</summary>
+        private void StartBeeping()
+        {
+            ResetBeepState();
+            _beepGap = _beepInterval;
+            _beepTimer = _beepInterval;
         }
 
         /// <summary>某个 actor 是否按住 E（每帧由 CsMatch 写入，机器人写 intent.Use）。</summary>
@@ -141,25 +174,24 @@ namespace Cs16.Module.Match
 
         private void TickBeep(float dt)
         {
-            if (_beepTimer > 0f)
-            {
-                _beepTimer -= dt;
-                if (_beepTimer > 0f) return;
-            }
+            _beepTimer -= dt;
+            if (_beepTimer > 0f) return;
 
-            _beepFast = TimeLeft <= CsMatchConst.BombBeepFastThreshold;
-            _beepTimer = _beepFast ? CsConst.BombBeepIntervalFast : CsConst.BombBeepIntervalSlow;
+            // 一响的节奏（原版 mp.dll: 排期 0x100449BE → 衰减 0x100449D8 → 换音 0x100449F6..0x10044A99 → 换档 0x10044AD1）：
+            // 先用**未衰减**的间隔排下一次蜂鸣，再让间隔 ×BombBeepIntervalDecay，最后把档位 +1。
+            _beepGap = _beepInterval;
+            _beepInterval *= CsConst.BombBeepIntervalDecay;
+            _beepTimer = _beepGap;
 
-            if (_beepFast && !_beepFastLogged)
+            _beepSerial++;
+            _beepTier = Mathf.Min(_beepSerial - 1, CsConst.BombBeepTierCount - 1);
+
+            if (_beepTier != _beepTierLogged)
             {
-                _beepFastLogged = true;
+                _beepTierLogged = _beepTier;
                 Game.Logger.Info(Tag,
-                    $"C4 剩余 {TimeLeft:F1}s ≤ {CsMatchConst.BombBeepFastThreshold:F0}s，蜂鸣切换为快速节拍" +
-                    $"（{CsConst.BombBeepIntervalFast:F2}s）");
-            }
-            else if (!_beepFast && _beepFastLogged)
-            {
-                _beepFastLogged = false;
+                    $"C4 蜂鸣换档 → 第 {_beepTier + 1}/{CsConst.BombBeepTierCount} 档" +
+                    $"（第 {_beepSerial} 响，间隔 {_beepGap:F3}s → {_beepInterval:F3}s，剩余 {TimeLeft:F1}s）");
             }
 
             _m.RaiseBombStateChanged();
@@ -251,9 +283,7 @@ namespace Cs16.Module.Match
             a.Score += CsMatchConst.ScorePerBombObjective;
             _plantingId = 0;
             _plantProgress = 0f;
-            _beepTimer = 0f;
-            _beepFast = false;
-            _beepFastLogged = false;
+            StartBeeping();
             ActiveUseProgress = -1f;
 
             _m.Economy.Add(a, CsConst.RewardBombPlant, "成功安放 C4");
@@ -355,7 +385,7 @@ namespace Cs16.Module.Match
             a.Score += CsMatchConst.ScorePerBombObjective;
             _defusingId = 0;
             _defuseProgress = 0f;
-            _beepFastLogged = false;
+            ResetBeepState();
             ActiveUseProgress = -1f;
 
             _m.Economy.Add(a, CsConst.RewardBombDefuse, "成功拆除 C4");
@@ -377,6 +407,7 @@ namespace Cs16.Module.Match
             Planted = false;
             TimeLeft = -1f;
             Dropped = false;
+            ResetBeepState();
             ActiveUseProgress = -1f;
 
             Game.Logger.Info(Tag, $"★★ C4 于 {pos} 爆炸 → T 赢下本回合");

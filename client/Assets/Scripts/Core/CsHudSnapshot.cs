@@ -68,6 +68,14 @@ namespace Cs16.Core
         // ---- 买枪 ----
         public static bool InBuyZone;
         public static bool CanBuyNow;
+        /// <summary>主武器槽当前那把枪的 id（null = 该槽为空）—— 买弹药的分类 6（PRIMARY AMMO）按它列条目。</summary>
+        public static string PrimaryWeaponId;
+        /// <summary>主武器槽当前那把枪的备弹。</summary>
+        public static int PrimaryReserve;
+        /// <summary>副武器槽当前那把枪的 id（null = 该槽为空）—— 买弹药的分类 7（SECONDARY AMMO）按它列条目。</summary>
+        public static string SecondaryWeaponId;
+        /// <summary>副武器槽当前那把枪的备弹。</summary>
+        public static int SecondaryReserve;
 
         // ---- 准星 / 命中（由 Module/Combat 写）----
         public static float CrosshairSpread;        // 0~1
@@ -116,6 +124,10 @@ namespace Cs16.Core
             UseProgress = -1f;
             InBuyZone = false;
             CanBuyNow = false;
+            PrimaryWeaponId = null;
+            PrimaryReserve = 0;
+            SecondaryWeaponId = null;
+            SecondaryReserve = 0;
             CrosshairSpread = 0f;
             HitMarkerTime = 0f;
             HitMarkerHeadshot = false;

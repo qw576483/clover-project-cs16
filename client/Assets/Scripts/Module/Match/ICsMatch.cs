@@ -64,6 +64,11 @@ namespace Cs16.Module.Match
         float BombTimeLeft { get; }
         /// <summary>下包/拆包进度 0~1（-1 = 未在进行）。</summary>
         float UseProgress { get; }
+        /// <summary>本次安放已经响过的 C4 蜂鸣次数（下包瞬间清零；未安放 = 0）。表现层用它判断
+        /// "哪一帧该响一声"，不必再自带一份蜂鸣计时器。</summary>
+        int BombBeepSerial { get; }
+        /// <summary>最近一次 C4 蜂鸣用的档位 0..4（决定放哪一支采样；从未响过为 0，最后一档之后恒为最后一档）。</summary>
+        int BombBeepTier { get; }
         bool BombCarrierIs(long actorId);
 
         IReadOnlyList<CsActor> Actors { get; }
@@ -120,6 +125,9 @@ namespace Cs16.Module.Match
         void DropActiveWeapon();
         /// <summary>右键开镜状态（AWP/Scout）。</summary>
         bool IsZoomed { get; }
+
+        /// <summary>开镜档位：0 = 不开镜、1 = 第一档（40°）、2 = 第二档（AWP 10° / 其余 15°）。</summary>
+        int ScopeLevel { get; }
 
         // ==================== 观战 ====================
         bool IsSpectating { get; }

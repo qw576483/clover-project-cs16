@@ -47,8 +47,16 @@ namespace Cs16.Module.View
         /// <summary>把模型缩到 <c>CsViewTuning.TargetHeight</c> 的竖直缩放（实测反算，不假定单位）。</summary>
         private float _fitScale = 1f;
 
-        /// <summary>模型最低点相对 <c>Body</c> 原点的抬升量（米）——让脚底正好落在 <c>CsActor.Position</c>。</summary>
+        /// <summary>模型最低点相对 <c>Body</c> 原点的抬升量（米）——让脚底正好落在 <c>CsActor.Position</c>。
+        /// Bind 时先取绑定姿态的值（<see cref="Measure"/>），此后由 <see cref="AlignFeetToGround"/>
+        /// 按**当前姿态**逐帧跟随。</summary>
         private float _modelLift;
+
+        /// <summary>模型自带的蒙皮网格（只取 <c>Body</c> 下的，头顶名牌不在其中）—— 取贴地基准用。</summary>
+        private SkinnedMeshRenderer[] _modelMeshes = new SkinnedMeshRenderer[0];
+
+        /// <summary>贴地对齐量被上限截断的告警是否已打过（每具视图一次，避免每帧刷屏）。</summary>
+        private bool _alignClampWarned;
 
         private float _crouchScale = 1f;
 
@@ -88,6 +96,10 @@ namespace Cs16.Module.View
         private float _preNextFireTime;
         private int _preReloadSeq;
         private string _preWeapon;
+
+        /// <summary>上一帧的权威血量。掉血 = 中了没死的一发（阵亡走 <see cref="PlayDeath"/>），
+        /// 用来触发原版受击抖动 <see cref="PlayFlinch"/>。</summary>
+        private int _preHealth;
 
         /// <summary>本具身体播过几次换弹（差异 #72 的断言用：每个成功换弹序号都该对上这里 +1）。</summary>
         private int _reloadAnimsPlayed;
@@ -171,10 +183,13 @@ namespace Cs16.Module.View
             _preWeapon = null;
             _preNextFireTime = 0f;
             _preReloadSeq = 0;
+            _preHealth = 0;
             _reloadAnimsPlayed = 0;
             _anim = null;
             _fitScale = 1f;
             _modelLift = 0f;
+            _modelMeshes = new SkinnedMeshRenderer[0];
+            _alignClampWarned = false;
             _crouchScale = 1f;
             IsShown = false;
         }
@@ -209,6 +224,9 @@ namespace Cs16.Module.View
             _proxies = GetComponentsInChildren<CsHitboxProxy>(true);
             _renderers = GetComponentsInChildren<Renderer>(true);
             _colliders = GetComponentsInChildren<Collider>(true);
+            // 贴地基准只取 Body 下的蒙皮网格：Body 之外的任何几何（头顶名牌）都不该参与。（此刻还没挂名牌，
+            // 但池复用时上一世的名牌由 PrepareForReuse 清掉，两条路一起保证这里量到的只是身体。）
+            _modelMeshes = _body.GetComponentsInChildren<SkinnedMeshRenderer>(true);
 
             var layer = isBot ? PhysicsLayers.Bot : PhysicsLayers.Player;
             for (var i = 0; i < _proxies.Length; i++)
@@ -321,7 +339,12 @@ namespace Cs16.Module.View
             return null;
         }
 
-        /// <summary>这具身体此刻该播哪条位移序列（速度/蹲/空中 → 原版标签）。</summary>
+        /// <summary>
+        /// 这具身体此刻该播哪条位移序列（速度/蹲/空中 → 原版标签）。
+        ///
+        /// <para>走 / 跑的分档按**实际水平速度**（<see cref="CsViewTuning.AnimRunSpeedThreshold"/>），
+        /// 与原版一致；<c>IsWalking</c>（Shift 标志）只决定期望速度，不参与选序列。</para>
+        /// </summary>
         private static string[] LocomotionStates(CsActor actor)
         {
             var v = actor.Velocity;
@@ -331,7 +354,14 @@ namespace Cs16.Module.View
             if (actor.IsCrouching)
                 return moving ? CsViewTuning.PStateCrouchRun : CsViewTuning.PStateCrouchIdle;
             if (!moving) return CsViewTuning.PStateIdle;
-            return actor.IsWalking ? CsViewTuning.PStateWalk : CsViewTuning.PStateRun;
+            return speed > CsViewTuning.AnimRunSpeedThreshold ? CsViewTuning.PStateRun : CsViewTuning.PStateWalk;
+        }
+
+        /// <summary>当前水平速率（米/秒）——位移状态的判据与日志口径。</summary>
+        private static float HorizontalSpeed(CsActor actor)
+        {
+            var v = actor.Velocity;
+            return new Vector2(v.x, v.z).magnitude;
         }
 
         /// <summary>
@@ -350,10 +380,15 @@ namespace Cs16.Module.View
                 _preWeapon = actor.ActiveWeapon;
                 _preNextFireTime = actor.NextFireTime;
                 _preReloadSeq = actor.ReloadSeq;
+                _preHealth = actor.Health;
                 return;
             }
 
             if (actor.ActiveWeapon != _preWeapon) _preWeapon = actor.ActiveWeapon;
+
+            // 受击（掉了血但这一帧还活着 ⇒ 不是阵亡）：播原版 flinch。判阵亡走 Apply 的死亡分支。
+            if (actor.Health < _preHealth) PlayFlinch(actor);
+            _preHealth = actor.Health;
 
             // 换弹优先（原版里换弹会打断射击姿势）
             if (actor.ReloadSeq != _preReloadSeq)
@@ -386,17 +421,62 @@ namespace Cs16.Module.View
             {
                 _lastState = want;
                 _anim.CrossFade(want, CsViewTuning.AnimCrossFade);
+                _log.Info("anim.loco",
+                    $"角色视图「{name}」位移状态 → {want}（水平速度 {HorizontalSpeed(actor):F3} m/s，" +
+                    $"蹲={actor.IsCrouching} 离地={!actor.OnGround}）");
             }
         }
 
-        /// <summary>死亡：播原版 death1/2/3（按 actorId 选，与 CS 里"每次倒地方向不同"一致），播完冻住留场（见 <see cref="_corpseHeld"/>）。</summary>
-        private void PlayDeath()
+        /// <summary>
+        /// 中弹**未死**时的抖动序列。原版（<c>mp.dll 0x10067439</c>）在
+        /// <c>head_flinch</c> / <c>gut_flinch</c> 之间用 <c>RANDOM(0,1)</c> 二选一，两条都只有 2 帧。
+        ///
+        /// <para><b>只在"中性姿态"时替换</b>：原版那次替换挂在"当前序列"的表上
+        /// （<c>0x1006742B</c> 的字节表 <c>0x1006790C</c>：序列 1 = <c>idle1</c>、2 = <c>crouch_idle</c>
+        /// 走 flinch 分支，位移/跳跃序列落到默认分支）⇒ 这里同样只在站定或蹲定时播，
+        /// 不给跑动、换弹、开枪中途插入抖动（那会把一次完整动作截断成"抽搐"）。</para>
+        /// </summary>
+        private void PlayFlinch(CsActor actor)
+        {
+            if (_anim == null || _overrideState != null) return;
+            if (HorizontalSpeed(actor) > CsViewTuning.AnimMoveSpeedEpsilon) return;
+            var cand = UnityEngine.Random.Range(0, 2) == 1
+                ? CsViewTuning.PStateFlinchHead
+                : CsViewTuning.PStateFlinchGut;
+            var st = ResolveState(cand);
+            if (st == null) return;
+            _anim.Play(st, 0f);
+            _overrideState = st;
+            _log.Info("anim.flinch.play",
+                $"角色视图「{name}」受击未死：血量 {_preHealth}→{actor.Health}，播状态 {st}");
+        }
+
+        /// <summary>
+        /// 死亡：蹲着死走原版 <c>crouch_die</c>（<c>FL_DUCKING</c> 分支），否则走 <c>death1/2/3</c>
+        /// （按 actorId 稳定取一条）。播完冻住留场（见 <see cref="_corpseHeld"/>）。
+        /// </summary>
+        private void PlayDeath(CsActor actor)
         {
             if (_anim == null)
             {
                 SetShown(false);
                 return;
             }
+
+            // 蹲姿：原版先测 pev->flags 的 FL_DUCKING（mp.dll 0x100676F7），命中就只播 crouch_die。
+            if (actor != null && actor.IsCrouching)
+            {
+                var cst = ResolveState(CsViewTuning.PStateDeathCrouch);
+                if (cst != null)
+                {
+                    _deathState = cst;
+                    _anim.Play(cst, 0f);
+                    _overrideState = cst;
+                    _log.Info("anim.death.play", $"角色视图「{name}」蹲姿死亡 → 状态 {cst}");
+                    return;
+                }
+            }
+
             var arr = CsViewTuning.PStateDeath;
             var start = (int)(ActorId % arr.Length);
             var cand = new string[arr.Length];
@@ -410,6 +490,7 @@ namespace Cs16.Module.View
             _deathState = st;
             _anim.Play(st, 0f);
             _overrideState = st;
+            _log.Info("anim.death.play", $"角色视图「{name}」死亡 → 状态 {st}（蹲={actor != null && actor.IsCrouching}）");
         }
 
         /// <summary>
@@ -458,6 +539,9 @@ namespace Cs16.Module.View
         /// <para>为什么不假定单位：预制体虽是生成器按 1.8m 归一化出来的，但素材随时可能被换成
         /// 另一个单位的模型（inch / cm / m）。实测一次并在偏差超容差时纠偏 + 告警，
         /// 保证"碰撞盒 / 射线命中位置 / 贴地"三者永远一致。</para>
+        ///
+        /// <para>本方法给的是**绑定姿态**那一个值（这一姿态脚底就在 0）；运行期每个姿态各自的最低点由
+        /// <see cref="AlignFeetToGround"/> 逐帧对齐 —— 姿态一变最低点就变，单一常数盖不住。</para>
         /// </summary>
         private void Measure()
         {
@@ -519,6 +603,47 @@ namespace Cs16.Module.View
             _body.localScale = new Vector3(_fitScale, _fitScale * _crouchScale, _fitScale);
         }
 
+        /// <summary>
+        /// 把模型最低点对齐到根原点（= 脚底落在 <c>CsActor.Position</c>）。
+        ///
+        /// <para><b>为什么必须随姿态</b>：模型最低点由**当前动画姿态**决定，不是绑定姿态的常数 ——
+        /// 同一具模型 <c>idle1</c> 贴地、<c>walk</c> 途中双脚会同时离地数厘米、<c>crouch_idle</c> 又悬空一点
+        /// （见 <c>CsViewTuning.FootAlignLimit</c> 注释里的实测量级）⇒ 任何单一常数都会"按下这个姿态、
+        /// 翘起那个姿态"。</para>
+        ///
+        /// <para><b>不参与的姿态</b>：离地（jump）时最低点不是脚，硬对齐会把整具模型往下拽 ⇒
+        /// 调用方只在 <c>OnGround</c> 时调；渲染被关掉（本地玩家第一人称下自己的模型）时量不到有效
+        /// 包围盒 ⇒ 保持既有值，不动。</para>
+        /// </summary>
+        private void AlignFeetToGround()
+        {
+            if (_body == null || _modelMeshes.Length == 0) return;
+
+            var minY = float.PositiveInfinity;
+            for (var i = 0; i < _modelMeshes.Length; i++)
+            {
+                var r = _modelMeshes[i];
+                if (r == null || !r.enabled) continue;
+                if (r.bounds.min.y < minY) minY = r.bounds.min.y;
+            }
+            if (float.IsInfinity(minY)) return;
+
+            var rootY = transform.position.y;
+            var want = _body.localPosition.y + (rootY - minY);
+            var clamped = Mathf.Clamp(want, -CsViewTuning.FootAlignLimit, CsViewTuning.FootAlignLimit);
+            if (!_alignClampWarned && !Mathf.Approximately(clamped, want))
+            {
+                _alignClampWarned = true;
+                _log.Warn("feet.align.clamp",
+                    $"角色视图「{name}」姿态最低点 {minY:F3}m 与根 {rootY:F3}m 相差 {rootY - minY:F3}m，" +
+                    $"超出贴地对齐上限 {CsViewTuning.FootAlignLimit:F3}m ⇒ 按上限对齐（包围盒异常？姿态不该走这条？）");
+            }
+
+            if (Mathf.Abs(clamped - _modelLift) < 0.0001f) return;      // 没变就不写 transform（省一次 dirty）
+            _modelLift = clamped;
+            _body.localPosition = new Vector3(0f, _modelLift, 0f);
+        }
+
         // ==================================================================
         //  每帧同步（由 ViewModule 在 LateUpdate 调用）
         // ==================================================================
@@ -557,7 +682,7 @@ namespace Cs16.Module.View
                 if (!_deathPlayed)
                 {
                     _deathPlayed = true;
-                    PlayDeath();
+                    PlayDeath(actor);
                     EnterCorpse();
                 }
                 // 尸体：确保可见（尸体不被"上一帧的隐藏"带走）+ 名牌/血条关掉（死人头顶不该有血条）。
@@ -581,6 +706,9 @@ namespace Cs16.Module.View
 
             // ---- 骨骼动画：按权威状态切原版序列 ----
             UpdateAnim(actor);
+
+            // ---- 脚底贴地：按**当前姿态**（idle / walk / crouch 各有各的最低点）对齐，见 AlignFeetToGround ----
+            if (actor.OnGround) AlignFeetToGround();
 
             // ---- 本地玩家：自己的第三人称模型隐藏渲染、保留碰撞体 ----
             if (_isLocal) HideOwnRenderers();

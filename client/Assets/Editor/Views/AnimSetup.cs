@@ -313,6 +313,14 @@ namespace Cs16.EditorTools
         /// </summary>
         private static Mesh BuildSkinMesh(string key, int index, Cs16AnimSkin sub, Matrix4x4[] bindposes)
         {
+            var mesh = new Mesh { name = $"{key}_{SkinName}{index}" };
+            FillSkinMesh(mesh, key, index, sub, bindposes);
+            return mesh;
+        }
+
+        /// <summary>把一块贴图分块的网格内容写进 <paramref name="mesh"/>（新建或既有资产都走这里）。</summary>
+        private static void FillSkinMesh(Mesh mesh, string key, int index, Cs16AnimSkin sub, Matrix4x4[] bindposes)
+        {
             var n = sub.VertCount;
             var verts = new Vector3[n];
             var uvs = new Vector2[n];
@@ -323,14 +331,17 @@ namespace Cs16.EditorTools
             for (var i = 0; i < n; i++)
             {
                 verts[i] = new Vector3(sub.Verts[i * 3], sub.Verts[i * 3 + 1], sub.Verts[i * 3 + 2]);
-                uvs[i] = new Vector2(sub.Uvs[i * 2], sub.Uvs[i * 2 + 1]);
+                //   V 方向必须取反：`.cs16anim` 的 v 是 GoldSrc 口径（贴图**首行**为 t=0），
+                //   贴图 PNG 按 mdl 原始字节序落盘（首行 = 图像上边），而 Unity 采样的 uv.y=0
+                //   是图像**下边**（导入时纵向翻过一次）。不取反就会采到上下镜像的纹素。
+                uvs[i] = new Vector2(sub.Uvs[i * 2], 1f - sub.Uvs[i * 2 + 1]);
                 norms[i] = new Vector3(sub.Norms[i * 3], sub.Norms[i * 3 + 1], sub.Norms[i * 3 + 2]);
                 if (!skinned) continue;
                 var bi = Mathf.Clamp(sub.BoneIdx[i], 0, maxBone);
                 weights[i] = new BoneWeight { boneIndex0 = bi, weight0 = 1f };
             }
 
-            var mesh = new Mesh { name = $"{key}_{SkinName}{index}" };
+            mesh.Clear();
             if (n > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.vertices = verts;
             mesh.uv = uvs;
@@ -342,7 +353,58 @@ namespace Cs16.EditorTools
             }
             mesh.triangles = ExpandDoubleSided(sub.Tris);
             mesh.RecalculateBounds();
-            return mesh;
+        }
+
+        /// <summary>绑定姿态世界矩阵的逆（与 <see cref="AttachSkin"/> 同口径）。</summary>
+        private static Matrix4x4[] Bindposes(Cs16AnimAsset a)
+        {
+            var bindWorld = a.BindWorld();
+            var bindposes = new Matrix4x4[a.Bones.Count];
+            for (var i = 0; i < a.Bones.Count; i++) bindposes[i] = ToMatrix(bindWorld[i]).inverse;
+            return bindposes;
+        }
+
+        /// <summary>
+        /// 只按当前口径重写 <c>Art/Mesh</c> 下已有的网格资产（**就地覆盖**，GUID 与预制体的引用都不变），
+        /// 不碰材质 / 动画 / 预制体。网格内容与预制体生成走同一份 <see cref="FillSkinMesh"/>。
+        /// 骨骼表为空 = 原版 <c>w_*.mdl</c> 那类静态网格（不写 boneWeights / bindposes）。
+        /// </summary>
+        internal static int RebuildMeshAssetsFromModelData(string modelDataDir, out string report)
+        {
+            var sb = new List<string>();
+            var files = Directory.GetFiles(modelDataDir, "*.cs16anim");
+            var written = 0;
+            var missing = 0;
+            for (var f = 0; f < files.Length; f++)
+            {
+                var file = files[f].Replace('\\', '/');
+                var a = Cs16AnimReader.Read(file, out var err);
+                if (a == null)
+                {
+                    Debug.LogError($"[AnimSetup] 读不了动画数据：{err}");
+                    continue;
+                }
+                var bindposes = a.Bones.Count > 0 ? Bindposes(a) : null;
+                for (var s = 0; s < a.Subs.Count; s++)
+                {
+                    var sub = a.Subs[s];
+                    if (sub.VertCount == 0 || sub.TriCount == 0) continue;
+                    var path = $"{MeshDir}/{a.Key}_{SkinName}{s}.asset";
+                    var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+                    if (mesh == null)
+                    {
+                        missing++;
+                        sb.Add($"! 缺网格 {path}（跳过）");
+                        continue;
+                    }
+                    FillSkinMesh(mesh, a.Key, s, sub, bindposes);
+                    EditorUtility.SetDirty(mesh);
+                    written++;
+                }
+            }
+            AssetDatabase.SaveAssets();
+            report = $"重写网格 {written} 块、缺 {missing} 块（键 {files.Length} 份）\n" + string.Join("\n", sb.ToArray());
+            return written;
         }
 
         /// <summary>

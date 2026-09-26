@@ -138,6 +138,13 @@ namespace Cs16.EditorTools
                 }
                 Debug.Log($"{Tag} 烘焙成功：{summary}");
 
+                // 产物后处理：单层 2D 位图在多层几何下会出现**互不连通的格区**（引擎 A* 是纯 2D ⇒
+                // 落在里面的目标点永远求不出路径）⇒ 收敛成单一连通分量并搬移孤立格区里的标记点。
+                // 与连通性探针共用同一份变换（Dust2WalkSeal）。
+                Dust2WalkSeal.ApplyToFiles(
+                    $"{Dust2Layout.ClientMapDir}/{CsConst.MapDust2}.bytes",
+                    $"{Dust2Layout.ServerMapDir}/{CsConst.MapDust2}.bytes");
+
                 VerifyOutputs();
             }
             finally

@@ -1,3 +1,5 @@
+using Cs16.Core;
+
 namespace Cs16.Module.Combat
 {
     /// <summary>
@@ -156,96 +158,340 @@ namespace Cs16.Module.Combat
         // ==================================================================
         //  表现（枪口火焰 / 弹道 / 手雷视觉）
         // ==================================================================
-        /// <summary>枪口火焰持续时间（秒）。出处：**本项目新增**。
-        /// 四张 `.spr` 现在都在盘（`原版资源/cs16src/cstrike/cstrike__sprites__muzzleflash1..4.spr`），
-        /// 但它们只给出"每张几帧"（`muzzleflash2/3` 各 3 帧），给不出**总时长**（引擎 `hw.dll` 不在盘）
-        /// ⇒ 时长仍是本项目新增，缺口记在 `策划/差异登记.tsv` #89。</summary>
-        public const float MuzzleFlashDuration = 0.045f;
-
-        /// <summary>
-        /// 枪口火焰**贴片**的世界尺寸（米）= 0.30m（本项目新增，登记在 `策划/差异登记.tsv` #89）。
-        ///
-        /// <para><b>2026-09-24 更正</b>：旧注释说"载体不在盘 ⇒ 这个数无出处"，前半句已不成立
-        /// （四张 `.spr` 在盘：48×48 / 64×64 / 72×72 / 48×48），但**没有任何载体给出"火焰的世界尺寸"**
-        /// —— 那是引擎的投影选择 ⇒ 仍按本项目新增记。</para>
-        ///
-        /// <para><b>单位是"米"，但必须经 <c>SpriteScaleForMeters</c> 换成倍率</b>：贴片导入 PPU=100，
-        /// 64 px 天生只有 0.64 世界单位宽，直接 `Vector3.one * 0.30f` 画出来只有 0.192 m
-        /// （= 0.64 × 0.30，小 3.1 倍）—— 同族口径见 <see cref="DecalSize"/> 的注释与
-        /// <c>CombatEffects.SpriteScaleForMeters</c>。</para>
-        /// </summary>
-        public const float MuzzleFlashSize = 0.30f;
-
         // ------------------------------------------------------------------
+        //  枪口火焰的落点 / 尺寸 / 时长 —— 三条都是**逐武器**的
         // ------------------------------------------------------------------
         /// <summary>
-        /// 枪口火焰在**相机局部系**里的落点（米）：<c>x</c>=右、<c>y</c>=上、<c>z</c>=前。
+        /// **表外武器的兜底**横向落点（米，相机局部 <c>x</c> = 相机右方）= 本工程既有值。
+        /// 已知武器一律走 <see cref="MuzzleLateral"/>（逐武器实测），本常量只给"武器表里没有的 id"。
         ///
-        /// <para><b>为什么不是旧值"相机前方 0.34 m + 右 0.13 + 下 0.09"</b>：
-        /// <c>x∈[-0.026,+0.239] y∈[-0.286,-0.062] z∈[-0.087,+0.705]</c>
-        /// （逐轴数字抄在 <c>ViewModelRig.EnsureAlwaysAnimate</c> 的注释里）——
-        /// 枪管尖在 <c>z ≈ 0.70</c> ⇒ 火焰被放进**枪身内部**；SpriteRenderer 走透明队列且
-        /// **开深度测试**，于是被枪身/手臂里 <c>z &lt; 0.34</c> 的那一截几何盖掉，
-        /// 表现就是用户 2026-09-24 报的「枪口火焰没有效果」。</para>
-        ///
-        /// <para><b>本值怎么来的</b>：取上面那条实测包围盒的**最前端**（<c>z=0.705</c>）再往外让
-        /// 0.015 m（防 z-fighting）⇒ <c>Forward = 0.72</c>；<c>x / y</c> 取枪管轴在包围盒里的位置
-        /// （右偏 + 略低于视平线）。**这不是原版出处**：原版落点在引擎 <c>hw.dll</c>（不在盘）；
-        /// 它是**从本工程实测几何反推**的，缺口与判据记在 <c>策划/差异登记.tsv</c> #89。</para>
+        /// <para><b>为什么落点按相机局部系给</b>：视模型（<c>v_*</c>）本身是在**相机空间**里建模的
+        /// （原点就在相机原点，只 y 下移 1 unit，见 <c>CsViewTuning.ViewModelLocalPosition</c>）⇒
+        /// <c>eye + 相机旋转 × 局部点</c> 定位与模型同一坐标系；用 world-up 叉乘算 right/up 反而在
+        /// 俯仰 ±90° 时退化。</para>
         /// </summary>
         public const float MuzzleOffsetRight = 0.13f;
 
         /// <summary>见 <see cref="MuzzleOffsetRight"/>（相机局部系 y；负数 = 视平线以下）。</summary>
         public const float MuzzleOffsetUp = -0.12f;
 
-        /// <summary>见 <see cref="MuzzleOffsetRight"/>（相机局部系 z；正数 = 相机前方）。</summary>
-        public const float MuzzleOffsetForward = 0.72f;
+        /// <summary>
+        /// 逐武器**枪口横向位置**（米，相机局部 <c>x</c>）。
+        ///
+        /// <para><b>出处 = 逐武器实测（逐顶点）</b>：视模型 idle 姿态下取"沿相机前向最靠前的 2 cm 内顶点"
+        /// 的质心，取其相机构型的 <c>x</c> 分量（载体 = <c>client/Assets/Resources/Art/{T,CT}/viewmodel_&lt;武器&gt;.prefab</c>）。
+        /// 实测 0.1113（p90）~ 0.1807（sg550）—— 用一个常数会让长枪的火焰偏离枪口（实测 <c>ak47</c> 差 4.4 cm、
+        /// <c>awp</c> 差 2.3 cm）。</para>
+        ///
+        /// <para><b>两条例外（不是原始质心，均按同类中位数）</b>：
+        /// ① <c>elite</c>（双持）有两个枪口，前 2 cm 顶点含左右两把 ⇒ 质心落在两枪口中点（实测 0.0003），
+        /// 单张火焰贴不到任一枪口 ⇒ 取手枪类中位数；
+        /// ② <c>xm1014</c> 的前沿顶点落在护木/泵上（实测质心 <c>y=-0.284</c>，明显不是枪口）⇒ 取霰弹类中位数。
+        /// 表外武器同样走类别中位数（= **类别推断**），见 <see cref="MuzzleLateralFallback"/>。</para>
+        /// </summary>
+        public static float MuzzleLateral(string weaponId)
+        {
+            switch (weaponId)
+            {
+                // ---- 手枪（实测 0.1168~0.1250）----
+                case CsWeapons.Glock18: return 0.1168f;
+                case CsWeapons.Usp: return 0.1192f;
+                case CsWeapons.P228: return 0.1195f;
+                case CsWeapons.Deagle: return 0.1204f;
+                case CsWeapons.FiveSeven: return 0.1250f;
+                case CsWeapons.Elite: return 0.1195f;      // 双枪：质心不可用，取手枪类中位数
+                // ---- 冲锋枪（实测 0.1113~0.1643）----
+                case CsWeapons.Mp5: return 0.1424f;
+                case CsWeapons.Tmp: return 0.1643f;
+                case CsWeapons.Mac10: return 0.1223f;
+                case CsWeapons.Ump45: return 0.1568f;
+                case CsWeapons.P90: return 0.1113f;
+                // ---- 步枪（实测 0.1220~0.1743）----
+                case CsWeapons.Galil: return 0.1220f;
+                case CsWeapons.Famas: return 0.1231f;
+                case CsWeapons.Ak47: return 0.1743f;
+                case CsWeapons.M4A1: return 0.1550f;
+                case CsWeapons.Sg552: return 0.1334f;
+                case CsWeapons.Aug: return 0.1443f;
+                // ---- 狙击枪（实测 0.1301~0.1807）----
+                case CsWeapons.Scout: return 0.1301f;
+                case CsWeapons.Awp: return 0.1530f;
+                case CsWeapons.G3sg1: return 0.1578f;
+                case CsWeapons.Sg550: return 0.1807f;
+                // ---- 霰弹枪 ----
+                case CsWeapons.M3: return 0.1338f;
+                case CsWeapons.Xm1014: return 0.1338f;     // 前沿顶点不是枪口，取霰弹类中位数
+                // ---- 机枪 ----
+                case CsWeapons.M249: return 0.1317f;
+                default: return MuzzleLateralFallback(weaponId);
+            }
+        }
+
+        /// <summary>
+        /// 逐武器**枪口竖直位置**（米，相机局部 <c>y</c>；负数 = 视平线以下）。出处同
+        /// <see cref="MuzzleLateral"/>（逐顶点实测，实测 -0.0762~-0.1348）。
+        /// <c>xm1014</c> 例外（前沿顶点在护木上）⇒ 取霰弹类中位数。
+        /// </summary>
+        public static float MuzzleVertical(string weaponId)
+        {
+            switch (weaponId)
+            {
+                case CsWeapons.Glock18: return -0.1009f;
+                case CsWeapons.Usp: return -0.0962f;
+                case CsWeapons.P228: return -0.0856f;
+                case CsWeapons.Deagle: return -0.0852f;
+                case CsWeapons.FiveSeven: return -0.1061f;
+                case CsWeapons.Elite: return -0.0762f;
+                case CsWeapons.Mp5: return -0.1101f;
+                case CsWeapons.Tmp: return -0.1228f;
+                case CsWeapons.Mac10: return -0.1156f;
+                case CsWeapons.Ump45: return -0.1134f;
+                case CsWeapons.P90: return -0.1102f;
+                case CsWeapons.Galil: return -0.1021f;
+                case CsWeapons.Famas: return -0.1078f;
+                case CsWeapons.Ak47: return -0.1159f;
+                case CsWeapons.M4A1: return -0.1200f;
+                case CsWeapons.Sg552: return -0.1046f;
+                case CsWeapons.Aug: return -0.0934f;
+                case CsWeapons.Scout: return -0.0954f;
+                case CsWeapons.Awp: return -0.0812f;
+                case CsWeapons.G3sg1: return -0.1074f;
+                case CsWeapons.Sg550: return -0.1348f;
+                case CsWeapons.M3: return -0.1058f;
+                case CsWeapons.Xm1014: return -0.1058f;    // 前沿顶点不是枪口，取霰弹类中位数
+                case CsWeapons.M249: return -0.0885f;
+                default: return MuzzleVerticalFallback(weaponId);
+            }
+        }
+
+        /// <summary>表外武器的横向位置（米）。**类别推断**：同类已测武器的中位数
+        /// （手枪 0.1195 / 冲锋枪 0.1424 / 步枪 0.1389 / 狙击 0.1554 / 霰弹 0.1338 / 机枪 0.1317），
+        /// 类别也没有时用全部已测武器的中位数 0.1326。</summary>
+        private static float MuzzleLateralFallback(string weaponId)
+        {
+            switch (MuzzleClass(weaponId))
+            {
+                case CsWeaponClass.Pistol: return 0.1195f;
+                case CsWeaponClass.SMG: return 0.1424f;
+                case CsWeaponClass.Rifle: return 0.1389f;
+                case CsWeaponClass.Sniper: return 0.1554f;
+                case CsWeaponClass.Shotgun: return 0.1338f;
+                case CsWeaponClass.MachineGun: return 0.1317f;
+                default: return 0.1326f;
+            }
+        }
+
+        /// <summary>表外武器的竖直位置（米）。**类别推断**：同类已测武器的中位数
+        /// （手枪 -0.0909 / 冲锋枪 -0.1134 / 步枪 -0.1062 / 狙击 -0.1014 / 霰弹 -0.1058 / 机枪 -0.0885），
+        /// 类别也没有时用全部已测武器的中位数 -0.1060。</summary>
+        private static float MuzzleVerticalFallback(string weaponId)
+        {
+            switch (MuzzleClass(weaponId))
+            {
+                case CsWeaponClass.Pistol: return -0.0909f;
+                case CsWeaponClass.SMG: return -0.1134f;
+                case CsWeaponClass.Rifle: return -0.1062f;
+                case CsWeaponClass.Sniper: return -0.1014f;
+                case CsWeaponClass.Shotgun: return -0.1058f;
+                case CsWeaponClass.MachineGun: return -0.0885f;
+                default: return -0.1060f;
+            }
+        }
+
+        /// <summary>
+        /// 枪口火焰比**枪口**再往前让的距离（米）。SpriteRenderer 走透明队列但**开**深度测试 ⇒
+        /// 贴片与枪口几何贴在一起会 z-fighting、落进枪身几何之内则整片被盖掉（表现 = 没有火焰）。
+        /// </summary>
+        public const float MuzzleForwardClearance = 0.015f;
+
+        /// <summary>
+        /// 逐武器**枪口轴向距离**（米，相机局部 z）= 该武器视模型 <c>viewmodel_*</c> 预制体在 idle
+        /// 姿态下、动画后包围盒沿相机前向的**最大投影**（= 枪管尖在相机前方多远）。
+        ///
+        /// <para><b>出处 = 逐武器实测（逐顶点）</b>：载体 = <c>client/Assets/Resources/Art/{T,CT}/viewmodel_&lt;武器&gt;.prefab</c>，
+        /// 量法 = idle 姿态下"沿相机前向最靠前的 2 cm 内顶点"的质心（与 <see cref="MuzzleLateral"/> 同一量法），
+        /// 实测跨度 <c>p228</c> 0.335 m ~ <c>sg550</c> 0.925 m（2.8 倍）⇒ 用一个常数必然让短枪的火焰飘在
+        /// 枪口前方、长枪的火焰埋进枪管里。</para>
+        ///
+        /// <para><b>表里没有的武器</b>走 <see cref="MuzzleAxialFallback"/>：取**同类别**已测武器的中位数
+        /// （类别取自 <c>CsWeaponDef.Class</c>）—— 那一档是**类别推断**，不是实测值。</para>
+        /// </summary>
+        public static float MuzzleAxial(string weaponId)
+        {
+            switch (weaponId)
+            {
+                // ---- 手枪（实测 0.335~0.549）----
+                case CsWeapons.Glock18: return 0.4339f;
+                case CsWeapons.Usp: return 0.5485f;
+                case CsWeapons.P228: return 0.3348f;
+                case CsWeapons.Deagle: return 0.3789f;
+                case CsWeapons.FiveSeven: return 0.3859f;
+                case CsWeapons.Elite: return 0.3989f;
+                // ---- 冲锋枪（实测 0.381~0.584）----
+                case CsWeapons.Mp5: return 0.5069f;
+                case CsWeapons.Tmp: return 0.5837f;
+                case CsWeapons.Mac10: return 0.3809f;
+                case CsWeapons.Ump45: return 0.5134f;
+                case CsWeapons.P90: return 0.3819f;
+                // ---- 步枪（实测 0.553~0.722）----
+                case CsWeapons.Galil: return 0.7168f;
+                case CsWeapons.Famas: return 0.5615f;
+                case CsWeapons.Ak47: return 0.6965f;
+                case CsWeapons.M4A1: return 0.7223f;
+                case CsWeapons.Sg552: return 0.5533f;
+                case CsWeapons.Aug: return 0.5640f;
+                // ---- 狙击枪（实测 0.670~0.925）----
+                case CsWeapons.Scout: return 0.6701f;
+                case CsWeapons.Awp: return 0.7039f;
+                case CsWeapons.G3sg1: return 0.7200f;
+                case CsWeapons.Sg550: return 0.9249f;
+                // ---- 霰弹枪（实测 0.531 / 0.717）----
+                case CsWeapons.M3: return 0.5313f;
+                // 逐顶点质心（0.668）落在护木/泵上、不是枪口 ⇒ 取该武器包围盒前沿的实测值
+                case CsWeapons.Xm1014: return 0.7169f;
+                // ---- 机枪（实测）----
+                case CsWeapons.M249: return 0.5442f;
+                default: return MuzzleAxialFallback(weaponId);
+            }
+        }
+
+        /// <summary>
+        /// <see cref="MuzzleAxial"/> 表外的武器的轴向距离（米）。**类别推断**：取同类别**已测**武器的中位数
+        /// （手枪 0.3924 / 冲锋枪 0.5069 / 步枪 0.6303 / 狙击 0.7120 / 霰弹 0.6241 / 机枪 0.5442）；
+        /// 连武器定义都没有时取全部已测武器的中位数 0.5509。
+        /// </summary>
+        private static float MuzzleAxialFallback(string weaponId)
+        {
+            var def = CsWeapons.Get(weaponId);
+            if (def == null) return 0.5509f;
+
+            switch (def.Class)
+            {
+                case CsWeaponClass.Pistol: return 0.3924f;
+                case CsWeaponClass.SMG: return 0.5069f;
+                case CsWeaponClass.Rifle: return 0.6303f;
+                case CsWeaponClass.Sniper: return 0.7120f;
+                case CsWeaponClass.Shotgun: return 0.6241f;
+                case CsWeaponClass.MachineGun: return 0.5442f;
+                default: return 0.5509f;
+            }
+        }
+
+        /// <summary>枪口火焰落点的相机局部 z（米）= <see cref="MuzzleAxial"/> + <see cref="MuzzleForwardClearance"/>。</summary>
+        public static float MuzzleForward(string weaponId)
+        {
+            return MuzzleAxial(weaponId) + MuzzleForwardClearance;
+        }
+
+        /// <summary>
+        /// 逐武器枪口火焰**贴片世界尺寸**（米）。**类别推断**（原版逐武器的尺寸是引擎选择例程
+        /// 的一个立即数、由调用方传入，本机拿不到 ⇒ 无出处）：
+        /// 手枪 0.24 / 冲锋枪 0.27 / 步枪 0.30 / 狙击 0.33 / 霰弹 0.36 / 机枪 0.42 m。
+        /// 类别序的理由 = 口径与装药越大，枪口焰越亮越大；基准档取**步枪 0.30 m**（= 本工程既有值）。
+        ///
+        /// <para><b>单位是"米"，调用点必须经 <c>CombatEffects.SpriteScaleForMeters</c> 换成倍率</b>：
+        /// 贴片导入 PPU=100，64 px 天生只有 0.64 世界单位宽，直接写 `Vector3.one * 0.30f`
+        /// 画出来只有 0.192 m（= 0.64 × 0.30，小 3.1 倍）—— 同族口径见 <see cref="DecalSize"/>。</para>
+        /// </summary>
+        public static float MuzzleFlashSize(string weaponId)
+        {
+            switch (MuzzleClass(weaponId))
+            {
+                case CsWeaponClass.Pistol: return 0.24f;
+                case CsWeaponClass.SMG: return 0.27f;
+                case CsWeaponClass.Rifle: return 0.30f;
+                case CsWeaponClass.Sniper: return 0.33f;
+                case CsWeaponClass.Shotgun: return 0.36f;
+                case CsWeaponClass.MachineGun: return 0.42f;
+                default: return 0.30f;
+            }
+        }
+
+        /// <summary>
+        /// 逐武器枪口火焰**存活时长**（秒）。**类别推断**（同 <see cref="MuzzleFlashSize"/>：原版时长由引擎按
+        /// 贴片帧数推进，逐武器值在 <c>hw.dll</c>、不在盘）：手枪 0.040 / 冲锋枪 0.045 / 步枪 0.050 /
+        /// 狙击 0.055 / 霰弹 0.050 / 机枪 0.045 s。
+        ///
+        /// <para>取值带的两条硬边界：**下界 ≥ 一帧**（<c>1/60 s</c>，否则可能整发看不见）、
+        /// **上界 &lt; 该武器一次射击的最小间隔**（否则相邻两发的火焰在画面上重叠成一团）。</para>
+        /// </summary>
+        public static float MuzzleFlashDuration(string weaponId)
+        {
+            switch (MuzzleClass(weaponId))
+            {
+                case CsWeaponClass.Pistol: return 0.040f;
+                case CsWeaponClass.SMG: return 0.045f;
+                case CsWeaponClass.Rifle: return 0.050f;
+                case CsWeaponClass.Sniper: return 0.055f;
+                case CsWeaponClass.Shotgun: return 0.050f;
+                case CsWeaponClass.MachineGun: return 0.045f;
+                default: return 0.045f;
+            }
+        }
+
+        /// <summary>武器类别（拿不到武器定义时返回 <see cref="CsWeaponClass.Equipment"/> = 走默认档）。</summary>
+        private static CsWeaponClass MuzzleClass(string weaponId)
+        {
+            var def = CsWeapons.Get(weaponId);
+            return def != null ? def.Class : CsWeaponClass.Equipment;
+        }
 
         public const float MuzzleLightDuration = 0.055f;
 
         /// <summary>
-        /// 弹痕贴片**整块画布**的世界尺寸（米）= 0.128 m（= 16 px × <see cref="DecalMetersPerPixel"/>）。
+        /// 弹痕贴片**整块画布**的世界尺寸（米）= 16 GoldSrc 单位 = **0.4064 m**。
         ///
-        /// <para><b>复核（用户报「弹痕还是没有」）</b>——
-        /// 实测（读的就是进工程的同一批 PNG）：
-        /// <c>fx_shot1..5</c> 是 16×16、RGB **纯黑 (0,0,0)**、alpha = 不透明度掩码，其中
-        /// <b><c>alpha≥32</c> 只有 13~16 px / 256、<c>alpha≥160</c> 只有 2~4 px</b>
-        /// ⇒ 真正"黑得看得见"的**核心只有约 4 px 宽 = 整块的 4/16</b>。</para>
+        /// <para><b>出处 = 原版引擎的贴花尺寸公式</b>（<c>原版资源/cs16src/hw.dll</c>）：
+        /// ① <c>pfnDecalShoot</c> VA <c>0x1D56AA0</c>（函数指针表 file <c>0x18264C</c>，= <c>cl_enginefunc_t</c>
+        /// 偏移 <c>0xD4</c>）把 scale **写死**为 <c>push 1.0f</c>（VA <c>0x56AB3</c>，调用方传的第 6 实参被丢弃）；
+        /// ② 内部 <c>R_DecalShoot</c>（VA <c>0x1D56770</c>）把 <c>1.0f</c> 改写成 <c>-1.0f</c> 哨兵（= 用默认）；
+        /// ③ 尺寸例程（RVA <c>0x55E20</c> 起）<c>size = (scale == -1) ? |texinfo-&gt;vecs[0]| : scale</c>，
+        /// 贴花世界尺度 = <c>decalTexture.width</c>（texel）× <c>size</c>
+        /// ⇒ 16 texel × 1.0 世界单位/texel = **16 单位**；1 单位 = 1 inch ⇒ ×
+        /// <see cref="CsConst.UnitToMeter"/> = 0.4064 m。</para>
         ///
-        /// <para>⇒ 旧值下<u>可见墨迹</u> = 0.075 × 5/16 = <b>2.34 cm</b>。按 1920 px / 水平 90° 的投影
-        /// （<c>px = 1920 · w / (2d)</c>）：2 m 处只有 <b>约 11 px</b>、4.89 m 处约 4.6 px
-        /// 说明"贴了、但只有 19 px 的淡影、其中仅约 5 px 是有墨的"）。这就是用户看不到它的原因。</para>
+        /// <para><b>载体</b>：<c>decals.wad</c> 的 <c>{shot1..5</c> 各 16×16、RGB 纯黑、alpha 为不透明度掩码
+        /// （<c>alpha≥32</c> 的 13~16 texel / 256 才是会改变屏幕像素的墨迹）。世界尺度按**贴花自己的 texel 宽**
+        /// 给 ⇒ 换任何一张贴花都自动同比例。</para>
         ///
-        /// <para><b>本值怎么定的</b>（可复算，不是"随手放大"）：把判据写成"**可见墨迹**在
-        /// 2 m 处 ≥ 15 px"（2 m = 贴脸打墙的典型距离），反解
-        /// <c>墨迹 ≥ 15·2·2/1920 = 3.13 cm</c> ⇒ 整块 ≥ 3.13 × 16/5 = 10.0 cm ⇒ 取 <b>12.8 cm</b>。
-        /// 于是墨迹 = 4.0 cm（2 m 处 <b>19.2 px</b>、4.89 m 处 7.8 px），实心核心 = 1.92 cm（2 m 处 9.2 px）。</para>
+        /// <para><b>不是 0.4096</b>：那是把 1 单位当 0.0256 m 的算法；本工程唯一换算口径是
+        /// <see cref="CsConst.UnitToMeter"/> = 0.0254（出处 <c>原版资源/cs16src/cs16_build.py:43</c>
+        /// <c>HL_UNIT = 0.0254</c>）。</para>
         ///
-        /// <para><b>出处缺口如实登记</b>：原版"贴花世界尺寸"的映射在**引擎**（<c>hw.dll</c>，
-        /// 不在盘 ⇒ <c>策划/对照表.md</c> 的 BLOCKED 口径），本值**没有** <c>文件:偏移</c> 级出处，
-        /// 属**本项目新增**；缺口记在 <c>策划/差异登记.tsv</c> #69，判据 = 可见性阈值（见上）。
-        /// 全工程**只有这一个旋钮**决定弹痕大小（血迹按 <see cref="DecalMetersPerPixel"/> 同比例联动），
-        /// 拿到引擎侧出处后**只改这一处**。</para>
+        /// <para>投影（1920 px / 水平 90°）：可见墨迹 <see cref="DecalVisibleCoreMeters"/> = 0.127 m
+        /// ⇒ 5 m 处 ≈ 24 px。全工程**只有这一个旋钮**决定贴花大小（血迹按
+        /// <see cref="DecalMetersPerPixel"/> 同比例联动）。</para>
         /// </summary>
-        public const float DecalSize = 0.128f;
+        public const float DecalSize = 16f * CsConst.UnitToMeter;
 
         /// <summary>
-        /// 弹痕**可见墨迹**占整块画布宽度的比例 = 5/16 = 0.3125（实测 4~5 px 的上界取值）。
+        /// 墙上的贴花（弹痕 / 血迹）的 **alpha 裁切阈值** = 0.25 —— alpha 不高于它的像素整片丢弃
+        /// （<c>clip(a - 0.25)</c>）。
         ///
-        /// <para><b>出处 = 载体逐像素实测</b>（
-        /// 读的就是进工程的同一批 PNG）：<c>decals.wad</c> 的 <c>{shot1..5</c> 是 16×16，RGB 纯黑、
-        /// alpha = 不透明度掩码；其中
-        /// <b><c>alpha≥32</c>（= 会真的改变屏幕像素的墨迹）的水平跨度 = 4~5 px</b>
-        /// （总像素 13~16 / 256），而 <c>alpha≥160</c> 的**实心黑核心**只有 1~3 px 宽。
-        /// 判据取前者（它是"看得见"的直接成因），后者只作诊断数报出来。</para>
+        /// <para><b>出处 = 原版 cvar <c>gl_alphamin</c> 的默认值 <c>"0.25"</c></b>
+        /// （<c>hw.dll</c> cvar 结构 VA <c>0x01E76D48</c>、值 VA <c>0x01E76D54</c>）。贴花绘制函数
+        /// （RVA <c>0x57800</c>）在 <c>0x0057822</c> 打开 <c>GL_ALPHA_TEST</c> 但**不设** <c>glAlphaFunc</c>
+        /// ⇒ 阈值继承引擎上一次设置，全引擎唯一的直接设置点就是 <c>0x00549F8</c> 读 <c>[0x1E76D54]</c>、
+        /// <c>0x00549FF push 0x0204</c>（<c>GL_GREATER</c>）、<c>0x0054A04 call glAlphaFunc</c>。</para>
         ///
-        /// <para>用途：运行期日志把"**可见墨迹**的世界宽度 / 屏幕投影"直接打出来，
-        /// 让"看不看得见"成为**可核对的数**，而不是"我看了觉得行"。</para>
+        /// <para><b>为什么必须裁</b>：<c>{shot*</c> 的载体是 16×16 里只有 13~16 个 <c>alpha≥32</c> 的 texel
+        /// 的软晕；不裁时整块软晕都参与混合，黑贴花压暗量 = <c>alpha × dst</c>，软晕那部分几乎不改墙面 ⇒
+        /// 墙上只剩一小块极淡的暗斑。裁掉 <c>alpha ≤ 0.25</c> 之后只画硬核，读感与"一个洞"一致。</para>
+        /// </summary>
+        public const float DecalAlphaCutoff = 0.25f;
+
+        /// <summary>
+        /// 弹痕**可见墨迹**占整块画布宽度的比例 = 5/16 = 0.3125。
+        ///
+        /// <para><b>出处 = 载体逐像素实测</b>（<c>decals.wad</c> 的 <c>{shot1..5</c>，读的就是进工程的
+        /// 同一批 PNG）：16×16、RGB 纯黑、alpha = 不透明度掩码；<c>alpha≥32</c>（= 会真的改变屏幕像素的
+        /// 墨迹）的水平跨度 = 4~5 px（总像素 13~16 / 256），<c>alpha≥160</c> 的实心黑核心只有 1~3 px 宽。
+        /// 前者是"看得见"的直接成因。</para>
+        ///
+        /// <para>运行期日志按它打出"可见墨迹的世界宽度 / 屏幕投影"（见
+        /// <see cref="DecalVisibleCoreMeters"/>）。</para>
         /// </summary>
         public const float DecalOpaqueCoreRatio = 5f / 16f;
-
-        /// <summary>可见性判据的参考距离（米）—— 贴脸打墙的典型距离，判据 <see cref="DecalSize"/> 按它反解。</summary>
-        public const float DecalVisibleReferenceDistance = 2f;
 
         /// <summary>参考屏幕上该距离处 1 米世界宽度投成的像素数（1920 px 宽 / 水平 90° FOV ⇒ <c>1920/(2d)</c>）。</summary>
         public static float ScreenPixelsPerMeter(float distanceMeters)
@@ -268,19 +514,20 @@ namespace Cs16.Module.Combat
         // ------------------------------------------------------------------
         // ------------------------------------------------------------------
         /// <summary>
-        /// 弹痕的"米/像素"。口径：弹痕载体 `{shot1..5` 是 **16×16**（`decals.wad` 实测），
-        /// <see cref="DecalSize"/> 取的是 16 px 那张的世界尺寸 ⇒ 每像素 = DecalSize / 16。
+        /// 贴花的"米/texel" = <see cref="DecalSize"/> / 16 = **0.0254 m/texel**（= 1 GoldSrc 单位/texel）。
         ///
-        /// <para><b>这是什么、不是什么</b>：原版"贴花世界尺寸"的映射在**引擎**里（`hw.dll` 不在盘）
-        /// ⇒ 拿不到。这里用的是**同族比例推演**：同一套 decal 载体、同一个换算，
-        /// 让 48×48 的血迹 = 弹痕的 3 倍宽、64×64 的 `{blood5` = 4 倍宽。
-        /// 这不是出处，出处缺口仍在 <c>策划/差异登记.tsv</c> #69 里；换掉 DecalSize 一处即可全改。</para>
+        /// <para>出处同 <see cref="DecalSize"/>：原版尺寸公式里 <c>size</c> 的默认值就是
+        /// <c>|texinfo-&gt;vecs[0]|</c> —— 1:1 地图纹理上等于 1 世界单位/texel，
+        /// 而贴花世界尺度 = <c>decalTexture.width</c> × <c>size</c> ⇒ 逐 texel = 1 单位。</para>
+        ///
+        /// <para>用途：<see cref="BloodDecalSize"/> 按各张血迹贴花自己的像素宽给世界尺寸
+        /// （48 px → 1.2192 m、64 px → 1.6256 m）。</para>
         /// </summary>
         public const float DecalMetersPerPixel = DecalSize / 16f;
 
         /// <summary>
         /// 血迹贴花的世界尺寸（米）—— 按**该张贴花自己的像素宽**反算（见 <see cref="DecalMetersPerPixel"/>）。
-        /// 例：48 px → 0.225 m、64 px → 0.30 m。
+        /// 例：48 px → 1.2192 m、64 px → 1.6256 m。
         /// </summary>
         public static float BloodDecalSize(int pixels)
         {
@@ -296,7 +543,7 @@ namespace Cs16.Module.Combat
 
         /// <summary>
         /// 血雾贴片存活时长（秒）。出处：**本项目新增**（载体 `valve/sprites/bloodspray.spr` 给的是
-        /// 10 帧像素，**帧时长在引擎**里、载体没给 ⇒ 同 <see cref="MuzzleFlashDuration"/> 处置）。
+        /// 10 帧像素，**帧时长在引擎**里、载体没给 ⇒ 同枪口火焰时长同一处置）。
         /// </summary>
         public const float BloodPuffDuration = 0.14f;
 
@@ -357,6 +604,66 @@ namespace Cs16.Module.Combat
         public const int MaxShotsConsumedPerFrame = 16;
 
         // ==================================================================
+        // ==================================================================
+        //  弹壳（模型与贴图来自原版 mdl，见 CsShellModels）
+        // ==================================================================
+        // 出处口径：几何 / 贴图 = 原版 models/{rshell,pshell,rshell_big}.mdl 逐点搬运；
+        // 下面这批运动参数 = 原版抛壳代码的常量与 RANDOM 区间，逐条列在各自注释的地址里。
+        // 服务端出处 = 原版 cstrike/dlls/mp.dll 的 CBasePlayerWeapon::EjectBrassLate（RVA 0x946D0，
+        // 抛壳口 0x9480F / 初速 0x9470A）；引擎侧出处 = hw.dll（1 单位 = CsConst.UnitToMeter）。
+
+        /// <summary>抛壳口·前（相机局部系 z，米）= 原版 forward*16 单位。
+        /// 出处：mp.dll RVA 0x9480F 的 <c>[gpGlobals+0x28] * [0x101420BC]=16.0f</c>。</summary>
+        public const float ShellPortForward = 16f * CsConst.UnitToMeter;
+
+        /// <summary>抛壳口·横（相机局部系 x，米）= 原版 right*(-9) 单位（**负值 = 观察者左侧**）。
+        /// 出处：mp.dll RVA 0x9480F 的 <c>[gpGlobals+0x34] * [0x101423CC]=-9.0f</c>（gpGlobals->v_right）。</summary>
+        public const float ShellPortLateral = -9f * CsConst.UnitToMeter;
+
+        /// <summary>抛壳口·下（相机局部系 y，米）= 原版 up*(-9) 单位（负值 = 眼睛下方）。
+        /// 出处：mp.dll RVA 0x9480F 的 <c>[gpGlobals+0x40] * [0x101423CC]=-9.0f</c>（gpGlobals->v_up）。</summary>
+        public const float ShellPortVertical = -9f * CsConst.UnitToMeter;
+
+        /// <summary>初速·上（米/秒）= 原版 <c>v_up * RANDOM_FLOAT(100,150)</c> 单位/秒 —— 三个分量里最大的一项。
+        /// 出处：mp.dll RVA 0x9470A（常量 100.0f @VA 0x10142194 / 150.0f @VA 0x101421C0）。</summary>
+        public const float ShellSpeedUpMin = 100f * CsConst.UnitToMeter;
+        public const float ShellSpeedUpMax = 150f * CsConst.UnitToMeter;
+
+        /// <summary>初速·右（米/秒）= 原版 <c>v_right * RANDOM_FLOAT(50,70)</c> 单位/秒。
+        /// 出处：mp.dll RVA 0x94745（常量 50.0f @VA 0x10142138 / 70.0f @VA 0x10142168）。</summary>
+        public const float ShellSpeedRightMin = 50f * CsConst.UnitToMeter;
+        public const float ShellSpeedRightMax = 70f * CsConst.UnitToMeter;
+
+        /// <summary>初速·前（米/秒）= 原版 <c>v_forward * 25.0</c> 单位/秒。
+        /// 出处：mp.dll RVA 0x9470A 区段（常量 25.0f @VA 0x101420E8）。</summary>
+        public const float ShellSpeedForward = 25f * CsConst.UnitToMeter;
+
+        /// <summary>自旋角速度逐轴区间（度/秒）= 引擎侧 <c>RANDOM_FLOAT(-512,511) / (-256,255) / (-256,255)</c>。
+        /// 出处：hw.dll RVA 0x2F16C（cl_enginefuncs 表 +0xC0 = 生成 tempent 的引擎例程）。
+        /// 原版把这个向量再整体乘一个正整数，该整数来自 client.dll 生成器的实参表、
+        /// **未回溯到具体值** ⇒ 这里取 RANDOM 原式（等价于乘 1），即原版量级的下界。</summary>
+        public const float ShellSpinXMin = -512f;
+        public const float ShellSpinXMax = 511f;
+        public const float ShellSpinYMin = -256f;
+        public const float ShellSpinYMax = 255f;
+        public const float ShellSpinZMin = -256f;
+        public const float ShellSpinZMax = 255f;
+
+        /// <summary>弹壳存活时长（秒）= 原版 2.0 s。
+        /// 出处：client.dll RVA 0x4600F（push 2.0f）+ hw.dll RVA 0x2F203（写 tempent 的 die 槽）。</summary>
+        public const float ShellLife = 2.0f;
+
+        /// <summary>弹壳的碰撞半径（米）：射线终点外扩、命中后沿法线抬起都用它。
+        /// 出处：**本项目新增**（取载体半径量级 0.4 GoldSrc 单位 ≈ 0.01 m 的下侧）。</summary>
+        public const float ShellRadius = 0.006f;
+
+        /// <summary>撞面后速度保留比例。出处：**未取到**（原版 tempent 每帧的碰撞反射在 hw.dll 里
+        /// 没有可定位锚点）⇒ 保持工程原值，缺口见 策划/差异登记.tsv。</summary>
+        public const float ShellBounceDamping = 0.35f;
+
+        /// <summary>低于该速率（米/秒）即"躺下"（贴面静止）。出处：**本项目新增**。</summary>
+        public const float ShellRestSpeed = 0.25f;
+
         /// <summary>命中标记音（普通）。</summary>
         public const string HitMarkerSfx = "sfx/hitmarker";
 

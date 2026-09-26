@@ -120,6 +120,17 @@ namespace Cs16.Module.Bot
         private float _nextHeightLogAt;
 
         /// <summary>
+        /// <see cref="ResolveNextTarget"/> 的"这个路点走得到吗"备忘：同一路点下标 + 同一所在格只在
+        /// <see cref="CsBotConst.PathReplanInterval"/> 秒内问一次 <see cref="CanReach"/>
+        /// （<see cref="CanReach"/> 内含一次 A*，不许每帧调）。
+        /// </summary>
+        private int _reachCheckedIndex = -1;
+        private Vector2Int _reachCheckedFrom = new Vector2Int(int.MinValue, int.MinValue);
+        private Vector2Int _reachCheckedCell = new Vector2Int(int.MinValue, int.MinValue);
+        private bool _reachCheckedOk;
+        private float _nextReachCheckAt;
+
+        /// <summary>
         /// <see cref="IsTrapCell"/> 的备忘（键 = 格；值 = 该格所在的位图连通分量是否 ≤
         /// <see cref="CsBotConst.TrapComponentCells"/>）。格心查询是热路径（每帧 ≤ 24 个方向候选），
         /// 而分量格数只需数一次。
@@ -264,6 +275,12 @@ namespace Cs16.Module.Bot
             _hasUnreachableCell = false;
             _pathFailStreak = 0;
             _nextUnreachableLogAt = 0f;
+            // 同一条理由也适用于"这个路点走不到"的备忘（见 SkipUnreachableWaypoint）：
+            // 它是**当前这条路线 + 当前这个路点下标**的结论，路线一换就必须重问。
+            _reachCheckedIndex = -1;
+            _reachCheckedFrom = new Vector2Int(int.MinValue, int.MinValue);
+            _reachCheckedCell = new Vector2Int(int.MinValue, int.MinValue);
+            _nextReachCheckAt = 0f;
         }
 
         /// <summary>
@@ -363,6 +380,33 @@ namespace Cs16.Module.Bot
             }
 
             DropUnreachableWaypoints(fromPosition, marker, pts.Length);
+        }
+
+        /// <summary>
+        /// 换目标时设置路线：**路线标记没变就保留既有顺序与游标**；标记变了（或还没有路线）才走
+        /// <see cref="SetRoute"/> —— 即"取标记点 + 最近邻排序 + 游标归零"。
+        ///
+        /// <para>路线的推进顺序是**路线数据的属性**，与自己此刻站在哪一格无关。若每次换目标都按"离当前位置
+        /// 最近优先"重排并把 <c>_index</c> 归零，刚走过、在身后的那个路点会排到最前 ⇒ 机器人掉头；
+        /// 巡逻 / 长路线于是每换一次目标就重走一遍。</para>
+        ///
+        /// <para>游标只在**路线已走完**（<see cref="RouteExhausted"/>）时归零：同一条路线再次被选中时从
+        /// 它自己的第一个路点继续推进（顺序照旧），而不是"回头找离自己最近的路点"。</para>
+        /// </summary>
+        public void SetRouteKeepProgress(ICsMap map, string marker, Vector3 fromPosition)
+        {
+            if (!string.IsNullOrEmpty(marker) && marker == _marker && _route.Count > 0)
+            {
+                if (_index >= _route.Count) _index = 0;
+                _stuckSeconds = 0f;
+                _hasCheckPos = false;
+                ClearEscape();
+                ClearStuckState();
+                InvalidatePath();
+                return;
+            }
+
+            SetRoute(map, marker, fromPosition);
         }
 
         /// <summary>
@@ -666,6 +710,29 @@ namespace Cs16.Module.Bot
                     continue;
                 }
 
+                //   第三道：位图说"可走"，但从**当前格按导航口径**（SnapToWalkable + 高度一致性层 +
+                //   引擎 AStar）求不出路径的路点。它与上面那条备忘（靠连续失败攒够才记）覆盖的是同一件事，
+                //   区别是**在退化之前就跳掉**：追一条走不到的路点会先退化成"朝它直线走"，被反复判卡住
+                //   （<see cref="CsBotConst.StuckCheckInterval"/> 一次的位移判卡）⇒ 上报"必须换目标"⇒
+                //   上层换目标时会把整条路线按最近点重排、游标归零 ⇒ 又走回刚路过的那个路点 ⇒
+                //   同一个"追不到 → 换目标 → 走回去"的环，整回合净位移只有十几米。
+                //   判据与 <see cref="EnsurePath"/> 逐字同一份（<see cref="CanReach"/>），阈值一个都没改。
+                if (SkipUnreachableWaypoint(selfPosition, wp))
+                {
+                    if (Time.time >= _nextSkipLogAt)
+                    {
+                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        var cc = CellOf(Game.Map, wp);
+                        var wc = CellCenter(cc);
+                        Game.Logger.Warn(Tag,
+                            $"{_ownerName} 跳过**导航口径走不到**的路点 {wp}（格 {cc}，世界 {wc.x:F1},{wc.z:F1}；" +
+                            $"路线 '{_marker}'，第 {_index + 1}/{_route.Count} 个）—— 位图判可走却求不出路径" +
+                            "（高度一致性层 / 连通性口径），追它只会先退化成直线走再被换目标（判据 = BotNavigator.CanReach）");
+                    }
+                    _index++;
+                    continue;
+                }
+
                 break;
             }
 
@@ -675,6 +742,45 @@ namespace Cs16.Module.Bot
             if (EnsurePath(selfPosition, target)) return AdvancePath(selfPosition, target);
 
             return target;
+        }
+
+        /// <summary>
+        /// "这个路点按导航口径走得到吗"的**降频**查询（<see cref="ResolveNextTarget"/> 的第三道跳点用）。
+        ///
+        /// <list type="bullet">
+        /// <item>口径 = <see cref="CanReach"/>，与 <see cref="EnsurePath"/> 逐字同一份（同一份
+        /// <see cref="SnapToWalkable"/>、同一份 <see cref="WalkableCellHeightAware"/>、同一个引擎
+        /// <see cref="AStar"/>）——本方法只是"问一句"的外壳，判据一个字没改；</item>
+        /// <item>只在该路点**下标或自己所在格变化**时才重问，且两次之间至少隔
+        /// <see cref="CsBotConst.PathReplanInterval"/>（<see cref="CanReach"/> 内含一次 A*，
+        /// 不许进每帧热路径）；</item>
+        /// <item>退化口径（一律返回 false = 不跳，行为同既有）：地图不可用 / 自己所在格附近没有可走格 /
+        /// 该路点格位图判**不可走**（那是 <see cref="ResolveNextTarget"/> 上一条分支的事）。</item>
+        /// </list>
+        /// </summary>
+        private bool SkipUnreachableWaypoint(Vector3 selfPosition, Vector3 wp)
+        {
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) return false;
+            if (_map == null || !_map.IsLoaded) return false;
+
+            var from = CellOf(map, selfPosition);
+            var cell = CellOf(map, wp);
+            if (!SnapToWalkable(ref from)) return false;        // 自己被卡在位图外 ⇒ 不是路点的问题
+            if (!WalkableCell(cell)) return false;              // 位图判挡 ⇒ 交给"跳过不可走的路点"那条
+
+            if (_reachCheckedIndex == _index && _reachCheckedFrom == from && _reachCheckedCell == cell
+                && CsClock.Now < _nextReachCheckAt)
+            {
+                return !_reachCheckedOk;                        // 命中备忘
+            }
+
+            _reachCheckedIndex = _index;
+            _reachCheckedFrom = from;
+            _reachCheckedCell = cell;
+            _nextReachCheckAt = CsClock.Now + CsBotConst.PathReplanInterval;
+            _reachCheckedOk = CanReach(selfPosition, wp);
+            return !_reachCheckedOk;
         }
 
         // ==================================================================

@@ -133,7 +133,9 @@ namespace Cs16.Module.Player
         /// <summary>
         /// 视点晃动的**数值口径**：7 个数值沿用 <c>Module/CameraRig/ViewBob.cs</c> 里写死的常量
         /// （引擎件只吃配置，数值一个都没动）：
-        /// 满幅基准速度 = <see cref="CsConst.SpeedRifle"/>（4.4 m/s，拿"步枪速度"当满幅基准）、
+        /// 满幅基准速度 = <see cref="CsConst.SpeedRifle"/>（4.4 m/s，**本项目自定的归一化基准，
+        /// ⛔ 不等于任何一把枪的移动速度**——逐武器速度见 <c>CsWeaponDef.MaxSpeed</c>；
+        /// 移动散布已改用 <c>CsInventory.MoveReferenceSpeed</c>，本处仍用固定值 ⇒ 已登记待接原版线性口径）、
         /// 幅度 = <see cref="CsConst.ViewBobAmount"/>、频率 = <see cref="CsConst.ViewBobSpeed"/>、
         /// 振幅平滑 / 横滚角 / 落地沉降两组四个来自 <see cref="CsCombatTuning"/>。
         /// </summary>
@@ -391,7 +393,7 @@ namespace Cs16.Module.Player
             _appliedAutoReload = autoReload;
             _appliedFov = fov;
 
-            _motor.ApplySettings(sensitivity, invertY);
+            _motor.ApplySettings(sensitivity, invertY, fov);
             _combat.ApplySettings(autoReload);
             _view.SetBaseFov(fov);
 

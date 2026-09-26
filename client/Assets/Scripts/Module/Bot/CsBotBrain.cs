@@ -866,7 +866,7 @@ namespace Cs16.Module.Bot
                 if (string.IsNullOrEmpty(routeMarker)) continue;
                 if (k < CsBotPlans.Slots && routeMarker == _planRoute) continue;   // 刚走完的那条最后再试
 
-                _nav.SetRoute(_map, routeMarker, self.Position);
+                _nav.SetRouteKeepProgress(_map, routeMarker, self.Position);
                 if (!_nav.HasRoute)
                 {
                     RateWarn("replan.route.empty",
@@ -908,7 +908,7 @@ namespace Cs16.Module.Bot
             var myPlan = CsBotPlans.For(self.Team, mySlot, _match.RoundNumber);
             if (!string.IsNullOrEmpty(myPlan.RouteMarker))
             {
-                _nav.SetRoute(_map, myPlan.RouteMarker, self.Position);
+                _nav.SetRouteKeepProgress(_map, myPlan.RouteMarker, self.Position);
                 if (_nav.HasRoute)
                 {
                     var count = GoalCandidateCount(myPlan.GoalMarker);
@@ -1005,7 +1005,7 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            _nav.SetRoute(_map, CsMarkers.Patrol, self.Position);
+            _nav.SetRouteKeepProgress(_map, CsMarkers.Patrol, self.Position);
             if (!_nav.HasRoute) return false;
 
             // 近的优先（不再"专挑最远"）：门口那个走得到的巡点，比 80m 外走不到的那个有用。

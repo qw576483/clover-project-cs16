@@ -95,6 +95,13 @@ namespace Cs16.Core
         public const string HudStopwatchIcon = "UI/Art/stopwatch";
 
         /// <summary>
+        /// 买枪区图标（真实文件 <c>Resources/UI/Art/hud_buyzone.png</c>，32×32）——
+        /// 原版 <c>sprites/hud.txt:131</c> 的 <c>buyzone</c>，由 <c>640hud7.spr</c> 的
+        /// <c>96,148,32,32</c> 源矩形解出。原版买枪期提示是这张**位图**，不是文字。
+        /// </summary>
+        public const string HudBuyZoneIcon = "UI/Art/hud_buyzone";
+
+        /// <summary>
         /// 雷达**俯视底图**（真实文件 <c>Resources/UI/Art/overview_de_dust2.png</c>，128×128）。
         ///
         /// <para><b>为什么不是"原版那张 bmp"</b>：原版雷达底图 = <c>cstrike/overviews/de_dust2.bmp</c>
@@ -297,6 +304,35 @@ namespace Cs16.Core
 
         /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
         public const string FxSpark = "UI/Art/fx_spark";
+
+        /// <summary>
+        /// 弹壳贴图·步枪族（真实文件 <c>Resources/UI/Art/fx_shell_rifle.png</c>，120×59 RGB）——
+        /// 载体 = 原版 <c>cstrike/models/rshell.mdl</c> 与 <c>rshell_big.mdl</c> 内嵌的
+        /// <c>rifle_goldshell.bmp</c>（mdl 内部 8 位索引 + 紧邻 768 B 调色板，整张无透明索引）。
+        /// </summary>
+        public const string FxShellRifle = "UI/Art/fx_shell_rifle";
+
+        /// <summary>
+        /// 弹壳贴图·手枪族（真实文件 <c>Resources/UI/Art/fx_shell_pistol.png</c>，88×59 RGB）——
+        /// 载体 = 原版 <c>cstrike/models/pshell.mdl</c> 内嵌的 <c>pistol_goldshell.bmp</c>。
+        /// </summary>
+        public const string FxShellPistol = "UI/Art/fx_shell_pistol";
+
+        /// <summary>
+        /// 墙上的贴花（弹痕 / 血迹）用的精灵着色器：真实文件
+        /// <c>Resources/Shaders/CsDecalAlphaClip.shader</c>（内置 <c>Sprites/Default</c> 的同式混合 + 一行
+        /// alpha 裁切）。加载者 <c>CombatEffects</c>（<c>res.LoadAsset&lt;Shader&gt;</c> → 自己 <c>new Material</c>
+        /// 并设 <c>_Cutoff</c>）。
+        ///
+        /// <para><b>为什么走 Resources 而不是 <c>Shader.Find</c></b>：<c>Shader.Find</c> 只保证编辑器里找得到，
+        /// 打进包时着色器若无人引用会被剥掉 ⇒ 打包后画面全空且不报错（静默失败）。放在 <c>Resources/</c> 下的
+        /// 资产一定随包走。</para>
+        ///
+        /// <para><b>阈值出处</b>：原版贴花绘制函数（<c>hw.dll</c> RVA 0x57800）开 <c>GL_ALPHA_TEST</c>，
+        /// 阈值继承 <c>glAlphaFunc(GL_GREATER, gl_alphamin)</c>，cvar <c>gl_alphamin</c> 默认 <c>"0.25"</c>
+        /// —— 逐条地址见该 <c>.shader</c> 文件头与 <see cref="CsCombatTuning.DecalAlphaCutoff"/>。</para>
+        /// </summary>
+        public const string DecalAlphaClipShader = "Shaders/CsDecalAlphaClip";
 
         /// <summary>
         /// 菜单背景拼图**目录前缀**（注意带尾斜杠；真实文件 <c>Resources/Background/*.tga</c>）。

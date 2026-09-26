@@ -35,6 +35,10 @@ namespace Cs16.Module.Player
         private float _sensitivity = CsConst.DefaultSensitivity;
         private bool _invertY;
 
+        /// <summary>玩家当前的基础（未开镜）水平 FOV（度）：开镜灵敏度补偿的分母，
+        /// 口径见 <see cref="CsConst.ScopeSensitivityScale"/>。由 <c>PlayerModule</c> 从 <c>Game.Setting</c> 读好后写进来。</summary>
+        private float _baseFov = CsConst.DefaultFov;
+
         // ---- 出生 / 接管检测 ----
         private long _lastActorId;
         private bool _lastAlive;
@@ -43,6 +47,7 @@ namespace Cs16.Module.Player
         // ---- 诊断（只报一次）----
         private bool _warnedNoInput;
         private bool _reportedEngineMove;
+        private int _reportedZoomLevel;
 
         /// <summary>当前水平朝向（度，0 = +Z；与模拟的 <c>CsActor.Yaw</c> 同口径）。</summary>
         public float Yaw => _look.Yaw;
@@ -55,11 +60,13 @@ namespace Cs16.Module.Player
             _match = match;
         }
 
-        /// <summary>把鼠标灵敏度/反转写进来（<c>PlayerModule</c> 从 <c>Game.Setting</c> 读好后调用）。</summary>
-        internal void ApplySettings(float sensitivity, bool invertY)
+        /// <summary>把鼠标灵敏度 / 反转 / 基础 FOV 写进来（<c>PlayerModule</c> 从 <c>Game.Setting</c> 读好后调用）。</summary>
+        internal void ApplySettings(float sensitivity, bool invertY, int baseFov)
         {
             if (sensitivity > 0.0001f) _sensitivity = sensitivity;
             _invertY = invertY;
+            if (baseFov > 0) _baseFov = baseFov;
+            else _log.Warn("fov.invalid", $"基础 FOV = {baseFov} 非法（须 > 0）⇒ 开镜灵敏度补偿继续用 {_baseFov:F0}");
         }
 
         /// <summary>把视角**直接**对齐到给定角度（出生 / 观战切换 / 接管本地玩家时用，不做平滑）。</summary>
@@ -98,7 +105,7 @@ namespace Cs16.Module.Player
 
             SyncLookWithActor(local);
 
-            if (!blockLook) ApplyMouseLook();
+            if (!blockLook) ApplyMouseLook(local);
 
             cmd.Yaw = _look.Yaw;
             cmd.Pitch = _look.Pitch;
@@ -124,7 +131,8 @@ namespace Cs16.Module.Player
         // ==================================================================
         //  视角
         // ==================================================================
-        private void ApplyMouseLook()
+        /// <param name="local">本地玩家（可能为 null）—— 只用来读开镜武器的定义（逐武器第二档视野不同）。</param>
+        private void ApplyMouseLook(CsActor local)
         {
             var input = Game.Input;
             if (input == null)
@@ -143,7 +151,31 @@ namespace Cs16.Module.Player
             // 灵敏度口径 = **每 count 多少度**（设置值 × 玩法换算系数），不乘 dt（鼠标位移本身就是增量）。
             var degPerCount = _sensitivity * CsCombatTuning.DegreesPerMouseCount;
 
-            _look.Add(delta.x, delta.y, degPerCount, _invertY, CsCombatTuning.PitchLimit);
+            // 开镜补偿（原版口径）：开镜时有效灵敏度 = 设置值 × (开镜视野 / 基础视野) × zoom_sensitivity_ratio。
+            // 系数 < 1 ⇒ 开镜后**更慢**；换算与出处见 CsConst.ScopeSensitivityScale。
+            var zoomLevel = _match != null ? _match.ScopeLevel : 0;
+            var zoomScale = zoomLevel > 0
+                ? CsConst.ScopeSensitivityScale(local != null ? local.ActiveDef : null, zoomLevel, _baseFov)
+                : 1f;
+
+            ReportZoomSensitivity(zoomLevel, zoomScale, degPerCount * zoomScale);
+
+            _look.Add(delta.x, delta.y, degPerCount * zoomScale, _invertY, CsCombatTuning.PitchLimit);
+        }
+
+        /// <summary>
+        /// 开镜档位**变化时**打一条灵敏度自证行（数值类证据）：档位 / 补偿系数 / 开镜与不开镜两种"每 count 多少度"。
+        /// 本方法每帧都被调用，同档位不重复打。
+        /// </summary>
+        private void ReportZoomSensitivity(int zoomLevel, float zoomScale, float degPerCount)
+        {
+            if (zoomLevel == _reportedZoomLevel) return;
+            _reportedZoomLevel = zoomLevel;
+
+            var hipDegPerCount = _sensitivity * CsCombatTuning.DegreesPerMouseCount;
+            _log.Always(zoomLevel > 0
+                ? $"开镜灵敏度补偿：档位={zoomLevel} 系数={zoomScale:F4}（每 count {degPerCount:F5}°，不开镜 {hipDegPerCount:F5}°）"
+                : $"退出开镜：灵敏度回到设置值（每 count {degPerCount:F5}°）");
         }
 
         /// <summary>

@@ -3,6 +3,7 @@ using CloverEngine;
 using Cs16.Core;
 using Cs16.Module.Map;
 using Cs16.Module.Match;
+using Cs16.Module.View;
 using Cs16.UI;
 using UnityEngine;
 
@@ -77,6 +78,8 @@ namespace Cs16.Module.Flow
         private bool _optionsFromPause;
         private bool _stageSceneReady;
         private bool _stageMapReady;
+        /// <summary>本局角色预制体是否已在读条期预热完（见 <see cref="OnEnterLoading"/>）。</summary>
+        private bool _stageAssetsReady;
         private bool _menuLoadRequested;
 
         /// <summary>本场是否已经在 Stage 站点开过局（用来区分"首次进图"与"从暂停恢复"）。</summary>
@@ -84,6 +87,9 @@ namespace Cs16.Module.Flow
 
         /// <summary>主菜单启动曲是否已经播过（原版口径：只在整个进程的**首次**主菜单播一次）。</summary>
         private bool _startupMusicPlayed;
+
+        /// <summary>启动画面期渲染预热的下一步：<c>0</c> = 已做完；<c>1</c> = 待编译着色器变体；<c>2</c> = 待重建 Canvas 网格。</summary>
+        private int _renderWarmStep;
 
         public string CurrentState => Game.Fsm != null ? Game.Fsm.Current : null;
 
@@ -117,7 +123,7 @@ namespace Cs16.Module.Flow
 
         private void RegisterStates()
         {
-            Game.Fsm.RegisterState(State.Boot, OnEnterBoot, null, OnExitBoot);
+            Game.Fsm.RegisterState(State.Boot, OnEnterBoot, OnTickBoot, OnExitBoot);
             Game.Fsm.RegisterState(State.MainMenu, OnEnterMainMenu, null, OnExitMainMenu);
             Game.Fsm.RegisterState(State.ServerList, OnEnterServerList, OnTickServerList, OnExitServerList);
             Game.Fsm.RegisterState(State.NewGame, OnEnterNewGame, OnTickNewGame, OnExitNewGame);
@@ -172,11 +178,46 @@ namespace Cs16.Module.Flow
         {
             Game.UI.Open<BootPanel>();
             Game.Logger?.Info(Tag, $"Boot 站点：启动画面已开（当前场景 {DescribeScene()}）");
+
+            // 启动画面这一屏本来就要停一下：把"第一次真正画出来"的代价（着色器变体编译 / Canvas 网格重建）
+            // 排在启动首帧**之后**。两件事都写在首帧里会把它们全压在那帧上（首帧还要付引擎初始化）
+            // ⇒ 只登记下一步，由 OnTickBoot 每帧一拍、分两帧做完。
+            _renderWarmStep = 1;
+        }
+
+        /// <summary>启动画面期的渲染预热泵：每帧只推进一拍。</summary>
+        private void OnTickBoot(float dt)
+        {
+            PumpRenderWarm();
+        }
+
+        /// <summary>
+        /// 按 <see cref="_renderWarmStep"/> 推进一拍（见 <see cref="CsRenderWarmup"/> 的两段）。
+        /// 两段都是 Unity 自己的同步调用、**不可中断** ⇒ 这里只负责"两件不同时做"，不改变任一件本身的耗时。
+        /// </summary>
+        private void PumpRenderWarm()
+        {
+            if (_renderWarmStep == 1)
+            {
+                _renderWarmStep = 2;
+                CsRenderWarmup.WarmInUseVariants(Time.realtimeSinceStartup);
+                return;
+            }
+
+            if (_renderWarmStep == 2)
+            {
+                _renderWarmStep = 0;
+                CsRenderWarmup.WarmCanvases(Time.realtimeSinceStartup);
+            }
         }
 
         private void OnExitBoot()
         {
             Game.UI.Close<BootPanel>();
+
+            // 启动画面活不到两帧就被切走时，泵没走完 ⇒ 在这里把剩下的步骤一次做完：
+            // 「两段各执行一次」不因切站时机而丢（本路径只在启动画面短于两帧时才走到）。
+            while (_renderWarmStep != 0) PumpRenderWarm();
         }
 
         private void OnEnterMainMenu()
@@ -382,6 +423,7 @@ namespace Cs16.Module.Flow
             _pending = cfg.Clone();
             _stageSceneReady = false;
             _stageMapReady = false;
+            _stageAssetsReady = false;
             _stageBegun = false;
 
             Game.Logger?.Info(Tag,
@@ -403,8 +445,20 @@ namespace Cs16.Module.Flow
         {
             if (CurrentState != State.Loading) return;
 
+            if (_stageSceneReady && _stageMapReady && !_stageAssetsReady)
+            {
+                // 只剩资源预热没完成 ⇒ 放弃预热照常进图（代价 = 开局那一帧仍会卡），绝不把玩家钉在读条屏。
+                _stageAssetsReady = true;
+                Game.Logger?.Warn(Tag,
+                    $"读条 {StageLoadTimeout:0}s 到点但只有资源预热没完成（sceneReady={_stageSceneReady} " +
+                    $"mapReady={_stageMapReady}）⇒ 放弃预热照常进图");
+                TryFinishStageLoad();
+                return;
+            }
+
             Game.Logger?.Error(Tag,
-                $"读条 {StageLoadTimeout:0}s 超时（sceneReady={_stageSceneReady} mapReady={_stageMapReady}），" +
+                $"读条 {StageLoadTimeout:0}s 超时（sceneReady={_stageSceneReady} mapReady={_stageMapReady} " +
+                $"assetsReady={_stageAssetsReady}），" +
                 $"放弃本次进图并回主菜单（检查 {SceneNames.StageDust2}.unity 是否已生成并加入 Build Settings）");
             Game.UI.Toast($"加载 {SceneNames.StageDust2} 失败或超时，已返回主菜单", 3f);
             GoMainMenu();
@@ -415,6 +469,26 @@ namespace Cs16.Module.Flow
             var mapName = _pending != null ? _pending.MapName : CsConst.MapDust2;
             Game.UI.Open<LoadingPanel>(mapName);
             Game.Logger?.Info(Tag, $"读条开始：scene={SceneNames.StageDust2} map={mapName}");
+
+            // 角色预制体若等到开局那一帧才首次加载，会把那一帧拖成长帧（实测读条空档 9s）。
+            // 这里在读条期先发起加载，由视图模块全部落定后回调 → 再走"读条完成"。
+            var view = ViewModule.Instance;
+            if (view == null)
+            {
+                _stageAssetsReady = true;
+                Game.Logger?.Warn(Tag, "视图模块不在场（ViewModule.Instance 为 null），跳过读条预热");
+            }
+            else
+            {
+                view.WarmUpMatchPrefabs(OnStageAssetsWarm);
+            }
+        }
+
+        /// <summary>读条预热完成（全部预制体落定）。</summary>
+        private void OnStageAssetsWarm()
+        {
+            _stageAssetsReady = true;
+            TryFinishStageLoad();
         }
 
         private void OnExitLoading()
@@ -486,10 +560,10 @@ namespace Cs16.Module.Flow
             TryFinishStageLoad();
         }
 
-        /// <summary>场景与地图都就绪才结束读条 —— 这样进度条走完时图真的能跑。</summary>
+        /// <summary>场景、地图、本局资源预热都就绪才结束读条 —— 这样进度条走完时图真的能跑、开局那一帧也不会卡。</summary>
         private void TryFinishStageLoad()
         {
-            if (!_stageSceneReady || !_stageMapReady) return;
+            if (!_stageSceneReady || !_stageMapReady || !_stageAssetsReady) return;
             if (CurrentState != State.Loading)
             {
                 Game.Logger?.Warn(Tag, $"读条完成但当前不在 Loading 站点（{CurrentState}），忽略");
@@ -617,6 +691,7 @@ namespace Cs16.Module.Flow
             _pending = null;
             _stageSceneReady = false;
             _stageMapReady = false;
+            _stageAssetsReady = false;
             _stageBegun = false;
 
             // 单机版没有 WorldSync；真有就说明装配错了，不能静默

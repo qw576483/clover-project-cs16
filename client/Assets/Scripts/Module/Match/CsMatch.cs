@@ -158,6 +158,14 @@ namespace Cs16.Module.Match
         /// <summary>视线被烟雾遮挡的判定半径。
         /// 出处：**本项目新增**（遮挡判定半径，与 <c>SmokeRadius</c> 同值）。</summary>
         public const float SmokeBlockRadius = 3.5f;
+        /// <summary>烟雾球从爆开到长满 <see cref="SmokeBlockRadius"/> 的时长（秒）——生长期间遮挡半径按它线性插值。
+        /// 出处：**本项目自定、原版未取证**（原版烟是 <c>func_smokevolume</c> 粒子体积，生长曲线在载体 <c>mp.dll</c> 里，
+        /// 载体不在盘）。视觉层 <c>Module/Combat/GrenadeThrower</c> 用同一常量同步生长。</summary>
+        public const float SmokeGrowSeconds = 1f;
+        /// <summary>投掷物之间的碰撞半径（两颗雷的球心距小于两倍该值即视为相撞）。
+        /// 出处：与视觉体半径同值 <c>Module/Combat/CsCombatTuning.GrenadeVisualRadius</c>（本值 = 那个常量，不另立数值；
+        /// 原版手雷的碰撞尺寸在 <c>mp.dll</c>，**载体不在盘**）。</summary>
+        public const float GrenadeCollisionRadius = 0.09f;
 
         // ---- 机器人 ----
         /// <summary>机器人瞄准误差的重采样间隔（秒）。
@@ -186,10 +194,6 @@ namespace Cs16.Module.Match
         /// （<c>client/Assets/ThirdParty/Dust2/de_dust2.bsp</c> entity lump）；**1.5 m 这个球半径本项目新增**
         /// （载体给的是 brush 体积，不是以炸弹为心的球半径）。</summary>
         public const float DefuseRadius = 1.5f;
-        /// <summary>炸弹剩余时间低于该值时，蜂鸣切到快速节拍（CsConst 注释里的 "&gt;10s"）。
-        /// 出处：**本项目新增**（10s 分界；原版 C4 蜂鸣节奏写在 <c>mp.dll</c> 的 C4 逻辑里（非 cvar），载体不在盘
-        /// ⇒ 已登记 <c>策划/差异登记.tsv</c> 第 15 条）。</summary>
-        public const float BombBeepFastThreshold = 10f;
         /// <summary>C4 爆炸半径（CsConst 未定义；官方 1.6 的 C4 在十余米内几乎必杀）。
         /// 出处：**本项目新增**（原版 C4 爆炸半径在 <c>mp.dll</c> 的 C4 逻辑里，载体不在盘）。</summary>
         public const float BombExplosionRadius = 12f;
@@ -282,7 +286,11 @@ namespace Cs16.Module.Match
 
         private bool _hasLocalInput;
         private CsInputState _localInput;
-        private bool _zoomHeld;
+        /// <summary>开镜档位：0 = 不开镜、1 = 第一档（40°）、2 = 第二档（AWP 10° / 其余 15°）。</summary>
+        private int _scopeLevel;
+
+        /// <summary>上一帧的开镜键，只用来判「按下沿」（按住型与电平型驱动都等价于一次）。</summary>
+        private bool _preZoom;
         /// <summary>
         /// 差异 #68：上一帧的 <c>Attack2</c>，只用来判「按下沿」。
         ///
@@ -578,7 +586,8 @@ namespace Cs16.Module.Match
             _nextActorId = 1;
             _botNameCursor = 0;
             _spectateIndex = -1;
-            _zoomHeld = false;
+            _scopeLevel = 0;
+            _preZoom = false;
             _localNextJumpTime = 0f;
             _hasLocalInput = false;
             _localInput = default;
@@ -900,6 +909,8 @@ namespace Cs16.Module.Match
         public Vector3 BombPosition => Bomb.Planted ? Bomb.Position : Bomb.LastKnownPosition;
         public float BombTimeLeft => Bomb.Planted ? Bomb.TimeLeft : -1f;
         public float UseProgress => Bomb.ActiveUseProgress;
+        public int BombBeepSerial => Bomb.BeepSerial;
+        public int BombBeepTier => Bomb.BeepTier;
 
         public bool BombCarrierIs(long actorId)
         {
@@ -1075,7 +1086,9 @@ namespace Cs16.Module.Match
                     if (dir.sqrMagnitude > 1f) dir.Normalize();
 
                     var speed = CsInventory.MovementSpeed(a);
-                    a.Velocity = new Vector3(dir.x * speed, a.Velocity.y, dir.z * speed);
+                    // 摩擦 + 逐帧加速（原版 PM_Friction / PM_Accelerate）：不能把速度直接设成目标值，
+                    // 否则松手即停、起步瞬间满速，丢掉了原版的惯性。
+                    a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt);
 
                     if (inp.Jump && a.OnGround)
                     {
@@ -1235,6 +1248,135 @@ namespace Cs16.Module.Match
             return true;
         }
 
+        /// <summary>买备用弹药（原版 <c>buyammo1</c> / <c>buyammo2</c>）：给本地玩家当前主 / 副武器补一份弹药。</summary>
+        /// <param name="slot"><see cref="CsAmmoBuy.PrimarySlot"/>（主武器）或 <see cref="CsAmmoBuy.SecondarySlot"/>（副武器）。</param>
+        public bool TryBuyAmmo(int slot, out string reason)
+        {
+            if (_local == null)
+            {
+                reason = "玩家不在场";
+                return false;
+            }
+            return TryBuyAmmoFor(_local.Id, slot, out reason);
+        }
+
+        /// <summary>
+        /// 给指定 actor 买备用弹药（**非 ICsMatch 契约的扩展**，形状同 <see cref="TryBuyFor"/>）。
+        ///
+        /// <para><b>闸门与买枪完全一致</b>（比赛在跑 / 活着 / 在买枪时限内 / 在买枪区内），
+        /// 另加原版 <c>BuyAmmo</c> 自己的两条：槽位里得有枪、备弹没到 <see cref="CsWeaponDef.ReserveAmmo"/>。
+        /// "已满"这条<b>不扣钱</b>、只记一条 Info（原版 <c>jge</c> 直接返回失败，不产生金钱变动）。</para>
+        ///
+        /// <para>价格与每份弹数取 <see cref="CsAmmoBuy"/>（原版 <c>mp.dll</c> 那张逐武器弹药表的
+        /// <c>+0x08</c> / <c>+0x0c</c> 两列）。</para>
+        /// </summary>
+        public bool TryBuyAmmoFor(long actorId, int slot, out string reason)
+        {
+            reason = null;
+
+            if (!_running) { reason = "比赛未开始"; return false; }
+
+            var a = Find(actorId);
+            if (a == null)
+            {
+                reason = "玩家不在场";
+                Game.Logger.Warn(Tag, $"买弹药失败：actor {actorId} 不存在（槽位 {slot}）");
+                return false;
+            }
+            if (!a.IsAlive)
+            {
+                reason = "玩家已死亡";
+                Game.Logger.Warn(Tag, $"买弹药失败：{a.Name} 已死亡（槽位 {slot}）");
+                return false;
+            }
+            if (!CanBuyTime())
+            {
+                reason = "不在买枪时间";
+                Game.Logger.Warn(Tag, $"买弹药失败：不在买枪时间（{a.Name} / 槽位 {slot}）");
+                return false;
+            }
+            if (!a.InBuyZone)
+            {
+                reason = "必须在买枪区";
+                Game.Logger.Warn(Tag, $"买弹药失败：{a.Name} 不在买枪区（槽位 {slot}）");
+                return false;
+            }
+
+            var weaponId = WeaponInSlot(a, slot);
+            if (weaponId == null)
+            {
+                reason = slot == CsAmmoBuy.PrimarySlot ? "没有主武器" : "没有副武器";
+                Game.Logger.Warn(Tag, $"买弹药失败：{a.Name} 的{(slot == CsAmmoBuy.PrimarySlot ? "主" : "副")}武器槽是空的");
+                return false;
+            }
+
+            var def = CsWeapons.Get(weaponId);
+            if (def == null)
+            {
+                reason = "未知武器";
+                Game.Logger.Warn(Tag, $"买弹药失败：未知武器 {weaponId}");
+                return false;
+            }
+
+            var price = CsAmmoBuy.Price(weaponId);
+            var box = CsAmmoBuy.Box(weaponId);
+            if (price <= 0 || box <= 0)
+            {
+                reason = "该武器不能补弹";
+                Game.Logger.Warn(Tag, $"买弹药失败：{def.DisplayName} 没有弹药价格/每份量（刀 / 手雷 / 装备 / C4 不可补弹）");
+                return false;
+            }
+
+            if (!a.Ammo.TryGetValue(weaponId, out var ammo))
+            {
+                // 持有某把武器却没它的弹药记录 = 状态不一致（DropWeapon / GivePurchased 都不产出这种组合）
+                reason = "弹药状态缺失";
+                RateWarn("buyammo.noammo." + weaponId, $"{a.Name} 持有 {def.DisplayName} 却没有它的弹药记录，买弹药被拒绝");
+                return false;
+            }
+            if (ammo.reserve >= def.ReserveAmmo)
+            {
+                reason = "备弹已满";
+                Game.Logger.Info(Tag,
+                    $"{a.Name} 的 {def.DisplayName} 备弹已满（{ammo.reserve}/{def.ReserveAmmo}），买弹药被拒绝且不扣钱");
+                return false;
+            }
+            if (a.Money < price)
+            {
+                reason = "金钱不足";
+                Game.Logger.Warn(Tag,
+                    $"买弹药失败：金钱不足（{a.Name} 有 ${a.Money}，{def.DisplayName} 一份弹药需 ${price}）");
+                return false;
+            }
+
+            Economy.Add(a, -price, $"补充 {def.DisplayName} 弹药");
+            var added = Inventory.GivePurchasedAmmo(a, weaponId, box);
+            Game.Logger.Info(Tag,
+                $"{a.Name} 买了 {def.DisplayName} 的备用弹药：+{added} 发（${price}），备弹 {ammo.reserve} → " +
+                $"{ammo.reserve + added} / {def.ReserveAmmo}，余钱 ${a.Money}");
+
+            if (added <= 0)
+            {
+                // 上面刚判过没满 ⇒ 走不到这里；真到了就是 GivePurchasedAmmo 的契约被破坏
+                RateWarn("buyammo.noadd." + weaponId, $"{a.Name} 买了 {def.DisplayName} 的弹药却一发没加上（状态不一致）");
+                return false;
+            }
+            return true;
+        }
+
+        /// <summary>槽位号 → 该槽当前那把枪（非主/副槽位记一条 Warn 并返回 null）。</summary>
+        private string WeaponInSlot(CsActor a, int slot)
+        {
+            switch (slot)
+            {
+                case CsAmmoBuy.PrimarySlot: return a.PrimaryWeapon;
+                case CsAmmoBuy.SecondarySlot: return a.SecondaryWeapon;
+                default:
+                    RateWarn("buyammo.slot." + slot, $"买弹药请求了非法槽位 {slot}（只支持 1=主武器 / 2=副武器）");
+                    return null;
+            }
+        }
+
         public void SetUseHeld(bool held)
         {
             if (!_running) return;
@@ -1261,11 +1403,14 @@ namespace Cs16.Module.Match
             Game.Logger.Info(Tag, $"{a.Name} 丢弃了 {def.DisplayName}");
         }
 
+        /// <summary>当前开镜档位（0 / 1 / 2）；没有比赛在跑时恒 0。</summary>
+        public int ScopeLevel => _running ? _scopeLevel : 0;
+
         public bool IsZoomed
         {
             get
             {
-                if (!_running || !_zoomHeld) return false;
+                if (!_running || _scopeLevel <= 0) return false;
                 var a = _local;
                 if (a == null || !a.IsAlive) return false;
                 var def = a.ActiveDef;
@@ -1863,7 +2008,8 @@ namespace Cs16.Module.Match
 
             if (a == _local)
             {
-                _zoomHeld = false;
+                _scopeLevel = 0;
+                _preZoom = false;
                 _hasLocalInput = false;
                 EmitEvent(Events.LocalRespawned);
                 Game.Logger.Info(Tag, $"本地玩家复活于 {a.Position}（{a.Team}，保留装备={keepLoadout}）");
@@ -2053,7 +2199,13 @@ namespace Cs16.Module.Match
             a.IsWalking = inp.Walk && !inp.Crouch;
 
             var def = a.ActiveDef;
-            _zoomHeld = inp.Zoom && def != null && def.Class == CsWeaponClass.Sniper;
+            // 开镜档位（原版 AWP 90→40→10、Scout/SG550/G3SG1 90→40→15；出处 策划/手感参数对照.md §5.2）。
+            // ⚠️ 原版的**按键语义**（同一右键逐档推进 / 按住进阶 / 点击切换）本片未取证 ⇒
+            // 这里只落"档位 + 可切换"：按下沿逐档推进，满档回到不开镜。
+            var canScope = def != null && def.Class == CsWeaponClass.Sniper;
+            if (!canScope) _scopeLevel = 0;
+            else if (inp.Zoom && !_preZoom) _scopeLevel = (_scopeLevel + 1) % 3;
+            _preZoom = inp.Zoom;
 
             // 差异 #68：右键 → 切换消音器（USP·M4A1）/ 连发模式（Glock18·FAMAS）。
             // 为什么放在"冻结期/阶段早退"之前：原版在买枪时间也能按右键拆装消音器（只禁移动），
@@ -2086,7 +2238,9 @@ namespace Cs16.Module.Match
             if (dir.sqrMagnitude > 1f) dir.Normalize();
 
             var speed = CsInventory.MovementSpeed(a);
-            a.Velocity = new Vector3(dir.x * speed, a.Velocity.y, dir.z * speed);
+            // 摩擦 + 逐帧加速（原版 PM_Friction / PM_Accelerate）：不能把速度直接设成目标值，
+            // 否则松手即停、起步瞬间满速，丢掉了原版的惯性。
+            a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt);
 
             if (inp.Jump && a.OnGround && now >= _localNextJumpTime)
             {
@@ -2116,6 +2270,9 @@ namespace Cs16.Module.Match
         {
             if (a == null || !a.IsAlive) return;
 
+            // 落地边沿的起点：本帧贴地判定跑完后再看它，只在"由假变真"那一帧结算坠落伤害。
+            var wasOnGround = a.OnGround;
+
             if (_map == null || !_map.IsLoaded)
             {
                 // 没有地图就没有"空间事实"，宁可站住也不要乱飘。
@@ -2132,6 +2289,10 @@ namespace Cs16.Module.Match
             // 原版口径的硬上限（`sv_maxvelocity`，出处见 CsMatchConst.TerminalFallSpeed）：
             // 既有的 CsConst.MaxFallSpeed(-30) 更严格 ⇒ 实际生效的仍是它 —— 这里不放宽既有钳制。
             a.Velocity.y = Mathf.Max(a.Velocity.y, -CsMatchConst.TerminalFallSpeed);
+
+            // 落地瞬间的下坠速率（m/s，取正）= 本帧贴地判定落地时的竖直速度。原版在空中每帧记录
+            // `flFallVelocity`、`FL_ONGROUND` 变真时结算一次 ⇒ 必须在下面把 `Velocity.y` 清零之前取。
+            var impactFallSpeed = -a.Velocity.y;
 
             var from = a.Position;
             var to = from + a.Velocity * dt;
@@ -2292,6 +2453,15 @@ namespace Cs16.Module.Match
                 // 落点换了 ⇒ 软地板换成**新落点的高度**（不许清掉不设：清掉后第一帧若因大 dt
                 // 一步跨过薄楼板，就再也探不到地面，直接又掉一次 —— 那就是"掉→拉回→再掉"的循环）。
                 SetSoftFloor(a.Id, back.y);
+            }
+
+            // ── 落地结算（坠落伤害）────────────────────────────────────────────
+            // 原版只在 `FL_ONGROUND` 由假变真的那一帧结算一次（消费完 `flFallVelocity` 立即清零）
+            // ⇒ 这里同样只看 0→1 边沿，⛔ 不是每帧扣。放在掉图兜底之后：兜底会把 OnGround 置回 false，
+            // 那是一次传送、不是落地，不该产生伤害。
+            if (!wasOnGround && a.OnGround)
+            {
+                Damage.ApplyFallDamage(a, impactFallSpeed);
             }
         }
 
@@ -2690,7 +2860,8 @@ namespace Cs16.Module.Match
                     if (move.sqrMagnitude > 1f) move.Normalize();
 
                     var speed = CsInventory.MovementSpeed(a);
-                    a.Velocity = new Vector3(move.x * speed, a.Velocity.y, move.z * speed);
+                    // 与本地 / 远端共用同一套摩擦与加速（原版 PM_Friction / PM_Accelerate）。
+                    a.Velocity = CsMovement.Solve(a.Velocity, move, move.magnitude * speed, a.OnGround, dt);
 
                     if (intent.Jump && a.OnGround)
                     {
@@ -3007,7 +3178,8 @@ namespace Cs16.Module.Match
 
             if (victim == _local)
             {
-                _zoomHeld = false;
+                _scopeLevel = 0;
+                _preZoom = false;
                 _spectateIndex = -1;
                 EmitEvent(Events.LocalDied);
                 Game.Logger.Info(Tag, $"本地玩家阵亡（{victim.Team}）→ 进入观战");
@@ -3133,6 +3305,12 @@ namespace Cs16.Module.Match
             CsHudSnapshot.InBuyZone = lp != null && lp.IsAlive && lp.InBuyZone;
             CsHudSnapshot.CanBuyNow = CanBuyNow;
 
+            // 买弹药那两页（原版分类 6/7）要"当前主/副武器 + 它的备弹"，UI 只读本快照
+            CsHudSnapshot.PrimaryWeaponId = lp != null ? lp.PrimaryWeapon : null;
+            CsHudSnapshot.PrimaryReserve = ReserveOf(lp, CsHudSnapshot.PrimaryWeaponId);
+            CsHudSnapshot.SecondaryWeaponId = lp != null ? lp.SecondaryWeapon : null;
+            CsHudSnapshot.SecondaryReserve = ReserveOf(lp, CsHudSnapshot.SecondaryWeaponId);
+
             // ---- 击杀信息（每帧清空重填）----
             CsHudSnapshot.KillFeed.Clear();
             for (var i = 0; i < _killFeed.Count; i++)
@@ -3186,6 +3364,16 @@ namespace Cs16.Module.Match
 
             AddBombsiteDots(CsMarkers.BombsiteA);
             AddBombsiteDots(CsMarkers.BombsiteB);
+        }
+
+        /// <summary>
+        /// 某把枪当前的备弹；没有它的弹药记录时返回 0。
+        /// **只读**（不走 <c>CsActor.GetAmmo</c> —— 那个会在缺项时把初始弹药写回字典，快照不该改游戏状态）。
+        /// </summary>
+        private static int ReserveOf(CsActor a, string weaponId)
+        {
+            if (a == null || string.IsNullOrEmpty(weaponId)) return 0;
+            return a.Ammo.TryGetValue(weaponId, out var ammo) ? ammo.reserve : 0;
         }
 
         private void AddBombsiteDots(string marker)

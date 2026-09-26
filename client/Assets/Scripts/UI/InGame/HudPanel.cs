@@ -56,7 +56,13 @@ namespace Cs16.UI
         [SerializeField] private Text _roundNumberText;
         [SerializeField] private Text _phaseText;
         [SerializeField] private Text _bombText;
-        [SerializeField] private Text _buyZoneText;
+        /// <summary>
+        /// 买枪区提示 = **原版 `buyzone` 位图精灵**（`hud.txt:131` = `640hud7` 的 96,148,32,32，32×32）。
+        /// 原版这里没有文字，所以本节点是 Image 而不是 Text。
+        /// </summary>
+        [SerializeField] private Image _buyZoneIcon;
+        /// <summary>底部左侧 `Time Left: … min. Next Map: …`（原版实机帧 `hud_ingame_1024x768.jpg`）。</summary>
+        [SerializeField] private Text _timeLeftText;
         [SerializeField] private Text _useLabel;
 
         // ─────────── 条 / 图 ───────────
@@ -68,6 +74,13 @@ namespace Cs16.UI
 
         // ─────────── 子件 ───────────
         [SerializeField] private CsCrosshairWidget _crosshair;
+
+        /// <summary>
+        /// 狙击镜遮罩（AWP / Scout / SG550 / G3SG1 开镜时压在画面上的黑底 + 镜筒 + 十字线）。
+        /// 它不进 <see cref="BuildLayout"/>：位置随面板根节点走、且必须是**第一个子节点**
+        /// （原版开镜时金钱/血量仍在黑底之上）⇒ 由刷新路径按需补建，旧预制体也照样有。
+        /// </summary>
+        private CsScopeOverlayWidget _scope;
         [SerializeField] private CsRadarWidget _radar;
         [SerializeField] private CsKillFeedWidget _killFeed;
         [SerializeField] private CsSpectatorWidget _spectator;
@@ -102,6 +115,14 @@ namespace Cs16.UI
         private bool _warnedHudIcons;
         /// <summary>图标就绪的运行时自证行已经打过（只打一次）。</summary>
         private bool _loggedHudIcons;
+
+        // ─────────── 买枪区图标（原版 `buyzone` 精灵 = hud.txt:131）───────────
+        /// <summary>买枪区图标 sprite（编辑器绑定 / 运行期兜底加载）。</summary>
+        private Sprite _iconBuyZone;
+        /// <summary>已经向资源模块请求过一次买枪区图标（避免每次 OnUpdate 重复请求）。</summary>
+        private bool _buyZoneRequested;
+        /// <summary>买枪区图标缺失/加载失败已经报过一次（防刷屏）。</summary>
+        private bool _warnedBuyZone;
         /// <summary>本地玩家名（记分板"自己那行"用；来自 <see cref="CsPlayerSettingsStore"/>）。</summary>
         private string _selfName;
         /// <summary>`Map:` 行上一次打过日志的地图名（变了才再打）。</summary>
@@ -162,6 +183,13 @@ namespace Cs16.UI
                 CsHudTheme.MoneyNormal);
             CsHudTheme.PlaceBottomLeft(_moneyText.rectTransform, new Vector2(Margin, MoneyY),
                 new Vector2(320f, 38f));
+
+            // ---- 底部左侧：`Time Left: … min. Next Map: …`（原版实机帧 hud_ingame_1024x768.jpg 实测）----
+            _timeLeftText = CsHudTheme.CreateText("TimeLeft", hud, string.Empty,
+                CsHudTheme.ScoreFontSize, TextAnchor.MiddleLeft, CsHudTheme.TextHud);
+            CsHudTheme.PlaceBottomLeft(_timeLeftText.rectTransform,
+                new Vector2(CsHudTheme.TimeLeftInsetPx, CsHudTheme.TimeLeftBottomInsetPx),
+                new Vector2(CsHudTheme.TimeLeftBoxWidthPx, CsHudTheme.TimeLeftBoxHeightPx));
 
             // ---- 右下：弹药 / 武器名（H3）----
             _ammoText = CsHudTheme.CreateText("Ammo", hud, "0 / 0", 38, TextAnchor.MiddleRight,
@@ -242,11 +270,12 @@ namespace Cs16.UI
             _spectator = new CsSpectatorWidget();
             _spectator.Build(hud);
 
-            // ---- 底部中央：Buy Zone（H10）+ 下包/拆包进度 ----
-            _buyZoneText = CsHudTheme.CreateText("BuyZone", hud, "Buy Zone", 24, TextAnchor.MiddleCenter,
-                CsHudTheme.HealthOk);
-            CsHudTheme.PlaceBottomCenter(_buyZoneText.rectTransform, new Vector2(0f, 200f),
-                new Vector2(300f, 30f));
+            // ---- 底部中央：Buy Zone 图标（H10，原版 `buyzone` 精灵）+ 下包/拆包进度 ----
+            // 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**，必须等 sprite 到手再开。
+            _buyZoneIcon = CsHudTheme.CreateBlock("BuyZone", hud,
+                new Vector2(0.5f, 0f), new Vector2(0.5f, 0f), new Vector2(0f, 200f),
+                new Vector2(CsHudTheme.BuyZoneIconSizePx, CsHudTheme.BuyZoneIconSizePx), CsHudTheme.HudIconTint);
+            _buyZoneIcon.enabled = false;
 
             _useBar = CsHudTheme.CreateBar("UseBar", hud, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
                 new Vector2(0f, 240f), new Vector2(320f, 16f), CsUiStyle.Accent);
@@ -439,6 +468,71 @@ namespace Cs16.UI
             });
         }
 
+        // ═══════════════════════ 买枪区图标（原版 `buyzone` 精灵）═══════════════════════
+
+        /// <summary>
+        /// 把买枪区图标的 sprite 绑上：编辑器的生成器生成预制体时调一次，
+        /// 运行期由 <see cref="EnsureBuyZoneSprite"/> 兜底。
+        /// 传 null 不算成功：只报一次 Warn，绝不静默把图标吞掉。
+        /// </summary>
+        public void BindBuyZoneSprite(Sprite sprite)
+        {
+            if (sprite == null)
+            {
+                WarnBuyZoneOnce($"买枪区图标 sprite 为空（Resources/{ResPaths.HudBuyZoneIcon}.png 没导入成 Sprite？），图标不显示");
+                return;
+            }
+
+            _iconBuyZone = sprite;
+            if (_buyZoneIcon == null) return;
+
+            _buyZoneIcon.sprite = sprite;
+            _buyZoneIcon.color = CsHudTheme.HudIconTint;
+            _buyZoneIcon.enabled = true;
+        }
+
+        /// <summary>运行期兜底取 sprite：预制体里已经绑好就什么都不做；只在需要时请求一次。</summary>
+        private void EnsureBuyZoneSprite()
+        {
+            if (_buyZoneIcon == null) return;
+            if (_buyZoneIcon.sprite != null) return;   // 生成器已绑好
+            if (_buyZoneRequested) return;
+
+            if (_iconBuyZone != null)
+            {
+                BindBuyZoneSprite(_iconBuyZone);
+                return;
+            }
+
+            var res = Game.Res;
+            if (res == null)
+            {
+                WarnBuyZoneOnce("Game.Res 为 null（CloverRes.Init 未执行？），买枪区图标加载不了");
+                return;
+            }
+
+            _buyZoneRequested = true;
+            var path = ResPaths.HudBuyZoneIcon;
+            res.LoadAsset<Sprite>(path, s =>
+            {
+                if (s == null)
+                {
+                    // 允许下一次 OnOpen 再试（资源还没导入 / 首次加载失败不该把图标永久废掉）
+                    _buyZoneRequested = false;
+                    WarnBuyZoneOnce($"买枪区图标加载失败（sprite 为空）：Resources/{path}");
+                    return;
+                }
+                BindBuyZoneSprite(s);
+            });
+        }
+
+        private void WarnBuyZoneOnce(string msg)
+        {
+            if (_warnedBuyZone) return;
+            _warnedBuyZone = true;
+            Game.Logger?.Warn(Tag, msg);
+        }
+
         // ═══════════════════════ 血量 / 护甲 位图图标 ═══════════════════════
 
         /// <summary>
@@ -601,6 +695,8 @@ namespace Cs16.UI
             ApplyScoreBlock();
             // 秒表图标的 sprite：生成器生成预制体时会直接绑进去；老预制体（没重跑生成器）走这里兜底。
             EnsureStopwatchSprite();
+            // 买枪区图标同一套：预制体带 sprite 就用预制体的，否则运行期兜底加载。
+            EnsureBuyZoneSprite();
             _crosshair?.ApplyColor(CsHudTheme.Crosshair);
 
             _selfName = CsPlayerSettingsStore.Load().PlayerName;
@@ -781,13 +877,21 @@ namespace Cs16.UI
                     _bombText.text = string.Empty;
             }
 
-            // ---- Buy Zone（H10）----
-            if (_buyZoneText != null)
+            // ---- Buy Zone 图标（H10，原版 `buyzone` 精灵）----
+            if (_buyZoneIcon != null)
             {
                 var inZone = CsHudSnapshot.InBuyZone;
-                if (_buyZoneText.gameObject.activeSelf != inZone) _buyZoneText.gameObject.SetActive(inZone);
-                if (inZone)
-                    _buyZoneText.text = CsHudSnapshot.CanBuyNow ? "Buy Zone（按 B 买枪）" : "Buy Zone";
+                if (_buyZoneIcon.gameObject.activeSelf != inZone) _buyZoneIcon.gameObject.SetActive(inZone);
+            }
+
+            // ---- `Time Left: … min. Next Map: …`（底部左侧；格式与落点出处见 CsHudTheme）----
+            if (_timeLeftText != null)
+            {
+                var mapName = (Game.Map != null && !string.IsNullOrEmpty(Game.Map.Name))
+                    ? Game.Map.Name
+                    : CsConst.MapDust2;
+                var content = CsHudTheme.TimeLeftText(MatchTimeLeftSeconds(), mapName);
+                if (_timeLeftText.text != content) _timeLeftText.text = content;
             }
 
             // ---- 下包 / 拆包进度 ----
@@ -817,6 +921,37 @@ namespace Cs16.UI
         }
 
         /// <summary>
+        /// `Time Left: …` 行的数值源 = **整场剩余秒数**。
+        ///
+        /// <para><b>口径（本项目）：</b>原版这一行是 <c>mp_timelimit</c> 的余量，而本机没有该 cvar 的
+        /// 载体（随包 <c>server.cfg</c> 不在盘、<c>mp.dll</c> 里只有名字串）⇒ 本工程是单地图、
+        /// <b>30 回合</b>（<see cref="CsConst.MaxRounds"/>）的单机比赛、没有地图时间上限，
+        /// 因此取"整场剩余时间" = **本回合还没走完的标称阶段** + 剩余整回合的标称时长。
+        /// 与原版的语义差异登记在 <c>策划/差异登记.tsv</c>。</para>
+        ///
+        /// <para><b>必须按阶段补上本回合剩余的名义时长</b>：冻结期只有 4 s、交战期有 105 s，
+        /// 若只写 <c>PhaseTimeLeft</c>，冻结期 4 s 走到 0 的下一帧会"跳 +101 s"
+        /// （实测：冻结期 `Time Left: 55:09` → 开战第一帧 `56:50`）—— 一个会往**上**跳的倒计时。
+        /// 补上"本回合剩余阶段"后它才是单调递减的。</para>
+        /// </summary>
+        private static float MatchTimeLeftSeconds()
+        {
+            var left = CsHudSnapshot.PhaseTimeLeft;
+
+            // 本回合内还没走完的标称阶段（冻结 → 交战 → 结算）
+            if (CsHudSnapshot.Phase == CsRoundPhase.Freeze)
+                left += CsConst.RoundTime + CsConst.RoundEndTime;
+            else if (CsHudSnapshot.Phase == CsRoundPhase.Live)
+                left += CsConst.RoundEndTime;
+
+            var remainingRounds = CsConst.MaxRounds - CsHudSnapshot.RoundNumber;
+            if (remainingRounds > 0)
+                left += remainingRounds * (CsConst.FreezeTime + CsConst.RoundTime + CsConst.RoundEndTime);
+
+            return Mathf.Max(0f, left);
+        }
+
+        /// <summary>
         /// `Map:` 行的运行时自证行（F-01 的数值类证据）：元素内容 / 是否上屏 / 字号 / 颜色 / 落点。
         /// 只在首次、或地图名变化时打（不刷屏）。位置的对错是表现类判据（并排看基线图），数值只证明"元素在、内容对"。
         /// </summary>
@@ -838,6 +973,16 @@ namespace Cs16.UI
         {
             var alive = CsHudSnapshot.IsAlive;
             var overlayOpen = IsAnyOverlayOpen();
+
+            // 开镜遮罩：按需补建（旧预制体里没有这个节点）+ 只在开镜时显示。
+            // 建在面板根节点上并塞到**第一个子节点** ⇒ 压在 3D 画面之上、整组 HUD 之下。
+            if (_scope == null)
+            {
+                _scope = new CsScopeOverlayWidget();
+                _scope.Build(transform as RectTransform);
+                _scope.Root?.SetAsFirstSibling();
+            }
+            _scope.Refresh(CsHudSnapshot.IsZoomed);
 
             _crosshair?.Refresh(alive && !CsHudSnapshot.IsZoomed && !overlayOpen,
                 CsHudSnapshot.CrosshairSpread, CsHudSnapshot.HitMarkerTime, CsHudSnapshot.HitMarkerHeadshot);

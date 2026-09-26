@@ -429,47 +429,17 @@ namespace Cs16.Module.Map
                 return to;
             }
 
-            // `if (!CanStand(from)) return WalkableAt(to) ? to : from;` 这种早退在
-            //   "canStand(from)=false 且 WalkableAt(to)=false"时会每帧都返回 `from`，
-            //   而 `StepActorPhysics` 见"要的位移没拿到"就把该轴速度清 0
-            //   ⇒ **位移恒 0、速度恒 0、按什么键都不动**（逐帧 dump 实测：f=51..399 连续 349 帧，
-            //   跳一下也一样；匪家扶手车道 x=-41.5 上 dt=0.05 时同样停 67..399 / 241..399）。
-            // 【为什么 `CanStand(from)` 会是 false 而人明明站在地面上】
-            //   `CanStand` 是**半径采样**（中心 + 8 向，`PlayerRadius`=0.36m）：
-            //   `BitmapClear`（位图 9 点）或几何分支只要有一个偏移点被拒就整点判 false。
-            //   站在台阶/扶手**旁边**时，偏移点落在"顶面比脚面高 0.12~0.45 m"的那一列上 ⇒
-            //   位图那一列判挡（单层 2D 位图），几何分支的 `BodyHeightClearAt`
-            //   又用 `GroundCheckDistance`(0.12) 当"算不算脚面"的容差 ⇒ 把它读成"身高带里有实体"。
-            //   ⇒ 人**站得好好的却"这一格不能站"**，于是走进"原地不动"那条路。
-            //   —— 这正是原版 `PM_WalkMove` 的行为：站位不完美时照走，靠滑墙/台阶把身体解出来。
-            //   所以放行必须带几何复核：目标格仍必须过 `CanStand` 或 `TryStepUp`
-            //     （后者带台阶高差 / 陡坡 / 膝盖射线 / 体积四道闸门）。
-            //   只有"一步都挪不动"时才退回这句早退（且只在目标格位图可走时直接过去）——
-            //     那是真的被墙夹住，此时**不许**凭空穿墙。
-            if (!CanStand(from, radius))
-            {
-                var stepped = StepOnce(from, to, radius);
-                var moved2 = (stepped.x - from.x) * (stepped.x - from.x) +
-                             (stepped.z - from.z) * (stepped.z - from.z);
-                if (moved2 > 1e-8f)
-                {
-                    trace?.Invoke(0, to, from, stepped);
-                    return new Vector3(stepped.x, to.y, stepped.z);
-                }
-                //   （本工程 B 通台阶 (-18.887, 0.653, 36.948)）按跳：`a.Velocity.y` 被置成 `JumpSpeed`
-                //   5.804、`OnGround` 1→0，但 `CsActor.Position.y` **连续 6 帧一个字没变**（恒 0.653）
-                //   ⇒ 一次跳的竖向位移**精确为 0** ⇒ 玩家在墙角**永远跳不出去**。
-                //   · `WalkableAt(to.x,to.z)==true` ⇒ 返回 **`to`**（含 `to.y`）—— 这是刻意留的"目标格
-                //     位图可走时直接过去"逃生口（见上 `:470-472`），**本来就没错**，不许动它；
-                //   · `==false` ⇒ 返回 **`from`** ⇒ 连 `free.y` 也变成 `from.y`，**竖向分量被水平几何否决**。
-                //   Y 取 `to.y` —— 与上面 `:482`（`stepped` 出口已用 `to.y`）同口径，也与本函数 `:427-430`
-                //   的 doc「**Y 分量原样跟随目标**（重力/落地由调用方用 SampleGround 收尾）」一致。
-                // 位图只准否决**水平**分量；竖向由重力/落地（调用方）说了算。
-                var free = WalkableAt(to.x, to.z) ? to : new Vector3(from.x, to.y, from.z);
-                trace?.Invoke(0, to, from, free);
-                return free;
-            }
-
+            // 一帧位移**一律分段推进**（每段 ≤ <see cref="MaxSweepStep"/>）：段内走
+            // <see cref="StepOnce"/> 的分轴滑墙 + <see cref="TryStepUp"/> 的台阶闸门。
+            // 分段是**必须**的 —— 一帧位移的大小由 dt 决定，不分段时同一个位置在不同帧率下
+            // 就是"一小步"与"一大步"两种形态：大 dt 那侧一步能跨过整格阻挡（穿墙），
+            // 小 dt 那侧跨不过去（原地不动）⇒ 走位结果变成帧率的函数。
+            //
+            // 每一段上再补一次**几何放行**（<see cref="BodyHeightClear"/> + <see cref="GroundWithinStep"/>）：
+            // 位图说挡、但身高带（含落点高差）是空的 ⇒ 放行。位图是**单层 2D**（一格一位、没有高度），
+            // "薄墙/扶手所在的整格"与"顶面能站的箱子"在位图里是同一个答案，只有真几何能分开这两者；
+            // 站位贴着这类几何时半径采样（<see cref="CanStand"/>）必然越界 ⇒ 位图单独说不出"能不能过"。
+            // 放行仍在分段内 ⇒ 单段最多 MaxSweepStep，不会一步穿墙。
             float dx = to.x - from.x;
             float dz = to.z - from.z;
             float dist = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz));
@@ -482,6 +452,10 @@ namespace Cs16.Module.Map
                 var want = new Vector3(from.x + dx * t, to.y, from.z + dz * t);
                 var prev = cur;
                 cur = StepOnce(cur, want, radius);
+                var probe = new Vector3(want.x, cur.y, want.z);
+                if (cur.x == prev.x && cur.z == prev.z &&
+                    BodyHeightClear(probe, radius) && GroundWithinStep(probe))
+                    cur = probe;
                 trace?.Invoke(i, want, prev, cur);
             }
             return new Vector3(cur.x, to.y, cur.z);

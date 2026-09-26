@@ -213,6 +213,7 @@ namespace Cs16.Module.Match
             bus.On(Events.SpectateNext, OnSpectateNext);
             bus.On<CsTeam>(Events.ChangeTeam, OnChangeTeam);
             bus.On<string>(Events.BuyWeapon, OnBuyWeapon);
+            bus.On<int>(Events.BuyAmmo, OnBuyAmmo);
             bus.On<string>(Events.RadioCommand, OnRadioCommand);
             bus.On<string>(Events.SwitchMap, OnSwitchMap);
             bus.On(Events.Disconnect, OnDisconnect);
@@ -239,6 +240,7 @@ namespace Cs16.Module.Match
             bus.Off(Events.SpectateNext, OnSpectateNext);
             bus.Off<CsTeam>(Events.ChangeTeam, OnChangeTeam);
             bus.Off<string>(Events.BuyWeapon, OnBuyWeapon);
+            bus.Off<int>(Events.BuyAmmo, OnBuyAmmo);
             bus.Off<string>(Events.RadioCommand, OnRadioCommand);
             bus.Off<string>(Events.SwitchMap, OnSwitchMap);
             bus.Off(Events.Disconnect, OnDisconnect);
@@ -362,6 +364,16 @@ namespace Cs16.Module.Match
                 return;
             }
             Match.TryBuy(weaponId, out _);
+        }
+
+        /// <summary>
+        /// 买备用弹药（原版 <c>buyammo1</c> / <c>buyammo2</c>）—— UI 只发槽位号，判定与扣钱都在模拟里。
+        /// 走具体类型 <see cref="CsMatch"/>（<c>TryBuyAmmo</c> 不在 <c>ICsMatch</c> 契约里，形状同 <c>TryBuyFor</c>）。
+        /// </summary>
+        private void OnBuyAmmo(int slot)
+        {
+            if (!EnsureMatch()) return;
+            _match.TryBuyAmmo(slot, out _);
         }
 
         private void OnRadioCommand(string text)

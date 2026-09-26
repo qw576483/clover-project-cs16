@@ -25,6 +25,8 @@ namespace Cs16.Core
         // ================= 游戏内操作（UI → Match）=================
         /// <summary>参数：string weaponId</summary>
         public const string BuyWeapon = "Game.BuyWeapon";
+        /// <summary>参数：int 槽位（<see cref="Cs16.Core.CsAmmoBuy.PrimarySlot"/> / <see cref="Cs16.Core.CsAmmoBuy.SecondarySlot"/>）</summary>
+        public const string BuyAmmo = "Game.BuyAmmo";
         /// <summary>参数：<see cref="Cs16.Core.CsBotDifficulty"/>（加上该难度的一队 bot）</summary>
         public const string AddBot = "Game.AddBot";
         /// <summary>踢出最后一个机器人</summary>

@@ -84,13 +84,15 @@ namespace Cs16.Module.Combat
         // ==================================================================
         //  散布（纯函数，便于自证）
         // ==================================================================
-        /// <summary>移动对散布的贡献系数（0 = 静止，1 = 达到步枪满速）。</summary>
+        /// <summary>移动对散布的贡献系数（0 = 静止，1 = 达到**当前手持武器**的满速）。</summary>
         public static float MoveFactor(CsActor actor)
         {
             if (actor == null) return 0f;
             var v = actor.Velocity;
             var speed = new Vector2(v.x, v.z).magnitude;
-            return Mathf.Clamp01(speed / CsConst.SpeedRifle);
+            var reference = CsInventory.MoveReferenceSpeed(actor.ActiveDef);
+            if (reference <= 0f) return 0f;
+            return Mathf.Clamp01(speed / reference);
         }
 
         /// <summary>
@@ -167,8 +169,37 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
+        /// 本武器能否穿墙、最多穿几层墙 —— 唯一的穿墙判据，闸门与层数上限都从这里取。
+        ///
+        /// <para><b>有出处</b>（<see cref="CsWeaponDef.Penetration"/> &gt; 0，原版 <c>iPenetration</c>）⇒
+        /// 直接用它当层数上限；<b>未取到</b>（<c>Penetration</c> == 0）⇒ **回落工程旧判据**：
+        /// 护甲穿透系数 &gt; <see cref="CsCombatTuning.PenetrationArmorThreshold"/> 才可穿、
+        /// 层数上限 <see cref="CsCombatTuning.MaxPenetrationLayers"/> —— ⛔ 不把"未知"当成"已知为零"
+        /// （否则这些枪会凭空失去原有的穿墙能力）。登记见 <c>策划/差异登记.tsv</c>。</para>
+        /// </summary>
+        public static bool CanPenetrate(CsWeaponDef def, out int maxLayers)
+        {
+            maxLayers = 0;
+            if (def == null) return false;
+
+            if (def.Penetration > 0)
+            {
+                maxLayers = def.Penetration;
+                return true;
+            }
+
+            if (def.ArmorPenetration > CsCombatTuning.PenetrationArmorThreshold)
+            {
+                maxLayers = CsCombatTuning.MaxPenetrationLayers;
+                return true;
+            }
+            return false;
+        }
+
+        /// <summary>
         /// 单个弹丸的射线解算：取最近的一批命中，按「先角色、后墙」的顺序判定，
-        /// 墙是否可穿透看 <see cref="CsWeaponDef.ArmorPenetration"/>。返回终点（画弹道用）。
+        /// 墙是否可穿透与能穿几层由 <see cref="CanPenetrate"/> 决定。
+        /// 返回终点（画弹道用）。
         /// </summary>
         private Vector3 ResolvePellet(in ShotRequest req, Vector3 dir, float range)
         {
@@ -189,8 +220,7 @@ namespace Cs16.Module.Combat
 
             SortByDistance(count);
 
-            var canPenetrate = req.Def != null &&
-                               req.Def.ArmorPenetration > CsCombatTuning.PenetrationArmorThreshold;
+            var canPenetrate = CanPenetrate(req.Def, out var maxLayers);
             var walls = 0;
             var end = req.Origin + dir * range;
 
@@ -229,7 +259,8 @@ namespace Cs16.Module.Combat
                 }
                 walls++;
                 end = h.point;
-                if (!canPenetrate || walls > CsCombatTuning.MaxPenetrationLayers) return end;
+                // 层数上限与可穿与否同源（见 CanPenetrate）：有 iPenetration 用它，未取到回落旧值 2
+                if (!canPenetrate || walls > maxLayers) return end;
             }
 
             // 穿完了也没打到人（或全被跳过）

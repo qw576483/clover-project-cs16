@@ -148,9 +148,8 @@ namespace Cs16.Module.Audio
         /// 事件挂点：<c>Module/Match/CsDamage.ApplyFlash</c>（闪成功任何目标时按爆炸点播一次）。</summary>
         public const string FlashExplode = "sfx/flash_explode";
 
-        /// <summary>C4 加速档蜂鸣（剩余时间 ≤ <see cref="BombBeepFastBelow"/> 时用它替换
-        /// <see cref="BombBeep"/>）。出处：资源文件
-        /// <c>Assets/Resources/Sound/SFX/sfx/bomb_beep_fast.wav</c>（在盘，原版 C4 快速蜂鸣音）；
+        /// <summary>C4 蜂鸣的另一支采样（5 档表的第 5 档用它）。出处：资源文件
+        /// <c>Assets/Resources/Sound/SFX/sfx/bomb_beep_fast.wav</c>（在盘）；
         /// 原版源文件名映射未记录（<c>资源欠缺清单.md:37</c> 只记了 <c>c4_beep1.wav</c>）⇒
         /// 已登记 <c>策划/差异登记.tsv</c>。事件挂点：<c>Module/Audio/AudioModule.TickBombBeep</c>。</summary>
         public const string BombBeepFast = "sfx/bomb_beep_fast";
@@ -178,9 +177,28 @@ namespace Cs16.Module.Audio
         // ==================================================================
         //  炸弹
         // ==================================================================
-        /// <summary>炸弹蜂鸣（普通档）。出处：原版 CS 1.6 <c>sound/weapons/c4_beep1.wav</c>
-        /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项）。加速档见 <see cref="BombBeepFast"/>。</summary>
+        /// <summary>炸弹蜂鸣（第 1 档）。出处：原版 CS 1.6 <c>sound/weapons/c4_beep1.wav</c>
+        /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项）。</summary>
         public const string BombBeep = "sfx/bomb_beep";
+
+        /// <summary>5 档蜂鸣采样（下标 = 档位 0..4）。出处：原版每档一支采样
+        /// <c>sound/weapons/c4_beep1..5.wav</c> —— <c>mp.dll</c> 按档把声音名写进 <c>m_sBeepName</c> 的 5 个串：
+        /// <c>0x10115160</c> / <c>0x10115178</c> / <c>0x10115190</c> / <c>0x101151A8</c> / <c>0x101151C0</c>。
+        ///
+        /// <para><b>盘上只有两支采样</b>：<see cref="BombBeep"/>（= 原版 <c>c4_beep1.wav</c>）与
+        /// <see cref="BombBeepFast"/>（原版源文件名未记录，且与前者字节相同）。
+        /// <c>c4_beep2..5</c> 四条采样不在盘、工程内也没有生成入口 ⇒ 5 档现在实际只换到这两支：
+        /// 档 0..3 用 <see cref="BombBeep"/>、档 4 用 <see cref="BombBeepFast"/>。
+        /// 补齐采样后只改本表（已登记 <c>策划/差异登记.tsv</c>）。</para></summary>
+        public static readonly string[] BombBeepTiers =
+        {
+            BombBeep, BombBeep, BombBeep, BombBeep, BombBeepFast,
+        };
+
+        /// <summary>每轮安放里逐响打印蜂鸣明细的响数上限（超过只打换档）。
+        /// 出处：**本项目新增**（日志降频；前 8 响已覆盖全部 5 个档位与间隔衰减，
+        /// 而引信末段每秒可响十余次，逐响打会刷屏）。</summary>
+        public const int BombBeepLogCount = 8;
 
         /// <summary>下包动作音。出处：原版 CS 1.6 <c>sound/weapons/c4_plant.wav</c>
         /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项）。</summary>
@@ -202,16 +220,10 @@ namespace Cs16.Module.Audio
         /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项）。</summary>
         public const string BombExplode = "sfx/bomb_explode";
 
-        /// <summary>手雷爆炸。出处：原版 CS 1.6 <c>sound/weapons/hegrenade-1.wav</c>
-        /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项）。</summary>
+        /// <summary>手雷爆炸（HE）。出处：原版 CS 1.6 <c>sound/weapons/hegrenade-1.wav</c>
+        /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项；盘上 = <c>sfx/grenade_explode.wav</c>）。
+        /// 事件挂点：<c>Module/Match/CsDamage.ApplyHeExplosion</c>（HE 爆炸时按爆心播一次）。</summary>
         public const string GrenadeExplode = "sfx/grenade_explode";
-
-        /// <summary>剩余时间低于它的蜂鸣间隔切换到"加速档"（秒）——与 <c>CsConst</c> 的口径一致。
-        /// 出处：本工程自己的分档点，与 <c>Core/CsConst.cs</c> 的
-        /// <c>BombBeepIntervalSlow</c>（剩余 &gt;10s）/ <c>BombBeepIntervalFast</c>（剩余 ≤10s）同值同界
-        /// （那两行的注释写明"剩余 &gt;10s / 剩余 &lt;=10s"）；该 10s 分界本身的**原版出处拿不到**
-        /// （C4 蜂鸣节奏在 <c>mp.dll</c>，载体不在盘）⇒ 一并登记 <c>策划/差异登记.tsv</c>。</summary>
-        public const float BombBeepFastBelow = 10f;
 
         // ==================================================================
         /// <summary>命中材质无法识别时的分类名。出处：**本项目新增**（分类枚举的兜底值；

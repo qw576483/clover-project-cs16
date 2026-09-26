@@ -517,8 +517,18 @@ namespace Cs16.Module.Combat
             {
                 // 落点按**相机局部系**给（CsCombatTuning 的三个偏移，从视模型实测包围盒反推）
                 // ⇒ 这里传相机旋转而不是 aim：world-up 叉乘算 right 在俯仰 ±90° 会退化。
+                // 旋转必须取**相机**：`_view` 自身的 transform 是 rig 根、恒为单位旋转，随视角转的
+                // 是它的子相机 `CsFpsCamera`（`_view.Camera`）—— 取错就会让弹壳与枪口火焰在
+                // 视角 yaw≠0 时偏到世界轴方向（= 玩家看不见）。
                 // weaponId 决定用哪张原版贴图（B51/M249 = 十字形，见 CombatEffects.PickMuzzleFlash）。
-                _fx.MuzzleFlash(eye, _view.transform.rotation, weaponId);
+                var viewRotation = _view != null && _view.Camera != null
+                    ? _view.Camera.transform.rotation
+                    : _view.transform.rotation;
+                _fx.MuzzleFlash(eye, viewRotation, weaponId);
+
+                // 抛壳：逐武器一种原版壳模型（霰弹枪那条载体取不到 ⇒ 不抛，见 CsShellModels.KindFor）。
+                // 第 4 个实参 = 原版初速里那一项 pev->velocity（跑动中开枪时壳跟着人走）。
+                _fx.ShellEject(eye, viewRotation, weaponId, local.Velocity);
             }
 
             // ---- 刀 / 手雷 / C4：模拟内部已直接结算，这里绝不再射线 ----
