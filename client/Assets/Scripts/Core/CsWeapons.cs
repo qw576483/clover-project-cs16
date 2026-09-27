@@ -9,8 +9,7 @@ namespace Cs16.Core
     /// <para><b>数值出处（逐条核对过）</b>：<see cref="Price"/> / <see cref="Magazine"/> /
     /// <see cref="ReserveAmmo"/> 三项全部来自原版 <c>mp.dll</c> 的 <c>WeaponInfo[]</c> ——
     /// 数组基址 <c>mp.dll:0x10f708</c>、步长 <c>0x20</c>，字段偏移 <c>iCost=+0x04</c>、
-    /// <c>iMaxClip=+0x10</c>、<c>iMaxAmmo=+0x14</c>、<c>pszName=+0x1c</c>
-    /// （字段语义的铁证见 <c>原版资源/解包产物/原版数值表.md</c> §0.3/§3）。</para>
+    /// <c>iMaxClip=+0x10</c>、<c>iMaxAmmo=+0x14</c>、<c>pszName=+0x1c</c>。</para>
     ///
     /// <para><b>已取到原版出处的几组</b>（载体同 <c>mp.dll</c>，逐条 VA / 反汇编见
     /// <c>策划/手感参数对照.md</c>）：<see cref="CsWeaponDef.ReloadTime"/>（§5.9，21 把）、

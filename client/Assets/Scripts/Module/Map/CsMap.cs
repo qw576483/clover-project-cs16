@@ -406,6 +406,59 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
+        /// 指定半径的竖直身体胶囊是否与实体重叠：端点各按该半径**内缩**，与
+        /// <see cref="CsConst.GroundCheckDistance"/> / <see cref="CsConst.StandHeight"/> 的脚面与身高口径对齐
+        /// （半径 = <see cref="CsConst.PlayerRadius"/> 时与 <see cref="BodyVolumeBlocked"/> 同一个体积）。
+        /// </summary>
+        private bool BodyVolumeOverlaps(Vector3 pos, float radius)
+        {
+            float lo = pos.y + CsConst.GroundCheckDistance + radius;
+            float hi = pos.y + CsConst.StandHeight - radius;
+            if (hi <= lo) return false;
+            return Physics.CheckCapsule(new Vector3(pos.x, lo, pos.z), new Vector3(pos.x, hi, pos.z),
+                                        radius, GroundMask(), QueryTriggerInteraction.Ignore);
+        }
+
+        /// <summary>压入深度量法的半径二分次数（7 次 ⇒ 分辨率 = PlayerRadius/128 ≈ 2.8 mm）。</summary>
+        private const int PenetrationBisectSteps = 7;
+
+        /// <summary>
+        /// 「压入深度不得增大」的比较容差（米）：与量法分辨率同量级，避免同一深度在浮点边界上反复判"更深"。
+        /// </summary>
+        private const float PenetrationTolerance = 0.004f;
+
+        /// <summary>
+        /// 身体压进实体的深度（米）。<c>0</c> = 身体一点没压进（<see cref="BodyVolumeBlocked"/> 为假）。
+        ///
+        /// <para><b>量法</b>：把身体半径逐级缩小（端点按半径内缩，口径同 <see cref="BodyVolumeOverlaps"/>），
+        /// 找"缩小多少才不再重叠"—— 缩 δ 后仍重叠 ⇒ 压入深度 ≥ δ。二分 <see cref="PenetrationBisectSteps"/> 次。
+        /// 轴心整个落进实体（半径缩到 1 cm 仍重叠）⇒ 饱和在 <see cref="CsConst.PlayerRadius"/>。</para>
+        ///
+        /// <para><b>为什么是这个形态</b>：本工程的体积口径只有 <c>Physics.CheckCapsule</c> 一个 ——
+        /// <c>Physics.ComputePenetration</c> 要临时碰撞体（本模块没有角色对象，只有几何），引擎侧也没有穿透深度 API；
+        /// 按半径缩小是唯一能单调表达"压得多深"的形态。</para>
+        /// </summary>
+        private float PenetrationDepth(Vector3 pos)
+        {
+            if (!BodyVolumeOverlaps(pos, CsConst.PlayerRadius)) return 0f;
+            if (BodyVolumeOverlaps(pos, 0.01f)) return CsConst.PlayerRadius;
+            float lo = 0f, hi = CsConst.PlayerRadius;
+            for (var i = 0; i < PenetrationBisectSteps; i++)
+            {
+                var mid = (lo + hi) * 0.5f;
+                if (BodyVolumeOverlaps(pos, mid)) lo = mid; else hi = mid;
+            }
+            return CsConst.PlayerRadius - lo;
+        }
+
+        /// <summary>
+        /// 取 <paramref name="pos"/> 的压入深度。<paramref name="known"/>（本段起点的深度）为 0
+        /// 且该点体积不重叠时直接返回 0 —— 绝大多数帧（不贴任何几何）因此零额外开销。
+        /// </summary>
+        private float PenetrationDepthFor(Vector3 pos, float known)
+            => known <= 0f && !BodyVolumeOverlaps(pos, CsConst.PlayerRadius) ? 0f : PenetrationDepth(pos);
+
+        /// <summary>
         /// 本地碰撞解算：**扫掠细分（≤0.25m）+ 分轴滑墙（先 X 后 Z）+ 台阶（≤ StepUpHeight）**。
         /// Y 分量原样跟随目标（重力/落地由调用方用 <see cref="SampleGround"/> 收尾）。
         /// </summary>
@@ -439,24 +492,73 @@ namespace Cs16.Module.Map
             // 位图说挡、但身高带（含落点高差）是空的 ⇒ 放行。位图是**单层 2D**（一格一位、没有高度），
             // "薄墙/扶手所在的整格"与"顶面能站的箱子"在位图里是同一个答案，只有真几何能分开这两者；
             // 站位贴着这类几何时半径采样（<see cref="CanStand"/>）必然越界 ⇒ 位图单独说不出"能不能过"。
-            // 放行仍在分段内 ⇒ 单段最多 MaxSweepStep，不会一步穿墙。
+            //
+            // 每段的目标点**从当前落点 `cur` 起算**（不是起点到终点直线上按比例取点）：
+            // 按比例取点时，被挡住的那一段之后，下一个点已经落在障碍**另一侧**，
+            // 而 <see cref="StepOnce"/> 对站得下的点一律放行 ⇒ 单段直接跨过障碍。
+            // 从 `cur` 起算后，单段位移 ≤ <see cref="MaxSweepStep"/>（0.25 m）＜
+            // 身体直径（2 × <see cref="CsConst.PlayerRadius"/>）⇒ 任何实体都不会被一段跳过。
             float dx = to.x - from.x;
             float dz = to.z - from.z;
             float dist = Mathf.Max(Mathf.Abs(dx), Mathf.Abs(dz));
             int steps = Mathf.Max(1, Mathf.CeilToInt(dist / MaxSweepStep));
 
             var cur = from;
+            // 本段起点的压入深度：下面按"深度不得增大"收紧（起点干净 ⇒ 结果也必须干净）。
+            float curDepth = PenetrationDepth(from);
             for (int i = 1; i <= steps; i++)
             {
-                float t = (float)i / steps;
-                var want = new Vector3(from.x + dx * t, to.y, from.z + dz * t);
+                float remX = to.x - cur.x;
+                float remZ = to.z - cur.z;
+                float remain = Mathf.Max(Mathf.Abs(remX), Mathf.Abs(remZ));
+                if (remain <= 1e-4f) break;          // 已经到位
+                float t = Mathf.Min(1f, MaxSweepStep / remain);
+                var want = new Vector3(cur.x + remX * t, to.y, cur.z + remZ * t);
                 var prev = cur;
                 cur = StepOnce(cur, want, radius);
+                var advanced = cur.x != prev.x || cur.z != prev.z;
+                if (advanced)
+                {
+                    // 收紧闸门：结果不许比本段起点**更深地**压进实体。
+                    // 贴墙平行推进的深度基本不变 ⇒ 照旧放行（贴墙滑行不受影响）。
+                    var depth = PenetrationDepthFor(new Vector3(cur.x, cur.y, cur.z), curDepth);
+                    if (depth > curDepth + PenetrationTolerance)
+                    {
+                        // 越界 ⇒ 撤销这一段，再按**同一道闸门**试更短的位移（0.5 / 0.25 / 0.125 倍）：
+                        // 贴墙/贴角时推进到"再走就压进去"的那一点为止，而不是整帧原地不动。
+                        // 每个候选都必须过同一道深度闸门 ⇒ 不会因为缩短而放宽。
+                        cur = prev;
+                        advanced = false;
+                        var f = 0.5f;
+                        for (var h = 0; h < 3; h++, f *= 0.5f)
+                        {
+                            var shortWant = new Vector3(prev.x + (want.x - prev.x) * f, to.y,
+                                                        prev.z + (want.z - prev.z) * f);
+                            var cand = StepOnce(prev, shortWant, radius);
+                            if (cand.x == prev.x && cand.z == prev.z) break;
+                            var candDepth = PenetrationDepthFor(new Vector3(cand.x, cand.y, cand.z), curDepth);
+                            if (candDepth > curDepth + PenetrationTolerance) continue;
+                            cur = cand;
+                            curDepth = candDepth;
+                            advanced = true;
+                            break;
+                        }
+                    }
+                    else
+                    {
+                        curDepth = depth;
+                    }
+                }
                 var probe = new Vector3(want.x, cur.y, want.z);
-                if (cur.x == prev.x && cur.z == prev.z &&
+                if (!advanced && cur.x == prev.x && cur.z == prev.z &&
                     BodyHeightClear(probe, radius) && GroundWithinStep(probe))
+                {
                     cur = probe;
+                    curDepth = 0f;                   // 放行判据本身要求身高带干净（体积不重叠）
+                }
                 trace?.Invoke(i, want, prev, cur);
+                // 两轴都推不动 ⇒ 直线上更远的点都必须先穿过这一段（那正是要禁掉的跨步），本帧到此为止
+                if (cur.x == prev.x && cur.z == prev.z) break;
             }
             return new Vector3(cur.x, to.y, cur.z);
         }

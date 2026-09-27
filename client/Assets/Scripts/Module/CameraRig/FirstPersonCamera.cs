@@ -40,8 +40,14 @@ namespace Cs16.Module.CameraRig
     /// <item><b>输入映射</b>：视角输入由玩家模块采集（<c>PlayerMotor.Yaw/Pitch</c>），
     /// 本组件每帧 <c>SetView(motor.Yaw, motor.Pitch)</c> 喂给 rig；rig 自己的鼠标读取**关掉**
     /// （<c>SetControlEnabled(false)</c>）—— 两处读鼠标会把灵敏度算两遍。这是项目专有的输入映射。</item>
-    /// <item><b>第三人称观战机位</b>（<see cref="ResolveChaseDistance"/>，原版 <c>V_GetChaseOrigin</c>）、
-    /// 模型显隐、外来主相机 / 音频监听器收编、FOV 与机位的自证日志。</item>
+    /// <item><b>四种观战机位</b>：第三人称追尾（<see cref="ResolveChaseDistance"/>，原版
+    /// <c>V_GetChaseOrigin</c>，view.cpp:894-1050；档位 1 锁定追尾 / 档位 2 自由追尾共用位置算法，
+    /// 角度来源见 <c>CsSpectator.TryChaseCameraAngles</c>）、目标第一人称（原版 <c>V_GetInEyePos</c>，
+    /// view.cpp:1289-1321；相机落在被观察者眼位、朝向随他）、自由飞行（原版 <c>OBS_ROAMING</c>，
+    /// view.cpp:1538-1540：相机在**观察者自己的漫游原点**、朝向 = 他自己的鼠标角；原点推进 =
+    /// <c>CsSpectatorRoam.Step</c>）—— 由观战档位 <c>CsSpectator.Mode</c> 选（有机位的档位见
+    /// <c>CsSpectator.ImplementedModes</c>）；
+    /// 另有模型显隐、外来主相机 / 音频监听器收编、FOV 与机位的自证日志。</item>
     /// </list>
     ///
     /// <para><b>两条硬约定（不变）</b>：</para>
@@ -132,13 +138,47 @@ namespace Cs16.Module.CameraRig
 
         private float _selfCheckTimer;
 
-        // ---- 第三人称（观战 / 跟随）机位状态 ----
+        // ---- 观战机位状态（第三人称追尾 / 目标第一人称）----
         /// <summary>当前平滑后的机位距离（米）。进第三人称时按原版重置为 <see cref="CsConst.ChaseMinDistance"/>。</summary>
         private float _chaseDistance = CsConst.ChaseDistance;
-        /// <summary>上一帧是否在第三人称（用于"进入第三人称时重置机位距离"）。</summary>
+        /// <summary>上一帧是否在观战（用于"进入观战时重置机位距离"）。</summary>
         private bool _lastSpectating;
         /// <summary>本帧射线命中点距眼位的距离（米）；&lt;0 = 本帧没打到墙。仅用于日志。</summary>
         private float _chaseHitDistance = -1f;
+        /// <summary>上一帧的观战档位（用于"档位变了就当场换机位 + 换模型显隐"）；非观战时记默认档。</summary>
+        private CsSpectatorMode _lastSpectateMode = CsSpectatorMode.ChaseFree;
+
+        // ---- 观战·自由飞行（原版 OBS_ROAMING = 档位 3）----
+        /// <summary>
+        /// 自由飞行的位置与速度。解算在 <see cref="CsSpectatorRoam.Step"/>（Core 里的纯函数，逐语句
+        /// 对应原版 <c>PM_SpectatorMove</c>）；本组件只负责"喂输入、喂给解算、把结果写进相机"。
+        /// </summary>
+        private CsSpectatorRoam.State _roam;
+
+        /// <summary>
+        /// 进入自由飞行时要**对齐到当前机位**（否则换档那一帧会瞬移到 (0,0,0)）。原版对应
+        /// <c>pm_shared.c:1503-1512</c> 的 <c>iJumpSpectator</c> 分支（把原点与角设成 vJumpOrigin /
+        /// vJumpAngles、速度清零）与 <c>hud_spectator.cpp:834-842</c> 的"跳进当前机位"。
+        /// </summary>
+        private bool _roamNeedsStart;
+
+        /// <summary>
+        /// 控制台面板的名字（自由飞行据此停手，见 <see cref="ReadRoamMoveInput"/>）。
+        /// <para><b>为什么用名字而不是类型</b>：本组件在 <c>Cs16.Module</c> 层，分层铁律不让模块引用
+        /// <c>Cs16.UI</c>（控制台是 UI 层的面板）；面板名与预制体名同源，
+        /// 与 <c>PlayerModule</c> 的 <c>NonBlockingPanels</c> 同一套写法。</para>
+        /// </summary>
+        private const string ConsolePanelName = "ConsolePanel";
+
+        /// <summary>
+        /// 当前打开中的面板名（只有**控制台**会挡住自由飞行，见 <see cref="ReadRoamMoveInput"/>）。
+        /// </summary>
+        private readonly HashSet<string> _openPanels = new HashSet<string>();
+
+        private bool _subscribedPanels;
+
+        /// <summary><c>Game.Input</c> 拿不到时只报一次（同 <c>PlayerMotor</c> 的口径）。</summary>
+        private bool _warnedRoamInput;
 
         // ---- FOV / 机位诊断日志的"变了才打"缓存 ----
         private float _loggedFovY = float.NaN;
@@ -184,7 +224,11 @@ namespace Cs16.Module.CameraRig
             EnsureCamera();
             EnsureAudioListener();
             HookDamage();
+            HookPanels();
             EnsureRig();
+
+            // 自由飞行：进入档位 3 时按"跳进当前机位"处理（见 _roamNeedsStart）。
+            _roamNeedsStart = true;
 
             // 让第一帧 PrepareView 立刻做一次自检（启用相机 / 找监听器 / 关掉别的主相机）。
             _selfCheckTimer = SelfCheckInterval;
@@ -261,6 +305,44 @@ namespace Cs16.Module.CameraRig
             if (!_subscribedDamage || _match == null) return;
             _match.OnDamaged -= OnDamaged;
             _subscribedDamage = false;
+        }
+
+        /// <summary>
+        /// 订阅面板开关（引擎 <c>Game.UI</c>）：**控制台打开时不推进自由飞行** —— 控制台里打的正是
+        /// <c>spec_mode</c> / <c>spec_player</c> 这类含 WASD 的命令，那些键是在打字，不是要飞
+        /// （控制台的输入框是 uGUI <c>InputField</c>，键盘照样被它收走，所以必须由这里闸一道）。
+        ///
+        /// <para>只闸控制台：其余面板不抢键盘，暂停族由 <c>ICsMatch.IsPaused</c> 挡（见
+        /// <see cref="ReadRoamMoveInput"/>）。引擎的面板事件**只有订阅、没有退订**（<c>Game.UI</c>），
+        /// 因此本组件只订阅一次，处理函数对"组件已销毁"做守卫（与 <c>PlayerModule</c> 同形）。</para>
+        /// </summary>
+        private void HookPanels()
+        {
+            if (_subscribedPanels) return;
+            var ui = Game.UI;
+            if (ui == null)
+            {
+                _log.Warn("ui.missing",
+                    "Game.UI 为 null（未 Launch？）：自由飞行没有控制台闸门，在控制台里按 WASD 会一起飞");
+                return;
+            }
+
+            ui.OnPanelOpened(OnPanelOpened);
+            ui.OnPanelClosed(OnPanelClosed);
+            _subscribedPanels = true;
+        }
+
+        /// <summary>面板打开 ⇒ 记名（自由飞行据此停手；见 <see cref="HookPanels"/>）。</summary>
+        private void OnPanelOpened(string panelName)
+        {
+            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            _openPanels.Add(panelName);
+        }
+
+        private void OnPanelClosed(string panelName)
+        {
+            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            _openPanels.Remove(panelName);
         }
 
         /// <summary>被打时晃一下（只处理"受击者就是自己"的情况，队友/敌人挨打不动我的镜头）。</summary>
@@ -346,7 +428,21 @@ namespace Cs16.Module.CameraRig
                 return;
             }
 
-            if (_lastTargetId != target.Id)
+            // 观战档位（控制面）决定机位：4 = 原版 OBS_IN_EYE（目标第一人称）、2 = 原版 OBS_CHASE_FREE（追尾）、
+            // 3 = 原版 OBS_ROAMING（观察者**自己**的自由飞行）。非观战永远是自己第一人称。
+            var inEye = spectating && CsSpectator.Mode == CsSpectatorMode.FirstPerson;
+
+            // 自由飞行**不要求有观战目标**（原版 SetModes 里 OBS_ROAMING 是唯一"没有 g_iUser2 也放行"的档位，
+            // 见 hud_spectator.cpp:814；它的原点就是观察者自己、不看别人）⇒ 判据只取 IsSpectating。
+            // 其余两档都要目标：`spectating` = "相机在看**别人**"，自由飞行时它是 false 也不影响本档。
+            var freeLook = _match.IsSpectating && CsSpectator.Mode == CsSpectatorMode.FreeLook;
+            var observeCamera = spectating || freeLook;
+
+            var targetChanged = _lastTargetId != target.Id;
+            var spectateModeChanged = observeCamera && _lastSpectateMode != CsSpectator.Mode;
+            _lastSpectateMode = observeCamera ? CsSpectator.Mode : CsSpectatorMode.ChaseFree;
+
+            if (targetChanged)
             {
                 _lastTargetId = target.Id;
                 _rig.ClearRecoil();      // 换目标：后坐力表现立即清零（引擎 rig 持有该状态）
@@ -354,20 +450,63 @@ namespace Cs16.Module.CameraRig
                 _bob?.Reset();
                 // 观战切换：把自由视角先对齐到被观察者的朝向，避免"瞬间背对"。
                 if (spectating && _motor != null) _motor.ForceLook(target.Yaw, target.Pitch);
-                _log.Always($"相机跟随目标切换 → {target.Name}（id={target.Id}，{(spectating ? "观战·第三人称" : "自己·第一人称")}）");
+                var where = inEye ? "观战·目标第一人称"
+                    : freeLook ? "观战·自由飞行"
+                    : spectating ? "观战·第三人称"
+                    : "自己·第一人称";
+                _log.Always($"相机跟随目标切换 → {target.Name}（id={target.Id}，{where}）");
+            }
 
-                // 模型显隐：
-                // · 第一人称（不观战）—— 藏掉自己的身体，否则镜头被自己的后脑勺糊满；
-                // · 第三人称观战 —— **必须把被观察者的模型露出来**（相机在他身后，藏了就看不到人），
-                //   同时把之前藏过的还回去。
-                if (spectating)
+            if (spectateModeChanged)
+            {
+                if (freeLook)
                 {
-                    RestoreHiddenBody();
+                    // 进入自由飞行：**对齐到当前机位**（原版 iJumpSpectator 语义，pm_shared.c:1503-1512）。
+                    StartRoamFrom(_camera.transform.position);
+                    _log.Always($"观战机位 → 自由飞行（原版 Spec_Mode3 / OBS_ROAMING）：相机在**观察者自己**的漫游原点、" +
+                                $"朝向 = 自己的鼠标角（view.cpp:1538-1540）；起点=({_roam.Origin.x:F3}, {_roam.Origin.y:F3}, " +
+                                $"{_roam.Origin.z:F3}) m、速度清零；推进 = PM_SpectatorMove（pm_shared.c:1490-1572，" +
+                                $"无重力 / 无碰撞 / 无边界），速度上限 sv_spectatormaxspeed {CsConst.SpecRoamMaxSpeed:F4} m/s");
+                }
+                else if (inEye)
+                {
+                    _log.Always($"观战机位 → 目标第一人称（原版 Spec_Mode4 / OBS_IN_EYE）：相机落在 {target.Name} 的眼位、" +
+                                "朝向随他（view.cpp:1289-1321 V_GetInEyePos）");
                 }
                 else
                 {
-                    // 与相机目标**同帧**切换：藏住自己、并把上一个目标的渲染还回去。
-                    // （只靠 1 秒一次的自检会出现"相机已经贴到他眼睛上、他的模型还开着"的最多 1 秒糊屏）
+                    if (!CsSpectator.IsImplemented(CsSpectator.Mode))
+                    {
+                        // 非预期分支：档位与机位不匹配（唯一写入入口 CsSpectator.TrySetMode 会拒掉未实现档位，
+                        // 走到这里说明状态是被别处直接改的）—— 留痕，本帧按追尾处理，不回写档位。
+                        _log.Warn("spec.mode.mismatch",
+                            $"观战档位 {CsSpectator.ModeName(CsSpectator.Mode)}（{(int)CsSpectator.Mode}）没有机位实现" +
+                            "（CsSpectator.IsImplemented=false），本帧按第三人称追尾处理");
+                    }
+                    var locked = CsSpectator.Mode == CsSpectatorMode.ChaseLocked;
+                    _log.Always($"观战机位 → 第三人称追尾（原版 Spec_Mode{(int)CsSpectator.Mode} / " +
+                                (locked ? "OBS_CHASE_LOCKED" : "OBS_CHASE_FREE") + $"）：相机退到 {target.Name} 身后、" +
+                                $"距离 cl_chasedist {CsConst.ChaseDistance:F4} m（view.cpp:894-1050 V_GetChaseOrigin）、" +
+                                (locked
+                                    ? "角度锁到目标的视角（原版给 V_GetChasePos 传 NULL 鼠标角 ⇒ 取 ent->angles，view.cpp:1532 + :1264-1268）"
+                                    : "角度用观察者自己的视角（原版传 v_cl_angles，view.cpp:1535 + :1269-1270）"));
+                }
+            }
+
+            // 模型显隐（换目标或换观战档位都要**同帧**改，不然最多 1 秒的自检间隔里会看到不该看的模型）：
+            // · 自己第一人称 —— 藏掉自己的身体，否则镜头被自己的后脑勺糊满；
+            // · 第三人称追尾 / 自由飞行 —— **必须把被观察者的模型露出来**（相机在他身外，藏了就看不到人），
+            //   还把之前藏过的还回去；
+            // · 目标第一人称 —— 相机就在被观察者的眼睛上，藏掉他自己的模型（同原版 OBS_IN_EYE 看不到自己的身子）。
+            if (targetChanged || spectateModeChanged)
+            {
+                if (observeCamera)
+                {
+                    if (inEye) ApplyHiddenBody(target, true);
+                    else RestoreHiddenBody();
+                }
+                else
+                {
                     ApplyHiddenBody(target, false);
                 }
             }
@@ -379,35 +518,55 @@ namespace Cs16.Module.CameraRig
                 _lastSpectating = spectating;
                 _chaseDistance = CsConst.ChaseMinDistance;
                 _chaseHitDistance = -1f;
+                // 观战开始时若已在自由飞行档位：同样要对齐到当前机位（不然会从 (0,0,0) 起飞）。
+                if (freeLook) _roamNeedsStart = true;
             }
 
-            // ---- 眼高（站/蹲与台阶做平滑；瞬移直接吸附）----
-            // 只平滑"眼高"这一个标量：引擎 rig 的 EyeSmoothTau 是**整点**平滑，会让机位在水平方向
-            // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（与既有实现行为一致）。
-            var eyeTarget = target.EyeHeight;
-            if (!_hasLastPosition || Vector3.Distance(target.Position, _lastActorPosition) > CsCombatTuning.TeleportSnapDistance)
+            if (freeLook)
             {
-                _eyeHeight = eyeTarget;
+                // ---- 自由飞行：推进**观察者自己**的漫游原点，眼位锚点落在相机自己身上 ----
+                if (_roamNeedsStart) StartRoamFrom(_camera.transform.position);
+                _roam = AdvanceRoam(dt, _motor != null ? _motor.Yaw : target.Yaw,
+                                        _motor != null ? _motor.Pitch : target.Pitch);
+
+                // 回到别的档位时眼高直接吸附（不拿自由飞行的位置去平滑）。
+                _hasLastPosition = false;
+                _eyeAnchor.position = _roam.Origin;
+                _rig.EyeOffset = Vector3.zero;   // ⇒ rig.EyePosition = 漫游原点 = 本帧的相机位置
             }
             else
             {
-                _eyeHeight = CameraMath.Follow(_eyeHeight, eyeTarget, dt, CsCombatTuning.EyeHeightSmoothTau);
+                // ---- 眼高（站/蹲与台阶做平滑；瞬移直接吸附）----
+                // 只平滑"眼高"这一个标量：引擎 rig 的 EyeSmoothTau 是**整点**平滑，会让机位在水平方向
+                // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（与既有实现行为一致）。
+                var eyeTarget = target.EyeHeight;
+                if (!_hasLastPosition || Vector3.Distance(target.Position, _lastActorPosition) > CsCombatTuning.TeleportSnapDistance)
+                {
+                    _eyeHeight = eyeTarget;
+                }
+                else
+                {
+                    _eyeHeight = CameraMath.Follow(_eyeHeight, eyeTarget, dt, CsCombatTuning.EyeHeightSmoothTau);
+                }
+
+                _lastActorPosition = target.Position;
+                _hasLastPosition = true;
+
+                // 眼位锚点搬到目标脚下，"脚 → 眼"的高度交给 rig 的 EyeOffset ⇒
+                // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与既有实现等价）。
+                _eyeAnchor.position = target.Position;
+                _rig.EyeOffset = new Vector3(0f, _eyeHeight, 0f);
             }
 
-            _lastActorPosition = target.Position;
-            _hasLastPosition = true;
-
-            // 眼位锚点搬到目标脚下，"脚 → 眼"的高度交给 rig 的 EyeOffset ⇒
-            // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与既有实现等价）。
-            _eyeAnchor.position = target.Position;
-            _rig.EyeOffset = new Vector3(0f, _eyeHeight, 0f);
-
             // ---- 喂 rig ①：视角（**项目专有的输入映射** —— 权威 yaw/pitch 由 PlayerMotor 采集）----
-            _rig.SetView(_motor != null ? _motor.Yaw : target.Yaw,
-                         _motor != null ? _motor.Pitch : target.Pitch);
+            // 目标第一人称（OBS_IN_EYE）是唯一例外：视角取**被观察者的**朝向
+            //（原版 V_GetInEyePos 里 VectorCopy(ent->angles, angles)，view.cpp:1306；只有 chase 档位才用
+            // 观察者自己的鼠标角 v_cl_angles，view.cpp:1535）。
+            _rig.SetView(inEye ? target.Yaw : (_motor != null ? _motor.Yaw : target.Yaw),
+                         inEye ? target.Pitch : (_motor != null ? _motor.Pitch : target.Pitch));
 
             // ---- 喂 rig ②：后坐力（只喂**模拟的权威值**，跟随 / 上跳回落时间常数在引擎里）----
-            if (spectating)
+            if (observeCamera)
             {
                 _rig.ClearRecoil();   // 观战时没有自己的后坐力（权威值属于被观察者）
             }
@@ -427,7 +586,7 @@ namespace Cs16.Module.CameraRig
 
             // ---- 喂 rig ④：视点晃动（引擎件 ViewBob 的输出缝）----
             var speedXZ = new Vector2(target.Velocity.x, target.Velocity.z).magnitude;
-            if (_bob != null) _bob.Tick(dt, spectating ? 0f : speedXZ, target.OnGround);
+            if (_bob != null) _bob.Tick(dt, observeCamera ? 0f : speedXZ, target.OnGround);
             _rig.ViewOffset = _bob != null ? _bob.Offset : Vector3.zero;
             _rig.ViewRoll = _bob != null ? _bob.Roll : 0f;
 
@@ -436,15 +595,45 @@ namespace Cs16.Module.CameraRig
             _eyePosition = _rig.EyePosition;
             _aimDirection = _rig.AimDirection;
 
-            if (spectating)
+            if (observeCamera)
             {
-                // ---- 第三人称观战 / 跟随（原版 view.cpp:617-635）----
-                // 机位 = 眼位沿**视线反方向**退 ofs[2]；roll 归零（view.cpp:627）；距离与防穿墙见 ResolveChaseDistance。
-                // 朝向 / 眼位 / 视线方向全部取 rig 算好的值（这里不再自己拼 yaw/pitch）。
-                var dist = ResolveChaseDistance(_eyePosition, _aimDirection);
-                _pendingRotation = Quaternion.Euler(-_rig.Pitch, _rig.Yaw, 0f);
-                _pendingPosition = _eyePosition - _aimDirection * dist;
-                _hasPendingView = true;
+                if (freeLook)
+                {
+                    // ---- 自由飞行（原版 OBS_ROAMING，view.cpp:1538-1540）----
+                    // 机位 = 观察者**自己**的漫游原点（AdvanceRoam 推进的 _roam.Origin）；朝向 = 他自己的
+                    // 鼠标角（rig 这一帧的 yaw/pitch 就是 motor 喂进去的值）。原版那两行就是
+                    // `VectorCopy(v_cl_angles, v_angles); VectorCopy(v_sim_org, v_origin);`。
+                    _pendingRotation = Quaternion.Euler(-_rig.Pitch, _rig.Yaw, 0f);
+                    _pendingPosition = _roam.Origin;
+                    _hasPendingView = true;
+                }
+                else if (inEye)
+                {
+                    // ---- 目标第一人称（原版 OBS_IN_EYE / V_GetInEyePos，view.cpp:1289-1321）----
+                    // 机位 = 被观察者的眼位（那里 origin = ent->origin，再按站/蹲加视高），朝向 = 他本人的 yaw/pitch。
+                    // 眼位不在这里另拼：rig 的 EyePosition 就是"眼位锚点（被观察者脚下）+ 眼高"，
+                    // 而眼高取自模拟的 CsActor.EyePosition（站立 CsConst.EyeHeight，蹲姿 ×0.72）。
+                    _pendingRotation = Quaternion.Euler(-_rig.Pitch, _rig.Yaw, 0f);
+                    _pendingPosition = _eyePosition;
+                    _hasPendingView = true;
+                }
+                else
+                {
+                    // ---- 第三人称观战 / 跟随（原版 view.cpp:617-635）----
+                    // 机位 = 被观察者眼位沿**视线反方向**退 ofs[2]；roll 归零（view.cpp:627）；距离与防穿墙见
+                    // ResolveChaseDistance。位置算法两档共用，角度来源按档位取（CsSpectator.TryChaseCameraAngles
+                    // 是这条规则的唯一实现）：档位 1 锁到目标的视角、档位 2 用观察者自己的视角。
+                    // 该函数对 5 / 6 返回 false 并按观察者自己的视角给出；那种"档位与机位不匹配"已在档位
+                    // 变化时由 spec.mode.mismatch 留过痕（本分支不逐帧重复报）。
+                    CsSpectator.TryChaseCameraAngles(CsSpectator.Mode, _rig.Yaw, _rig.Pitch,
+                                                     target.Yaw, target.Pitch, out var camYaw, out var camPitch);
+
+                    var chaseLook = CameraMath.AimDirection(camYaw, camPitch);
+                    var dist = ResolveChaseDistance(_eyePosition, chaseLook);
+                    _pendingRotation = Quaternion.Euler(-camPitch, camYaw, 0f);
+                    _pendingPosition = _eyePosition - chaseLook * dist;
+                    _hasPendingView = true;
+                }
             }
         }
 
@@ -560,30 +749,95 @@ namespace Cs16.Module.CameraRig
         }
 
         /// <summary>
-        /// 第三人称机位的运行时自证行（数值类证据）：相机 ↔ 目标眼位的水平距离 / 三维距离 / 理想值 / 下限 /
-        /// 本帧射线命中点距离。判据 = 在 [0.762, 2.8448] m 内、且贴墙时收缩。
+        /// 观战机位的运行时自证行（数值类证据）。每个有机位的档位各一条（行里都带档位号 + 相机位置 + 朝向），
+        /// 判据分别是：
+        /// <list type="bullet">
+        /// <item>目标第一人称（OBS_IN_EYE）—— 相机 ↔ 目标眼位距离应为 0（相机就在他眼睛上）、
+        /// 相机 yaw 应等于目标 yaw、眼位高应等于模拟给的值；</item>
+        /// <item>第三人称追尾（OBS_CHASE_LOCKED / OBS_CHASE_FREE）—— 相机 ↔ 目标眼位水平/三维距离，在
+        /// [<c>CsConst.ChaseMinDistance</c>, <c>CsConst.ChaseDistance</c>] 内、且贴墙时收缩；
+        /// 相机朝向：档位 1 = 目标的视角、档位 2 = 观察者自己的视角；</item>
+        /// <item>自由飞行（OBS_ROAMING）—— 相机位置与速度（速度上限
+        /// <c>CsConst.SpecRoamMaxSpeed</c>）、朝向 = 观察者自己的鼠标角。</item>
+        /// </list>
         /// </summary>
         private void LogSpectateDiagnostics()
         {
             if (_camera == null || !_camera.enabled) return;
-            var target = IsThirdPersonSpectate() ? _match.SpectateTarget : null;
+
+            var camPos = _camera.transform.position;
+
+            if (IsFreeLookSpectate())
+            {
+                _log.Always($"自由飞行机位：相机=({camPos.x:F3}, {camPos.y:F3}, {camPos.z:F3}) m，" +
+                            $"速度={_roam.Velocity.magnitude:F4} m/s（上限 sv_spectatormaxspeed {CsConst.SpecRoamMaxSpeed:F4} m/s），" +
+                            $"朝向 yaw={_camera.transform.eulerAngles.y:F2}° pitch={-_camera.transform.eulerAngles.x:F2}°" +
+                            "；无重力 / 无碰撞 / 无边界（view.cpp:1538-1540 + pm_shared.c:1490-1572）");
+                return;
+            }
+
+            if (!IsSpectateWithTarget()) return;
+
+            var target = _match.SpectateTarget;
             if (target == null) return;
 
-            var eye = target.Position + new Vector3(0f, target.EyeHeight, 0f);
-            var camPos = _camera.transform.position;
+            var eye = target.EyePosition;
+
+            if (IsFirstPersonSpectate())
+            {
+                var d = Vector3.Distance(camPos, eye);
+                _log.Always($"目标第一人称机位：相机↔目标眼位 距离={d:F4} m（应为 0 —— 相机就在他眼睛上）" +
+                            $"，相机 yaw={_camera.transform.eulerAngles.y:F2}° / 目标 yaw={target.Yaw:F2}°" +
+                            $"，眼位高={target.EyeHeight:F4} m（站 {CsConst.EyeHeight:F2} / 蹲 ×0.72，取自模拟的 CsActor）" +
+                            "（view.cpp:1289-1321 V_GetInEyePos）");
+                return;
+            }
+
             var dh = new Vector2(camPos.x - eye.x, camPos.z - eye.z).magnitude;
             var d3 = Vector3.Distance(camPos, eye);
-            _log.Always($"第三人称机位：相机↔目标眼位 水平距离={dh:F4} m（三维 {d3:F4} m）" +
+            var chaseMode = CsSpectator.Mode;
+            var chaseFace = chaseMode == CsSpectatorMode.ChaseLocked
+                ? "角度锁到目标视角（view.cpp:1532 传 NULL ⇒ :1264-1268 取 ent->angles）"
+                : "角度用观察者自己的视角（view.cpp:1535 传 v_cl_angles）";
+            _log.Always($"第三人称机位（档位 {(int)chaseMode} {CsSpectator.ModeName(chaseMode)}，{chaseFace}）：" +
+                        $"相机=({camPos.x:F3}, {camPos.y:F3}, {camPos.z:F3}) m，" +
+                        $"朝向 yaw={_camera.transform.eulerAngles.y:F2}° pitch={-_camera.transform.eulerAngles.x:F2}°" +
+                        $"，相机↔目标眼位 水平距离={dh:F4} m（三维 {d3:F4} m）" +
                         $"，理想={CsConst.ChaseDistance:F4} 下限={CsConst.ChaseMinDistance:F4} " +
                         $"当前距离={_chaseDistance:F4} m，本帧射线命中点={(_chaseHitDistance >= 0f ? _chaseHitDistance.ToString("F4") : "无（未贴墙）")}" +
                         "（cl_chasedist 112 unit + CAM_MIN_DIST 30 unit + V_GetChaseOrigin）");
         }
 
-        /// <summary>相机是否正处于第三人称观战（观战中且拿到了被观察者）。</summary>
-        private bool IsThirdPersonSpectate()
+        /// <summary>相机是否处于观战且拿到了被观察者（需要目标的观战档位 1 / 2 / 4 共同的前提）。</summary>
+        private bool IsSpectateWithTarget()
         {
             if (_match == null || !_match.IsSpectating) return false;
             return _match.SpectateTarget != null;
+        }
+
+        /// <summary>
+        /// 当前是否**外部机位**的观战档位（原版 <c>OBS_CHASE_LOCKED</c> / <c>OBS_CHASE_FREE</c> = 两种追尾 /
+        /// <c>OBS_ROAMING</c> = 自由飞行）—— 这几种机位相机都不在目标身上，被观察者的模型必须看得见。
+        /// </summary>
+        private bool IsExternalSpectate()
+        {
+            if (!IsSpectateWithTarget()) return false;
+            var mode = CsSpectator.Mode;
+            return mode == CsSpectatorMode.ChaseLocked
+                || mode == CsSpectatorMode.ChaseFree
+                || mode == CsSpectatorMode.FreeLook;
+        }
+
+        /// <summary>当前是否目标第一人称档位（原版 <c>OBS_IN_EYE</c>）。</summary>
+        private bool IsFirstPersonSpectate()
+        {
+            return IsSpectateWithTarget() && CsSpectator.Mode == CsSpectatorMode.FirstPerson;
+        }
+
+        /// <summary>当前是否自由飞行档位（原版 <c>OBS_ROAMING</c>；不要求有观战目标 —— 原版该档位同样不需要）。</summary>
+        private bool IsFreeLookSpectate()
+        {
+            return _match != null && _match.IsSpectating && CsSpectator.Mode == CsSpectatorMode.FreeLook;
         }
 
         /// <summary>自建相机只在比赛运行时启用 —— 否则它会盖住主菜单画面、并抢走 <c>Camera.main</c>。</summary>
@@ -634,9 +888,11 @@ namespace Cs16.Module.CameraRig
         /// <list type="bullet">
         /// <item><b>第一人称</b>（不观战）= 本地玩家自己 —— 第一人称不能看见自己的身体
         /// （否则镜头被自己的后脑勺糊满）；</item>
-        /// <item><b>第三人称观战中</b> = **谁都不藏**：相机在目标身后 2.8448 m 处（见
-        /// <see cref="PrepareView"/> 的第三人称分支），被观察者的模型必须看得见 —— 藏了就没人可看。
+        /// <item><b>第三人称追尾观战中</b> = **谁都不藏**：相机在目标身后 2.8448 m 处（见
+        /// <see cref="PrepareView"/> 的追尾分支），被观察者的模型必须看得见 —— 藏了就没人可看。
         /// 这条分支在 <see cref="HideOwnBody"/> 开头就 return 掉了。</item>
+        /// <item><b>目标第一人称观战中</b>（原版 <c>OBS_IN_EYE</c>）= 藏掉**被观察者**自己 ——
+        /// 相机就在他的眼睛上，不藏就是被他的后脑勺/躯干糊满（等同"第一人称看不见自己的身体"）。</item>
         /// </list>
         ///
         /// <para>依据契约：角色的模型由视图生成器生成，并在受击体上挂 <see cref="CsHitboxProxy"/> +
@@ -654,9 +910,9 @@ namespace Cs16.Module.CameraRig
             if (_match == null) return;
             if (_camera == null || !_camera.enabled) return;
 
-            // 第三人称观战中：相机在目标**身后**，必须把被观察者的模型露出来（藏了就没东西可看）；
-            // 只把之前（第一人称时期）藏过的还回去。
-            if (IsThirdPersonSpectate())
+            // 外部机位观战中（追尾 2 / 自由飞行 3）：相机在目标**身外**，必须把被观察者的模型露出来
+            // （藏了就没东西可看）；只把之前（第一人称时期）藏过的还回去。
+            if (IsExternalSpectate())
             {
                 RestoreHiddenBody();
                 return;
@@ -826,6 +1082,82 @@ namespace Cs16.Module.CameraRig
                 _chaseHitDistance = -1f;
             }
             return _chaseDistance;
+        }
+
+        // ==================================================================
+        //  观战·自由飞行（原版 OBS_ROAMING = 档位 3）
+        // ==================================================================
+        /// <summary>
+        /// 进入自由飞行的起点（原版 <c>iJumpSpectator</c> 语义，<c>pm_shared.c:1503-1512</c>：
+        /// <c>VectorCopy(vJumpOrigin, pmove-&gt;origin)</c> + 速度清零；对应 <c>hud_spectator.cpp:834-842</c>
+        /// 切到 <c>OBS_ROAMING</c> 时先把观察者"跳"到当前机位）。这里取**当前相机位置**当起点
+        /// （换档前那一帧机位就停在那儿），避免瞬移。
+        /// </summary>
+        private void StartRoamFrom(Vector3 position)
+        {
+            _roam = new CsSpectatorRoam.State { Origin = position, Velocity = Vector3.zero };
+            _roamNeedsStart = false;
+            _log.Info("spectate.roam.start",
+                $"自由飞行起点：({position.x:F3}, {position.y:F3}, {position.z:F3}) m，速度清零（原版 iJumpSpectator，pm_shared.c:1503-1512）");
+        }
+
+        /// <summary>
+        /// 本帧推进**观察者自己**的漫游原点（解算 = <see cref="CsSpectatorRoam.Step"/>，逐语句对应原版
+        /// <c>PM_SpectatorMove</c>）。
+        ///
+        /// <para><b>方向口径</b>取本工程既有约定（<c>Module/Match/CsMatch.cs:1080-1082</c>：
+        /// <c>forward = (sin yaw, 0, cos yaw)</c>、<c>right = (cos yaw, 0, -sin yaw)</c>），
+        /// 这里 forward 再按俯仰抬起来 —— 原版 <c>pm_shared.c:2454</c> 的
+        /// <c>AngleVectors(pmove-&gt;angles, …)</c> 给的 forward 本来就含俯仰，所以
+        /// "抬头 / 低头 + 前进"能往下 / 往上飞（这也是本工程唯一的垂直移动方式，见
+        /// <see cref="ReadRoamMoveInput"/> 的 upmove 说明）。</para>
+        /// </summary>
+        private CsSpectatorRoam.State AdvanceRoam(float dt, float yaw, float pitch)
+        {
+            var yawRad = yaw * Mathf.Deg2Rad;
+            var pitchRad = pitch * Mathf.Deg2Rad;
+            var forward = new Vector3(Mathf.Cos(pitchRad) * Mathf.Sin(yawRad), Mathf.Sin(pitchRad),
+                                      Mathf.Cos(pitchRad) * Mathf.Cos(yawRad));
+            var right = new Vector3(Mathf.Cos(yawRad), 0f, -Mathf.Sin(yawRad));
+
+            ReadRoamMoveInput(out var forwardMove, out var sideMove);
+            // upmove 恒 0：原版它来自 `+moveup` / `+movedown` 的**按键绑定**，而绑定表（config.cfg）不在盘
+            // ⇒ 盘上给不出"本工程该把上下飞绑到哪两个键"的口径，就不绑（垂直移动靠抬头/低头 + 前进）。
+            return CsSpectatorRoam.Step(_roam, dt, forward, right, forwardMove, sideMove, 0f);
+        }
+
+        /// <summary>
+        /// 读自由飞行的 WASD 指令（前进 / 后退 / 侧移幅值都取 <see cref="CsConst.SpecRoamMoveSpeed"/>）。
+        ///
+        /// <para><b>鼠标不在这里读</b>：视角仍由 <c>PlayerMotor</c> 采集（本组件读第二遍会把灵敏度算两遍，
+        /// 这是本组件类注释里的既有约定）。</para>
+        ///
+        /// <para><b>什么时候不读</b>：有面板打开（控制台里打的 <c>spec_*</c> 命令含 WASD，按下去是在打字）、
+        /// 暂停、不在比赛中 —— 这三种情况下推进原点就是在乱飞。</para>
+        /// </summary>
+        private void ReadRoamMoveInput(out float forwardMove, out float sideMove)
+        {
+            forwardMove = 0f;
+            sideMove = 0f;
+
+            if (_openPanels.Contains(ConsolePanelName)) return;   // 控制台里按 WASD 是在打字
+            if (_match == null || !_match.IsRunning || _match.IsPaused) return;
+
+            var input = Game.Input;
+            if (input == null)
+            {
+                if (!_warnedRoamInput)
+                {
+                    _warnedRoamInput = true;
+                    _log.Warn("input.missing", "Game.Input 为 null（CloverInput.Init 未执行？）：自由飞行不会响应 WASD");
+                }
+                return;
+            }
+
+            var f = (input.GetKey(GameKey.W) ? 1f : 0f) - (input.GetKey(GameKey.S) ? 1f : 0f);
+            var s = (input.GetKey(GameKey.D) ? 1f : 0f) - (input.GetKey(GameKey.A) ? 1f : 0f);
+            forwardMove = f * CsConst.SpecRoamMoveSpeed;
+            sideMove = s * CsConst.SpecRoamMoveSpeed;
         }
 
         // ==================================================================

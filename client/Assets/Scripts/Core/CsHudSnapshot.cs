@@ -31,7 +31,7 @@ namespace Cs16.Core
     /// <para>原因：`reference/architecture.md` 要求 UI 不许 `using` 任何 `Module.*`。
     /// HUD / 记分板 / 买枪菜单只读本类。</para>
     ///
-    /// <para><b>写入方</b>：<see cref="Cs16.Module.Match"/>（血量/护甲/金钱/弹药/回合/比分/炸弹/买枪/观战/击杀信息/雷达）、
+    /// <para><b>写入方</b>：<see cref="Cs16.Module.Match"/>（血量/护甲/金钱/弹药/回合/比分/炸弹/买枪/观战/击杀信息/雷达/机器人数量与难度）、
     /// <see cref="Cs16.Module.Combat"/>（准星扩散/命中标记/闪光）。
     /// <b>读取方</b>：全部 UI 面板。</para>
     /// </summary>
@@ -76,6 +76,12 @@ namespace Cs16.Core
         public static string SecondaryWeaponId;
         /// <summary>副武器槽当前那把枪的备弹。</summary>
         public static int SecondaryReserve;
+
+        // ---- 机器人 ----
+        /// <summary>本场机器人总数（含阵亡等待重生的），不含本地玩家、不含 LAN 远端真人。</summary>
+        public static int BotCount;
+        /// <summary>当前生效的机器人难度（最近一次添加机器人 / 切难度之后的档位）。</summary>
+        public static CsBotDifficulty BotDifficulty;
 
         // ---- 准星 / 命中（由 Module/Combat 写）----
         public static float CrosshairSpread;        // 0~1
@@ -124,6 +130,8 @@ namespace Cs16.Core
             UseProgress = -1f;
             InBuyZone = false;
             CanBuyNow = false;
+            BotCount = 0;
+            BotDifficulty = CsBotDifficulty.Easy;
             PrimaryWeaponId = null;
             PrimaryReserve = 0;
             SecondaryWeaponId = null;

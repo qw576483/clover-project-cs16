@@ -130,10 +130,11 @@ namespace Cs16.Module.Audio
         public const float DryfireMinInterval = 0.25f;
 
         /// <summary>弹着墙（非角色碰撞体）。出处：资源文件
-        /// <c>Assets/Resources/Sound/SFX/sfx/hit_wall.wav</c>（在盘，原版弹着音）；
-        /// 原版**按材质分的多条弹着音**（<c>sound/weapons/</c> 的弹着族）与文件名映射都未记录、
-        /// 载体（<c>原版资源/cs16src</c>）已空 ⇒ 已登记 <c>策划/差异登记.tsv</c>：
-        /// 现在全部材质落这一条 clip，材质分类见 <see cref="ClassifyImpact"/>（分类已做、表只有一行）。
+        /// <c>Assets/Resources/Sound/SFX/sfx/hit_wall.wav</c>（在盘）；
+        /// 原版**按材质族分的多条弹着音**（<c>weapons/ric_metal-{1,2}.wav</c> / <c>ric_conc-{1,2}.wav</c> /
+        /// <c>ric1..5.wav</c>，出处见 <see cref="ImpactClassOfLetter"/>）**采样本体不在盘**
+        /// ⇒ 金属 / 混凝土两族现在落这一条 clip；族本身由 <see cref="ClassifyImpact"/> 按原版
+        /// <c>sound/materials.txt</c> 的材质字母给出。已登记 <c>策划/差异登记.tsv</c> #56 / #172。
         /// 事件挂点：<c>Module/Combat/CombatModule.HandleLocalShot</c> 的"打墙落点"循环。</summary>
         public const string HitWall = "sfx/hit_wall";
 
@@ -226,34 +227,856 @@ namespace Cs16.Module.Audio
         public const string GrenadeExplode = "sfx/grenade_explode";
 
         // ==================================================================
-        /// <summary>命中材质无法识别时的分类名。出处：**本项目新增**（分类枚举的兜底值；
-        /// 原版没有"材质分类"这个量，它是本工程为 <c>hit_wall</c> 的分流落点自建的）。</summary>
-        public const string ImpactClassUnknown = "unknown";
+        /// <summary>原版对「<c>materials.txt</c> 里没有该贴图」给的**默认材质字母** = <c>'C'</c>（concrete）。
+        /// 出处：<c>原版资源/hlsdk/pm_shared/pm_shared.c:288</c>（<c>PM_FindTextureType</c> 二分查不到时
+        /// <c>return CHAR_TEX_CONCRETE;</c>）与 <c>:100</c>（<c>#define CHAR_TEX_CONCRETE 'C'</c>）。
+        /// ⛔ 表外**不给**任何关键词猜测：原版这里只有这一个默认值。</summary>
+        public const char ImpactDefaultLetter = 'C';
+
+        /// <summary>金属弹着族（原版材质字母 <c>M</c> / <c>V</c>）。出处见 <see cref="ImpactClassOfLetter"/>。</summary>
+        public const string ImpactClassMetal = "metal";
+
+        /// <summary>混凝土弹着族（原版材质字母表里非金属字母的族）。出处见 <see cref="ImpactClassOfLetter"/>。</summary>
+        public const string ImpactClassConcrete = "concrete";
+
+        /// <summary>
+        /// 原版**材质字母 ⇒ 弹着音族**：<c>'M'</c>（metal）/ <c>'V'</c>（ventilation）⇒ 金属族，
+        /// 其余字母 ⇒ 混凝土族。
+        ///
+        /// <para><b>出处</b>：<c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>（1,093,128 B，
+        /// ImageBase <c>0x1900000</c>）里"打墙的冲击音 + 弹痕"那个函数，RVA <c>0x1E80-0x2091</c>：
+        /// <list type="bullet">
+        /// <item><c>0x1EAE</c> 取字母（<c>mov cl, byte ptr [esp+0x18]</c>，第三个实参）；</item>
+        /// <item><c>0x1EB2</c> <c>cmp cl,'M'</c> / <c>0x1EBB</c> <c>cmp cl,'V'</c> ⇒ 都跳 <c>0x1FBE</c>；</item>
+        /// <item><c>0x1FBE-0x1FEC</c> 那两个分支 push 的串 = <c>weapons/ric_metal-1.wav</c>
+        /// （.data RVA <c>0xE1590</c>）与 <c>weapons/ric_metal-2.wav</c>（<c>0xE1578</c>）；</item>
+        /// <item>其余字母走 <c>0x1EC4-0x1ED4</c> 的 6 路跳表（表在 RVA <c>0x2094</c>）⇒
+        /// <c>weapons/ric1..5.wav</c>（<c>0xE1628/0xE1614/0xE1600/0xE15EC/0xE15D8</c>）与
+        /// <c>weapons/ric_conc-1.wav</c>（<c>0xE15C0</c>）。</item>
+        /// </list>
+        /// 即：**只有 M / V 走金属族，其余字母一律混凝土族**（族内随机取一条采样）。</para>
+        ///
+        /// <para><b>字母从哪来</b>：<see cref="MaterialLetters.TryGetLetter"/> 查原版
+        /// <c>sound/materials.txt</c>（解析口径 = <c>PM_InitTextureTypes</c>）；
+        /// 查不到时用 <see cref="ImpactDefaultLetter"/>（<c>'C'</c>，<c>pm_shared.c:288</c>）。</para>
+        ///
+        /// <para><b>族 ⇒ 采样那一步在本工程仍缺</b>：原版那两条金属 / 混凝土采样本体不在盘，
+        /// 盘上只有一条 <c>sfx/hit_wall.wav</c> ⇒ 各族现在落同一 clip，但"族"本身有出处。
+        /// 补齐采样后只改本函数与调用点，不散落到别处。</para>
+        /// </summary>
+        public static string ImpactClassOfLetter(char letter)
+            => letter == 'M' || letter == 'V' ? ImpactClassMetal : ImpactClassConcrete;
 
         /// <summary>
         /// 把命中物的材质名（<c>Material.name</c> = BSP 贴图组名，如 <c>csSandWallDJ1</c>；
-        /// 阻挡盒没有材质 ⇒ 退到节点名 <c>Blocker_*</c>）归到几个大类。
+        /// 阻挡盒没有材质 ⇒ 材质名为 <c>null</c>）归到一个音效族。
         ///
-        /// <para><b>为什么要有这一步</b>：原版 CS 的着弹音**按材质分流**（打沙地 / 打木箱 / 打金属各有采样），
-        /// 而本工程盘上**只有一条** <c>hit_wall.wav</c>。所以"分流"落在这一层：
-        /// 分类先做出来、日志里记下来（可被离线断言与日志核对），拿不到的那几条按材质采样
-        /// 已登记 <c>策划/差异登记.tsv</c> —— 补齐后只改本函数与调用点，不散落到别处。
-        /// 关键词取自 <c>ThirdParty/Dust2/Textures/*.png</c> 的**真实组名**
-        /// （<c>box</c>/<c>box_x</c> = 原版 <c>func_breakable</c> 木箱，见 <c>策划/对照表.md</c> G-16）。</para>
+        /// <para><b>口径与</b>原版 <c>PM_FindTextureType</c> <b>逐条一致（两条分支）</b>：
+        /// <list type="number">
+        /// <item>材质名在 <c>materials.txt</c> 里 ⇒ 用它那一行的字母
+        /// （<see cref="TryLookupImpactLetter"/>）再给族（<see cref="ImpactClassOfLetter"/>）；</item>
+        /// <item>查不到（含 <c>null</c> / 空串）⇒ 用默认字母 <see cref="ImpactDefaultLetter"/>
+        /// = <c>'C'</c> ⇒ <b>混凝土族</b>（<c>pm_shared.c:288</c>）。</item>
+        /// </list>
+        /// ⛔ **表外不做任何按名字的猜测**：原版这一步只有"默认 'C'"这一个出口
+        /// （关键词分类是"按贴图名猜"，与 1:1 复刻冲突，已删）。</para>
+        ///
+        /// <para><b>本图的后果（如实记）</b>：de_dust2 的 38 个贴图名在原版表里**一个都没有**
+        /// （交叉输出见 <c>tools/probes/cs16_materials_table.py</c>）⇒ 本图全图弹着音都落**混凝土族** ——
+        /// 这正是原版对这张图的行为，已登记 <c>策划/差异登记.tsv</c> #171。</para>
         /// </summary>
         public static string ClassifyImpact(string materialName)
         {
-            if (string.IsNullOrEmpty(materialName)) return ImpactClassUnknown;
-            var n = materialName.ToLowerInvariant();
-
-            if (n.Contains("box")) return "wood";          // box / box_x = func_breakable 木箱
-            if (n.Contains("door")) return "wood-door";    // SandWllDoor* = 门板面
-            if (n.Contains("crt") || n.Contains("crate")) return "wood-crate";
-            if (n.Contains("ccrete") || n.Contains("crete") || n.Contains("concrete")) return "concrete";
-            if (n.Contains("metal") || n.Contains("trim")) return "metal";
-            if (n.Contains("sand") || n.Contains("ground") || n.Contains("path") || n.Contains("site")) return "sand";
-            return ImpactClassUnknown;
+            if (TryLookupImpactLetter(materialName, out var letter)) return ImpactClassOfLetter(letter);
+            return ImpactClassOfLetter(ImpactDefaultLetter);
         }
+
+        /// <summary>材质名 ⇒ 原版材质字母（表里没有该贴图 / <c>null</c> / 空串 ⇒ <c>false</c>）。
+        /// 表见 <see cref="MaterialLetters"/>。</summary>
+        public static bool TryLookupImpactLetter(string materialName, out char letter)
+            => MaterialLetters.TryGetLetter(materialName, out letter);
+
+        // >>> 生成块：MaterialLetters（生成器 = tools/probes/cs16_materials_table.py --csharp）
+        /// <summary>
+        /// 原版 CS 1.6 `sound/materials.txt` 的「贴图名 -> 材质字母」表。
+        ///
+        /// <para><b>表本身是数据、不是手写常量</b>：由 <c>tools/probes/cs16_materials_table.py --csharp</c>
+        /// 逐行打印，⚠️ 手改这张表等于绕过生成器 —— 要改就改生成器再重跑。
+        /// 人读版本 = <c>client/Assets/ThirdParty/Dust2/materials_letters.tsv</c>。</para>
+        ///
+        /// <para><b>载体</b>：<c>原版资源/cs16src/cstrike/sound/materials.txt</c>（11064 B / 787 行 / SHA256 <c>0D35D708CB3737FC99CAF50E41AE32680E197218D2A51488489ECB7561B3AB6C</c>）。</para>
+        ///
+        /// <para><b>解析口径</b> = 原版 <c>PM_InitTextureTypes</c> 的逐语句搬运，出处
+        /// <c>原版资源/hlsdk/pm_shared/pm_shared.c</c>：行文法 <c>:217-249</c>（<c>'/'</c> 或非字母开头跳过；字母 <c>toupper</c>；名字扫到空白；行尾无空白则丢弃；
+        /// 名字截断到 <c>CBTEXTURENAMEMAX-1</c> = 16 字符）；查表 <c>:258-289</c>（<c>strnicmp(name, stored, 16)</c> = 大小写不敏感、按前 16 字符整名相等；
+        /// 查不到返回 <c>CHAR_TEX_CONCRETE</c> '<c>C</c>'，<c>:288</c>）。</para>
+        ///
+        /// <para><b>同名不同字母</b>：原版 <c>PM_SortTextures</c>（<c>:178-190</c>）只在严格大于时交换，同名条目保留文件序；
+        /// 但 <c>PM_FindTextureType</c> 是二分查找，同键命中哪一条**原版自己不确定**。
+        /// 本表保留全部条目，<see cref="TryGetLetter"/> 取**文件序第一条**并只 Warn 一次（见调用点）。</para>
+        /// </summary>
+        public static class MaterialLetters
+        {
+            /// <summary>一行的两个字段。名字是原版文件里的原样（<= 16 字符），比较时才截断运行时名。</summary>
+            private struct Row
+            {
+                public readonly string Texture;
+                public readonly char Letter;
+
+                public Row(string texture, char letter)
+                {
+                    Texture = texture;
+                    Letter = letter;
+                }
+            }
+
+            /// <summary>表（文件序；701 条，行号见 materials_letters.tsv）。</summary>
+            private static readonly Row[] Table =
+            {
+            new Row("snow", 'N'),
+            new Row("A_Snow", 'N'),
+            new Row("znow1", 'N'),
+            new Row("TSBgVent", 'G'),
+            new Row("TSCaution", 'M'),
+            new Row("TSCprFlr", 'M'),
+            new Row("TSCrteSd", 'M'),
+            new Row("TSCrteTp", 'M'),
+            new Row("TSFlrGrt", 'G'),
+            new Row("TSHull2", 'M'),
+            new Row("TSHull4", 'M'),
+            new Row("TSHull7", 'M'),
+            new Row("TSHull8", 'M'),
+            new Row("TSHull9", 'M'),
+            new Row("TSIBeam", 'M'),
+            new Row("TSNoSkd", 'G'),
+            new Row("TSOily", 'M'),
+            new Row("TSPlainRed", 'M'),
+            new Row("TSRfGrvl", 'D'),
+            new Row("TSShutters", 'G'),
+            new Row("TSVent", 'G'),
+            new Row("747wall_x4", 'M'),
+            new Row("-1a747plane_x4", 'M'),
+            new Row("-0a747plane_x4", 'M'),
+            new Row("747inv_block", 'M'),
+            new Row("planegen1", 'M'),
+            new Row("pl_out_shell4a", 'M'),
+            new Row("pl_out_shell3", 'M'),
+            new Row("pl_out_shell_dr", 'M'),
+            new Row("overhead_x4", 'M'),
+            new Row("curtain3", 'W'),
+            new Row("blueback_x4", 'W'),
+            new Row("chair1_x4", 'W'),
+            new Row("planeseatsideba", 'W'),
+            new Row("brickPath", 'D'),
+            new Row("64crate0", 'W'),
+            new Row("64crate1", 'W'),
+            new Row("64crateTop", 'W'),
+            new Row("bigCrate0", 'W'),
+            new Row("bigCrate1", 'W'),
+            new Row("bigCrate2", 'W'),
+            new Row("bigCrateTop", 'W'),
+            new Row("chestDrawers", 'W'),
+            new Row("crateBox", 'W'),
+            new Row("crateBoxLabel", 'W'),
+            new Row("oldWood", 'W'),
+            new Row("panelWood", 'W'),
+            new Row("wBarrelSide", 'W'),
+            new Row("wBarrelTop", 'W'),
+            new Row("wdnDrawer", 'W'),
+            new Row("wdbDrawers", 'W'),
+            new Row("TrainTop01", 'M'),
+            new Row("TrainTop02", 'M'),
+            new Row("DumpsterFront", 'M'),
+            new Row("DumpsterSide", 'M'),
+            new Row("Tracks01", 'D'),
+            new Row("Tracks02", 'D'),
+            new Row("Gravel01", 'D'),
+            new Row("Gravel02", 'D'),
+            new Row("GravelGrass01", 'D'),
+            new Row("GravelGrass02", 'D'),
+            new Row("GravelGrass03", 'D'),
+            new Row("GravelGrass04", 'D'),
+            new Row("Grass01", 'D'),
+            new Row("Wood01", 'W'),
+            new Row("{cstrike_OE4Ven", 'V'),
+            new Row("-0cstrike_FJ2Dk", 'W'),
+            new Row("-0cstrike_ME1Pl", 'M'),
+            new Row("-0cstrike_ME2Ri", 'M'),
+            new Row("-0cstrike_MH5Tl", 'T'),
+            new Row("-0cstrike_MJ2Sg", 'W'),
+            new Row("-0cstrike_WE1Mt", 'M'),
+            new Row("-0cstrike_WE4Al", 'M'),
+            new Row("-1cstrike_FJ2Dk", 'W'),
+            new Row("-1cstrike_ME1Pl", 'M'),
+            new Row("-1cstrike_ME2Ri", 'M'),
+            new Row("-1cstrike_MH5Tl", 'T'),
+            new Row("-1cstrike_MJ2Sg", 'W'),
+            new Row("-1cstrike_WE1Mt", 'M'),
+            new Row("-1cstrike_WE4Al", 'M'),
+            new Row("-2cstrike_ME1Pl", 'M'),
+            new Row("-2cstrike_WE1Mt", 'M'),
+            new Row("-3cstrike_ME1Pl", 'M'),
+            new Row("-4cstrike_ME1Pl", 'M'),
+            new Row("-5cstrike_ME1Pl", 'M'),
+            new Row("-6cstrike_ME1Pl", 'M'),
+            new Row("cstrike_CE2XCng", 'M'),
+            new Row("cstrike_CH3Tile", 'T'),
+            new Row("cstrike_CJ2Beam", 'W'),
+            new Row("cstrike_DE6Horz", 'M'),
+            new Row("cstrike_DE6Vert", 'M'),
+            new Row("cstrike_DJ2Old", 'W'),
+            new Row("cstrike_FE2Gtng", 'G'),
+            new Row("cstrike_FE2Sqrs", 'M'),
+            new Row("cstrike_FE4Crgd", 'M'),
+            new Row("cstrike_FH4WtTl", 'T'),
+            new Row("cstrike_FJ2Dock", 'W'),
+            new Row("cstrike_FT2Dirt", 'D'),
+            new Row("cstrike_FT2Mud", 'D'),
+            new Row("cstrike_FT4Apht", 'D'),
+            new Row("cstrike_ME1Clng", 'M'),
+            new Row("cstrike_ME1Grat", 'G'),
+            new Row("cstrike_ME2DRst", 'M'),
+            new Row("cstrike_ME2RstW", 'M'),
+            new Row("cstrike_ME4DCln", 'M'),
+            new Row("cstrike_ME4Greb", 'M'),
+            new Row("cstrike_ME4Metl", 'M'),
+            new Row("cstrike_ME4Radr", 'G'),
+            new Row("cstrike_ME7Caut", 'M'),
+            new Row("cstrike_OE1BxSd", 'M'),
+            new Row("cstrike_OE1BxTp", 'M'),
+            new Row("cstrike_OE1LgBm", 'M'),
+            new Row("cstrike_OE1SmBm", 'M'),
+            new Row("cstrike_OE2StrR", 'M'),
+            new Row("cstrike_OE2Vent", 'V'),
+            new Row("cstrike_OE4FnVt", 'M'),
+            new Row("cstrike_OE4Pnl", 'M'),
+            new Row("cstrike_OE4PnlH", 'M'),
+            new Row("cstrike_OE4Vent", 'V'),
+            new Row("cstrike_OE6TnkF", 'G'),
+            new Row("cstrike_OE6TnkS", 'G'),
+            new Row("cstrike_WE2Ribd", 'M'),
+            new Row("{cxchana", 'G'),
+            new Row("{cxchanb", 'G'),
+            new Row("{cxcnstrctpoles", 'M'),
+            new Row("{cxcrtna", 'D'),
+            new Row("{cxcrtnd", 'D'),
+            new Row("{cxcrtnf", 'D'),
+            new Row("{cxgate", 'M'),
+            new Row("{fence2", 'M'),
+            new Row("cxbarrela", 'W'),
+            new Row("cxbooksa", 'D'),
+            new Row("cxbooksb", 'D'),
+            new Row("cxbooksc", 'D'),
+            new Row("cxbooksd", 'D'),
+            new Row("cxbookse", 'D'),
+            new Row("cxbooksf", 'D'),
+            new Row("cxbrusha", 'N'),
+            new Row("cxbrushb", 'N'),
+            new Row("cxcnstrcttarp", 'D'),
+            new Row("cxcnstrcttarpb", 'D'),
+            new Row("cxcnstrctwooda", 'W'),
+            new Row("cxcnstrctwoodb", 'W'),
+            new Row("cxcrptb", 'D'),
+            new Row("cxcrptc", 'D'),
+            new Row("cxcrptd", 'D'),
+            new Row("cxdecwdc", 'W'),
+            new Row("cxdecwdd", 'W'),
+            new Row("cxdrc", 'W'),
+            new Row("cxdrd", 'W'),
+            new Row("cxgrounda", 'D'),
+            new Row("cxgroundc", 'D'),
+            new Row("cxgroundd", 'D'),
+            new Row("cxgroundh", 'D'),
+            new Row("cxgroundk", 'D'),
+            new Row("cxmarblec", 'T'),
+            new Row("cxmarblee", 'T'),
+            new Row("cxmrbla", 'T'),
+            new Row("cxroofa", 'W'),
+            new Row("cxruga", 'D'),
+            new Row("cxsolida", 'G'),
+            new Row("cxsolidb", 'G'),
+            new Row("cxsolidc", 'G'),
+            new Row("cxstairsd", 'W'),
+            new Row("cxstairse", 'W'),
+            new Row("cxstairsf", 'W'),
+            new Row("cxtapa", 'D'),
+            new Row("cxtapb", 'D'),
+            new Row("cxtapc", 'D'),
+            new Row("cxtapd", 'D'),
+            new Row("cxtape", 'D'),
+            new Row("cxwllbooksa", 'D'),
+            new Row("cxwllh", 'W'),
+            new Row("cxwooda", 'W'),
+            new Row("cxwoodb", 'W'),
+            new Row("cxwoodd", 'W'),
+            new Row("cxwoodf", 'W'),
+            new Row("cxwoodh", 'W'),
+            new Row("cxwoodi", 'W'),
+            new Row("cxwoodj", 'W'),
+            new Row("cxwoodk", 'W'),
+            new Row("cxwoodl", 'W'),
+            new Row("cxwoodm", 'W'),
+            new Row("{pi_benchside", 'M'),
+            new Row("{pi_chairback", 'W'),
+            new Row("{pi_orrery01", 'M'),
+            new Row("{pi_orrery02", 'M'),
+            new Row("{pi_orrery03", 'M'),
+            new Row("{pi_railing", 'M'),
+            new Row("{pi_scaffold", 'M'),
+            new Row("{pi_window", 'M'),
+            new Row("pi_art1", 'W'),
+            new Row("pi_art2", 'W'),
+            new Row("pi_art3", 'W'),
+            new Row("pi_art4", 'W'),
+            new Row("pi_barrel", 'W'),
+            new Row("pi_barrelt", 'W'),
+            new Row("pi_bcase", 'W'),
+            new Row("pi_bigdoor", 'W'),
+            new Row("pi_brusha", 'D'),
+            new Row("pi_brushb", 'D'),
+            new Row("pi_buckets", 'M'),
+            new Row("pi_buckett", 'S'),
+            new Row("pi_chairleg", 'W'),
+            new Row("pi_chairtop", 'W'),
+            new Row("pi_floorst1", 'T'),
+            new Row("pi_floorst1g", 'T'),
+            new Row("pi_floorst4", 'T'),
+            new Row("pi_floorst4g", 'T'),
+            new Row("pi_floorst5", 'T'),
+            new Row("pi_floorwd1", 'W'),
+            new Row("pi_floorwd2", 'W'),
+            new Row("pi_floorwd3", 'W'),
+            new Row("pi_grnmetal", 'M'),
+            new Row("pi_grnmetalp", 'M'),
+            new Row("pi_grnmetalt", 'M'),
+            new Row("pi_ground", 'X'),
+            new Row("pi_lantern", 'M'),
+            new Row("pi_motor", 'M'),
+            new Row("pi_orrery04", 'M'),
+            new Row("pi_orrery05", 'M'),
+            new Row("pi_orrery06", 'M'),
+            new Row("pi_orrery07", 'M'),
+            new Row("pi_potb", 'D'),
+            new Row("pi_roof", 'T'),
+            new Row("pi_roofedge", 'T'),
+            new Row("pi_rug1", 'D'),
+            new Row("pi_rug2", 'D'),
+            new Row("pi_rug3", 'D'),
+            new Row("pi_rug4", 'D'),
+            new Row("pi_rug5", 'D'),
+            new Row("pi_rug6", 'D'),
+            new Row("pi_rust", 'M'),
+            new Row("pi_scaffold2", 'M'),
+            new Row("pi_secretf", 'W'),
+            new Row("pi_secrets", 'W'),
+            new Row("pi_signexc", 'T'),
+            new Row("pi_signexd", 'T'),
+            new Row("pi_steptop1", 'T'),
+            new Row("pi_steptop1d", 'T'),
+            new Row("pi_sundial", 'M'),
+            new Row("pi_ticketwnd", 'Y'),
+            new Row("pi_treetr1", 'W'),
+            new Row("pi_treetr2", 'W'),
+            new Row("pi_wood1", 'W'),
+            new Row("pi_wood2", 'W'),
+            new Row("pi_wood3", 'W'),
+            new Row("pi_wood4", 'W'),
+            new Row("pi_wood5", 'W'),
+            new Row("pi_woodceil", 'W'),
+            new Row("{ikcanopt", 'W'),
+            new Row("{ikcanopy", 'W'),
+            new Row("{ikcnp1", 'W'),
+            new Row("{ikfencea", 'G'),
+            new Row("{ikfenceb", 'G'),
+            new Row("{ikfencec", 'G'),
+            new Row("{ikjungwt", 'W'),
+            new Row("{ikjungwt2", 'W'),
+            new Row("{ikjungwt3", 'W'),
+            new Row("{ikjungwt4", 'W'),
+            new Row("{ikvinea", 'W'),
+            new Row("{ikvineb", 'W'),
+            new Row("{ikvinec", 'D'),
+            new Row("{ikvined", 'W'),
+            new Row("-0ikjungw", 'W'),
+            new Row("-1ikjungw", 'W'),
+            new Row("-2ikjungw", 'W'),
+            new Row("ikbarls1", 'M'),
+            new Row("ikbarls2", 'M'),
+            new Row("ikbarls3", 'M'),
+            new Row("ikbarls4", 'M'),
+            new Row("ikbarlt1", 'M'),
+            new Row("ikbarlt2", 'M'),
+            new Row("ikbarlt3", 'M'),
+            new Row("ikbarlt4", 'M'),
+            new Row("ikcratea", 'W'),
+            new Row("ikcrateb", 'W'),
+            new Row("ikcratec", 'W'),
+            new Row("ikcrated", 'W'),
+            new Row("ikcratee", 'W'),
+            new Row("ikcratef", 'W'),
+            new Row("ikcrateg", 'W'),
+            new Row("ikcrateh", 'W'),
+            new Row("ikftanks", 'M'),
+            new Row("ikftankt", 'M'),
+            new Row("ikgrndj", 'X'),
+            new Row("ikgrndjt", 'D'),
+            new Row("ikgrndrt", 'D'),
+            new Row("ikgrndrw", 'D'),
+            new Row("ikgrnds", 'D'),
+            new Row("ikgrndt", 'D'),
+            new Row("ikgrndt2", 'D'),
+            new Row("ikgrndt3", 'D'),
+            new Row("ikgrndte", 'D'),
+            new Row("ikgrndte2", 'D'),
+            new Row("ikgrndte3", 'D'),
+            new Row("ikjungw", 'W'),
+            new Row("ikjungwg", 'D'),
+            new Row("ikmetla", 'M'),
+            new Row("ikmetlb", 'M'),
+            new Row("ikmetlc", 'M'),
+            new Row("ikvines", 'W'),
+            new Row("DUCT_FLR01", 'V'),
+            new Row("DUCT_FLR01A", 'V'),
+            new Row("DUCT_FLR02A", 'V'),
+            new Row("DUCT_VNT", 'V'),
+            new Row("DUCT_VNT2", 'V'),
+            new Row("DUCT_WALL01", 'V'),
+            new Row("DUCT_WALL02", 'V'),
+            new Row("DUCT_WALL03", 'V'),
+            new Row("DUCT_WALL04", 'V'),
+            new Row("SILO2_COR", 'V'),
+            new Row("OUT_GRVL1", 'D'),
+            new Row("OUT_GRVL2", 'D'),
+            new Row("OUT_GRVL2B", 'D'),
+            new Row("OUT_GRVL3", 'D'),
+            new Row("OUT_MUD1", 'D'),
+            new Row("OUT_SND1", 'D'),
+            new Row("OUT_SND2", 'D'),
+            new Row("OUT_SND2B", 'D'),
+            new Row("OUT_SND2C", 'D'),
+            new Row("OUT_WLK", 'D'),
+            new Row("OUT_GRSS1", 'D'),
+            new Row("OUT_DIRT1", 'D'),
+            new Row("OUT_DIRT2", 'D'),
+            new Row("GENERIC48", 'D'),
+            new Row("GENERIC49", 'D'),
+            new Row("GENERIC51", 'D'),
+            new Row("GENERIC52", 'D'),
+            new Row("GENERIC93", 'D'),
+            new Row("OUT_PAVE2", 'D'),
+            new Row("OUT_SNBAG", 'D'),
+            new Row("OUT_SNBAG2", 'D'),
+            new Row("OUT_SNBAGB", 'D'),
+            new Row("OUT_SNBAGC", 'D'),
+            new Row("OUT_TNT2", 'D'),
+            new Row("OUT_TNT1", 'D'),
+            new Row("OUT_TNT1B", 'D'),
+            new Row("OUT_TNT1C", 'D'),
+            new Row("OUT_TNT3", 'D'),
+            new Row("OUT_TNT3B", 'D'),
+            new Row("OUT_NET1", 'D'),
+            new Row("OUT_NET1B", 'D'),
+            new Row("FROSTSEWFLR", 'D'),
+            new Row("GENERIC109", 'G'),
+            new Row("GENERIC015C", 'G'),
+            new Row("GENERIC015D", 'G'),
+            new Row("GENERIC015E", 'G'),
+            new Row("GENERIC015F", 'G'),
+            new Row("GENERIC015G", 'G'),
+            new Row("GENERIC015H", 'G'),
+            new Row("GENERIC015I", 'G'),
+            new Row("GENERIC015", 'G'),
+            new Row("GENERIC015A", 'G'),
+            new Row("GENERIC015B", 'G'),
+            new Row("BABTECH_FLR02", 'G'),
+            new Row("CRETE2_FLR03", 'G'),
+            new Row("CRETE2_FLR03A", 'G'),
+            new Row("CRETE2_FLR03B", 'G'),
+            new Row("CRETE2_FLR03C", 'G'),
+            new Row("ELEV1_FLR", 'G'),
+            new Row("ELEV2_FLR", 'G'),
+            new Row("ELEV_FLR", 'G'),
+            new Row("GRATE1", 'G'),
+            new Row("GRATE2", 'G'),
+            new Row("GRATE2A", 'G'),
+            new Row("GRATE3A", 'G'),
+            new Row("GRID1", 'G'),
+            new Row("GRID2", 'G'),
+            new Row("TNNL_FLR12", 'G'),
+            new Row("TNNL_FLR12A", 'G'),
+            new Row("TNNL_FLR1A", 'G'),
+            new Row("LAB1_STAIR2A", 'G'),
+            new Row("FROSTFLOOR", 'G'),
+            new Row("GRATE4A", 'G'),
+            new Row("GRATE3B", 'G'),
+            new Row("GRATESTEP1", 'G'),
+            new Row("GRATESTEP2", 'G'),
+            new Row("GRATESTEP3", 'G'),
+            new Row("GRID1", 'G'),
+            new Row("GRID2", 'G'),
+            new Row("GENERIC015V", 'G'),
+            new Row("C1A1_FLR1", 'M'),
+            new Row("BABFL", 'M'),
+            new Row("C2A3TURBINE1", 'M'),
+            new Row("C2A3TURBINE2", 'M'),
+            new Row("C2A3TURBINE3", 'M'),
+            new Row("C2A3TURBINE4", 'M'),
+            new Row("SILO2_P2", 'M'),
+            new Row("SILO2_P2B", 'M'),
+            new Row("SILO2_P3", 'M'),
+            new Row("SILO2_P4", 'M'),
+            new Row("SILO2_PAN2", 'M'),
+            new Row("SILO2_W1", 'M'),
+            new Row("SILO2_W1A", 'M'),
+            new Row("SILO2_WALL1", 'M'),
+            new Row("SILO2_W2", 'M'),
+            new Row("BABTECH_C5", 'M'),
+            new Row("LAB3_FLR2A", 'M'),
+            new Row("LAB3_FLR2B", 'M'),
+            new Row("FIFTIES_CMP3", 'M'),
+            new Row("LAB1_STAIR2B", 'M'),
+            new Row("OUT_QUNST11", 'M'),
+            new Row("FREEZER_FLR1", 'M'),
+            new Row("GENERIC015N", 'M'),
+            new Row("GENERIC015P", 'M'),
+            new Row("GENERIC015R", 'M'),
+            new Row("GENERIC0150", 'M'),
+            new Row("GENERIC015S", 'M'),
+            new Row("GENERIC015T", 'M'),
+            new Row("GENERIC015U", 'M'),
+            new Row("GENERIC015V", 'M'),
+            new Row("GENERIC015V2", 'M'),
+            new Row("C1A4_DOME3", 'M'),
+            new Row("GENERIC_114", 'S'),
+            new Row("WATERBLUE", 'S'),
+            new Row("WATERGREEN", 'S'),
+            new Row("TOXICGRN", 'S'),
+            new Row("FLUID1A", 'S'),
+            new Row("FLUID1B", 'S'),
+            new Row("FLUID2", 'S'),
+            new Row("FLUID3", 'S'),
+            new Row("FLUID4", 'S'),
+            new Row("WATERSILO", 'S'),
+            new Row("WATERSILO2", 'S'),
+            new Row("WATERF", 'S'),
+            new Row("FLUID1A", 'S'),
+            new Row("FIFT_BLOODFLR", 'T'),
+            new Row("FIFT_BLOODFLRA", 'T'),
+            new Row("FIFTIES_F01", 'T'),
+            new Row("FIFTIES_F02", 'T'),
+            new Row("FIFTIES_F03", 'T'),
+            new Row("FIFTIES_F03B", 'T'),
+            new Row("FIFTIES_FLR01", 'T'),
+            new Row("FIFTIES_FLR02", 'T'),
+            new Row("FIFTIES_FLR02B", 'T'),
+            new Row("FIFTIES_FLR02C", 'T'),
+            new Row("FIFTIES_FLR03", 'T'),
+            new Row("FIFTIES_FLR03B", 'T'),
+            new Row("FIFTIES_FLR5", 'T'),
+            new Row("LAB1_BLUXFLR1", 'T'),
+            new Row("LAB1_BLUXFLR1B", 'T'),
+            new Row("LAB1_BLUX1", 'T'),
+            new Row("LAB1_BLUX1B", 'T'),
+            new Row("LAB1_C4003", 'T'),
+            new Row("LAB1_C4A001", 'T'),
+            new Row("LAB1_C4B002", 'T'),
+            new Row("LAB1_C4D2", 'T'),
+            new Row("LAB1_CAB2", 'T'),
+            new Row("LAB1_FLOOR2A", 'T'),
+            new Row("LAB1_FLOOR2B", 'T'),
+            new Row("LAB1_FLOOR3", 'T'),
+            new Row("LAB1_FLOOR4", 'T'),
+            new Row("LAB1_FLOOR5", 'T'),
+            new Row("LAB1_FLOOR6", 'T'),
+            new Row("LAB1_FLOOR10", 'T'),
+            new Row("LAB1_FLR3", 'T'),
+            new Row("LAB1_FLR4", 'T'),
+            new Row("LAB1_FLR4B", 'T'),
+            new Row("LAB1_FLR4C", 'T'),
+            new Row("LAB1_FLR4D", 'T'),
+            new Row("LAB1_FLR5B", 'T'),
+            new Row("LAB1_FLR5C", 'T'),
+            new Row("LAB1_FLR5D", 'T'),
+            new Row("LAB1_FLR5D", 'T'),
+            new Row("LAB1_FLR6B", 'T'),
+            new Row("LAB1_FLR6C", 'T'),
+            new Row("LAB1_FLR6D", 'T'),
+            new Row("LAB1_W8FLR1", 'T'),
+            new Row("LAB1_W8FLR1B", 'T'),
+            new Row("LAB1_W8FLR1C", 'T'),
+            new Row("LAB1_W8FLR1D", 'T'),
+            new Row("C2A4_FLR6", 'T'),
+            new Row("C1A2_FLR1", 'T'),
+            new Row("C1A2_FLR2", 'T'),
+            new Row("C1A0_LABFLRB", 'T'),
+            new Row("C1A0_LABFLRC", 'T'),
+            new Row("C1A0_LABFLRD", 'T'),
+            new Row("C1A0_LABFLRE", 'T'),
+            new Row("C1A0_LABFLR", 'T'),
+            new Row("CRATE01", 'W'),
+            new Row("CRATE02", 'W'),
+            new Row("CRATE02B", 'W'),
+            new Row("CRATE03", 'W'),
+            new Row("CRATE04", 'W'),
+            new Row("CRATE05", 'W'),
+            new Row("CRATE06", 'W'),
+            new Row("CRATE07", 'W'),
+            new Row("CRATE08", 'W'),
+            new Row("CRATE08B", 'W'),
+            new Row("CRATE09", 'W'),
+            new Row("CRATE09B", 'W'),
+            new Row("CRATE09C", 'W'),
+            new Row("CRATE19", 'W'),
+            new Row("CRATE20", 'W'),
+            new Row("CRATE21", 'W'),
+            new Row("CRATE22", 'W'),
+            new Row("CRATE23", 'W'),
+            new Row("CRATE25", 'W'),
+            new Row("FIFTIES_DR6", 'W'),
+            new Row("FIFTIES_DR6A", 'W'),
+            new Row("FIFTIES_CCH1", 'W'),
+            new Row("FIFTIES_CCH2", 'W'),
+            new Row("FIFTIES_CCH3", 'W'),
+            new Row("FIFTIES_CCH4", 'W'),
+            new Row("FIFTIES_DR1K", 'W'),
+            new Row("FIFTIES_DR2", 'W'),
+            new Row("FIFTIES_DR7", 'W'),
+            new Row("FIFTIES_DR8", 'W'),
+            new Row("FIFTIES_DR9", 'W'),
+            new Row("FIFTIES_DSK1", 'W'),
+            new Row("OUT_SLAT01", 'W'),
+            new Row("OUT_WD", 'W'),
+            new Row("OUT_CAC1", 'W'),
+            new Row("OUT_CAC2", 'W'),
+            new Row("OUT_CAC2", 'W'),
+            new Row("BCRATE02", 'W'),
+            new Row("BCRATE03", 'W'),
+            new Row("BCRATE04", 'W'),
+            new Row("BCRATE05", 'W'),
+            new Row("BCRATE06", 'W'),
+            new Row("BCRATE07", 'W'),
+            new Row("BCRATE08", 'W'),
+            new Row("BCRATE12", 'W'),
+            new Row("BCRATE14", 'W'),
+            new Row("BCRATE15", 'W'),
+            new Row("BCRATE16", 'W'),
+            new Row("BCRATE17", 'W'),
+            new Row("BCRATE18", 'W'),
+            new Row("BCRATE25", 'W'),
+            new Row("BCRATE26", 'W'),
+            new Row("CRATE10", 'W'),
+            new Row("CRATE11", 'W'),
+            new Row("CRATE12", 'W'),
+            new Row("CRATE13", 'W'),
+            new Row("CRATE24", 'W'),
+            new Row("CRATE27", 'W'),
+            new Row("C3A1_NRC2", 'P'),
+            new Row("C1A1_GAD1", 'P'),
+            new Row("C1A1_GAD2", 'P'),
+            new Row("C1A1_GAD3", 'P'),
+            new Row("C1A1_GAD4", 'P'),
+            new Row("C1A1_GAD4A", 'P'),
+            new Row("C1A1_GGT8", 'P'),
+            new Row("C1A4_PAN1A", 'P'),
+            new Row("C1A4_PAN1B", 'P'),
+            new Row("C1A4_SWTCH1", 'P'),
+            new Row("C2A2_SATORB", 'P'),
+            new Row("C2A4_CMP1", 'P'),
+            new Row("C2A4_GAD2", 'P'),
+            new Row("C3A2A_W1D", 'P'),
+            new Row("C3A2A_W1E", 'P'),
+            new Row("C3A2A_W2D", 'P'),
+            new Row("C3A2A_W2E", 'P'),
+            new Row("DRKMTL_SCRN2", 'P'),
+            new Row("DRKMTL_SCRN3", 'P'),
+            new Row("DRKMTL_SCRN4", 'P'),
+            new Row("DRKMTLT_WALL", 'P'),
+            new Row("FIFTIES_GGT8", 'P'),
+            new Row("FIFTIES_MON1", 'P'),
+            new Row("FIFTIES_MON1B", 'P'),
+            new Row("FIFTIES_MON2", 'P'),
+            new Row("FIFTIES_MON2B", 'P'),
+            new Row("FIFTIES_MON3", 'P'),
+            new Row("FIFTIES_MON3B", 'P'),
+            new Row("FIFTIES_MON4", 'P'),
+            new Row("FIFTIES_PAN2", 'P'),
+            new Row("GENERIC105", 'P'),
+            new Row("GENERIC106", 'P'),
+            new Row("GENERIC107", 'P'),
+            new Row("GENERIC114", 'P'),
+            new Row("GENERIC87A", 'P'),
+            new Row("GENERIC88A", 'P'),
+            new Row("GENERIC89A", 'P'),
+            new Row("GENERIC113", 'P'),
+            new Row("LAB1_CMPM1", 'P'),
+            new Row("LAB1_CMPM2", 'P'),
+            new Row("LAB1_CMPM3", 'P'),
+            new Row("LAB1_CMPM4", 'P'),
+            new Row("LAB1_CMPM5", 'P'),
+            new Row("LAB1_CMPM6", 'P'),
+            new Row("LAB1_CMPM7", 'P'),
+            new Row("LAB1_CMPM8", 'P'),
+            new Row("LAB1_COMP1", 'P'),
+            new Row("LAB1_COMP2", 'P'),
+            new Row("LAB1_COMP3", 'P'),
+            new Row("LAB1_COMP2A", 'P'),
+            new Row("LAB1_COMP10A", 'P'),
+            new Row("LAB1_COMP10B", 'P'),
+            new Row("LAB1_COMP10C", 'P'),
+            new Row("LAB1_COMP10D", 'P'),
+            new Row("LAB1_COMP10E", 'P'),
+            new Row("LAB1_COMP7", 'P'),
+            new Row("LAB1_COMP8", 'P'),
+            new Row("LAB1_COMP9A", 'P'),
+            new Row("LAB1_COMP9A2", 'P'),
+            new Row("LAB1_COMP9B", 'P'),
+            new Row("LAB1_COMP9C", 'P'),
+            new Row("LAB1_COMP9D", 'P'),
+            new Row("LAB1_GAD2", 'P'),
+            new Row("LAB1_GAD3", 'P'),
+            new Row("LAB1_GAD4", 'P'),
+            new Row("LAB1_RADSCRN2", 'P'),
+            new Row("LAB4_GAD3", 'P'),
+            new Row("LAB4_GAD4", 'P'),
+            new Row("LAB4_SWTCH", 'P'),
+            new Row("LAB_COMPM4", 'P'),
+            new Row("RECHARGEA", 'P'),
+            new Row("TNNL_GAD1", 'P'),
+            new Row("TNNL_GAD2", 'P'),
+            new Row("TNNL_GAD4", 'P'),
+            new Row("C2A4C2C", 'P'),
+            new Row("C2A4W1B", 'P'),
+            new Row("LAB1_CMP", 'P'),
+            new Row("LAB1_CMP1", 'P'),
+            new Row("LAB1_CMP2", 'P'),
+            new Row("LAB1_COMP3", 'P'),
+            new Row("LAB1_COMP3A", 'P'),
+            new Row("LAB1_COMP3B", 'P'),
+            new Row("LAB1_COMP3C", 'P'),
+            new Row("LAB1_COMP3D", 'P'),
+            new Row("LAB1_COMP4", 'P'),
+            new Row("LAB1_COMP5", 'P'),
+            new Row("LAB1_COMP7", 'P'),
+            new Row("LAB1_COMP8", 'P'),
+            new Row("LAB1_SW1", 'P'),
+            new Row("LAB_CRT1", 'P'),
+            new Row("LAB_CRT10A", 'P'),
+            new Row("LAB_CRT10B", 'P'),
+            new Row("LAB_CRT10C", 'P'),
+            new Row("LAB_CRT10D", 'P'),
+            new Row("LAB_CRT2", 'P'),
+            new Row("LAB_CRT3", 'P'),
+            new Row("LAB_CRT4", 'P'),
+            new Row("LAB_CRT5", 'P'),
+            new Row("LAB_CRT6", 'P'),
+            new Row("LAB_CRT7", 'P'),
+            new Row("LAB_CRT8", 'P'),
+            new Row("LAB_CRT9C", 'P'),
+            new Row("CRETESTCH01A", 'P'),
+            new Row("DRKMTLLGT1", 'P'),
+            new Row("FIFTS_LGHT01", 'P'),
+            new Row("FIFTS_LGHT3", 'P'),
+            new Row("FIFTS_LGHT4", 'P'),
+            new Row("FIFTIES_LGT2", 'P'),
+            new Row("FIFTS_LGHT5", 'P'),
+            new Row("GYMLIGHT", 'P'),
+            new Row("LIGHT1", 'P'),
+            new Row("LIGHT2A", 'P'),
+            new Row("LIGHT3A", 'P'),
+            new Row("LIGHT3B", 'P'),
+            new Row("LIGHT3C", 'P'),
+            new Row("LIGHT3D", 'P'),
+            new Row("LIGHT3E", 'P'),
+            new Row("LIGHT3F", 'P'),
+            new Row("LIGHT4A", 'P'),
+            new Row("LIGHT5A", 'P'),
+            new Row("LIGHT5B", 'P'),
+            new Row("LIGHT5C", 'P'),
+            new Row("LIGHT5D", 'P'),
+            new Row("LIGHT5E", 'P'),
+            new Row("LIGHT5F", 'P'),
+            new Row("LIGHT6A", 'P'),
+            new Row("METALSTCH2", 'P'),
+            new Row("TNNL_LGT1", 'P'),
+            new Row("TNNL_LGT2", 'P'),
+            new Row("TNNL_LGT3", 'P'),
+            new Row("TNNL_LGT4", 'P'),
+            new Row("LAB1_GAD2", 'P'),
+            new Row("ELEV1_DWN", 'P'),
+            new Row("SPOTBLUE", 'P'),
+            new Row("SPOTGREEN", 'P'),
+            new Row("SPOTRED", 'P'),
+            new Row("SPOTYELLOW", 'P'),
+            new Row("LAB1_GAD3", 'P'),
+            new Row("LAB1_GAD3B", 'P'),
+            new Row("ELEV2_PAN", 'P'),
+            new Row("ELEV1_PAN", 'P'),
+            new Row("C2A4X_C3", 'P'),
+            new Row("C2A4X_C1", 'P'),
+            new Row("MEDKIT", 'P'),
+            new Row("GLASS_BRIGHT", 'Y'),
+            new Row("GLASS_DARK", 'Y'),
+            new Row("GLASS_MED", 'Y'),
+            new Row("GLASSBLUE1", 'Y'),
+            new Row("GLASSBLUE2", 'Y'),
+            new Row("GLASSGREEEN", 'Y'),
+            new Row("GLASSGREEEN", 'Y'),
+            new Row("cubed", 'D'),
+            new Row("cubrusha", 'N'),
+            new Row("cudumpsterc", 'M'),
+            new Row("cugroundb", 'D'),
+            new Row("cuiflra", 'T'),
+            new Row("cuiflrb", 'T'),
+            new Row("cuiflrc", 'T'),
+            new Row("cuiflrd", 'T'),
+            new Row("cuiflre", 'T'),
+            new Row("cuiflrf", 'T'),
+            new Row("custovetop", 'M'),
+            new Row("cutrashb", 'M'),
+            new Row("cuwoodm", 'W'),
+            };
+
+            /// <summary>表里的行数（离线宿主用它核对「表没被截断」）。</summary>
+            public static int TableCount => Table.Length;
+
+            /// <summary>按序号读表的一行（供离线自检遍历；越界返回 false）。</summary>
+            public static bool TryGetRow(int index, out string texture, out char letter)
+            {
+                texture = null;
+                letter = '\0';
+                if (index < 0 || index >= Table.Length) return false;
+                texture = Table[index].Texture;
+                letter = Table[index].Letter;
+                return true;
+            }
+
+            /// <summary>
+            /// 按运行时材质名查材质字母（纯函数，不依赖 Unity，可离线断言）。
+            ///
+            /// <para><b>比较口径</b> = 原版 <c>strnicmp(name, stored, 16)</c>（<c>pm_shared.c:272</c>）：
+            /// 大小写不敏感；比较到库里名字的结尾为止 ⇒ 等价于「**运行时名的前 16 字符**与库里的名字**整名相等**」。
+            /// （<c>strnicmp</c> 用进程当前 locale 折叠大小写，这里用 <c>OrdinalIgnoreCase</c> —— 表里全是 ASCII，两者对本表等价。）</para>
+            ///
+            /// <para><b>查不到</b>返回 <c>false</c>（本方法只回答「表里有没有这个名字」）：由调用点 <c>ClassifyImpact</c> 按原版口径落默认字母 '<c>C</c>'（<c>pm_shared.c:288</c>）。</para>
+            /// </summary>
+            public static bool TryGetLetter(string texture, out char letter)
+            {
+                letter = '\0';
+                if (string.IsNullOrEmpty(texture)) return false;
+
+                var key = texture.Length > 16 ? texture.Substring(0, 16) : texture;
+                for (var i = 0; i < Table.Length; i++)
+                {
+                    if (string.Equals(Table[i].Texture, key, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        letter = Table[i].Letter;
+                        return true;
+                    }
+                }
+                return false;
+            }
+        }
+        // <<< 生成块结束
 
         // ==================================================================
         //  高频防护 / 日志

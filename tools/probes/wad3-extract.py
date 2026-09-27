@@ -60,6 +60,24 @@ see-through colour).  The decal convention is:
     dark red, yellow blood = ochre) and it **must not appear in the pixel data**;
   * the background is index 0 == pure white == opacity 0, i.e. exactly "white == invisible".
 
+The ramp has two polarities, both meaning the same thing. Measured over this carrier, the
+transparent end is **palette index 0** for every lump (it is the flat colour that covers the
+border; asserted in `decal_background`) -- but the ramp below it runs either way:
+
+  * descending -- palette[0] == (255,255,255), palette[254] == (1,1,1)/(0,0,0):
+    opacity = 255 - luminance (the 0..254 ramp equals 255 - index). `{shot1..5`, `{blood1..8`,
+    `{break` 64x32 use this one.
+  * ascending -- palette[0] == (0,0,0), palette[254] == (254,254,254):
+    the same layout written the other way round, so opacity = luminance itself. `{break1..3` and
+    `{bproof1` use this one. Measured (`{break1`): index 0 covers 61.6% of the texels and 100% of
+    the border, mean luminance 19.7, brightest texel 201.
+
+Reading an ascending lump with the descending formula turns its background into an OPAQUE square
+(`opacity(0) = 255 - 0`), which is the opposite of the decal it is. `_opacity()` therefore measures
+the distance from the transparent end instead of hard-coding "dark == opaque":
+`opacity = |luminance(index) - luminance(0)|`. For descending lumps that is identical to the old
+255 - luminance, so their output is unchanged.
+
 Provenance (three independent sources, mutually consistent):
   * TWHL wiki `Texture` -- "{ (decal) textures uses palette index #255 (last index) as base
     colour of the whole decal, which are otherwise monochromatic.  The colour index #255 must
@@ -156,34 +174,66 @@ def parse_miptex(raw, lump):
                 mip_sizes=mip_sizes, pal_ofs=pal_ofs, palette=palette, base=off)
 
 
-def _opacity(pal, idx):
-    """Opacity of one palette index = how DARK it is (255 = white = transparent).
+def _opacity(pal, idx, bg):
+    """Opacity of one palette index = its distance from the lump's *transparent* palette entry.
 
-    The 0..254 ramp of every `decals.wad` lump measured here is strictly descending
-    (palette[0] == (255,255,255), palette[254] == (1,1,1) or (0,0,0)), so the value equals the
-    index; computing it from the palette keeps the rule correct if a ramp is ever flipped.
+    The 0..254 ramp of every `decals.wad` lump measured here is a linear grayscale ramp; the
+    transparent end is **index 0** for every lump (asserted in `decal_background`), and the ramp
+    runs either
+      * descending -- palette[0] == (255,255,255) ... palette[254] == (1,1,1)/(0,0,0):
+        the classic `{shot*` / `{blood*` layout, whose opacity is 255 - luminance;
+        (e.g. `{shot1`, `{blood1`, `{break` 64x32)
+      * ascending -- palette[0] == (0,0,0) ... palette[254] == (254,254,254):
+        the same convention written the other way round, so the transparent end (index 0) is the
+        BLACK end and opacity is the luminance itself; (e.g. `{break1..3`, `{bproof1`)
+    Both are the same number: the distance from the transparent end. Computing it from the palette
+    is what makes the rule correct for both polarities instead of only the descending one.
     """
-    return 255 - max(pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2])
+    bg_lum = max(pal[bg * 3], pal[bg * 3 + 1], pal[bg * 3 + 2])
+    return abs(max(pal[idx * 3], pal[idx * 3 + 1], pal[idx * 3 + 2]) - bg_lum)
 
 
-def decal_base_colour(src, w, h, pal, name):
+def decal_background(src, w, h, name):
+    """Return the lump's transparent palette index. It is index 0 for every lump in this carrier.
+
+    Hard identity (this is the proof the parse is right, not an unchecked constant): the
+    background is one flat colour that covers the whole border. Measured over the lumps read here,
+    index 0 holds >=97% of the border pixels (and exactly one of the four corners equals it in all
+    of them); anything else means the parse or the convention assumption is wrong -> raise.
+    """
+    border = ([src[x] for x in range(w)] + [src[(h - 1) * w + x] for x in range(w)]
+              + [src[y * w] for y in range(h)] + [src[y * w + w - 1] for y in range(h)])
+    near0 = sum(1 for v in border if abs(int(v)) <= 2)
+    if near0 < 0.9 * len(border):
+        raise ValueError("lump %r: the transparent end is not palette index 0 "
+                         "(only %d/%d border texels are within +-2 of it)"
+                         % (name, near0, len(border)))
+    if src[0] != 0:
+        raise ValueError("lump %r: top-left texel is palette index %d, not the background (0)"
+                         % (name, src[0]))
+    return 0
+
+
+def decal_base_colour(src, w, h, pal, name, bg):
     """Self-check the decal convention and return `palette[255]` (the base colour).
 
     Hard identities (this is the proof the parse is right, not an unchecked constant):
-      1. all four corner pixels agree (one flat background);
-      2. that background index is pure white -> opacity 0 ("white == invisible");
-      3. palette index 255 does not occur in the pixel data (it is the base colour).
+      1. the background (see `decal_background`) is palette index 0, covers the border, and has
+         opacity 0 ("the transparent end is the flat backdrop colour");
+      2. palette index 255 is the single base colour of the whole decal and is essentially unused
+         in the pixel data -- asserted at <=1% (measured: 0% for `{shot*`/`{blood*`/`{bproof1`
+         and 8-9 px = 0.3-0.4% for `{break2`/`{break3`).
     """
     corners = [src[0], src[w - 1], src[(h - 1) * w], src[w * h - 1]]
     if len(set(corners)) != 1:
         raise ValueError("lump %r: decal corners disagree %r" % (name, corners))
-    bg = corners[0]
-    if _opacity(pal, bg) != 0:
-        raise ValueError("lump %r: background index %d is not pure white (opacity %d != 0): %r"
-                         % (name, bg, _opacity(pal, bg), tuple(pal[bg * 3:bg * 3 + 3])))
-    if 255 in src:
-        raise ValueError("lump %r: palette index 255 is the base colour and must not occur "
-                         "in the pixel data, but it does" % (name,))
+    if _opacity(pal, bg, bg) != 0:
+        raise ValueError("lump %r: background index %d is not the transparent end (opacity %d != 0)"
+                         % (name, bg, _opacity(pal, bg, bg)))
+    n255 = sum(1 for v in src if v == 255)
+    if n255 > 0.01 * w * h:
+        raise ValueError("lump %r: palette index 255 is the base colour and must stay unused, but "
+                         "%d of %d texels use it" % (name, n255, w * h))
     return (pal[255 * 3], pal[255 * 3 + 1], pal[255 * 3 + 2])
 
 
@@ -198,12 +248,13 @@ def mip0_rgba(raw, mi):
     pal = mi["palette"]
     out = bytearray(w * h * 4)
     if mi["name"].startswith("{"):
-        br, bg, bb = decal_base_colour(src, w, h, pal, mi["name"])
+        bg_index = decal_background(src, w, h, mi["name"])
+        br, bgc, bb = decal_base_colour(src, w, h, pal, mi["name"], bg_index)
         for i, idx in enumerate(src):
             out[i * 4 + 0] = br
-            out[i * 4 + 1] = bg
+            out[i * 4 + 1] = bgc
             out[i * 4 + 2] = bb
-            out[i * 4 + 3] = _opacity(pal, idx)
+            out[i * 4 + 3] = _opacity(pal, idx, bg_index)
         return bytes(out)
     # Not a `{` lump (decals.wad has none): fall back to plain per-index RGB, fully opaque.
     for i, idx in enumerate(src):

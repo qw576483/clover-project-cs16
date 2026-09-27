@@ -109,6 +109,20 @@ namespace Cs16.Module.View
         /// <summary>上一帧的观战目标 id（0 = 没在观战）——用于只在"目标真的换了"时留一条日志。</summary>
         private long _lastSpectateTargetId;
 
+        // ---- 观战控制面（档位 / 换目标 / 自动导演）----
+
+        /// <summary>观战对象表（只含活人）：与 <see cref="_specNames"/> 同下标。</summary>
+        private readonly List<CsActor> _specAlive = new List<CsActor>(32);
+
+        /// <summary>观战对象表里每个目标的名字（供 <c>spec_player &lt;名字&gt;</c> 定位）。</summary>
+        private readonly List<string> _specNames = new List<string>(32);
+
+        /// <summary>控制面事件是否已订阅（见 <see cref="SubscribeSpectateControl"/>）。</summary>
+        private bool _specSubscribed;
+
+        /// <summary>输入 / 事件总线缺失的"只报一次"闸。</summary>
+        private bool _warnedSpecUnavailable;
+
         /// <summary>本模块最近一次统计（自检用）。</summary>
         public int ViewCount => _views.Count;
 
@@ -150,12 +164,14 @@ namespace Cs16.Module.View
 
             Instance = this;
             _ready = true;
+            SubscribeSpectateControl();
             _log.Always($"视图模块就绪：角色模型 Art/{{T|CT}}/player，武器视图 viewmodel_*，名牌 {CsViewTuning.NameplatePath}");
         }
 
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
+            UnsubscribeSpectateControl();
             ClearViews();
             if (_root != null) Object.Destroy(_root.gameObject);
             _root = null;
@@ -177,6 +193,12 @@ namespace Cs16.Module.View
                 if (running)
                 {
                     _log.Always($"视图同步开始：本局就位（本地玩家={DescribeLocal()})");
+                    // 观战控制面随一局复位 —— 同原版 HUD 复位：InitHUDData 里
+                    // SetModes(OBS_CHASE_FREE, INSET_OFF)（hud_spectator.cpp:1617）、
+                    // 非 HLTV/非回放时 autoDirector = 0（:1610-1613）。
+                    CsSpectator.Reset();
+                    _log.Always($"观战控制面复位：档位 {CsSpectator.ModeName(CsSpectator.Mode)}" +
+                                $"（{(int)CsSpectator.Mode}/6，原版 OBS_CHASE_FREE）、自动导演关");
                     // 开局先把已存在的 actor 一次性建齐（避免"进图头几帧没人"）。
                     SyncViews();
                 }
@@ -190,6 +212,7 @@ namespace Cs16.Module.View
 
             if (!running) return;
 
+            PollSpectateInput();
             SyncViews();
             SyncDroppedWeapons();
         }
@@ -443,10 +466,241 @@ namespace Cs16.Module.View
                     _log.Always(
                         $"观战目标是 {target.Name}(id={id})：已隐藏他的头顶名牌" +
                         $"（那台相机正对着他，世界空间血条+名字会顶在镜头前糊住画面）");
+
+                    // 原版：玩家自己换目标就退出自动导演（hud_spectator.cpp:747-748，
+                    // FIRE1/FIRE2 分支里的 m_autoDirector->value = 0.0f）。
+                    if (CsSpectator.AutoDirector)
+                    {
+                        CsSpectator.AutoDirector = false;
+                        _log.Always("手动换了观战目标 ⇒ 自动导演关闭（原版 hud_spectator.cpp:747-748）");
+                    }
                 }
                 _lastSpectateTargetId = id;
             }
             return id;
+        }
+
+        // ==================================================================
+        //  观战控制面（换目标：鼠标 / 控制台命令）
+        // ==================================================================
+        /// <summary>
+        /// 观战鼠标换目标：**左键 = 下一个、右键 = 上一个**（原版 <c>FIRE1</c> / <c>FIRE2</c> →
+        /// <c>FindNextPlayer(false/true)</c>，<c>hud_spectator.cpp:736-749</c>；帮助文本
+        /// <c>cstrike_english.txt:922-925</c>："FIRE1 - Chase next player / FIRE2 - Chase previous player"）。
+        ///
+        /// <para><b>闸门</b>：① 只在观战中（原版 <c>if ( !g_iUser1 ) return;</c>，<c>hud_spectator.cpp:689-690</c>）；
+        /// ② 指针不在 UI 上（<see cref="CloverEngine.IInputManager.PointerOverUi"/>）—— 控制台 / 买枪菜单打开时
+        /// 这次点击归界面，不该顺带换观战目标。</para>
+        ///
+        /// <para>只切活人：目标表的筛选口径由模拟独占（<c>CsMatch.SpectateTarget</c>），本模块不另立一份。</para>
+        /// </summary>
+        private void PollSpectateInput()
+        {
+            if (_match == null || !_match.IsSpectating) return;
+
+            var input = Game.Input;
+            if (input == null)
+            {
+                if (!_warnedSpecUnavailable)
+                {
+                    _warnedSpecUnavailable = true;
+                    _log.Warn("spec.noinput", "Game.Input 为 null，观战鼠标换目标（左/右键）无法采集");
+                }
+                return;
+            }
+
+            if (input.PointerOverUi) return;
+
+            var dir = 0;
+            if (input.GetKeyDown(GameKey.MouseLeft)) dir = 1;
+            else if (input.GetKeyDown(GameKey.MouseRight)) dir = -1;
+            if (dir == 0) return;
+
+            StepToDirection(dir, dir > 0 ? "左键（原版 FIRE1）" : "右键（原版 FIRE2）");
+        }
+
+        /// <summary>
+        /// 朝 <paramref name="dir"/> 走一格换目标。
+        ///
+        /// <para><b>目标是谁由控制面算</b>：<see cref="CsSpectator.StepIndex"/> 在观战对象表上给出
+        /// 「末位 +1 回首位、首位 −1 回末位」的下标；门面 <c>ICsMatch.SpectateNext(dir)</c> 用的就是同一条
+        /// 环绕公式，这里**核对**两者是否一致 —— 不一致（口径漂移）当帧就留一条 Warn，不去猜哪边对。</para>
+        ///
+        /// <para>观战对象表为空按原版留 Warn（<c>hud_spectator.cpp:660</c>：<c>"No observer targets."</c>）。</para>
+        /// </summary>
+        private void StepToDirection(int dir, string reason)
+        {
+            CollectSpectateCandidates();
+            if (_specAlive.Count == 0)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{reason} 换目标：没有可观察目标（原版 \"No observer targets.\"，hud_spectator.cpp:660）");
+                return;
+            }
+
+            var wantIdx = CsSpectator.StepIndex(CurrentSpectateIndex(), _specAlive.Count, dir);
+            if (wantIdx < 0)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{reason} 换目标：目标下标越界（观战对象表 {_specAlive.Count} 项），已忽略");
+                return;
+            }
+
+            var want = _specAlive[wantIdx];
+            _match.SpectateNext(dir);
+
+            var got = _match.SpectateTarget;
+            if (got == null || got.Id != want.Id)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{reason} 换目标：门面停在 {got?.Name ?? "<无目标>"}，控制面算的是 {want.Name}" +
+                    $"（观战对象表 {_specAlive.Count} 项 / 下标 {wantIdx}）");
+                return;
+            }
+
+            _log.Always($"{reason}：观战目标 → {got.Name}（{got.Team}）");
+        }
+
+        /// <summary>当前观战目标在观战对象表里的下标（不在表内 / 没有目标 = −1）。</summary>
+        private int CurrentSpectateIndex()
+        {
+            var cur = _match.SpectateTarget;
+            if (cur == null) return -1;
+
+            for (var i = 0; i < _specAlive.Count; i++)
+            {
+                if (_specAlive[i].Id == cur.Id) return i;
+            }
+            return -1;
+        }
+
+        /// <summary>
+        /// 订阅观战控制面的两个命令事件（<c>spec_prev</c> / <c>spec_player</c>）。
+        ///
+        /// <para><b>为什么由本模块接</b>：UI 按分层铁律不许引用 <c>Cs16.Module.*</c>，命令最终要落到
+        /// <c>ICsMatch.SpectateNext</c>；<c>spec_next</c> 复用既有 <see cref="Events.SpectateNext"/>
+        /// （<c>MatchModule</c> 已订阅），本模块**不**重复订阅那一条 —— 否则一次点击会跳两个目标。</para>
+        /// </summary>
+        private void SubscribeSpectateControl()
+        {
+            if (_specSubscribed) return;
+
+            var bus = Game.Event;
+            if (bus == null)
+            {
+                _log.Warn("spec.noevent", "Game.Event 为 null（引擎未 Launch？），观战控制面命令 spec_prev / spec_player 不会生效");
+                return;
+            }
+
+            bus.On(Events.SpectatePrev, OnSpectatePrev);
+            bus.On<string>(Events.SpectateTarget, OnSpectateTarget);
+            _specSubscribed = true;
+        }
+
+        private void UnsubscribeSpectateControl()
+        {
+            if (!_specSubscribed) return;
+            _specSubscribed = false;
+
+            var bus = Game.Event;
+            if (bus == null) return;
+            bus.Off(Events.SpectatePrev, OnSpectatePrev);
+            bus.Off<string>(Events.SpectateTarget, OnSpectateTarget);
+        }
+
+        private void OnSpectatePrev()
+        {
+            if (_match == null) return;
+            if (!_match.IsSpectating)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{Events.SpectatePrev} 到达，但本地玩家当前不是观战状态（还活着 / 比赛未运行），已忽略");
+                return;
+            }
+
+            StepToDirection(-1, "spec_prev");
+        }
+
+        /// <summary>
+        /// <c>spec_player &lt;名字|#序号&gt;</c>：在观战对象表上定位后逐格推进（见 <see cref="SelectTarget"/>）。
+        /// 非预期分支（不在观战 / 没有可观察目标 / 定位不到）各留一行 Warn。
+        /// </summary>
+        private void OnSpectateTarget(string token)
+        {
+            if (_match == null) return;
+
+            if (!_match.IsSpectating)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{Events.SpectateTarget}（{token}）到达，但本地玩家当前不是观战状态（还活着 / 比赛未运行），已忽略");
+                return;
+            }
+
+            CollectSpectateCandidates();
+            if (_specAlive.Count == 0)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"没有可观察目标（原版 #Spec_NoPlayers：{CsSpectator.NoPlayersText}），spec_player 已忽略");
+                return;
+            }
+
+            if (!CsSpectator.TryParseTarget(token, _specNames, out var index, out var error))
+            {
+                Game.Logger?.Warn(Tag, $"spec_player 无法定位目标「{token}」：{error}");
+                return;
+            }
+
+            SelectTarget(_specAlive[index], $"spec_player {token}");
+        }
+
+        /// <summary>
+        /// 收集观战对象表：**只含活人**，口径与模拟一致（<c>CsMatch.CollectAlive</c> 取 <c>IsAlive</c>；
+        /// 本地玩家阵亡后才进观战，本就不在表内）。顺序即表内序号。
+        /// </summary>
+        private void CollectSpectateCandidates()
+        {
+            _specAlive.Clear();
+            _specNames.Clear();
+
+            var actors = _match.Actors;
+            if (actors == null) return;
+
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var a = actors[i];
+                if (a == null || !a.IsAlive) continue;
+                _specAlive.Add(a);
+                _specNames.Add(a.Name);
+            }
+        }
+
+        /// <summary>
+        /// 把观战目标切到指定 actor：先读一次 <c>ICsMatch.SpectateTarget</c>（越界的观战索引会被模拟就地
+        /// 纠正为 0），再逐格 <c>SpectateNext(+1)</c> 直到到达 —— 推进格数上界 = 目标表长度，
+        /// 所以任何在表内的目标都能以环绕方式到达（首尾环绕见 <see cref="CsSpectator.StepIndex"/>）。
+        /// </summary>
+        /// <param name="reason">日志前缀：谁触发的（鼠标 / 控制台命令）。</param>
+        private void SelectTarget(CsActor target, string reason)
+        {
+            if (target == null) return;
+
+            var guard = _specAlive.Count + 1;
+            var cur = _match.SpectateTarget;
+            while (guard-- > 0 && (cur == null || cur.Id != target.Id))
+            {
+                _match.SpectateNext(1);
+                cur = _match.SpectateTarget;
+            }
+
+            if (cur == null || cur.Id != target.Id)
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{reason}：目标 {target.Name}(id={target.Id}) 推进 {_specAlive.Count + 1} 格仍未到达，" +
+                    $"当前停在 {cur?.Name ?? "<无目标>"}");
+                return;
+            }
+
+            _log.Always($"{reason}：观战目标 → {cur.Name}（{cur.Team}）");
         }
 
         // ==================================================================

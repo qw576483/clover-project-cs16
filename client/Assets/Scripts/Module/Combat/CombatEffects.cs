@@ -93,6 +93,11 @@ namespace Cs16.Module.Combat
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
         private readonly List<EffectItem> _items = new List<EffectItem>(128);
+
+        /// <summary>在场弹壳的计数闸门（原版 cvar <c>max_shells</c>；容量见 <see cref="CsCombatTuning.MaxShells"/>）。</summary>
+        private readonly CsCombatTuning.ShellCountGate<EffectItem> _shells =
+            new CsCombatTuning.ShellCountGate<EffectItem>(CsCombatTuning.MaxShells);
+
         private Transform _root;
 
         // ---- 贴图（异步加载；缺资源时只 Warn 一次并退化成"点光 + 无贴片"，绝不退回黄色球）----
@@ -111,6 +116,10 @@ namespace Cs16.Module.Combat
         private readonly Sprite[] _sprBlood = new Sprite[ResPaths.FxBloodVariants];
         /// <summary>血雾**十帧**（原版 `valve/sprites/bloodspray.spr`，key 表见 <see cref="ResPaths.FxBloodSprayKeys"/>）。</summary>
         private readonly Sprite[] _sprBloodSpray = new Sprite[ResPaths.FxBloodSprayVariants];
+        /// <summary>碎裂族**三变体**（原版 `decals.wad` 的 `{break1..3`，48×48，key 表见 <see cref="ResPaths.FxBreakKeys"/>）。</summary>
+        private readonly Sprite[] _sprBreaks = new Sprite[ResPaths.FxBreakVariants];
+        /// <summary>「命中面的材质不在 flags 表里」的日志闸门 —— 只 Warn 一次（高频路径，不刷屏）。</summary>
+        private readonly CsCombatTuning.OnceFlag _surfaceMissing = new CsCombatTuning.OnceFlag();
         private bool _spritesRequested;
         private bool _spriteWarned;
         private bool _bloodWarned;
@@ -176,6 +185,7 @@ namespace Cs16.Module.Combat
                 if (_items[i].Go != null) Object.Destroy(_items[i].Go);
             }
             _items.Clear();
+            _shells.Clear();
 
             if (_root != null)
             {
@@ -234,6 +244,15 @@ namespace Cs16.Module.Combat
             {
                 var slot = i;
                 res.LoadAsset<Sprite>(ResPaths.FxBloodSprayKeys[i], s => _sprBloodSpray[slot] = s);
+            }
+
+            // 碎裂族三变体（原版 decals.wad 的 {break1..3，48×48）：走字面量表，但按 **Texture2D** 取回来
+            // 再自己包成 sprite（见 MakeDecalSprite）—— 不依赖任何导入设置，也不为此写 .meta。
+            for (var i = 0; i < ResPaths.FxBreakKeys.Length; i++)
+            {
+                var slot = i;                        // 闭包捕获：⛔ 不能直接用 i
+                var key = ResPaths.FxBreakKeys[i];
+                res.LoadAsset<Texture2D>(key, tex => _sprBreaks[slot] = MakeDecalSprite(key, tex));
             }
         }
 
@@ -309,11 +328,37 @@ namespace Cs16.Module.Combat
             return null;
         }
 
-        /// <summary>弹痕贴图：五变体随机；变体一张都没加载到 → 退到程序化替身 <see cref="ResPaths.FxBulletHole"/>。</summary>
-        private Sprite PickBulletHole()
+        /// <summary>
+        /// 按弹痕**族**选贴图 + 给出对应的世界尺寸（米）。
+        ///
+        /// <para>碎裂族（<see cref="CsCombatTuning.SurfaceDecals.Family.Break"/>）走 <see cref="_sprBreaks"/>
+        /// （原版 `{break1..3`，48 texel ⇒ 1.2192 m）；其余族走五变体 <see cref="_sprShots"/>
+        /// （16 texel ⇒ 0.4064 m）。</para>
+        ///
+        /// <para>尺寸跟着**实际用到的那套贴图**走，不跟着"判出来的族"走：碎裂族那一套一张都没加载到时
+        /// 回落普通弹痕，尺寸也必须一起回落到 0.4064 m（否则会把 16×16 的贴片抻到 1.2192 m）。
+        /// 两者都取不到时退回程序化替身 <see cref="ResPaths.FxBulletHole"/>（⛔ 不画白块）。</para>
+        /// </summary>
+        private Sprite PickBulletHole(CsCombatTuning.SurfaceDecals.Family family, out float sizeMeters)
         {
-            var s = PickRandom(_sprShots);
+            sizeMeters = CsCombatTuning.SurfaceDecals.SizeMeters(family);
+            var pool = family == CsCombatTuning.SurfaceDecals.Family.Break ? _sprBreaks : _sprShots;
+            var s = PickRandom(pool);
             if (s != null) return s;
+
+            if (family == CsCombatTuning.SurfaceDecals.Family.Break)
+            {
+                var fb = PickRandom(_sprShots);
+                if (fb != null)
+                {
+                    WarnSpriteOnce($"碎裂族贴图缺失：Resources/{ResPaths.FxBreakKeys[0]}.png … " +
+                                   $"{ResPaths.FxBreakKeys[ResPaths.FxBreakKeys.Length - 1]}.png" +
+                                   "（木/玻璃命中回落普通弹痕，尺寸一并回落）");
+                    sizeMeters = CsCombatTuning.DecalSize;
+                    return fb;
+                }
+            }
+
             if (_sprHole == null) WarnSpriteOnce($"弹痕贴图缺失：Resources/{ResPaths.FxBulletHoleKeys[0]}.png（打墙不留痕）");
             return _sprHole;
         }
@@ -462,6 +507,9 @@ namespace Cs16.Module.Combat
         /// <item><b>初速还要叠上玩家自身速度</b>：原版是 <c>vecShellVelocity = pev-&gt;velocity + …</c>，
         /// 所以跑动中开枪时弹壳会跟着人走。</item>
         /// <item><b>没有点光</b>：枪口那一盏在 <see cref="MuzzleFlash"/> 里，弹壳自己不发亮。</item>
+        /// <item><b>数量上限</b>：在场弹壳按原版 cvar <c>max_shells</c>（<see cref="CsCombatTuning.MaxShells"/> = 120）
+        /// 计数，满员时新来者挤掉**最老的一枚**（<c>CsCombatTuning.ShellCountGate</c>）；寿命到期是另一条
+        /// 并存的清除路径（见 <see cref="Tick"/>）。</item>
         /// <item><b>霰弹枪不抛</b>：原版抛 <c>models/shotgunshell.mdl</c>，该件在本机可取的载体里不存在
         /// ⇒ <see cref="CsShellModels.KindFor"/> 返回 <c>None</c>，本方法直接返回。</item>
         /// </list>
@@ -518,6 +566,28 @@ namespace Cs16.Module.Combat
                 rng.Range(CsCombatTuning.ShellSpinYMin, CsCombatTuning.ShellSpinYMax),
                 rng.Range(CsCombatTuning.ShellSpinZMin, CsCombatTuning.ShellSpinZMax));
             item.Shell = true;
+
+            // 计数闸门：满员时挤出**最老的一枚**（原版 max_shells 上限 ⇒ 新来者挤掉最老的那个；
+            // 寿命到期是另一条并存的清除路径，见 Tick）。
+            var evicted = _shells.Register(item);
+            if (evicted != null)
+            {
+                if (evicted.Go == null || !_items.Contains(evicted))
+                {
+                    _log.Warn("fx.shell.gate.foreign",
+                        "计数闸门挤出的对象不在特效池里 ⇒ 未回收（闸门与实际不同步）");
+                }
+                else
+                {
+                    evicted.Shell = false;
+                    evicted.Life = 0f;
+                    evicted.Velocity = Vector3.zero;
+                    evicted.Spin = Vector3.zero;
+                    if (evicted.Go.activeSelf) evicted.Go.SetActive(false);
+                }
+                _log.Info("fx.shell.gate",
+                    $"弹壳数达上限 {CsCombatTuning.MaxShells}（原版 max_shells）⇒ 回收最老的一枚，在场 {_shells.Count}");
+            }
 
             _log.Info("shell.eject",
                 $"弹壳 {model.SourceName}（{model.Size.x:F3}x{model.Size.y:F3}x{model.Size.z:F3} m）" +
@@ -577,24 +647,43 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 命中墙：**弹痕**（五变体随机、按命中面法线贴上去的贴片）+ 一记小火星。
-        /// <paramref name="normal"/> 必须是世界法线（<c>RaycastHit.normal</c>）。
+        /// 命中墙：**弹痕**（按命中面的族选贴图、按法线贴上去）+ 一记小火星。
+        /// <paramref name="normal"/> 必须是世界法线（<c>RaycastHit.normal</c>）；
+        /// <paramref name="materialName"/> = 命中面的材质名（= 命中 Mesh 的 <c>sharedMaterial.name</c>，
+        /// 即 <c>Firearm.ImpactMaterials</c> 的那一项）。
+        ///
+        /// <para><b>弹痕族</b>由 <see cref="CsCombatTuning.SurfaceDecals"/> 决定：材质名查表得到
+        /// 原版判据的两个字段（`[surf+0x8C]` / `[surf+0x68]`），再走原版三步选族 —— 碎裂族 1.2192 m、
+        /// 防弹族 / 普通族 0.4064 m。表里没有该材质（含 null）⇒ 回落普通弹痕并只 Warn 一次。</para>
         /// </summary>
-        public void BulletImpact(Vector3 point, Vector3 normal)
+        public void BulletImpact(Vector3 point, Vector3 normal, string materialName)
         {
             if (normal.sqrMagnitude < 0.0001f) normal = Vector3.up;
             normal.Normalize();
 
-            // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸 = 原版 16 单位（见 CsCombatTuning.DecalSize）----
-            var sprite = PickBulletHole();
+            // ---- 族判据：材质名 -> 表里的 flags -> 原版三步选族 ----
+            var material = materialName;
+            if (!CsCombatTuning.SurfaceDecals.TrySelectFamily(material, out var family))
+            {
+                family = CsCombatTuning.SurfaceDecals.Family.Shot;
+                if (_surfaceMissing.Take())
+                {
+                    _log.Warn("fx.decal.surface.missing",
+                        $"命中面材质「{material ?? "null"}」不在 flags 表里（{CsCombatTuning.SurfaceDecals.TableCount} 行，" +
+                        "真源 = 原版 de_dust2 BSP）⇒ 本条及以后一律按普通弹痕处理（只报一次）");
+                }
+            }
+
+            // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸随族（碎裂 1.2192 m / 其余 0.4064 m）----
+            var sprite = PickBulletHole(family, out var sizeMeters);
             var decal = AcquireDecal(blood: false);
             if (decal != null)
             {
                 decal.Tr.position = point + normal * 0.01f;
                 decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
-                // 尺寸 = CsCombatTuning.DecalSize（整块 0.4064 m）—— 必须按贴片自己的宽度反算倍率，
-                // 不能直接写 `Vector3.one * DecalSize`：那少乘 1/PPU 倍（见 SpriteScaleForMeters）。
-                var scale = SpriteScaleForMeters(sprite, CsCombatTuning.DecalSize);
+                // 尺寸是"整块画布"的米数，必须按贴片自己的宽度反算倍率，
+                // 不能直接写 `Vector3.one * sizeMeters`：那少乘 1/PPU 倍（见 SpriteScaleForMeters）。
+                var scale = SpriteScaleForMeters(sprite, sizeMeters);
                 decal.Tr.localScale = Vector3.one * scale;
                 decal.Sprite.sprite = sprite;
                 decal.Sprite.enabled = sprite != null;
@@ -602,19 +691,23 @@ namespace Cs16.Module.Combat
                 // 裁掉软晕、只画硬核（原版贴花绘制时开 GL_ALPHA_TEST + gl_alphamin=0.25）。
                 ApplyDecalMaterial(decal.Sprite);
 
-                // 可核对日志：贴图=null / 启用=False ⇒ 贴图没加载到；世界宽 不是 0.406 ⇒ 尺寸口径坏了。
-                // 「可见核心宽」= 整块 × 载体实测的核心占比（alpha≥32 的墨迹水平跨度 4~5 texel / 16）——
-                // 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
+                // 可核对日志：贴图=null / 启用=False ⇒ 贴图没加载到；世界宽只允许是**该族**的那一个值
+                // （碎裂 1.2192 / 其余 0.4064），对不上就是尺寸口径坏了。
+                // 「可见核心宽」= 整块 × 载体实测的核心占比（`{shot*`：alpha≥32 的墨迹水平跨度 4~5 texel / 16）
+                // —— 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
                 // （口径：0.127 m 的墨迹在 5 m 处约 24 px）。距离用相机（弹痕的观察者恒是本地相机）。
                 var cam = Camera.main;
                 var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
-                var coreM = CsCombatTuning.DecalVisibleCoreMeters;
+                // 可见核心宽按**这一发实际用的族尺寸**算（碎裂族的 48 texel 贴图核心占比与 {shot* 不同，
+                // 故只用整块宽度乘占比这一个口径，不写死）。
+                var coreM = sizeMeters * CsCombatTuning.DecalOpaqueCoreRatio;
                 var corePx = dist > 0.0001f ? coreM * CsCombatTuning.ScreenPixelsPerMeter(dist) : 0f;
 
                 _log.Info("shot.decal",
-                    $"弹痕落在 {point}（法线 {normal}）→ 贴图 {(sprite != null ? sprite.name : "null")}" +
-                    $" 启用={decal.Sprite.enabled} 世界宽={CsCombatTuning.DecalSize:F3}m" +
-                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}" +
+                    $"弹痕落在 {point}（法线 {normal}）→ 材质「{material ?? "null"}」族 {family}" +
+                    $" 贴图 {(sprite != null ? sprite.name : "null")}" +
+                    $" 启用={decal.Sprite.enabled} 世界宽={sizeMeters:F3}m" +
+                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}/{ResPaths.FxBreakVariants}" +
                     $" 可见核心宽={coreM:F4}m（占比 {CsCombatTuning.DecalOpaqueCoreRatio:F2}）" +
                     $" 本发距离={dist:F2}m ⇒ 核心投影 {corePx:F1}px");
             }
@@ -633,6 +726,27 @@ namespace Cs16.Module.Combat
             spark.Sprite.sprite = _sprSpark;
             spark.Sprite.enabled = _sprSpark != null;
             spark.Billboard = true;
+        }
+
+        /// <summary>
+        /// 把取回的 <see cref="Texture2D"/> 现包成贴花 sprite。
+        ///
+        /// <para><b>为什么按 Texture2D 取</b>：<c>fx_break*.png</c> 是脚本现落的文件，带不带 Sprite 导入设置
+        /// 取决于编辑器（本片不写 <c>.meta</c>，也不该依赖某个导入设置）；按纹理取回来自己包成 sprite，
+        /// 默认导入（Texture）也拿得到（先例见 <c>UI/InGame/CsScopeOverlayWidget</c> 的取图方式）。</para>
+        ///
+        /// <para>PPU 取 <see cref="CsCombatTuning.DecalSpritePixelsPerUnit"/>：贴花的米数由
+        /// <see cref="SpriteScaleForMeters"/> 按 sprite 自己的宽度反算，PPU 只决定"1 米 = 多少像素"这一个换算。</para>
+        /// </summary>
+        private static Sprite MakeDecalSprite(string key, Texture2D tex)
+        {
+            if (tex == null) return null;
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            var sprite = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f), CsCombatTuning.DecalSpritePixelsPerUnit);
+            sprite.name = key;
+            return sprite;
         }
 
         /// <summary>
@@ -809,6 +923,11 @@ namespace Cs16.Module.Combat
                 if (item.Go != go) continue;
                 item.Persistent = false;
                 item.Life = 0f;
+                if (item.Shell && !_shells.Unregister(item))
+                {
+                    _log.Warn("fx.shell.gate.desync",
+                        "归还的弹壳不在计数队列里 ⇒ 闸门与实际不同步");
+                }
                 item.Go.SetActive(false);
                 return;
             }
@@ -840,6 +959,12 @@ namespace Cs16.Module.Combat
                 item.Life -= dt;
                 if (item.Life <= 0f)
                 {
+                    // 弹壳寿命到期：从计数闸门里摘掉（槽位不销毁，留给 Acquire 复用）。
+                    if (item.Shell && !_shells.Unregister(item))
+                    {
+                        _log.Warn("fx.shell.gate.desync",
+                            "弹壳寿命到期却不在计数队列里 ⇒ 闸门与实际不同步");
+                    }
                     item.Go.SetActive(false);
                     continue;
                 }

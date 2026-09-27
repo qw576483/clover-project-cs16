@@ -1,0 +1,52 @@
+# de_dust2.bsp（GoldSource BSP v30）逐贴图的弹痕族判据表
+# 生成器 = tools/probes/dust2_surface_flags.py（可重跑）
+# BSP = client/Assets/ThirdParty/Dust2/de_dust2.bsp（2057288 字节 / v30）
+# 原版判据出处 = client.dll RVA 0x20B5-0x2127（函数 0x20B0；同逻辑 0x1E00-0x1E73）：
+#   [obj+0x8C]==1 -> {break%i ; 否则 [obj+0x68]!=0 -> {bproof1 ; 否则 {shot%i
+#   （族名串 .data：{shot%i@0xE154C / {bproof1@0xE1554 / {break%i@0xE1560）
+# surf8C 的来源 = ENTITY lump：该贴图是否**过半数**的面在 func_breakable 刷实体的刷面上
+#   （de_dust2 共 10 个 func_breakable，全部 material 2 / gibmodel models/mil_crategibs.mdl）
+#   「过半」是**本项目新增的判定口径**（原版按表面判、不按贴图）：本工程每张贴图合并成一个
+#   Mesh / 一个 MeshCollider / 一个材质 ⇒ 运行时只拿得到材质名，只能按贴图粒度判。
+# ⛔ texinfo.flags 不是这一位：本图 flags 只有 0/1，==1 的是 sky/aaatrigger/clip（TEX_SPECIAL）
+# surf68 = 0：dust2 的载体里没有任何「防弹面」声明（如实记 0，不猜）
+# slug = 运行时材质名（= ThirdParty/Dust2/Textures/<slug>.png 去扩展名）；空 = 工程侧另有回落名
+model	texinfo_flags	surf8C	surf68	breakable_faces	texinfo_count	faces	slug	entities
+-0csSandWall	0	0	0	0	66	1554	_0csSandWall	func_illusionary
+sky	1	0	0	0	25	1356		
+SandTrim	0	0	0	0	62	921	SandTrim	
+SandCCrete	0	0	0	0	20	271	SandCCrete	
+SandRoad	0	0	0	0	15	236	SandRoad	
+-2Sand	0	0	0	0	5	135	_2Sand	
+-0SandRock2	0	0	0	0	5	128	_0SandRock2	
+-0Sand	0	0	0	0	5	122	_0Sand	
+generic011	0	0	0	0	17	108		func_illusionary
+SandCrtSmSd	0	0	0	4	59	99	SandCrtSmSd	func_breakable
+SandCrtLrgSd	0	0	0	0	58	91	SandCrtLrgSd	
+SandWllWndw	0	0	0	0	20	67	SandWllWndw	
+SandCrtSmTp	0	0	0	2	28	40	SandCrtSmTp	func_breakable
+SandCrtLrgTp	0	0	0	0	26	38	SandCrtLrgTp	
++0~fifties_lgt2	0	0	0	0	16	36		func_illusionary
+MltryCrteSd2	0	1	0	36	16	36	MltryCrteSd2	func_breakable
+SandWllDoor	0	0	0	0	43	26	SandWllDoor	
+MltryCrteTp	0	1	0	18	20	25	MltryCrteTp	func_breakable
+aaatrigger	1	0	0	0	14	25		func_bomb_target|func_buyzone
+MltryCrteSd	0	0	0	0	22	22	MltryCrteSd	
+white	0	0	0	0	3	8	white	
+black	0	0	0	0	3	5	black	
+SandRoadTgtB	0	0	0	0	1	4	SandRoadTgtB	
+SandWllDoorDJ1	0	0	0	0	4	4	SandWllDoorDJ1	
+csSandWallBTA	0	0	0	0	6	4	csSandWallBTA	
+csSandWallGH1b	0	0	0	0	4	4	csSandWallGH1b	
+djCredit1	0	0	0	0	1	4	djCredit1	
+csSandWallGH1a	0	0	0	0	4	3	csSandWallGH1a	
+SandWllDoorDJ2	0	0	0	0	10	2	SandWllDoorDJ2	
+csSandWallDJ1	0	0	0	0	1	2	csSandWallDJ1	
+djCredit2	0	0	0	0	1	2	djCredit2	
+SandCCrete2	0	0	0	0	3	1	SandCCrete2	
+SandWllDoor2	0	0	0	0	6	1	SandWllDoor2	
+SandWllDoorBTA	0	0	0	0	1	1	SandWllDoorBTA	
+SandWllDoorBTb	0	0	0	0	1	1	SandWllDoorBTb	
+csSandWallBTB	0	0	0	0	1	1	csSandWallBTB	
+SandRoadTgtA	0	0	0	0	1	0	SandRoadTgtA	
+clip	1	0	0	0	45	0		

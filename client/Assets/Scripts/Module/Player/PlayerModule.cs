@@ -75,8 +75,11 @@ namespace Cs16.Module.Player
         private readonly System.Collections.Generic.HashSet<string> _openPanels =
             new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
-        /// <summary>观战/输入相关的"只报一次"告警闸（见 <see cref="PollSpectateInput"/>）。</summary>
+        /// <summary>观战键/输入相关的"只报一次"告警闸（见 <see cref="PollSpectateInput"/>）：
+        /// 一次会话内每条"按键被闸门挡下"的分支只留一条痕，避免活着时空格（跳跃）每按一次刷一行。</summary>
         private bool _warnedNoInput;
+        private bool _warnedSpaceAlive;
+        private bool _warnedSpaceBlocked;
 
         // ---- 已应用设置的镜像（用于"只有真的改了才打日志"）----
         private float _appliedSensitivity = CsConst.DefaultSensitivity;
@@ -233,40 +236,63 @@ namespace Cs16.Module.Player
         }
 
         /// <summary>
-        /// 观战切目标：<c>[空格]</c> → <see cref="Events.SpectateNext"/>。
+        /// 观战键 <c>[空格]</c>（原版 JUMP）→ **循环切换观战档位**，唯一入口
+        /// <see cref="CsSpectator.TryCycleModeOnJump"/>（原版 <c>hud_spectator.cpp:715-733</c> 的 JUMP 分支）。
+        /// 换目标是鼠标的职责（左键下一个 / 右键上一个，见 <c>Module/View/ViewModule.cs</c>），
+        /// 本方法不发任何换目标事件。
         ///
-        /// <para><b>为什么在这里读键</b>：规格 H11 的提示「[空格] 切换目标」由 <c>UI/InGame/CsSpectatorWidget</c>
-        /// 显示，但按分层铁律 UI 不许直接调 <c>ICsMatch.SpectateNext</c> —— 键位必须由操作模块采集后
-        /// 经事件总线转给 <c>MatchModule</c>（它订阅 <see cref="Events.SpectateNext"/> 再调
-        /// <c>ICsMatch.SpectateNext(+1)</c>）。原先无人发这个事件 ⇒ 提示是空话。</para>
-        ///
-        /// <para><b>只在观战中发</b>：还活着时空格是跳跃（<c>PlayerMotor.BuildInput</c> 也在读它），
-        /// 这里以 <c>ICsMatch.IsSpectating</c> 为闸，平时一次事件都不发。</para>
+        /// <para><b>闸门</b>：
+        /// ① 只在观战中（原版 <c>hud_spectator.cpp:689-690</c> 的 <c>if ( !g_iUser1 ) return;</c>）；
+        /// 活着时空格是跳跃（<see cref="PlayerMotor.BuildInput"/> 另有一条读键），这里不消费它、只留一次痕；
+        /// ② 模态界面（暂停 / 控制台 / 买枪菜单）开着时这次按键归界面 —— 与视角、移动共用同一套
+        /// <see cref="HasBlockingOverlay"/> 判据（鼠标那一侧另有 <c>IInputManager.PointerOverUi</c>，
+        /// 键盘没有指针，故用面板集合）。</para>
         /// </summary>
         private void PollSpectateInput()
         {
             var match = _match;
-            if (match == null || !match.IsSpectating) return;
+            if (match == null) return;
 
             var input = Game.Input;
             if (input == null)
             {
-                if (!_warnedNoInput) { _warnedNoInput = true; _log.Warn("spectate.noinput", "Game.Input 为 null，观战切换目标（空格）无法采集"); }
+                if (!_warnedNoInput) { _warnedNoInput = true; _log.Warn("spectate.noinput", "Game.Input 为 null，观战切档位（空格）无法采集"); }
                 return;
             }
 
             if (!input.GetKeyDown(GameKey.Space)) return;
 
-            var bus = Game.Event;
-            if (bus == null)
+            if (!match.IsSpectating)
             {
-                if (!_warnedNoInput) { _warnedNoInput = true; _log.Warn("spectate.noevent", "Game.Event 为 null，观战切换目标事件发不出去"); }
+                // 活着时空格是跳跃（PlayerMotor 读同一条键），观战链不消费；只留一次痕，不按次刷屏。
+                if (!_warnedSpaceAlive)
+                {
+                    _warnedSpaceAlive = true;
+                    _log.Info("spectate.space.alive",
+                        "非观战态按下 [空格]：不作为观战输入（活着时它是跳跃），后续同样的按键不再重复记录");
+                }
                 return;
             }
 
-            var cur = match.SpectateTarget;
-            _log.Info("spectate.next", $"观战中按下 [空格] → 请求切换观战目标（当前 {cur?.Name ?? "<无>"}）");
-            bus.Emit(Events.SpectateNext);
+            if (match.IsPaused || HasBlockingOverlay())
+            {
+                if (!_warnedSpaceBlocked)
+                {
+                    _warnedSpaceBlocked = true;
+                    _log.Info("spectate.space.blocked",
+                        "模态界面（暂停 / 控制台 / 买枪菜单）开着，观战切档位的 [空格] 本次不响应；后续同样情形不再重复记录");
+                }
+                return;
+            }
+
+            if (!CsSpectator.TryCycleModeOnJump(spectating: true, out var reason))
+            {
+                _log.Warn("spectate.mode.rejected", $"观战中按下 [空格] 未切档位：{reason}");
+                return;
+            }
+
+            _log.Info("spectate.mode",
+                $"观战中按下 [空格] → 观战档位 {CsSpectator.ModeName(CsSpectator.Mode)}（档位 {(int)CsSpectator.Mode}/6）");
         }
 
         /// <summary>

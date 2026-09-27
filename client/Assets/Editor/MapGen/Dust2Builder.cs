@@ -190,7 +190,7 @@ namespace Cs16.EditorTools
                 if (g.Vertices.Length > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
                 mesh.vertices = g.Vertices;
                 // UV 的单位是**原版 miptex 的原始 w×h**：转换脚本按 `u = …/miptex.w`、`v = 1 − …/miptex.h`
-                //   算（`原版资源/解包产物/dust2_build.py:945-951`），不做任何二次幂取整。
+                //   算（转换脚本本机不在盘，见 `Assets/ThirdParty/Dust2/SOURCES.txt`），不做任何二次幂取整。
                 //   ⇒ 贴图**导入后尺寸必须等于原图尺寸**（`npotScale = None`，见 NormalizeTextureImporters），
                 //   否则 Unity 把非 POT 贴图拉到最近的 2 的幂再上传，UV 却仍按原尺寸走 ⇒ 比例失真。
                 mesh.uv = g.Uvs;

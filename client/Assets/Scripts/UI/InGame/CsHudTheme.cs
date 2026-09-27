@@ -83,7 +83,7 @@ namespace Cs16.UI
         //   :121 `cross            640 640hud7  48  25 24 24`   血量
         //   :135 `suit_full        640 640hud7   0  25 24 24`   护甲（无头盔）
         //   :137 `suithelmet_full  640 640hud7   0 124 24 24`   护甲（有头盔）
-        // 像素由 `原版资源/解包产物/cs16_asset_extract.py` 的第 ③ 段从本体 `640hud7.spr` 解出，
+        // 像素由本体 `640hud7.spr` 解出（解码脚本本机不在盘，见 `ThirdParty/Dust2/SOURCES.txt`），
         // 落到 `Resources/UI/Art/hud_{cross,suit_full,suithelmet_full}.png`（24×24 RGBA）。
         // 编码与秒表图标同一套（**RGB = 白 + alpha = 精灵索引**；☑ 理由见 StopwatchTint 的注释：
         // 这些精灵是 GoldSrc 的加性灰阶遮罩，索引即亮度 ⇒ 屏上像素 = (索引/255) × 着色）。
@@ -331,7 +331,7 @@ namespace Cs16.UI
         //     `stopwatch  640  640hud7  144  72  24  24`
         //   ⇒ 源矩形 = `640hud7.spr` 的 (144,72,24,24)；该 sprite 画布 256×256、
         //     调色板是 0..255 的**纯灰阶**（同一帧逐帧索引像素；解码器与核对逻辑见
-        //     `原版资源/解包产物/cs16_asset_extract.py`，它会断言 consumed == 文件长度）。
+        //     解码脚本本机不在盘，见 `ThirdParty/Dust2/SOURCES.txt`，它会断言 consumed == 文件长度）。
         //     解码后的 PNG 落在 `client/Assets/Resources/UI/Art/stopwatch.png`（24×24 RGBA）。
         //
         // **屏幕落点来自原版 1920×1080 实机截图的像素量化**：

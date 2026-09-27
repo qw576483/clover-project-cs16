@@ -36,7 +36,7 @@ namespace Cs16.Module.Match
         // ---- 出生 / 掉图兜底 ----
         /// <summary>
         /// 出生点向下找地面的探测深度（米）。**口径 = "只做小幅校正"，不是"从天上找地板"**：
-        /// 标记 Y 本身就是 BSP 实体的脚底（`原版资源/解包产物/dust2_build.py:657-665`：`origin.z − 36` 再 `to_u`），
+        /// 标记 Y 本身就是 BSP 实体的脚底（口径 = `origin.z − 36` 再 `to_u`），
         /// 是可信真值；这里只探标记点附近 ±2m 的窗口（<c>SpawnGroundProbeUp 2</c> + 本值 4）。
         /// </summary>
         public const float SpawnGroundProbeDrop = 4f;
@@ -66,7 +66,7 @@ namespace Cs16.Module.Match
         /// 为 <c>sv_maxvelocity 3500</c>（<c>listenserver.cfg:27</c> 同值）⇒ <c>3500 units/s × 0.0254</c>
         /// = <b>88.9 m/s</b>（与 <c>CsConst.Gravity</c> / <c>JumpSpeed</c> 同一套 units→m 换算）。</para>
         ///
-        /// <para><b>口径说明（重要）</b>：出处是 <c>原版资源/解包产物/原版数值表.md</c>
+        /// <para><b>口径说明（重要）</b>：出处即上方随包 <c>server.cfg:29</c>，
         /// 故按"参考物已有的一律解析搬运"取**随包 server.cfg**，与 `策划/对照表.md` N-10~N-13 的口径一致。</para>
         ///
         /// <para>注意它比既有的 <see cref="CsConst.MaxFallSpeed"/>（-30 m/s）**宽松**，所以实际生效的上限
@@ -1527,6 +1527,8 @@ namespace Cs16.Module.Match
 
             var a = NewBotActor(team, diff);
             _actors.Add(a);
+            // 「当前难度」跟着最近一次生效的难度走（添加机器人的档位也算一次变更）。
+            _botDifficulty = diff;
             Game.Logger.Info(Tag, $"添加机器人 {a.Name}（{team} / {diff}）当前人数 T={PlayerCount(CsTeam.T)} CT={PlayerCount(CsTeam.CT)}");
 
             // 中途加入 → 立刻出生，能马上参与本回合。
@@ -2600,7 +2602,7 @@ namespace Cs16.Module.Match
         /// 返回 false = 标记点附近没有可信地面（调用方**沿用标记 Y**）。
         ///
         /// <para>为什么是"小幅校正"：标记 Y 就是 BSP 实体的脚底
-        /// （`原版资源/解包产物/dust2_build.py:657-665` 的 <c>origin.z − 36</c> 再 <c>to_u</c>），
+        /// （口径 = <c>origin.z − 36</c> 再 <c>to_u</c>），
         /// 是可信真值。**不许**改回"从 +100m 往下取第一个命中面" —— 那会抓到出生点头顶的
         /// 横板/墙顶（实测：BSP 真值 CT 脚底 <c>-3.15</c>，运行时却复活在 y=<c>2.44</c>/<c>3.47</c>）。</para>
         /// </summary>
@@ -3310,6 +3312,10 @@ namespace Cs16.Module.Match
             CsHudSnapshot.PrimaryReserve = ReserveOf(lp, CsHudSnapshot.PrimaryWeaponId);
             CsHudSnapshot.SecondaryWeaponId = lp != null ? lp.SecondaryWeapon : null;
             CsHudSnapshot.SecondaryReserve = ReserveOf(lp, CsHudSnapshot.SecondaryWeaponId);
+
+            // ---- 机器人（H 菜单回显）----
+            CsHudSnapshot.BotCount = BotCount;
+            CsHudSnapshot.BotDifficulty = BotDifficulty;
 
             // ---- 击杀信息（每帧清空重填）----
             CsHudSnapshot.KillFeed.Clear();

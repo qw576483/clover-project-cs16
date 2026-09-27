@@ -3,7 +3,7 @@ CS 1.6 de_dust2 —— 资源来源与转换说明（本项目非商用，只在
 1) 地图本体（几何/实体/内嵌贴图）
    来源：https://archive.org/download/cs-109-de_dust2/cs-109-de_dust2.zip
         （archive.org 条目 cs-109-de_dust2，1,086,336 字节）
-   本地：原版资源/解包产物/cs109_dust2.zip（1,086,336 字节 / MD5 81f71bbecf6914614bc23e3c794225b2）
+   本地：原版资源/解包产物/cs109_dust2.zip（1,086,336 字节 / MD5 81f71bbecf6914614bc23e3c794225b2）—— 本机当前不在盘
    落地：Assets/ThirdParty/Dust2/de_dust2.bsp  (2,057,288 字节, GoldSource BSP v30)
    内容：worldspawn 几何 + 木箱(func_breakable×10) + 包点(func_bomb_target A/B)
         + 买枪区(func_buyzone team1=T / team2=CT) + 出生点(info_player_deathmatch×20 T,
@@ -32,6 +32,50 @@ CS 1.6 de_dust2 —— 资源来源与转换说明（本项目非商用，只在
         ⇒ 本次不是"换了一张图"，是把来源口径统一到本体（像素不变）。
    落地：Assets/ThirdParty/Dust2/Skybox/sky_*.png（TGA→PNG，256×256，RGB）
 
-转换脚本（**全部在项目内，可重跑**）：
+转换脚本（**逐支说明是否存在、是否可重跑**）：
   · 地图几何/贴图/材质：原版资源/解包产物/dust2_build.py
-  · 天空盒 TGA→PNG 与 HUD 精灵抽取：原版资源/解包产物/cs16_asset_extract.py
+    —— ⚠️ 本机当前**没有**这支脚本：`原版资源/` 是本机一次性产物（被 .gitignore 忽略），仓库里只有它的
+       **输出**（即上面 §1/§2/§3 那些 PNG / 材质 / 几何）。上面那些产物都已经落盘，但**暂时不能在别处重跑**。
+  · 天空盒 TGA→PNG 与 HUD 精灵抽取：原版资源/解包产物/cs16_asset_extract.py —— 同上，本机当前不在盘。
+  · 逐贴图的 surface flags 表：tools/probes/dust2_surface_flags.py（**在库内、可重跑**）
+    —— 在盘、可重跑（只读 BSP，见 §4）。
+  缺的是"再生成"能力，不是产物本身；要恢复可重跑需拿回本机那份 `原版资源/解包产物/`（见 策划/差异登记.tsv #170）。
+
+4) 逐贴图的 surface flags 表（`surface_flags.tsv`）—— 弹痕族的判据载体
+   来源：就是 1) 里那份 de_dust2.bsp 自己（lump 0 ENTITY / 2 TEXTURES / 6 TEXINFO / 7 FACES / 14 MODELS）
+   脚本：tools/probes/dust2_surface_flags.py（只读 BSP；六段自洽断言；`--out` 写本目录的表）
+   产物：surface_flags.tsv —— 逐贴图一行：`model  texinfo_flags  surf8C  surf68  breakable_faces
+        texinfo_count  faces  slug  entities`（38 行，BSP 里 44 个 miptex 中真有面被引用的那些）
+   用途：原版按**表面属性**选弹痕族（client.dll 函数 0x20B0 内 RVA 0x20B5-0x2127：
+        `[obj+0x8C]==1` ⇒ `"{break%i"`；否则 `[obj+0x68]!=0` ⇒ `"{bproof1"`；否则 `"{shot%i"`），
+        本表就是那两个字段的载体侧取值。
+   两条实测结论（都写进表头，别再按旧写法推）：
+     · `TEXINFO.flags` 不是这一位 —— de_dust2 里它只有 0/1，且 ==1 的只有 sky(1356 面) /
+       aaatrigger(25 面) / clip(0 面)，那是 TEX_SPECIAL（天空/触发/夹层）；
+     · `surf8C=1` 的真正载体 = ENTITY lump 的 func_breakable 刷面（de_dust2 共 10 个，全部
+       `material 2` / `gibmodel models/mil_crategibs.mdl`）⇒ 经 model→faces→texinfo 得到贴图；
+       过半数面在可碎裂刷上的贴图 = `MltryCrteSd2`(36/36) / `MltryCrteTp`(18/25)。
+   崩溃/遗漏一律靠脚本自己的断言挡（跑不过就 exit 2，不产半份表）。
+   碎裂族贴图像素不在这里，在 Resources/UI/Art/fx_break{1,2,3}.png（由 decals.wad 解出，见 §2 的 wad3-extract.py）。
+
+   5) 材质字母表（`materials_letters.tsv`）—— 弹着音的材质分类载体（**与 de_dust2 无关，是全 CS 的表**）
+    来源：原版 CS 1.6 本体的 `sound/materials.txt`
+         —— 原版资源/cs16src/cstrike/sound/materials.txt（11,064 字节 / 787 行 / LF；
+            SHA256 0D35D708CB3737FC99CAF50E41AE32680E197218D2A51488489ECB7561B3AB6C）
+    脚本：tools/probes/cs16_materials_table.py（**在库内、可重跑**；逐行解析，口径 = 原版
+         `PM_InitTextureTypes` 的逐语句搬运，出处 原版资源/hlsdk/pm_shared/pm_shared.c:217-249 / :258-289）
+    产物：materials_letters.tsv —— 701 条，逐条一行：`line  letter  name  key  dup`
+         （line = 源文件行号；key = 查表键 = 小写前 16 字符；dup = 该键条目数）
+    用途：原版按**材质字母**选弹着音族（client.dll RVA 0x1EB2 `cmp cl,'M'` / 0x1EBB `cmp cl,'V'`
+         ⇒ 0x1FBE 的 `weapons/ric_metal-{1,2}.wav`；其余字母 ⇒ 0x1EC4 跳表的
+         `weapons/ric1..5.wav` + `weapons/ric_conc-1.wav`）⇒ 本表就是那个字母的载体侧取值。
+    运行期读的是同一份数据的 C# 版：Module/Audio/CsAudioTuning.cs 的 `MaterialLetters`（由脚本
+         `--csharp` 打印后粘入；⚠️ 手改那张表＝绕过生成器）。
+    两条实测结论：
+      · de_dust2 的 38 个贴图名**一个都不在**这张表里（0 命中）⇒ 本图的弹着音分类走的是
+        CsAudioTuning.ClassifyImpact 的**关键词回落**分支；原版对"表里没有"给的是默认字母 'C'（混凝土），
+        这条差别已登记 策划/差异登记.tsv；
+      · 表里最长的名字 15 字符 ⇒ 运行时长 16 字符的名字永远命不中（原版 `strnicmp(...,16)` 比到库里
+        那个串的 NUL 为止 = 整名相等，不是前缀匹配）。
+    崩溃/遗漏一律靠脚本自己的断言挡（跑不过就 exit 2，不产半份表）；表的完整性由离线宿主
+         .ai-tmp/hosts/impact-letters 对着本文件逐行核对（C# 表 ↔ 本 TSV ↔ 载体 SHA256）。

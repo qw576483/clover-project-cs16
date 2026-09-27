@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Cs16.Core;
 
 namespace Cs16.Module.Combat
@@ -589,6 +590,14 @@ namespace Cs16.Module.Combat
         /// </summary>
         public const float BloodDecalTraceRange = 2.5f;
 
+        /// <summary>
+        /// 现包贴花 sprite 时用的每单位像素数（PPU）：贴花 sprite 由 <c>Sprite.Create</c> 在运行期包出来
+        /// （纹理按 <c>Texture2D</c> 取，不依赖导入设置），贴花的**米数**由
+        /// <c>CombatEffects.SpriteScaleForMeters</c> 按 sprite 自己的宽度反算 ⇒ PPU 只决定
+        /// "1 米 = 多少像素"这一个换算。取 100，与工程里 UI 素材一贯的 <c>spritePixelsToUnits</c> 一致。
+        /// </summary>
+        public const float DecalSpritePixelsPerUnit = 100f;
+
         /// <summary>击中火星的存活时长（秒）。</summary>
         public const float SparkDuration = 0.05f;
 
@@ -663,6 +672,276 @@ namespace Cs16.Module.Combat
 
         /// <summary>低于该速率（米/秒）即"躺下"（贴面静止）。出处：**本项目新增**。</summary>
         public const float ShellRestSpeed = 0.25f;
+
+        /// <summary>在场弹壳的数量上限 = 原版 cvar <c>max_shells</c> 的出厂默认值 120。
+        /// 出处：<c>cstrike/cl_dlls/client.dll</c> RVA <c>0x4DAB9</c> 的
+        /// <c>pfnRegisterVariable("max_shells","120",flags)</c>（默认值串即 <c>"120"</c>）。</summary>
+        public const int MaxShells = 120;
+
+        /// <summary>
+        /// 弹壳的**计数闸门**（原版 <c>max_shells</c> 的机制；不依赖 Unity，可离线断言）。
+        ///
+        /// <para>队列语义：满员时新来者挤掉**最老的一枚**（先来的先出）。元素的进出由调用方给 ——
+        /// 抛壳时 <see cref="Register"/>、寿命到期或主动回收时 <see cref="Unregister"/>。</para>
+        ///
+        /// <para><b>为什么不直接数池里的物件</b>：弹壳槽位会被 <c>Acquire</c> 复用，
+        /// "池里有几个 Mesh 物件" ≠ "场上有几枚活着的弹壳"，计数只能跟着活着的弹壳走。</para>
+        /// </summary>
+        internal sealed class ShellCountGate<T> where T : class
+        {
+            private readonly List<T> _live = new List<T>();
+            private readonly int _capacity;
+
+            /// <summary>容量（&lt;=0 按 1 处理，避免"永远挤出"的退化）。</summary>
+            public ShellCountGate(int capacity)
+            {
+                _capacity = capacity > 0 ? capacity : 1;
+            }
+
+            /// <summary>容量。</summary>
+            public int Capacity => _capacity;
+
+            /// <summary>当前在场的弹壳数。</summary>
+            public int Count => _live.Count;
+
+            /// <summary>当前最老的一枚（无则 null）。</summary>
+            public T Oldest => _live.Count > 0 ? _live[0] : null;
+
+            /// <summary>登记新出现的一枚；已达上限则先挤掉最老的一枚并把它返回（未达上限返回 null）。</summary>
+            public T Register(T shell)
+            {
+                if (shell == null) return null;
+                T evicted = null;
+                if (_live.Count >= _capacity)
+                {
+                    evicted = _live[0];
+                    _live.RemoveAt(0);
+                }
+                _live.Add(shell);
+                return evicted;
+            }
+
+            /// <summary>摘掉一枚（寿命到期 / 主动回收）。返回它本来是否在队列里。</summary>
+            public bool Unregister(T shell)
+            {
+                if (shell == null) return false;
+                var index = _live.IndexOf(shell);
+                if (index < 0) return false;
+                _live.RemoveAt(index);
+                return true;
+            }
+
+            /// <summary>清空（特效模块销毁时）。</summary>
+            public void Clear() => _live.Clear();
+        }
+
+        // ==================================================================
+        //  命中面的**弹痕族**（判据来自原版 BSP；表由脚本生成）
+        // ==================================================================
+
+        /// <summary>
+        /// 碎裂族（`{break1..3`）贴花的**整块画布**世界尺寸（米）= 48 texel ×
+        /// <see cref="CsConst.UnitToMeter"/> = **1.2192 m**。
+        ///
+        /// <para><b>出处</b>：载体尺寸 = `decals.wad` 的 `{break1..3` 各 **48×48** texel
+        /// （`tools/probes/wad3-extract.py --info` 读出的 lump 头）；世界尺度 = 贴花自己的 texel 宽 ×
+        /// `size`，而 `size` 的默认值就是 |texinfo-&gt;vecs[0]| = 1 世界单位/texel（同一公式见
+        /// <see cref="DecalSize"/> 的出处段）⇒ 48 × 1 单位 = 48 单位 × 0.0254 = 1.2192 m。</para>
+        /// </summary>
+        public const float BreakDecalSize = 48f * CsConst.UnitToMeter;
+
+        /// <summary>
+        /// 命中面的弹痕族判据（原版 `client.dll` 的三步选族）。
+        ///
+        /// <para><b>原版规则</b>（本工程自己反汇编复核过，RVA 可复跑）：`client.dll` 的函数 0x20B0
+        /// 内 RVA <c>0x20B5-0x2127</c>（同逻辑另一份在 <c>0x1E00-0x1E73</c>）：
+        /// <c>[obj+0x8C] == 1</c> ⇒ <c>"{break%i"</c>（RandomInt(0,2)+1，碎裂族）；
+        /// 否则 <c>[obj+0x68] != 0</c> ⇒ <c>"{bproof1"</c>（防弹族）；
+        /// 否则 <c>"{shot%i"</c>（RandomInt(0,4)+1，普通弹痕）。族名串在 .data RVA
+        /// <c>0xE154C / 0xE1554 / 0xE1560</c>。</para>
+        ///
+        /// <para><b>两个入参从哪来</b>（见 <see cref="Table"/>）：都取自地图 <c>de_dust2.bsp</c> 自己的
+        /// 数据 —— <c>surf8C</c> = 该贴图**过半数**的面落在某个 <c>func_breakable</c> 刷实体的刷面上
+        /// （de_dust2 共 10 个，全部 <c>material 2</c> / <c>gibmodel models/mil_crategibs.mdl</c>）；
+        /// <c>surf68</c> = 防弹面，dust2 的载体里没有任何这种声明 ⇒ 全 0（如实记 0，不猜）。
+        /// 生成器 = <c>tools/probes/dust2_surface_flags.py</c>（ENTITY/MODELS/FACES/TEXINFO
+        /// 四段都过自洽断言；表也在 <c>ThirdParty/Dust2/surface_flags.tsv</c>）。</para>
+        ///
+        /// <para><b>⛔ 为什么不用 BSP 的 TEXINFO.flags</b>：实测该字段全图只有 0/1，且 ==1 的只有
+        /// <c>sky</c>(1356 面) / <c>aaatrigger</c>(25 面) / <c>clip</c>(0 面) —— 那是 TEX_SPECIAL
+        /// （天空/触发/夹层），**不是**"这一面可碎裂"。拿它当选族判据会把天空判成碎裂族。</para>
+        ///
+        /// <para><b>⛔ 名字只是查表键</b>：族由表里的 flags 决定；名字用来把运行时的材质名对到表里那一行。
+        /// 表里查不到 ⇒ <see cref="TrySelectFamily"/> 返回 false ⇒ 回落既有的 <c>{shot*</c> 路径
+        /// （⛔ 不让 `box` / `door` / `metal` 这类关键词参与选族）。</para>
+        ///
+        /// <para><b>命中音走另一条链</b>：<c>CsAudioTuning.ClassifyImpact</c> 按原版
+        /// <c>sound/materials.txt</c> 的材质字母分族，表外落原版默认字母 <c>'C'</c>
+        /// （<c>pm_shared.c:288</c>）—— 与弹痕族**无关**，两者只是共用同一个命中面材质名。</para>
+        /// </summary>
+        internal static class SurfaceDecals
+        {
+            /// <summary>弹痕族（下标即判据顺序，见 <see cref="SelectFamily"/>）。</summary>
+            public enum Family
+            {
+                /// <summary>普通弹痕（`{shot%i`，16×16 texel = <see cref="DecalSize"/>）。</summary>
+                Shot = 0,
+                /// <summary>防弹面（`{bproof1`，16×16 texel = <see cref="DecalSize"/>）。</summary>
+                Bproof = 1,
+                /// <summary>木/玻璃碎裂（`{break%i`，48×48 texel = <see cref="BreakDecalSize"/>）。</summary>
+                Break = 2,
+            }
+
+            /// <summary>表的一行：`texture` = 运行时可查的材质名（BSP miptex 名或工程侧贴图名）。</summary>
+            private struct Row
+            {
+                public readonly string Texture;
+                public readonly int Surf8C;
+                public readonly int Surf68;
+
+                public Row(string texture, int surf8C, int surf68)
+                {
+                    Texture = texture;
+                    Surf8C = surf8C;
+                    Surf68 = surf68;
+                }
+            }
+
+            /// <summary>
+            /// de_dust2 的表（由 <c>tools/probes/dust2_surface_flags.py --csharp</c> 打印，逐行粘入；
+            /// 完整性由离线宿主 <c>.ai-tmp/hosts/bspflags-check</c> 对着 <c>surface_flags.tsv</c> 逐行核对）。
+            /// ⛔ 手改这张表等于绕过生成器 —— 要改就改生成器再重跑。
+            /// </summary>
+            private static readonly Row[] Table =
+            {
+            new Row("-0csSandWall", 0, 0),
+            new Row("_0csSandWall", 0, 0),
+            new Row("sky", 0, 0),
+            new Row("SandTrim", 0, 0),
+            new Row("SandCCrete", 0, 0),
+            new Row("SandRoad", 0, 0),
+            new Row("-2Sand", 0, 0),
+            new Row("_2Sand", 0, 0),
+            new Row("-0SandRock2", 0, 0),
+            new Row("_0SandRock2", 0, 0),
+            new Row("-0Sand", 0, 0),
+            new Row("_0Sand", 0, 0),
+            new Row("generic011", 0, 0),
+            new Row("SandCrtSmSd", 0, 0),
+            new Row("SandCrtLrgSd", 0, 0),
+            new Row("SandWllWndw", 0, 0),
+            new Row("SandCrtSmTp", 0, 0),
+            new Row("SandCrtLrgTp", 0, 0),
+            new Row("+0~fifties_lgt2", 0, 0),
+            new Row("MltryCrteSd2", 1, 0),
+            new Row("SandWllDoor", 0, 0),
+            new Row("MltryCrteTp", 1, 0),
+            new Row("aaatrigger", 0, 0),
+            new Row("MltryCrteSd", 0, 0),
+            new Row("white", 0, 0),
+            new Row("black", 0, 0),
+            new Row("SandRoadTgtB", 0, 0),
+            new Row("SandWllDoorDJ1", 0, 0),
+            new Row("csSandWallBTA", 0, 0),
+            new Row("csSandWallGH1b", 0, 0),
+            new Row("djCredit1", 0, 0),
+            new Row("csSandWallGH1a", 0, 0),
+            new Row("SandWllDoorDJ2", 0, 0),
+            new Row("csSandWallDJ1", 0, 0),
+            new Row("djCredit2", 0, 0),
+            new Row("SandCCrete2", 0, 0),
+            new Row("SandWllDoor2", 0, 0),
+            new Row("SandWllDoorBTA", 0, 0),
+            new Row("SandWllDoorBTb", 0, 0),
+            new Row("csSandWallBTB", 0, 0),
+            new Row("SandRoadTgtA", 0, 0),
+            new Row("clip", 0, 0),
+            };
+
+            /// <summary>表里的行数（宿主用它核对"表没被截断"）。</summary>
+            public static int TableCount => Table.Length;
+
+            /// <summary>按序号读表的一行（供离线自检遍历；越界返回 false）。</summary>
+            public static bool TryGetRow(int index, out string texture, out int surf8C, out int surf68)
+            {
+                texture = null;
+                surf8C = 0;
+                surf68 = 0;
+                if (index < 0 || index >= Table.Length) return false;
+                texture = Table[index].Texture;
+                surf8C = Table[index].Surf8C;
+                surf68 = Table[index].Surf68;
+                return true;
+            }
+
+            /// <summary>
+            /// 原版三步选族（纯函数：不依赖 Unity，可离线断言）。
+            /// <c>surf8C</c> / <c>surf68</c> 就是原版读的两个字段（<c>[obj+0x8C]</c> / <c>[obj+0x68]</c>）。
+            /// </summary>
+            public static Family SelectFamily(int surf8C, int surf68)
+            {
+                if (surf8C == 1) return Family.Break;
+                if (surf68 != 0) return Family.Bproof;
+                return Family.Shot;
+            }
+
+            /// <summary>该族贴花的整块画布世界尺寸（米）—— <see cref="BreakDecalSize"/> 只归碎裂族。</summary>
+            public static float SizeMeters(Family family)
+            {
+                return family == Family.Break ? BreakDecalSize : DecalSize;
+            }
+
+            /// <summary>
+            /// 按运行时材质名查表。名字比较用 <see cref="System.StringComparison.OrdinalIgnoreCase"/>
+            /// （材质名来自资产文件名，大小写不该决定族）。
+            /// </summary>
+            public static bool TryLookup(string texture, out int surf8C, out int surf68)
+            {
+                surf8C = 0;
+                surf68 = 0;
+                if (string.IsNullOrEmpty(texture)) return false;
+                for (var i = 0; i < Table.Length; i++)
+                {
+                    if (string.Equals(Table[i].Texture, texture, System.StringComparison.OrdinalIgnoreCase))
+                    {
+                        surf8C = Table[i].Surf8C;
+                        surf68 = Table[i].Surf68;
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            /// <summary>查表 + 选族。表里没有该材质 ⇒ 返回 false（调用方回落既有路径，并只 Warn 一次）。</summary>
+            public static bool TrySelectFamily(string texture, out Family family)
+            {
+                family = Family.Shot;
+                if (!TryLookup(texture, out var s8c, out var s68)) return false;
+                family = SelectFamily(s8c, s68);
+                return true;
+            }
+        }
+
+        /// <summary>
+        /// 一次性闸门：第一次 <see cref="Take"/> 返回 true，之后恒 false。
+        /// 用于"表里查不到该材质"这类**高频**分支的日志降频（只 Warn 一次）。
+        /// 不依赖 Unity ⇒ 可离线断言（宿主 <c>.ai-tmp/hosts/bspflags-check</c>）。
+        /// </summary>
+        internal sealed class OnceFlag
+        {
+            private bool _taken;
+
+            /// <summary>放行第一次调用（true），其余为 false。</summary>
+            public bool Take()
+            {
+                if (_taken) return false;
+                _taken = true;
+                return true;
+            }
+
+            /// <summary>已放过（供自检读）。</summary>
+            public bool Taken => _taken;
+        }
 
         /// <summary>命中标记音（普通）。</summary>
         public const string HitMarkerSfx = "sfx/hitmarker";

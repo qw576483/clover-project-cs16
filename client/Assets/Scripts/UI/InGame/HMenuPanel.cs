@@ -11,10 +11,9 @@ namespace Cs16.UI
     /// <para><b>它是纯"发令台"</b>：所有动作都只 <c>Game.Event.Emit(...)</c>，
     /// 由比赛模块（<c>MatchModule</c> 已接好线）真正执行。UI 不碰任何业务对象。</para>
     ///
-    /// <para><b>数值回显的诚实边界</b>：<c>CsHudSnapshot</c> 里没有机器人数量 / 当前难度
-    /// （看它的字段清单），所以本面板**不编数字**：显示的是本面板刚发出的操作回执，
-    /// 并把"真实数量要看控制台日志；快照里还没有 BotCount / BotDifficulty"直接写在界面上。
-    /// 快照补上之后，只需改 <see cref="RefreshEcho"/> 那两行。</para>
+    /// <para><b>数值回显</b>：机器人数量 / 当前难度直接读 <c>CsHudSnapshot.BotCount</c> /
+    /// <c>CsHudSnapshot.BotDifficulty</c>（比赛模块每帧写入），文案由 <see cref="FormatBotEcho"/> 拼出。
+    /// 本面板不自己记数 —— 回显只反映比赛模拟的当前状态。</para>
     ///
     /// <para><b>换图</b>：本工程只有 de_dust2。点箭头**不发 <c>Events.SwitchMap</c>** ——
     /// 该事件目前在比赛模块里只会打一条"换图需要 Flow 重载场景，已忽略"的 Warn；
@@ -50,11 +49,25 @@ namespace Cs16.UI
         /// <summary>本工程唯一可玩地图（换图选择器只有这一项）。</summary>
         private static readonly string[] Maps = { CsConst.MapDust2 };
 
+        /// <summary>顶部提示行的节点路径（<see cref="BuildLayout"/> 建出的 <c>Dialog/Warn</c>）。</summary>
+        private const string HintPath = "Dialog/Warn";
+
+        /// <summary>顶部提示行文案：数量 / 难度由快照实时给出，这一行只说明这一页怎么看操作结果。</summary>
+        private const string HintText =
+            "机器人数量 / 当前难度实时显示在本页回显处；操作结果见控制台（/ 键）的 [Match] 日志";
+
         private int _mapIndex;
         private string _lastBotAction = "（还没有操作）";
-        private CsBotDifficulty _lastDifficulty = CsBotDifficulty.Normal;
-        private bool _difficultyKnown;
         private bool _warnedRefs;
+
+        /// <summary>
+        /// H 菜单「机器人」一行的显示文案：<c>机器人：{N} 个　难度：{Easy/Normal/Hard}</c>。
+        /// 纯函数：只把两个数值映射成文案。
+        /// </summary>
+        public static string FormatBotEcho(int botCount, CsBotDifficulty difficulty)
+        {
+            return $"机器人：{botCount} 个　难度：{difficulty}";
+        }
 
         public override UILayer Layer => UILayer.Popup;
 
@@ -71,10 +84,8 @@ namespace Cs16.UI
                 CsHudTheme.TextMain);
             CsHudTheme.PlaceTopLeft(title.rectTransform, new Vector2(28f, -16f), new Vector2(600f, 46f));
 
-            var warn = CsHudTheme.CreateText("Warn", boxRt,
-                "机器人数量 / 当前难度：CsHudSnapshot 未提供（快照无 BotCount 字段）" +
-                " —— 以本页回执与控制台（/ 键）的 [Match] 日志为准",
-                17, TextAnchor.MiddleLeft, CsHudTheme.Warn);
+            var warn = CsHudTheme.CreateText("Warn", boxRt, HintText,
+                17, TextAnchor.MiddleLeft, CsHudTheme.TextDim);
             CsHudTheme.PlaceTopLeft(warn.rectTransform, new Vector2(28f, -60f), new Vector2(900f, 26f));
 
             // ─────────── 机器人 ───────────
@@ -184,6 +195,7 @@ namespace Cs16.UI
             CsIngameCursor.UnlockForMenu(nameof(HMenuPanel));
 
             RefreshMapValue();
+            RefreshHint();
             RefreshEcho();
             Game.Logger?.Info(Tag, "H 菜单已打开（机器人 / 比赛 / 换阵营 / 换图）");
         }
@@ -217,8 +229,6 @@ namespace Cs16.UI
 
         private void AddBot(CsBotDifficulty difficulty)
         {
-            _lastDifficulty = difficulty;
-            _difficultyKnown = true;
             _lastBotAction = $"添加机器人（{difficulty}）";
             SetStatus($"{_lastBotAction} —— 已发送（加到人少的一队，由比赛模块判定成败）");
 
@@ -293,13 +303,26 @@ namespace Cs16.UI
             if (_statusText != null) _statusText.text = text;
         }
 
+        /// <summary>
+        /// 把顶部提示行写成 <see cref="HintText"/>（预制体里可能带着生成当时的副本）。
+        /// 节点缺失不影响 H 菜单的其它功能，只留一条日志。
+        /// </summary>
+        private void RefreshHint()
+        {
+            var node = transform.Find(HintPath);
+            var hint = node != null ? node.GetComponent<Text>() : null;
+            if (hint == null)
+            {
+                Game.Logger?.Warn(Tag, $"H 菜单提示行 {HintPath} 未找到，顶部文案沿用预制体里的副本");
+                return;
+            }
+            hint.text = HintText;
+        }
+
         private void RefreshEcho()
         {
             if (_botEchoText != null)
-            {
-                var difficulty = _difficultyKnown ? _lastDifficulty.ToString() : "未知";
-                _botEchoText.text = $"最近操作：{_lastBotAction}　难度档：{difficulty}";
-            }
+                _botEchoText.text = FormatBotEcho(CsHudSnapshot.BotCount, CsHudSnapshot.BotDifficulty);
 
             if (_aliveText == null) return;
 

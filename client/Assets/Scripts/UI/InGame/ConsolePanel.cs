@@ -15,8 +15,11 @@ namespace Cs16.UI
     /// <c>0</c>（<see cref="GameKey.Num0"/>）都能开关控制台。</para>
     ///
     /// <para><b>支持的命令</b>：<c>bot_add [easy|normal|hard]</c>、<c>bot_kick</c>、
-    /// <c>bot_difficulty &lt;easy|normal|hard&gt;</c>；其余一律回显"未知命令"
-    /// （不静默、不猜）。命令最终都只发 <c>Events.*</c> 事件，由比赛模块执行。</para>
+    /// <c>bot_difficulty &lt;easy|normal|hard&gt;</c>，以及观战五项
+    /// <c>spec_mode &lt;1-6&gt;</c> / <c>spec_player &lt;名字|#序号&gt;</c> / <c>spec_next</c> /
+    /// <c>spec_prev</c> / <c>spec_autodirector</c>；其余一律回显"未知命令"
+    /// （不静默、不猜）。命令最终都只发 <c>Events.*</c> 事件或写 <c>CsSpectator</c> 控制面状态，
+    /// 由视图模块 / 比赛模块执行。</para>
     ///
     /// <para><b>层</b>：<see cref="UILayer.Top"/>。控制台要能盖在任何弹窗（买枪 / H 菜单）之上，
     /// 而且它不该参与 <c>Popup</c> 的互斥（开控制台把买枪菜单顶掉是错的）。</para>
@@ -35,6 +38,11 @@ namespace Cs16.UI
             "bot_add [easy|normal|hard]",
             "bot_kick",
             "bot_difficulty <easy|normal|hard>",
+            "spec_mode <1|2|3|4>",
+            "spec_player <名字|#序号>",
+            "spec_next",
+            "spec_prev",
+            "spec_autodirector",
         };
 
         [SerializeField] private Text _logText;
@@ -207,6 +215,26 @@ namespace Cs16.UI
                     BotDifficulty(tokens);
                     break;
 
+                case "spec_mode":
+                    SpecMode(tokens);
+                    break;
+
+                case "spec_player":
+                    SpecPlayer(tokens);
+                    break;
+
+                case "spec_next":
+                    SpecNext();
+                    break;
+
+                case "spec_prev":
+                    SpecPrev();
+                    break;
+
+                case "spec_autodirector":
+                    SpecAutoDirector();
+                    break;
+
                 default:
                     Game.Logger?.Info(Tag, $"控制台收到未知命令：{raw}");
                     SetStatus($"未知命令：{command}", true);
@@ -269,6 +297,146 @@ namespace Cs16.UI
                     difficulty = CsBotDifficulty.Normal;
                     return false;
             }
+        }
+
+        // ═══════════════════════ 观战（spec_*）══════════════════════
+
+        /// <summary>
+        /// <c>spec_mode &lt;Main Mode&gt;</c>：命令名与用法串出处 = 客户端
+        /// <c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>（<c>spec_mode</c> @ file <c>0xe96f0</c>、
+        /// 用法串 @ file <c>0xe9530</c>，处理函数 <c>hud_spectator.cpp:48-63</c> → <c>SetModes(atoi(argv1), …)</c>）；
+        /// 原版档位范围 1..6 与非法档位原文 <c>"Invalid spectator mode."</c> 出处同文件 <c>:799-803</c>。
+        ///
+        /// <para><b>只接受有机位的档位</b>（本工程 = <c>1</c> 锁定追尾 / <c>2</c> 自由追尾 / <c>3</c> 自由飞行 /
+        /// <c>4</c> 目标第一人称，判据 <c>CsSpectator.IsImplemented</c>）：切到别的档位则**状态不变**、给
+        /// <c>Not implemented in this build: …</c> 并留 Warn —— 不存在"名字切了、机位没动"的中间态。
+        /// 5 / 6 为什么没有机位，见 <c>CsSpectator.IsImplemented</c> 的说明
+        /// （登记在 <c>策划/差异登记.tsv</c>）。</para>
+        ///
+        /// <para>第二个参数（inset 第二画面，原版 <c>spec_pip</c> / <c>INSET_*</c>）本工程没有实现，
+        /// 且其档位数值的载体 <c>hltv.h</c> 不在盘 ⇒ 收到就 Warn 并忽略，不静默吞掉。</para>
+        /// </summary>
+        private void SpecMode(string[] tokens)
+        {
+            if (tokens.Length < 2)
+            {
+                Game.Logger?.Warn(Tag, "控制台 spec_mode 缺参数");
+                SetStatus(CsSpectator.SpecModeUsageText, true);
+                LogBuffer.Push($"{CsSpectator.SpecModeUsageText}" +
+                               $"（可切档位 1 / 2 / 3 / 4；当前 {CsSpectator.ModeName(CsSpectator.Mode)}）");
+                return;
+            }
+
+            if (!CsSpectator.TrySetMode(tokens[1], out var reason))
+            {
+                Game.Logger?.Warn(Tag, $"控制台 spec_mode 拒绝 {tokens[1]}：{reason}");
+                SetStatus(reason, true);
+                LogBuffer.Push($"spec_mode {tokens[1]} → {reason}" +
+                               $"（档位未变，仍是 {CsSpectator.ModeName(CsSpectator.Mode)}）");
+                return;
+            }
+
+            if (tokens.Length > 2)
+                Game.Logger?.Warn(Tag,
+                    $"控制台 spec_mode 的 inset 参数本工程未实现（原版 spec_pip / INSET_* 档位），已忽略：{tokens[2]}");
+
+            Game.Logger?.Info(Tag,
+                $"控制台命令 spec_mode → {CsSpectator.ModeName(CsSpectator.Mode)}（档位 {(int)CsSpectator.Mode}/6）");
+            SetStatus($"观战档位 → {CsSpectator.ModeName(CsSpectator.Mode)}", false);
+            LogBuffer.Push($"spec_mode → {CsSpectator.ModeName(CsSpectator.Mode)}（机位已切换）");
+        }
+
+        /// <summary>
+        /// <c>spec_player &lt;名字|#序号&gt;</c>：定位与切换由视图模块在观战对象表上做（UI 不许引用
+        /// <c>Cs16.Module.*</c>），这里只把原始参数发出去。
+        /// </summary>
+        private void SpecPlayer(string[] tokens)
+        {
+            if (tokens.Length < 2)
+            {
+                Game.Logger?.Warn(Tag, "控制台 spec_player 缺参数");
+                SetStatus("用法：spec_player <名字|#序号>", true);
+                LogBuffer.Push("spec_player → 用法：spec_player <名字|#序号>");
+                return;
+            }
+
+            var bus = Game.Event;
+            if (bus == null)
+            {
+                Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_player 发不出去");
+                SetStatus("事件总线不可用：spec_player 未发送", true);
+                return;
+            }
+
+            Game.Logger?.Info(Tag, $"控制台命令 spec_player → {tokens[1]}");
+            bus.Emit(Events.SpectateTarget, tokens[1]);
+            SetStatus($"已发送：观战目标 {tokens[1]}", false);
+            LogBuffer.Push($"spec_player {tokens[1]} → 已发送（结果见 [View] 日志）");
+        }
+
+        /// <summary>
+        /// <c>spec_next</c>：切下一个观战目标（原版 FIRE1 / <c>follownext 0</c>，命令串
+        /// <c>follownext %i</c> @ <c>client.dll</c> file <c>0xe99e4</c>）。走既有
+        /// <see cref="Events.SpectateNext"/>（由比赛模块执行），本面板不重复实现。
+        /// </summary>
+        private void SpecNext()
+        {
+            var bus = Game.Event;
+            if (bus == null)
+            {
+                Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_next 发不出去");
+                SetStatus("事件总线不可用：spec_next 未发送", true);
+                return;
+            }
+
+            Game.Logger?.Info(Tag, $"控制台命令 spec_next → 发 {Events.SpectateNext}");
+            bus.Emit(Events.SpectateNext);
+            SetStatus("已发送：下一个观战目标", false);
+            LogBuffer.Push("spec_next → 已发送（结果见 [Match]/[View] 日志）");
+        }
+
+        /// <summary>
+        /// <c>spec_prev</c>：切上一个观战目标（原版 FIRE2 / <c>follownext 1</c>，
+        /// <c>hud_spectator.cpp:736-749</c> 里 <c>FindNextPlayer(bReverse=true)</c>）。
+        /// </summary>
+        private void SpecPrev()
+        {
+            var bus = Game.Event;
+            if (bus == null)
+            {
+                Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_prev 发不出去");
+                SetStatus("事件总线不可用：spec_prev 未发送", true);
+                return;
+            }
+
+            Game.Logger?.Info(Tag, $"控制台命令 spec_prev → 发 {Events.SpectatePrev}");
+            bus.Emit(Events.SpectatePrev);
+            SetStatus("已发送：上一个观战目标", false);
+            LogBuffer.Push("spec_prev → 已发送（结果见 [View] 日志）");
+        }
+
+        /// <summary>
+        /// <c>spec_autodirector</c>：切换自动导演标记（原版命令名 @ <c>client.dll</c> file <c>0xe9664</c>，
+        /// 配套内部 cvar <c>spec_autodirector_internal</c> @ file <c>0xe95e4</c>；命令行是**无参切换**）。
+        ///
+        /// <para>本工程没有导演流 —— 原版的自动导演由代理推 <c>DRC_CMD_*</c> 消息驱动
+        /// （<c>hud_spectator.cpp:464-600</c>）—— 所以置开后只记录状态，不动机位；
+        /// 玩家手动换目标时按原版 <c>:747-748</c> 自动关掉。</para>
+        /// </summary>
+        private void SpecAutoDirector()
+        {
+            CsSpectator.AutoDirector = !CsSpectator.AutoDirector;
+            var text = CsSpectator.AutoDirector ? "开" : "关";
+
+            if (CsSpectator.AutoDirector)
+                Game.Logger?.Warn(Tag,
+                    "控制台命令 spec_autodirector → 开：本工程没有导演流（原版由代理的 DRC_CMD_* 驱动），" +
+                    "自动导演只记录状态、不改机位");
+            else
+                Game.Logger?.Info(Tag, "控制台命令 spec_autodirector → 关");
+
+            SetStatus($"已发送：自动导演 {text}", false);
+            LogBuffer.Push($"spec_autodirector → {text}");
         }
     }
 }

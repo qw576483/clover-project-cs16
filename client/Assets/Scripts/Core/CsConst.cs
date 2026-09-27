@@ -1,3 +1,7 @@
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
 namespace Cs16.Core
 {
     /// <summary>
@@ -370,6 +374,56 @@ namespace Cs16.Core
         /// </summary>
         public const float ChaseDistanceSnap = 0.0508f;
 
+        // ---- 观战：自由飞行（原版 OBS_ROAMING = 档位 3）----
+        //
+        // 机位语义 = **观战者自己**的漫游原点 + 他自己的鼠标角，出处 `view.cpp:1538-1540`
+        //   （`VectorCopy (v_cl_angles, v_angles); VectorCopy (v_sim_org, v_origin);`）；
+        // 漫游原点的推进 = 共享代码 `PM_SpectatorMove`（`pm_shared.c:1490-1572`）——
+        //   服务端与 HLTV 客户端走的是同一个函数，本工程没有服务端，故在客户端按同一套式解算。
+        // ⛔ 该分支**没有重力 / 没有碰撞 / 没有边界钳制**：`pm_shared.c:2456-2461` 进了
+        //   `PM_SpectatorMove` 就 `return`（不进 `PM_AddGravity` / `PM_FixupGravityVelocity`、
+        //   也不做任何 trace），位置唯一的写点是 `:1571` 的
+        //   `VectorMA(origin, frametime, velocity, origin)`。
+
+        /// <summary>
+        /// 自由飞行的速度上限 = 原版 cvar <c>sv_spectatormaxspeed</c> 的默认 <b>500</b>（unit/s）· 出处
+        /// <c>原版资源/cs16src/hw.dll</c> file <c>0x18A098</c>（名串）/ file <c>0x18A0AF</c>（默认串 <c>500</c>）
+        /// ⇒ 500 × <see cref="UnitToMeter"/> = <b>12.7 m/s</b>。
+        /// 消费点 = <c>CsSpectatorRoam.Step</c>（对应原版 <c>pm_shared.c:1551-1555</c> 的那次钳制）。
+        /// </summary>
+        public const float SpecRoamMaxSpeed = 500f * UnitToMeter;
+
+        /// <summary>
+        /// 自由飞行的**水平指令幅值** = 原版 cvar <c>cl_forwardspeed</c> 的默认 <b>400</b>（unit/s）· 出处
+        /// <c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c> file <c>0xE9E40</c>（名串）/
+        /// file <c>0xE9E50</c>（默认串 <c>400</c>）⇒ 400 × <see cref="UnitToMeter"/> = <b>10.16 m/s</b>。
+        ///
+        /// <para><b>为什么前进 / 后退 / 侧移共用这一个幅值</b>：原版侧移与后退的幅值取自同族的
+        /// <c>cl_sidespeed</c> / <c>cl_backspeed</c>，而这两条 cvar 在同一个 client.dll 里的默认串是
+        /// <b>空串</b>（file <c>0xE9E20</c> / <c>0xE9E30</c>；整份二进制里 <c>"400"</c> 字面量只出现一次，
+        /// 就在 <c>cl_forwardspeed</c> 的默认值处），随包 <c>config.cfg</c> 又不在盘 ⇒ 盘上给不出这两个
+        /// 幅值的第二口径。本工程不另立数值，三条水平轴共用已取到的那一条 <c>cl_forwardspeed</c>
+        /// （登记在 <c>策划/差异登记.tsv</c>）。</para>
+        ///
+        /// <para>消费点 = <c>CsSpectatorRoam.Step</c> 的 <c>forwardMove</c> / <c>sideMove</c>
+        /// （对应原版 <c>pm_shared.c:1537-1544</c> 的 <c>cmd-&gt;forwardmove</c> / <c>cmd-&gt;sidemove</c>）。</para>
+        /// </summary>
+        public const float SpecRoamMoveSpeed = 400f * UnitToMeter;
+
+        /// <summary>
+        /// 自由飞行的摩擦倍率 = <b>1.5 ×</b> 地面摩擦 · 出处 <c>pm_shared.c:1523</c>
+        /// （<c>friction = pmove-&gt;movevars-&gt;friction * 1.5;</c>，其中的 1.5 就是本常量）。
+        /// 摩擦本体取 <see cref="SvFriction"/>（<c>sv_friction 4</c>）。
+        /// </summary>
+        public const float SpecRoamFrictionScale = 1.5f;
+
+        /// <summary>
+        /// 自由飞行的**速度死区** = 原版 <c>if (speed &lt; 1)</c> 里的那个 1（unit/s）· 出处
+        /// <c>pm_shared.c:1515-1518</c>（低于它就 <c>VectorCopy(vec3_origin, pmove-&gt;velocity)</c>，
+        /// 免得摩擦只剩无限逼近 0 的残速）⇒ 1 × <see cref="UnitToMeter"/> = <b>0.0254 m/s</b>。
+        /// </summary>
+        public const float SpecRoamDeadbandSpeed = 1f * UnitToMeter;
+
         // ---- 武器切换/动作时长 ----
         public const float SwitchTimePrimary = 0.6f;
         public const float SwitchTimePistol = 0.3f;
@@ -433,5 +487,506 @@ namespace Cs16.Core
         public const string PlayerName = "CsPlayer";
         public const string BotName = "CsBot";
         public const string WorldName = "CsWorld";
+    }
+
+    /// <summary>
+    /// 观战**主模式**档位（= 原版 <c>g_iUser1</c> 的取值）。原版的符号名
+    /// <c>OBS_CHASE_LOCKED … OBS_MAP_CHASE</c> 定义在 <c>hltv.h</c>，**该头文件本机不在盘**
+    /// ⇒ 数值由三处载体交叉推得，逐条可查：
+    /// <list type="number">
+    /// <item><c>原版资源/hlsdk/cl_dll/hud_spectator.cpp:876-877</c> 把档位号直接拼进本地化词条
+    /// （<c>sprintf(string, "#Spec_Mode%d", g_iUser1)</c>）⇒ **档位号 = 词条号**；</item>
+    /// <item><c>原版资源/cs16src/cstrike/cstrike__resource__cstrike_english.txt:941-946</c> 给出六个名字
+    /// （<c>Spec_Mode1</c> "Locked Chase Cam" / <c>2</c> "Free Chase Cam" / <c>3</c> "Free Look" /
+    /// <c>4</c> "First Person" / <c>5</c> "Free Overview" / <c>6</c> "Chase Overview"）；</item>
+    /// <item><c>hud_spectator.cpp:715-733</c>（JUMP 键的循环）与 <c>:799-803</c>（<c>spec_mode</c> 的范围校验
+    /// <c>&lt; OBS_CHASE_LOCKED || &gt; OBS_MAP_CHASE</c>）给出符号之间的先后与上下界。</item>
+    /// </list>
+    /// 三者合起来唯一确定"名字 ↔ 符号 ↔ 数值"：例如 <c>Spec_Mode4</c> 是 "First Person"、而循环里
+    /// <c>OBS_IN_EYE</c> 的下一个是 <c>OBS_ROAMING</c>（"Free Look"），故 <c>OBS_IN_EYE = 4</c>、
+    /// <c>OBS_ROAMING = 3</c>。
+    /// </summary>
+    public enum CsSpectatorMode
+    {
+        /// <summary>1 = "Locked Chase Cam"（原版 <c>OBS_CHASE_LOCKED</c>，锁定追尾：相机角度锁到目标的视角）。</summary>
+        ChaseLocked = 1,
+        /// <summary>2 = "Free Chase Cam"（原版 <c>OBS_CHASE_FREE</c>，自由追尾：相机角度用观察者自己的视角）。</summary>
+        ChaseFree = 2,
+        /// <summary>3 = "Free Look"（原版 <c>OBS_ROAMING</c>，自由飞行）。</summary>
+        FreeLook = 3,
+        /// <summary>4 = "First Person"（原版 <c>OBS_IN_EYE</c>，目标第一人称）。</summary>
+        FirstPerson = 4,
+        /// <summary>5 = "Free Overview"（原版 <c>OBS_MAP_FREE</c>，自由俯瞰）。</summary>
+        FreeOverview = 5,
+        /// <summary>6 = "Chase Overview"（原版 <c>OBS_MAP_CHASE</c>，跟随俯瞰）。</summary>
+        ChaseOverview = 6,
+    }
+
+    /// <summary>
+    /// 观战**控制面**（档位循环 / 自动导演标记 / 目标定位）的纯逻辑与状态。
+    ///
+    /// <para><b>为什么在 <c>Core</c></b>：写入者有 <c>UI/InGame/ConsolePanel</c>（控制台命令）与
+    /// <c>Module/View/ViewModule</c>（换目标、开局复位），读取者有 <c>UI/InGame/CsSpectatorWidget</c>
+    /// （显示档位名）—— 三者共有的层只有 <c>Cs16.Core</c>（UI 不许引用 <c>Cs16.Module.*</c>）。</para>
+    ///
+    /// <para><b>不吃机位</b>：真正的机位（锁定追尾 / 自由追尾 / 目标第一人称 / 自由飞行）由
+    /// <c>Module/CameraRig/FirstPersonCamera</c> 独占写，本类只承载档位状态与"哪几档有机位"的判据
+    /// （<see cref="IsImplemented"/>，集合见 <see cref="ImplementedModes"/>），其余档位不可切
+    /// （见 <see cref="TrySetMode"/>）。自由飞行的位置解算是**纯函数**，放在
+    /// <see cref="CsSpectatorRoam"/> 里（它也不碰相机，只算位置与速度）。</para>
+    /// </summary>
+    public static class CsSpectator
+    {
+        /// <summary>当前观战档位（默认见 <see cref="DefaultMode"/>）。</summary>
+        public static CsSpectatorMode Mode = DefaultMode;
+
+        /// <summary>
+        /// 自动导演标记 = 原版 cvar <c>spec_autodirector</c>（命令名与内部 cvar 名同在客户端
+        /// <c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>：<c>spec_autodirector</c> @ file <c>0xe9664</c>、
+        /// <c>spec_autodirector_internal</c> @ file <c>0xe95e4</c>）。
+        ///
+        /// <para><b>默认值 = 关</b>，出处 <c>hud_spectator.cpp:1610-1613</c>：HUD 复位时
+        /// <c>if (IsSpectateOnly() || demo playback) m_autoDirector-&gt;value = 1; else m_autoDirector-&gt;value = 0;</c>
+        /// —— 本工程的观战路径是"本地玩家阵亡后观战"，属 <c>else</c> 分支（非 HLTV 代理、非录像回放）⇒ <b>0</b>。
+        /// （另一口径：同文件 <c>:160</c> 注册时给的默认串是 <c>"1"</c>；那一条只对 HLTV 生效，两套口径不混用。）</para>
+        ///
+        /// <para>本工程没有导演流（原版由代理的 <c>DRC_CMD_*</c> 消息驱动，见 <c>hud_spectator.cpp:464-600</c>）
+        /// ⇒ 置开后只记录状态，不改变机位。</para>
+        /// </summary>
+        public static bool AutoDirector;
+
+        /// <summary>
+        /// 默认档位 = <see cref="CsSpectatorMode.ChaseFree"/>，出处 <c>hud_spectator.cpp:1617</c>：
+        /// <c>SetModes( OBS_CHASE_FREE, INSET_OFF );</c>（HUD 复位时进入的档位）。
+        /// </summary>
+        public static CsSpectatorMode DefaultMode => CsSpectatorMode.ChaseFree;
+
+        /// <summary>一局开始时复位（同原版 HUD 复位：档位回默认、自动导演回 0）。</summary>
+        public static void Reset()
+        {
+            Mode = DefaultMode;
+            AutoDirector = false;
+        }
+
+        /// <summary>
+        /// **本工程有真机位**的档位集合（判据见 <see cref="IsImplemented"/>）；<c>spec_mode</c> 只认这四档。
+        /// 顺序 = 原版 JUMP 键循环序（<c>hud_spectator.cpp:715-733</c>）扣掉未实现档后的样子
+        /// —— 原版那条循环自档位 1 起 <c>1 → 2 → 4 → 3 → 5 → 6 → 2</c>，本工程实现了其中的 1 / 2 / 4 / 3。
+        ///
+        /// <para>⛔ 本数组**不是** <see cref="NextMode"/> 的循环：循环只有 <c>2 → 4 → 3 → 2</c>
+        /// 三档，档位 1 不在循环里（原版循环自己也跳过它，见 <see cref="NextMode"/>）——
+        /// 档位 1 只能由 <c>spec_mode 1</c> 进入。</para>
+        /// </summary>
+        public static readonly CsSpectatorMode[] ImplementedModes =
+        {
+            CsSpectatorMode.ChaseLocked,   // 1
+            CsSpectatorMode.ChaseFree,     // 2
+            CsSpectatorMode.FirstPerson,   // 4
+            CsSpectatorMode.FreeLook,      // 3
+        };
+
+        /// <summary>
+        /// 该档位在本工程是否有**真机位**（不是只有名字）。
+        /// <list type="bullet">
+        /// <item><see cref="CsSpectatorMode.ChaseLocked"/>（原版 <c>OBS_CHASE_LOCKED</c>）= 锁定追尾：
+        /// 位置算法与档位 2 **完全共用**（同一个 <c>V_GetChaseOrigin</c>，<c>HLSDK/cl_dll/view.cpp:894-1050</c>），
+        /// 差异只在相机角度**锁到目标的视角** —— 原版给 <c>V_GetChasePos</c> 传的鼠标角是 <c>NULL</c>
+        /// （<c>view.cpp:1532</c>），那里判 <c>cl_angles == NULL</c> 就取 <c>ent-&gt;angles</c>
+        /// （<c>view.cpp:1264-1268</c>）。角度来源的纯判据 = <see cref="TryChaseCameraAngles"/>；</item>
+        /// <item><see cref="CsSpectatorMode.ChaseFree"/>（原版 <c>OBS_CHASE_FREE</c>）= 第三人称追尾：
+        /// 机位常量 <c>CsConst.ChaseDistance</c> / <c>ChaseMinDistance</c> / <c>ChaseWallOffset</c> /
+        /// <c>ChaseDistanceLerp</c> / <c>ChaseDistanceSnap</c>，出处 <c>HLSDK/cl_dll/view.cpp:894-1050</c>
+        /// （<c>V_GetChaseOrigin</c>）/ <c>HLSDK/cl_dll/in_camera.cpp:386-389</c>；角度用观察者自己的视角
+        /// （原版传 <c>v_cl_angles</c>，<c>view.cpp:1535</c> + <c>:1269-1270</c>）；</item>
+        /// <item><see cref="CsSpectatorMode.FirstPerson"/>（原版 <c>OBS_IN_EYE</c>）= 目标眼位 + 目标朝向：
+        /// 出处 <c>HLSDK/cl_dll/view.cpp:1289-1321</c>（<c>V_GetInEyePos</c>：<c>origin = ent-&gt;origin</c>、
+        /// <c>angles = ent-&gt;angles</c>，站立 <c>origin[2] += 28</c>、蹲姿 <c>+= 12</c>）。眼位高**直接复用
+        /// 模拟自己的 <c>CsActor.EyePosition</c>**（<c>Module/Match/CsTypes.cs:28/32</c>），⛔ 不新增任何眼高常量。</item>
+        /// <item><see cref="CsSpectatorMode.FreeLook"/>（原版 <c>OBS_ROAMING</c>）= 观察者**自己**的漫游机位：
+        /// 机位 = 他自己的漫游原点 + 他自己的鼠标角（<c>HLSDK/cl_dll/view.cpp:1538-1540</c>），原点推进 =
+        /// 共享代码 <c>PM_SpectatorMove</c>（<c>HLSDK/pm_shared/pm_shared.c:1490-1572</c>；数值取自
+        /// <see cref="CsConst"/> 的 <c>SpecRoam*</c> 常量）。</item>
+        /// </list>
+        ///
+        /// <para><b>其余两档（5 / 6）在本工程没有机位实现</b>：
+        /// <list type="number">
+        /// <item>5 / 6 = 原版 <c>OBS_MAP_FREE</c> / <c>OBS_MAP_CHASE</c>：主画面**不是 3D 机位** ——
+        /// <c>view.cpp:1545-1551</c> 把 <c>pparams-&gt;onlyClientDraw</c> 置真，而该字段的契约是
+        /// "引擎除 clientDraw 外什么都不画"（<c>common/ref_params.h:70</c>），画面上看到的是客户端自己画的
+        /// <b>2D 概览图</b>（<c>hud_spectator.cpp:395-416</c> 的 <c>m_mapZoom</c> / <c>m_mapOrigin</c>，
+        /// 取值来自 <c>overviews/de_dust2.txt</c> 的 <c>ZOOM 1.50</c> / <c>ORIGIN -223 1097 -192</c>）；
+        /// <c>V_GetMap*Position</c> 算出的 origin/angles 只用来把玩家投影到那张图上
+        /// （<c>hud_spectator.cpp:1305-1328</c> 的 <c>WorldToScreen</c>）。本工程没有 2D 概览子系统
+        /// ⇒ 这两档保持不可切（登记 <c>策划/差异登记.tsv</c>）。</item>
+        /// </list>
+        /// 这两档**不可切**：<see cref="TrySetMode"/> 拒绝、<see cref="NextMode"/> 不经过，因此画面上
+        /// 显示的档位名永远等于真正生效的那个机位。</para>
+        /// </summary>
+        public static bool IsImplemented(CsSpectatorMode mode)
+        {
+            return mode == CsSpectatorMode.ChaseLocked
+                || mode == CsSpectatorMode.ChaseFree
+                || mode == CsSpectatorMode.FirstPerson
+                || mode == CsSpectatorMode.FreeLook;
+        }
+
+        /// <summary>
+        /// 档位循环：按原版 JUMP 键的循环序走 <c>2 → 4 → 3 → 2</c>（判据 <see cref="IsImplemented"/>）。
+        ///
+        /// <para>原版 JUMP 键的循环序是 <c>1 → 2 → 4 → 3 → 5 → 6 → 2 …</c>
+        /// （<c>hud_spectator.cpp:715-733</c>，逐档一一对应；末档回到 2 的注释在 <c>:733</c>）。
+        /// ⛔ 本方法**不经过档位 1**：原版循环自己也跳过它 —— <c>:733</c> 那一支的注释逐字是
+        /// <c>don't use OBS_CHASE_LOCKED anymore</c>，档位 1 只能由 <c>spec_mode 1</c> 进入。
+        /// 本工程实现了该循环里的 2 / 4 / 3 ⇒ 本方法就是那条循环**扣掉未实现档与档位 1**后的样子：
+        /// 4 之后是 3；3 之后是 5 / 6（未实现）⇒ 按原版末档口径回到 2。
+        /// ⛔ 不切到没有机位的档位（切过去只会让档位名变了、镜头没动）。既没机位、也不在循环里的档位被问到就归一为默认档。</para>
+        /// </summary>
+        public static CsSpectatorMode NextMode(CsSpectatorMode current)
+        {
+            switch (current)
+            {
+                case CsSpectatorMode.ChaseFree: return CsSpectatorMode.FirstPerson;   // 2 → 4
+                case CsSpectatorMode.FirstPerson: return CsSpectatorMode.FreeLook;    // 4 → 3
+                case CsSpectatorMode.FreeLook: return CsSpectatorMode.ChaseFree;      // 3 →（5/6 未实现）→ 2
+                default: return DefaultMode;
+            }
+        }
+
+        /// <summary>
+        /// 追尾机位（档位 1 / 2）的**相机角度来源** —— 纯函数。位置算法两档完全共用
+        /// （<c>V_GetChaseOrigin</c>，<c>HLSDK/cl_dll/view.cpp:894-1050</c>），差异只在这里：
+        /// <list type="bullet">
+        /// <item>档位 1 <see cref="CsSpectatorMode.ChaseLocked"/>（原版 <c>OBS_CHASE_LOCKED</c>）：
+        /// 相机角度**锁到目标** —— 原版 <c>view.cpp:1532</c> 给 <c>V_GetChasePos</c> 传的鼠标角是 <c>NULL</c>，
+        /// 那里判 <c>cl_angles == NULL</c> 就取 <c>ent-&gt;angles</c>（<c>view.cpp:1264-1268</c>，
+        /// 注释逐字 <c>no mouse angles given, use entity angles ( locked mode )</c>）；</item>
+        /// <item>档位 2 <see cref="CsSpectatorMode.ChaseFree"/>（原版 <c>OBS_CHASE_FREE</c>）：
+        /// 相机角度取**观察者自己**的视角 —— <c>view.cpp:1535</c> 传的是 <c>v_cl_angles</c>，
+        /// <c>V_GetChasePos</c> 走 <c>VectorCopy(cl_angles, angles)</c>（<c>view.cpp:1269-1270</c>）。</item>
+        /// </list>
+        ///
+        /// <para><paramref name="targetYaw"/> / <paramref name="targetPitch"/> = 目标的视角角，
+        /// 与档位 4（原版 <c>OBS_IN_EYE</c>）用的是同一套目标朝向（<c>V_GetInEyePos</c> 同样取
+        /// <c>ent-&gt;angles</c>，<c>view.cpp:1306</c>）。返回 false = <paramref name="mode"/> 不是追尾档位，
+        /// 此时按观察者自己的角给出，调用方据此留痕。</para>
+        /// </summary>
+        public static bool TryChaseCameraAngles(CsSpectatorMode mode, float spectatorYaw, float spectatorPitch,
+                                                float targetYaw, float targetPitch,
+                                                out float yaw, out float pitch)
+        {
+            switch (mode)
+            {
+                case CsSpectatorMode.ChaseLocked:
+                    yaw = targetYaw;
+                    pitch = targetPitch;
+                    return true;
+
+                case CsSpectatorMode.ChaseFree:
+                    yaw = spectatorYaw;
+                    pitch = spectatorPitch;
+                    return true;
+
+                default:
+                    yaw = spectatorYaw;
+                    pitch = spectatorPitch;
+                    return false;
+            }
+        }
+
+        /// <summary>档位名 = 原版本地化串原文（<c>cstrike_english.txt:941-946</c>，经 <c>#Spec_Mode%d</c> 取）。</summary>
+        public static string ModeName(CsSpectatorMode mode)
+        {
+            switch (mode)
+            {
+                case CsSpectatorMode.ChaseLocked: return "Locked Chase Cam";
+                case CsSpectatorMode.ChaseFree: return "Free Chase Cam";
+                case CsSpectatorMode.FreeLook: return "Free Look";
+                case CsSpectatorMode.FirstPerson: return "First Person";
+                case CsSpectatorMode.FreeOverview: return "Free Overview";
+                case CsSpectatorMode.ChaseOverview: return "Chase Overview";
+                default: return string.Empty;
+            }
+        }
+
+        /// <summary>非法档位号的原版提示原文（<c>hud_spectator.cpp:801</c>；亦见客户端 <c>client.dll</c> file <c>0xe9a00</c>）。</summary>
+        public const string InvalidModeText = "Invalid spectator mode.";
+
+        /// <summary><c>spec_mode</c> 的用法串 = 原版原文（客户端 <c>client.dll</c> file <c>0xe9530</c>）。</summary>
+        public const string SpecModeUsageText = "usage:  spec_mode <Main Mode> [<Inset Mode>]";
+
+        /// <summary>未实现档位的拒绝文案（沿用原版英文提示的句式；该档位的机位在本工程不存在，见 <see cref="IsImplemented"/>）。</summary>
+        public static string NotImplementedText(CsSpectatorMode mode)
+        {
+            return $"Not implemented in this build: {ModeName(mode)}.";
+        }
+
+        /// <summary>
+        /// <c>spec_mode &lt;n&gt;</c> 的档位解析与**范围**校验。原版口径：<c>SetModes(atoi(argv1), …)</c>
+        /// 后判 <c>iNewMainMode &lt; OBS_CHASE_LOCKED || iNewMainMode &gt; OBS_MAP_CHASE</c> 就报
+        /// <c>"Invalid spectator mode."</c>（<c>hud_spectator.cpp:799-803</c>）⇒ 原版的合法区间就是
+        /// <b>1..6</b>；本方法只判这个区间（"本工程有没有该机位"由 <see cref="TrySetMode"/> 再判一层）。
+        ///
+        /// <para>解析用 <c>int.TryParse</c>（整数严格匹配）；原版 <c>atoi</c> 会把 <c>"3abc"</c> 截成 3，
+        /// 本工程不模仿那截断行为（越界与非法输入都落到同一条 <c>false</c>）。</para>
+        /// </summary>
+        /// <param name="reason">失败原因（用法串 / 原版原文 / 未实现文案），成功时为 null。</param>
+        public static bool TryParseMode(string text, out CsSpectatorMode mode, out string reason)
+        {
+            mode = DefaultMode;
+            reason = null;
+
+            if (string.IsNullOrEmpty(text))
+            {
+                reason = SpecModeUsageText;
+                return false;
+            }
+
+            if (!int.TryParse(text.Trim(), out var value))
+            {
+                reason = InvalidModeText;
+                return false;
+            }
+
+            if (value < (int)CsSpectatorMode.ChaseLocked || value > (int)CsSpectatorMode.ChaseOverview)
+            {
+                reason = InvalidModeText;
+                return false;
+            }
+
+            mode = (CsSpectatorMode)value;
+            return true;
+        }
+
+        /// <summary>
+        /// <c>spec_mode &lt;n&gt;</c> 的唯一写入入口：解析 + **已实现机位闸门** + 写状态。
+        ///
+        /// <para>只有已实现机位（<see cref="IsImplemented"/>）才会改 <see cref="Mode"/>；被拒时
+        /// **状态一个字节都不改**，返回 false 并把文案交给调用方（控制台显示 + 留痕）。
+        /// 这是"画面上显示的档位名必须等于真正生效的机位"的实现面：不存在"名字切了、机位没动"的中间态。</para>
+        /// </summary>
+        public static bool TrySetMode(string text, out string reason)
+        {
+            if (!TryParseMode(text, out var mode, out reason)) return false;
+
+            if (!IsImplemented(mode))
+            {
+                reason = NotImplementedText(mode);
+                return false;
+            }
+
+            Mode = mode;
+            reason = null;
+            return true;
+        }
+
+        /// <summary>
+        /// 非观战态按观战键的原因文案。<b>本项目新增措辞</b>：原版在 <c>if ( !g_iUser1 ) return;</c>
+        /// （<c>hud_spectator.cpp:689-690</c>）静默返回，盘上没有对应提示串。
+        /// </summary>
+        public const string NotSpectatingText = "Not spectating (spectator keys are ignored while alive).";
+
+        /// <summary>
+        /// 观战键（原版 JUMP / 本工程 <c>[空格]</c>）的**唯一入口**：按原版循环序
+        /// （<see cref="NextMode"/>）切到下一档，写入仍走 <see cref="TrySetMode"/> ——
+        /// 档位状态只有 <see cref="Mode"/> 这一份，⛔ 不另立第二套。
+        ///
+        /// <para><b>闸门</b>：原版把 JUMP 循环写在 <c>hud_spectator.cpp:715-733</c>，入口闸门是同文件
+        /// <c>:689-690</c> 的 <c>if ( !g_iUser1 ) return;</c> ⇒ 只有观战/阵亡态才消费这个键
+        /// （<paramref name="spectating"/> = false 时返回 false，且状态一个字节都不改）。
+        /// 活着时空格是跳跃，由 <c>Module/Player/PlayerMotor.cs</c> 那条读键负责。</para>
+        ///
+        /// <para>⛔ 循环按原版**跳过档位 1**（<c>:733</c> 注释 <c>don't use OBS_CHASE_LOCKED anymore</c>）——
+        /// 档位 1 只能由 <c>spec_mode 1</c> 进入，从档位 1 按本键回到默认档而不是停在 1。</para>
+        /// </summary>
+        /// <param name="spectating">本地玩家当前是否处于观战/阵亡态。</param>
+        /// <param name="reason">没切档的原因（非观战态 / 目标档位没有机位），成功时为 null；调用方据此留痕。</param>
+        /// <returns>是否真的切了档位。</returns>
+        public static bool TryCycleModeOnJump(bool spectating, out string reason)
+        {
+            reason = null;
+            if (!spectating)
+            {
+                reason = NotSpectatingText;
+                return false;
+            }
+
+            var want = NextMode(Mode);
+            if (!IsImplemented(want))
+            {
+                // NextMode 只返回有机位的档位；这一步是防口径漂移的闸门（⛔ 不静默：调用方会 Warn）。
+                reason = NotImplementedText(want);
+                return false;
+            }
+
+            // 单一写入入口：被拒时 Mode 保持不变，reason 由它给出（"名字切了、机位没动"的中间态不存在）。
+            return TrySetMode(((int)want).ToString(), out reason);
+        }
+
+        /// <summary>
+        /// next / prev 的**首尾环绕**：返回在 <paramref name="count"/> 个元素上从
+        /// <paramref name="index"/> 朝 <paramref name="dir"/> 走一格后的下标（<c>dir &gt;= 0</c> 为下一个，
+        /// 否则上一个）。末位 +1 回到首位、首位 −1 回到末位。
+        ///
+        /// <para>公式与原版一致：<c>hud_spectator.cpp:635-643</c> 的
+        /// <c>if (iCurrent &gt; MAX_PLAYERS) iCurrent = 1; if (iCurrent &lt; 1) iCurrent = MAX_PLAYERS;</c>
+        /// 是同一件事（环绕），<c>CsMatch.SpectateNext</c> 用的也是同一条 <c>((i + step) % n + n) % n</c>。</para>
+        ///
+        /// <para><paramref name="index"/> 越界（含 −1 = "当前还没有目标"）时归一：<c>dir &gt;= 0</c> 取首位、
+        /// 否则取末位 —— 对应原版 <c>FindNextPlayer</c> 在 <c>g_iUser2 == 0</c> 时也照走一格
+        /// （<c>:620-629</c>：无目标时 <c>iStart = 1</c> 再 <c>iCurrent += iDir</c>）。</para>
+        /// <paramref name="count"/> &lt;= 0（没有可观察目标）返回 −1。</summary>
+        public static int StepIndex(int index, int count, int dir)
+        {
+            if (count <= 0) return -1;
+            if (index < 0 || index >= count) return dir < 0 ? count - 1 : 0;
+            var step = dir >= 0 ? 1 : -1;
+            return ((index + step) % count + count) % count;
+        }
+
+        /// <summary>
+        /// <c>spec_player &lt;名字|#序号&gt;</c> 的参数解析。<paramref name="names"/> = 观战对象表
+        /// （只含活人）中每个目标的名字，下标与表一致。
+        ///
+        /// <para><c>#n</c> 里的 <c>n</c> 是**表内 1-based 序号**（与模拟自己的日志口径
+        /// <c>CsMatch.SpectateNext</c> 的 <c>_spectateIndex + 1/n</c> 一致）；名字按
+        /// **不区分大小写完全相等**匹配。</para>
+        ///
+        /// <para>原版的观战对象列表项是 <c>#Spec_PlayerItem</c> / <c>#Spec_PlayerItem_Team</c>
+        /// （<c>client.dll</c> file <c>0xed870</c> / <c>0xed884</c>，即列表里的"玩家项"），
+        /// 选中不可观战对象时给 <c>#Spec_Not_Valid_Choice</c>（"** You are not allowed to spectate this person."）；
+        /// 盘上三份二进制里**没有** <c>spec_player</c> 这个命令串 ⇒ 本方法的参数形态是本工程按上面两条
+        /// 列表口径取的（见 <c>策划/差异登记.tsv</c>）。</para>
+        /// </summary>
+        public static bool TryParseTarget(string text, IReadOnlyList<string> names, out int index, out string error)
+        {
+            index = -1;
+            error = null;
+
+            if (string.IsNullOrEmpty(text) || text.Trim().Length == 0)
+            {
+                error = "用法：spec_player <名字|#序号>";
+                return false;
+            }
+
+            if (names == null || names.Count == 0)
+            {
+                error = "没有可观察目标（原版 #Spec_NoPlayers：" + NoPlayersText + "）";
+                return false;
+            }
+
+            var token = text.Trim();
+
+            if (token[0] == '#')
+            {
+                if (!int.TryParse(token.Substring(1), out var ordinal) || ordinal < 1 || ordinal > names.Count)
+                {
+                    error = $"序号超出范围（1..{names.Count}）";
+                    return false;
+                }
+                index = ordinal - 1;
+                return true;
+            }
+
+            for (var i = 0; i < names.Count; i++)
+            {
+                if (string.Equals(names[i], token, StringComparison.OrdinalIgnoreCase))
+                {
+                    index = i;
+                    return true;
+                }
+            }
+
+            error = $"找不到观战对象：{token}";
+            return false;
+        }
+
+        /// <summary>原版 <c>#Spec_NoPlayers</c> 的文案（<c>cstrike_english.txt:947</c>）。</summary>
+        public const string NoPlayersText = "No Players to Spectate";
+    }
+
+    /// <summary>
+    /// 观战**自由飞行**（原版 <c>OBS_ROAMING</c> = 档位 3）的位置解算 —— 纯函数，不碰相机 / 不碰
+    /// Transform（相机写入仍然只在 <c>Module/CameraRig/FirstPersonCamera</c>）。
+    ///
+    /// <para><b>它为什么在 <c>Core</c></b>：数值全是 <see cref="CsConst"/> 的 <c>SpecRoam*</c> 常量，
+    /// 逻辑是原版共享代码 <c>PM_SpectatorMove</c> 的逐语句搬运（<c>pm_shared.c:1490-1572</c>）——
+    /// 放在这里才能被离线断言宿主直接跑（不启编辑器、不进 Play）。</para>
+    ///
+    /// <para><b>原版语义</b>：自由飞行时观察者的机位就是**他自己的**模拟原点 + 他自己的鼠标角
+    /// （<c>view.cpp:1538-1540</c>）；这个原点由 <c>PM_SpectatorMove</c> 按他的 usercmd 推进。
+    /// 该分支**无重力、无碰撞、无边界钳制**（<c>pm_shared.c:2456-2461</c> 进了函数就 return）。</para>
+    /// </summary>
+    public static class CsSpectatorRoam
+    {
+        /// <summary>自由飞行的一帧状态：位置（米）与速度（米/秒），都是本工程的世界坐标口径。</summary>
+        public struct State
+        {
+            public Vector3 Origin;
+            public Vector3 Velocity;
+        }
+
+        /// <summary>
+        /// 推进一帧自由飞行，**逐语句对应原版 <c>PM_SpectatorMove</c> 的 <c>OBS_ROAMING</c> 分支
+        /// （<c>pm_shared.c:1490-1572</c>）：
+        /// <list type="number">
+        /// <item>摩擦：<c>speed &lt; SpecRoamDeadbandSpeed</c> 直接清零（原版 <c>:1515-1518</c>），否则
+        /// <c>control = max(speed, SvStopSpeed)</c>、<c>drop = control × SvFriction × 1.5 × dt</c>、
+        /// 速度按 <c>(speed − drop)/speed</c> 缩放（原版 <c>:1521-1534</c>）；</item>
+        /// <item>期望速度 <c>wish = forward × forwardMove + right × sideMove</c>，再 <c>wish.y += upMove</c>，
+        /// 然后按 <see cref="CsConst.SpecRoamMaxSpeed"/> 钳制（原版 <c>:1537-1555</c>）；</item>
+        /// <item><c>addSpeed = wishSpeed − dot(velocity, wishDir)</c>；<c>≤ 0</c> 时**提前返回** ——
+        /// 速度已经被摩擦过、位置这一步不推进（原版 <c>:1560-1561</c> 就是这样，"松手即停"）；</item>
+        /// <item>否则 <c>accel = min(SvAccelerate × dt × wishSpeed, addSpeed)</c>，速度加上去，位置按
+        /// <c>origin += dt × velocity</c> 积分（原版 <c>:1563-1571</c>）。</item>
+        /// </list>
+        ///
+        /// <para><b>单位</b>：入口出口都是米 / 米每秒（本工程口径），<paramref name="dt"/> 吃秒；
+        /// <paramref name="forward"/> / <paramref name="right"/> 须是单位向量，且 <paramref name="forward"/>
+        /// **含俯仰** —— 原版 <c>pm_shared.c:2454</c> 的
+        /// <c>AngleVectors(pmove-&gt;angles, pmove-&gt;forward, pmove-&gt;right, pmove-&gt;up)</c> 就是这样，
+        /// 所以"抬头 / 低头 + 前进"本来就是原版的垂直移动方式（<c>upMove</c> 另有 <c>+moveup</c> /
+        /// <c>+movedown</c> 一条路，本工程不绑专用上下键 ⇒ 调用方传 0）。</para>
+        /// </summary>
+        public static State Step(State s, float dt, Vector3 forward, Vector3 right,
+                                 float forwardMove, float sideMove, float upMove)
+        {
+            if (dt <= 0f) return s;
+
+            // ① 摩擦（原版 :1513-1535）
+            var velocity = s.Velocity;
+            var speed = velocity.magnitude;
+            if (speed < CsConst.SpecRoamDeadbandSpeed)
+            {
+                velocity = Vector3.zero;
+            }
+            else
+            {
+                var friction = CsConst.SvFriction * CsConst.SpecRoamFrictionScale;
+                var control = speed < CsConst.SvStopSpeed ? CsConst.SvStopSpeed : speed;
+                var drop = control * friction * dt;
+                var newspeed = speed - drop;
+                if (newspeed < 0f) newspeed = 0f;
+                velocity = velocity * (newspeed / speed);
+            }
+
+            // ② 期望速度（原版 :1537-1555）
+            var wish = forward * forwardMove + right * sideMove;
+            wish.y += upMove;
+            var wishSpeed = wish.magnitude;
+            var wishDir = wishSpeed > 0f ? wish * (1f / wishSpeed) : Vector3.zero;
+            if (wishSpeed > CsConst.SpecRoamMaxSpeed) wishSpeed = CsConst.SpecRoamMaxSpeed;
+
+            // ③ 已达期望速度 ⇒ 原版在这里 return：速度已摩擦、位置不推进（原版 :1557-1561）
+            var currentSpeed = wishDir.x * velocity.x + wishDir.y * velocity.y + wishDir.z * velocity.z;
+            var addSpeed = wishSpeed - currentSpeed;
+            if (addSpeed <= 0f) return new State { Origin = s.Origin, Velocity = velocity };
+
+            // ④ 加速 + 位置积分（原版 :1563-1571）
+            var accelSpeed = CsConst.SvAccelerate * dt * wishSpeed;
+            if (accelSpeed > addSpeed) accelSpeed = addSpeed;
+            velocity = velocity + wishDir * accelSpeed;
+
+            return new State { Origin = s.Origin + velocity * dt, Velocity = velocity };
+        }
     }
 }

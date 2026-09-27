@@ -36,7 +36,12 @@ namespace Cs16.Core
         public const string RestartRound = "Game.RestartRound";
         public const string RestartMatch = "Game.RestartMatch";
         public const string TogglePause = "Game.TogglePause";
+        /// <summary>切到下一个观战目标（原版 FIRE1 → <c>FindNextPlayer(false)</c>）。</summary>
         public const string SpectateNext = "Game.SpectateNext";
+        /// <summary>切到上一个观战目标（原版 FIRE2 → <c>FindNextPlayer(true)</c>）。</summary>
+        public const string SpectatePrev = "Game.SpectatePrev";
+        /// <summary>参数：string（<c>spec_player &lt;名字|#序号&gt;</c> 的原始参数；定位由视图模块在观战对象表上做）。</summary>
+        public const string SpectateTarget = "Game.SpectateTarget";
 
         /// <summary>参数：string 地图名（H 菜单换图）</summary>
         public const string SwitchMap = "Game.SwitchMap";

@@ -538,7 +538,7 @@ namespace Cs16.UI
         /// <summary>
         /// 编辑器生成器在建预制体时调一次：把三个**原版图标 sprite** 绑进来
         /// （<c>Resources/UI/Art/hud_{cross,suit_full,suithelmet_full}.png</c>，
-        /// 由 <c>原版资源/解包产物/cs16_asset_extract.py</c> 从本体 <c>640hud7.spr</c> 解出）。
+        /// 由本体 <c>640hud7.spr</c> 解出 —— 解码脚本本机不在盘，见 <c>ThirdParty/Dust2/SOURCES.txt</c>）。
         /// 运行期没有 AssetDatabase，所以引用必须在编辑器里绑进预制体。
         /// 传 null 不算成功：只报一次 Warn，绝不静默把图标吞掉。
         /// </summary>
@@ -1010,8 +1010,8 @@ namespace Cs16.UI
         //    它们**并非 A（CS 1.6）的行为** —— 原版 HUD 里没有"伤害数字"这一项（依据：`策划/对照表.md`
         //    （`hud.txt:179` 的 `d_headshot`）与击杀条，**没有伤害数字**；`策划/验收表.md` B 段我方 HUD
         //    项清单与 `client/资源欠缺清单.md` 的"A 有/我方缺"对账里同样没有它）。
-        //    原版硬载体（`cstrike/sprites/hud.txt` / `原版资源/解包产物/`）本机不在盘
-        //    （`原版资源/清单.md` 实测为空）⇒ 拿不到 hud.txt 原文级直证；故本条按「本项目新增、
+        //    原版硬载体 `cstrike/sprites/hud.txt` 在盘（`原版资源/cs16src/cstrike/cstrike__sprites__hud.txt`），
+        //    `原版资源/解包产物/` 在盘但为空（见 `原版资源/清单.md`）⇒ 本条未用 hud.txt 原文做逐行直证；故本条按「本项目新增、
         //    受击的**方向**反馈仍在（屏幕边缘红框 = CsDamageIndicatorWidget，见下面 RefreshWidgets
         //    里 `_damage?.Refresh(...)` 那一行），其时长常量已改名 CsConst.DamageIndicatorTime。
         //    若要恢复，请先给出原版出处的 file:line（当前载体里没有）。

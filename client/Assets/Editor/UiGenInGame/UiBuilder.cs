@@ -174,8 +174,9 @@ namespace Cs16.EditorTools
         /// <summary>
         /// 把 HUD 用的 PNG 导入设置规整成 **Sprite/Single**（点采样、无 mipmap、alpha 透明），并取回 sprite。
         /// 原版那种 24×24 的图标必须是 Sprite 才能被 <c>Image</c> 用 / 被 <c>Game.Res.LoadAsset&lt;Sprite&gt;</c> 取到。
-        /// <para>PNG 本身**不在这里生成**：它是 `原版资源` 里解出的原版素材副本
-        /// （<c>python 原版资源/解包产物/cs16_asset_extract.py</c> 产出并复制进工程），
+        /// <para>PNG 本身**不在这里生成**：它是原版 HUD 素材的副本，由 <c>cs16_asset_extract.py</c>
+        /// 从原版本体解出后复制进工程（该脚本**本机不在盘**，清单与出处见
+        /// <c>Assets/ThirdParty/Dust2/SOURCES.txt</c>），
         /// 本方法只负责"导入设置 + 取引用" —— 素材缺失时报 Error 而不是造一个占位图。</para>
         /// </summary>
         private static Sprite EnsureHudIconSprite(string resourcePath, string hint = null)
@@ -184,7 +185,7 @@ namespace Cs16.EditorTools
             if (!File.Exists(path))
             {
                 Debug.LogError($"{LogTag} 缺 HUD 图标 PNG：{path} —— " + (hint ??
-                               "请先在项目根跑 `python 原版资源/解包产物/cs16_asset_extract.py`") +
+                               "请把原版 HUD 素材复制进工程（解出脚本本机不在盘，见 Assets/ThirdParty/Dust2/SOURCES.txt）") +
                                "（不许用占位图顶替）");
                 return null;
             }

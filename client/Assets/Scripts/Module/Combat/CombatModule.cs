@@ -66,6 +66,10 @@ namespace Cs16.Module.Combat
         private string _lastSeenWeapon;
         private string _previousWeapon;
 
+        /// <summary>弹着音的「原版 materials.txt 未收录该贴图」日志闸门 —— 只 Warn 一次
+        /// （每发子弹打墙都会走到那条回落分支，不闸就是刷屏）。</summary>
+        private readonly CsCombatTuning.OnceFlag _impactLetterMiss = new CsCombatTuning.OnceFlag();
+
         /// <summary>准星扩散 0~1（同时写进 <c>CsHudSnapshot.CrosshairSpread</c> 供 HUD 读）。</summary>
         public float CrosshairSpread => _crosshair.Value;
 
@@ -570,18 +574,33 @@ namespace Cs16.Module.Combat
             var impactMaterials = _firearm.ImpactMaterials;
             for (var i = 0; i < impactPoints.Count; i++)
             {
-                _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i]);
-
-                // "按材质分流"落在 CsAudioTuning.ClassifyImpact：先按命中物的材质名/节点名分类
-                // （沙 / 木箱 / 门板 / 混凝土 / 金属 / 未知），再播 hit_wall。
-                // 盘上**只有一条** hit_wall.wav（原版按材质分的多条弹着采样不在盘）⇒ 各类现在落同一 clip，
-                //    但"分类"是真的、且逐类可在日志核对；缺口已登记 策划/差异登记.tsv。
+                // 命中面的材质名（= 命中 Mesh 的 sharedMaterial.name）——**弹痕族与弹着音分类共用同一个来源**：
+                // 弹痕族由 CsCombatTuning.SurfaceDecals 按它查表（原版 client.dll 的 [surf+0x8C]/[surf+0x68]），
+                // 弹着音分类由 CsAudioTuning.ClassifyImpact 按它分流。
                 var matName = i < impactMaterials.Count ? impactMaterials[i] : null;
+                _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i], matName);
+
+                // 弹着音的分族 = 原版口径（CsAudioTuning.ClassifyImpact）：
+                //   ① 材质名在 sound/materials.txt 里 ⇒ 用它那一行的字母给族（M/V = 金属，其余 = 混凝土）；
+                //   ② 查不到 ⇒ 原版的默认字母 'C' = 混凝土族（pm_shared.c:288）。
+                // 盘上**只有一条** hit_wall.wav（原版按族分的多条弹着采样不在盘）⇒ 两族落同一 clip，
+                //   但"族"是真的、且逐族可在日志核对；缺口已登记 策划/差异登记.tsv #56。
                 var cls = CsAudioTuning.ClassifyImpact(matName);
+                // 闸门与 CombatEffects 的「命中面材质不在 flags 表里」同款（CsCombatTuning.OnceFlag，
+                // 纯逻辑、可离线断言）：每发子弹都会走到这个分支，不闸就是刷屏。
+                if (!CsAudioTuning.TryLookupImpactLetter(matName, out var impactLetter) && _impactLetterMiss.Take())
+                {
+                    _log.Warn("hitwall.material.miss",
+                        $"原版 sound/materials.txt 未收录命中贴图「{matName ?? "null"}」—— " +
+                        "按原版落默认材质字母 'C' / 混凝土族（pm_shared.c:288）");
+                }
                 _audio.PlayAt(CsAudioTuning.HitWall, impactPoints[i]);
                 _log.Info("hitwall." + cls,
                     $"弹着音 hit_wall（落点 {impactPoints[i]}）：命中材质「{matName ?? "null"}」→ 分类 {cls}" +
-                    "（原版按材质分流的多条采样不在盘，见 策划/差异登记.tsv）");
+                    (impactLetter != '\0'
+                        ? $"（原版材质字母 {impactLetter}）"
+                        : $"（materials.txt 未收录该贴图 → 按原版落默认 {CsAudioTuning.ImpactDefaultLetter} / 混凝土族）") +
+                    "（原版按族分的多条采样不在盘，见 策划/差异登记.tsv）");
             }
 
             var hits = _firearm.Hits;

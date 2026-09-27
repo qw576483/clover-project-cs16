@@ -174,6 +174,15 @@ namespace Cs16.UI
         {
             Game.Logger.Info(Tag, $"暂停菜单：换阵营 → {team}");
             Game.Event.Emit(Events.ChangeTeam, team);
+            HudPanel.Notify($"已换到{TeamText(team)}");
+        }
+
+        /// <summary>阵营的中文名（CT = 反恐精英、T = 恐怖分子，其余取值为观察者）。</summary>
+        private static string TeamText(CsTeam team)
+        {
+            if (team == CsTeam.CT) return "反恐精英";
+            if (team == CsTeam.T) return "恐怖分子";
+            return "观察者";
         }
 
         private void OnBackToMainMenu()

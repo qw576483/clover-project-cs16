@@ -105,9 +105,9 @@ namespace Cs16.Core
         /// 雷达**俯视底图**（真实文件 <c>Resources/UI/Art/overview_de_dust2.png</c>，128×128）。
         ///
         /// <para><b>为什么不是"原版那张 bmp"</b>：原版雷达底图 = <c>cstrike/overviews/de_dust2.bmp</c>
-        /// （787510 B = 1024×768×8bpp）+ <c>overviews/de_dust2.txt</c>（ZOOM/ORIGIN/ROTATED），
-        /// 这两份载体**在本机不在盘**（<c>原版资源/{cs16src,cs109,cs16-maps,解包产物}</c> 为空，
-        /// 见 <c>原版资源/清单.md</c>）。按载体降级链退到**级①原始数据**：由工程内的
+        /// （787510 B = 1024×768×8bpp）+ <c>overviews/de_dust2.txt</c>（ZOOM/ORIGIN/ROTATED）。
+        /// 本机 <c>原版资源/</c> 实测（见 <c>原版资源/清单.md</c>）：<c>cs16src/</c> 在盘（含这两份载体），
+        /// <c>cs109/</c> / <c>cs16-maps/</c> 不在盘，<c>解包产物/</c> 在盘但为空。工程内这份底图是**级①原始数据**产物：由工程内的
         /// <c>Assets/ThirdParty/Dust2/de_dust2_geo.bin</c>（= 原版 de_dust2 BSP 的几何）离线俯视
         /// 栅格化而成
         /// （随仓库提交；口径 = 逐三角面按自身法线分"可站立面/竖直面/陡面"，
@@ -235,6 +235,32 @@ namespace Cs16.Core
 
         /// <summary>弹痕变体张数（= <see cref="FxBulletHoleKeys"/> 的长度；不许与那张表分开维护）。</summary>
         public static int FxBulletHoleVariants => FxBulletHoleKeys.Length;
+
+        /// <summary>
+        /// 碎裂族（木/玻璃）**三变体 key 表**：真实文件 <c>Resources/UI/Art/fx_break1.png</c> …
+        /// <c>fx_break3.png</c>（各 **48×48**）。
+        ///
+        /// <para><b>载体</b>：原版 <c>decals.wad</c> 的 `{break1` … `{break3`（各 48×48 texel），
+        /// 由 <c>tools/probes/wad3-extract.py</c> 解出。这三张的调色板是**反向灰阶**（透明端 = 索引 0 的
+        /// 黑端、基色 = 索引 255 的纯白），解出的 RGB 是纯白 —— 逐条数字见该脚本头。</para>
+        ///
+        /// <para><b>为什么是 3 张</b>：原版选族是 <c>"{break%i"</c> + <c>RandomInt(0,2)+1</c>
+        /// （<c>client.dll</c> RVA 0x1E0D-0x1E2B；<c>RandomInt</c> 含两端 ⇒ 1..3），与 wad 里
+        /// `{break1..3` 三张一一对应（同族的 `{break` 64×32 是旧版变体，`%i` 取不到它 ⇒ 不落盘）。</para>
+        ///
+        /// <para><b>尺寸</b>：世界尺度 = 贴花自己的 texel 宽 × 1 单位（同 <see cref="FxBulletHoleKeys"/>
+        /// 的公式）⇒ 48 × 0.0254 = <c>CsCombatTuning.BreakDecalSize</c> = 1.2192 m。同样逐条字面量
+        /// （理由见 <see cref="FxBulletHoleKeys"/>）。</para>
+        /// </summary>
+        public static readonly string[] FxBreakKeys =
+        {
+            "UI/Art/fx_break1",
+            "UI/Art/fx_break2",
+            "UI/Art/fx_break3",
+        };
+
+        /// <summary>碎裂族变体张数（= <see cref="FxBreakKeys"/> 的长度）。</summary>
+        public static int FxBreakVariants => FxBreakKeys.Length;
 
         /// <summary>
         /// 血迹贴花**六变体 key 表**：真实文件 <c>Resources/UI/Art/fx_blood1.png</c> … <c>fx_blood6.png</c>
