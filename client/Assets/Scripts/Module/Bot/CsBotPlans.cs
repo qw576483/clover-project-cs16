@@ -201,6 +201,34 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
+        /// **路线家族 → 拥有它的槽位**（该槽位在本回合的计划路线就是 <paramref name="routeMarker"/>）。
+        /// 不是分工家族（出生点 / 已下包的集合守包 / 空串）⇒ <c>-1</c>。
+        ///
+        /// <para><b>为什么需要它</b>：槽位是"路线家族"的唯一持有凭证 —— 开局按槽位分派
+        /// （<see cref="For"/>）、换目标按槽位轮转（<c>CsBotBrain.TryRouteObjective</c>）、
+        /// 互斥门禁按槽位表判"这条家族有没有活着的队友在走"（<see cref="AliveSlotTable"/> /
+        /// <see cref="FamilyHeldByAliveTeammate"/>）。所以**任何把 bot 实际走的路线改掉的路径，
+        /// 都必须同时把它的槽位改成该家族的拥有者**，否则"槽位 ↔ 路线"不再一一对应，
+        /// 上述三处读到的全是错的 —— 实机形态就是本函数的注释里那种
+        /// <c>同队路线撞车：Cliffe(CT/槽位2) 与 Scuzzy(CT/槽位3) 都走 'Route_Patrol'</c>：
+        /// 两只都活着，而其中一只的槽位已经不指向它真正走的那条路。</para>
+        ///
+        /// <para>与 <see cref="For"/> 同源：不另立第二张表，直接问 <see cref="For"/>。
+        /// T 的主攻路按回合奇偶轮换（<c>TAttackA</c> 是槽位 0 还是槽位 3 取决于 <paramref name="roundNumber"/>），
+        /// 所以必须带回合号。</para>
+        /// </summary>
+        /// <returns>拥有该家族的槽位（0..Slots-1）；不是分工家族 / 空串 ⇒ -1。</returns>
+        public static int SlotOwningRoute(CsTeam team, string routeMarker, int roundNumber)
+        {
+            if (string.IsNullOrEmpty(routeMarker)) return -1;
+            for (var slot = 0; slot < Slots; slot++)
+            {
+                if (For(team, slot, roundNumber).RouteMarker == routeMarker) return slot;
+            }
+            return -1;
+        }
+
+        /// <summary>
         /// 队内序号：同阵营 actor 里按 <c>Id</c> 升序的名次（0 起）。
         /// <para>为什么不用全局 <c>Id % 4</c>：真人玩家的 Id 恒为最小（<c>CsMatch._nextActorId</c> 从 0 起递增），
         /// "T 队槽位 0 与槽位 1 撞车"。取队内序号后，**每队的 bot 序号恒为连续 0..n-1** ⇒ 取模必得互不相同的槽位。</para>
@@ -507,6 +535,41 @@ namespace Cs16.Module.Bot
                 {
                     failures++;
                     sb.Append("\n  ✗ 失败：持包者（序号 ").Append(carrier).Append("）未落在槽位 0（持包者必须走主攻包点路线）");
+                }
+            }
+
+            // 「槽位 ↔ 路线」必须**可反查**：运行期换路线时靠 SlotOwningRoute 把槽位改成家族拥有者
+            //   （CsBotBrain.ApplyObjective），所以"每个槽位的路线恰好反查回它自己"这条性质是那份改动的判据。
+            for (var round = 1; round <= 2; round++)              // T 的主攻路按回合奇偶轮换，两档都要查
+            {
+                foreach (var team in new[] { CsTeam.T, CsTeam.CT })
+                {
+                    for (var slot = 0; slot < Slots; slot++)
+                    {
+                        var route = For(team, slot, round).RouteMarker;
+                        var owner = SlotOwningRoute(team, route, round);
+                        if (owner != slot)
+                        {
+                            failures++;
+                            sb.Append("\n  ✗ 失败：").Append(team).Append(" 回合").Append(round)
+                              .Append(" 槽位").Append(slot).Append(" 的路线 '").Append(route)
+                              .Append("' 反查拥有者 = ").Append(owner).Append("（应 = ").Append(slot).Append("）");
+                        }
+                    }
+                }
+            }
+
+            // 反向：不是分工家族的标记（出生点 / 空串）不许被判成"有拥有者" —— 否则兜底会把集体目标也门禁掉。
+            foreach (var team in new[] { CsTeam.T, CsTeam.CT })
+            {
+                if (SlotOwningRoute(team, CsMarkers.SpawnT, 2) >= 0 ||
+                    SlotOwningRoute(team, CsMarkers.SpawnCT, 2) >= 0 ||
+                    SlotOwningRoute(team, null, 2) >= 0 ||
+                    SlotOwningRoute(team, "", 2) >= 0)
+                {
+                    failures++;
+                    sb.Append("\n  ✗ 失败：").Append(team)
+                      .Append(" 的出生点 / 空串被当成**分工家族**（SlotOwningRoute 应返回 -1）");
                 }
             }
 

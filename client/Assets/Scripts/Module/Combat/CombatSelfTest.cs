@@ -1292,6 +1292,23 @@ namespace Cs16.Module.Combat
                     $"{def.DisplayName} 的散布系数没出处却非 0（差异 #94；缺档不许猜）");
             }
 
+            // ---- 参考态 acc（差异 #94）：复位值非 0 的取复位值；MP5 / UMP45（复位 0，退化）取"首发后"。 ----
+            void ExpectRef(string id, float expected)
+            {
+                var def = CsWeapons.Get(id);
+                Assert(def != null, $"武器表里缺 {id}，参考态 acc 无法校验（差异 #94）");
+                if (def == null) return;
+                Assert(Mathf.Abs(CsWeapons.ReferenceAccuracy(def) - expected) <= 1e-4f,
+                    $"{def.DisplayName} 参考态 acc 实测 {CsWeapons.ReferenceAccuracy(def)} ≠ 期望 {expected}（差异 #94）");
+                Assert(CsWeapons.SpreadCoefficientReference(def) > 0f,
+                    $"{def.DisplayName} 的参考态系数仍为 0（比值模型退化，差异 #94）");
+            }
+
+            ExpectRef(CsWeapons.Ak47, 0.2f);                       // 复位口径不变
+            ExpectRef(CsWeapons.Mp5, 0.4545434f);                  // 0.45 + 1/(1/0.00454339)
+            ExpectRef(CsWeapons.Ump45, 0.5047619f);                // 0.5 + 1/210
+            ExpectRef(CsWeapons.Mac10, 0.15f);
+
             if (Failures.Count == 0)
             {
                 Notes.Add("差异 #94 散布系数：16 把逐条 == 出处（步枪族 7 + 冲锋枪族 5：MAC10 0.375/0.03 · " +

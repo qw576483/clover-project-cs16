@@ -1005,8 +1005,26 @@ namespace Cs16.Core
         public static float SpreadCoefficientReference(CsWeaponDef def)
         {
             if (def == null || def.SpreadStillMul <= 0f) return 0f;
-            return SpreadCoefficient(def, def.AccReset, onGround: true, moving: false,
+            return SpreadCoefficient(def, ReferenceAccuracy(def), onGround: true, moving: false,
                 crouching: false, silenced: false);
+        }
+
+        /// <summary>
+        /// 差异 #94：**参考态**的 acc = <see cref="CsWeaponDef.Spread"/>（本工程"度"标定值）对应的那一档。
+        ///
+        /// <para>口径 = 原版复位值 <see cref="CsWeaponDef.AccReset"/>；但 MP5 / UMP45 的原版复位值是 **0**
+        /// （`Spawn` 用 `fldz` 写 `+0xF8`）⇒ 该态下"静止站"系数恒 0、比值模型分母为 0（退化）。
+        /// 这两把改用**首发后**的 acc = `AccBase + 1^AccPower / AccDiv`（幂次对 `shots = 1` 无影响），
+        /// 除数 / 钳制口径与 <see cref="AccuracyAfterShot"/> 一致 ⇒ 可离线复算：
+        /// MP5 = `0.45 + 1/220.1…`（`1/0.00454339`）· UMP45 = `0.5 + 1/210`。</para>
+        /// </summary>
+        public static float ReferenceAccuracy(CsWeaponDef def)
+        {
+            if (def == null) return 0f;
+            if (def.AccReset > 0f) return def.AccReset;
+            var div = def.AccDiv > 0f ? def.AccDiv : 1f;
+            var v = def.AccBase + 1f / div;
+            return def.AccClampMax > 0f && v > def.AccClampMax ? def.AccClampMax : v;
         }
 
         /// <summary>

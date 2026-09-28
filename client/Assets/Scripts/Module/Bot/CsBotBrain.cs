@@ -1069,11 +1069,26 @@ namespace Cs16.Module.Bot
             var bestDist = -1f;
             var bestMarker = (string)null;
             var bestPoint = Vector3.zero;
+            var heldSkipped = 0;
+
+            // 兜底**不是**互斥门禁的例外：3 个候选里的 `_planRoute` / `CsMarkers.Patrol` 都是**分工家族**，
+            //   活着的队友正走着就不许抢（与 TryRouteObjective 的槽位表、TryPatrolObjective 的家族门禁同一条判据）。
+            //   不加这一道，兜底会把一只 bot 放进队友的家族里 —— 而且它自己的槽位还写着旧家族
+            //   （实机形态：`同队路线撞车：Cliffe(CT/槽位2) 与 Scuzzy(CT/槽位3) 都走 'Route_Patrol'`）。
+            var carrierOrdinal = CsBotPlans.RoundCarrierOrdinal(_match.Actors, _match, self.Team, _match.RoundNumber);
 
             for (var i = 0; i < markers.Length; i++)
             {
                 var marker = markers[i];
                 if (string.IsNullOrEmpty(marker)) continue;
+
+                if (CsBotPlans.SlotOwningRoute(self.Team, marker, _match.RoundNumber) >= 0 &&
+                    CsBotPlans.FamilyHeldByAliveTeammate(_match.Actors, self.Team, carrierOrdinal,
+                        _match.RoundNumber, self.Id, marker))
+                {
+                    heldSkipped++;
+                    continue;
+                }
 
                 var pts = _map.Points(marker);
                 if (pts == null) continue;
@@ -1093,7 +1108,16 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            if (bestDist < 0f) return false;
+            if (bestDist < 0f)
+            {
+                if (heldSkipped > 0)
+                {
+                    RateWarn("replan.lastresort.held",
+                        $"{_name} 兜底目标：3 个候选标记里 {heldSkipped} 个是**活着的**队友正走着的分工家族 ⇒ " +
+                        $"不抢（互斥优先于兜底：本帧保留上一个目标，宁可不动也不与队友同路；{reason}）");
+                }
+                return false;
+            }
 
             _nav.ClearRoute();
             ApplyObjective(self, bestMarker, bestPoint, false,
@@ -1106,6 +1130,20 @@ namespace Cs16.Module.Bot
         private void ApplyObjective(CsActor self, string routeMarker, Vector3 goal, bool isSite, string why, float now)
         {
             _planRoute = routeMarker;
+
+            // 「槽位 ↔ 路线」必须一一对应：路线家族换了就跟着换槽位（判据见 CsBotPlans.SlotOwningRoute）。
+            //   只在**分工家族**上做（出生点 / 守包这类集体目标返回 -1，槽位保持不动）。
+            //   不做这一步的后果：兜底路径（TryLastResortObjective）把 bot 放进队友正走着的家族，
+            //   而它的槽位还写着别的家族 ⇒ 槽位表 / 互斥门禁 / 撞车审计三处读到的都是错的。
+            var owner = CsBotPlans.SlotOwningRoute(self.Team, routeMarker, _match.RoundNumber);
+            if (owner >= 0 && owner != _planSlot)
+            {
+                Game.Logger.Info(Tag,
+                    $"{_name}（{self.Team}）路线换成 '{routeMarker}'（家族拥有者 = 槽位 {owner}）" +
+                    $"⇒ 槽位 {_planSlot} → {owner}（保持「槽位 ↔ 路线」一一对应）");
+                _planSlot = owner;
+            }
+
             _goalPos = goal;
             _goalValid = true;
             _goalIsSite = isSite;
