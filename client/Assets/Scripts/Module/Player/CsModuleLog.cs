@@ -31,13 +31,13 @@ namespace Cs16.Module.Player
         }
 
         /// <summary>打一条（降频的）Info。</summary>
-        public void Info(string key, string msg) => LogThrottle.InfoCounted(_tag, key, msg, LogRateEvery);
+        public void Info(string key, string msg) => LogThrottle.InfoCounted(_tag, key, WithKey(key, msg), LogRateEvery);
 
         /// <summary>打一条（降频的）Warn。</summary>
-        public void Warn(string key, string msg) => LogThrottle.WarnCounted(_tag, key, msg, LogRateEvery);
+        public void Warn(string key, string msg) => LogThrottle.WarnCounted(_tag, key, WithKey(key, msg), LogRateEvery);
 
         /// <summary>打一条（降频的）Error。</summary>
-        public void Error(string key, string msg) => LogThrottle.ErrorCounted(_tag, key, msg, LogRateEvery);
+        public void Error(string key, string msg) => LogThrottle.ErrorCounted(_tag, key, WithKey(key, msg), LogRateEvery);
 
         /// <summary>
         /// **不降频**的 Info —— 只在"每次发生都值得看见"的低频事件上用
@@ -50,5 +50,13 @@ namespace Cs16.Module.Player
         /// 它清空**所有**限频记录（时间口径 + 计数口径）。
         /// </summary>
         public void Reset() => LogThrottle.Reset();
+
+        /// <summary>
+        /// 计数闸门只把 message 交给 `Game.Logger`，key 不出现在落盘行里 ⇒
+        /// 按 key（`anim.flinch.play` / `anim.ready` / `anim.loco` 这类）检索日志文件永远 0 命中。
+        /// 这里把 key 拼在消息头，让落盘行能按 key 检索；key 为空时不加前缀。
+        /// </summary>
+        private static string WithKey(string key, string msg)
+            => string.IsNullOrEmpty(key) ? msg : key + " " + msg;
     }
 }
