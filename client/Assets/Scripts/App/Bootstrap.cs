@@ -75,6 +75,13 @@ namespace Cs16.App
             DontDestroyOnLoad(gameObject);
         }
 
+        private void OnDestroy()
+        {
+            // 本对象是流程的唯一持有者：销毁时让流程把引擎回调退掉
+            // （引擎的面板开关事件按**同一委托实例**注销，见 IUIManager.OffPanelOpened/OffPanelClosed）。
+            _flow?.Exit();
+        }
+
         private void Start()
         {
             if (_started) return;       // 域重载 / 重复 Start 的守卫

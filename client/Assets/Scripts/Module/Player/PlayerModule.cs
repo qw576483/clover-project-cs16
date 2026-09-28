@@ -75,6 +75,9 @@ namespace Cs16.Module.Player
         private readonly System.Collections.Generic.HashSet<string> _openPanels =
             new System.Collections.Generic.HashSet<string>(System.StringComparer.Ordinal);
 
+        /// <summary>是否已订阅引擎的面板开关事件（<see cref="UnsubscribePanels"/> 的判据）。</summary>
+        private bool _subscribedPanels;
+
         /// <summary>观战键/输入相关的"只报一次"告警闸（见 <see cref="PollSpectateInput"/>）：
         /// 一次会话内每条"按键被闸门挡下"的分支只留一条痕，避免活着时空格（跳跃）每按一次刷一行。</summary>
         private bool _warnedNoInput;
@@ -158,6 +161,8 @@ namespace Cs16.Module.Player
 
         private void OnDestroy()
         {
+            UnsubscribePanels();
+
             // 退出 Play / 换场景时把光标还回去（编辑器里被"锁着"的光标很难受）。
             Cursor.lockState = CursorLockMode.None;
             Cursor.visible = true;
@@ -180,9 +185,22 @@ namespace Cs16.Module.Player
                 return;
             }
 
-            // 具名方法（引擎的事件/面板回调都要求同一引用才能注销）。
+            // 具名方法：引擎的面板回调按**同一委托实例**退订（OffPanelOpened/OffPanelClosed）。
             ui.OnPanelOpened(OnPanelOpened);
             ui.OnPanelClosed(OnPanelClosed);
+            _subscribedPanels = true;
+        }
+
+        /// <summary>退订面板开关（<see cref="OnDestroy"/>）：组件销毁后不能再被引擎回调。</summary>
+        private void UnsubscribePanels()
+        {
+            if (!_subscribedPanels) return;
+            _subscribedPanels = false;
+
+            var ui = Game.UI;
+            if (ui == null) return;     // 表现域已先一步释放：订阅表随之没了，无需再退
+            ui.OffPanelOpened(OnPanelOpened);
+            ui.OffPanelClosed(OnPanelClosed);
         }
 
         // ==================================================================
@@ -352,13 +370,13 @@ namespace Cs16.Module.Player
         // ==================================================================
         private void OnPanelOpened(string panelName)
         {
-            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            if (string.IsNullOrEmpty(panelName)) return;
             if (_openPanels.Add(panelName)) _log.Info("panel", $"面板打开：{panelName}（当前 {_openPanels.Count} 个）");
         }
 
         private void OnPanelClosed(string panelName)
         {
-            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            if (string.IsNullOrEmpty(panelName)) return;
             if (_openPanels.Remove(panelName)) _log.Info("panel", $"面板关闭：{panelName}（当前 {_openPanels.Count} 个）");
 
             // Options 面板改完设置后（或者任何面板关闭时）重新读一次设置：灵敏度 / FOV / 自动换弹即时生效。

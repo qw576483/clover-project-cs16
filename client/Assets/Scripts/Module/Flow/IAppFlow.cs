@@ -18,6 +18,9 @@ namespace Cs16.Module.Flow
         /// <summary>进入流程（进启动画面）。<c>Bootstrap</c> 在装配完之后调用一次。</summary>
         void Enter();
 
+        /// <summary>退出流程：退订 <see cref="Enter"/> 里挂上的引擎回调（<c>Bootstrap</c> 在销毁时调用一次）。</summary>
+        void Exit();
+
         /// <summary>当前站点名（<c>Game.Fsm.Current</c>），用于日志与自检。</summary>
         string CurrentState { get; }
 

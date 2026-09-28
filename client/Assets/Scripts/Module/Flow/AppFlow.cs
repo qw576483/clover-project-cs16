@@ -149,8 +149,8 @@ namespace Cs16.Module.Flow
         }
 
         /// <summary>
-        /// 订阅流程事件。**一律用具名方法**：<c>Game.Event.Off</c> 没有句柄、必须传同一方法引用，
-        /// 写匿名 lambda 就 Off 不掉。本类与 App 同生命周期（不需要 Off）。
+        /// 订阅流程事件。**一律用具名方法**：<c>Game.Event.Off</c> / <c>Game.UI.OffPanelOpened</c> /
+        /// <c>OffPanelClosed</c> 都按**同一委托实例**注销，写匿名 lambda 就退订不掉。
         /// </summary>
         private void SubscribeEvents()
         {
@@ -170,6 +170,18 @@ namespace Cs16.Module.Flow
             Game.UI.OnPanelClosed(OnPanelClosed);
 
             Game.Logger?.Info(Tag, "流程事件已订阅（StartNewGame/OpenServerList/OpenOptions/QuitGame/BackToMain/Disconnect/Resume/RequestPause/LaunchMatch/TeamChosen）");
+        }
+
+        /// <summary>
+        /// 退出流程：退订 <see cref="Enter"/> 里挂上的面板开关回调，由 <c>Bootstrap</c> 在销毁时调用一次。
+        /// <para><c>Game.Event</c> 那条总线随进程结束一并释放，不在这里逐个 Off。</para>
+        /// </summary>
+        public void Exit()
+        {
+            var ui = Game.UI;
+            if (ui == null) return;     // 表现域已先一步释放：订阅表随之没了，无需再退
+            ui.OffPanelOpened(OnPanelOpened);
+            ui.OffPanelClosed(OnPanelClosed);
         }
 
         // ═══════════════════════════════ 站点：Boot / MainMenu ═══════════════════════════════

@@ -291,6 +291,7 @@ namespace Cs16.Module.CameraRig
         private void OnDestroy()
         {
             UnhookDamage();
+            UnhookPanels();
         }
 
         private void HookDamage()
@@ -313,8 +314,8 @@ namespace Cs16.Module.CameraRig
         /// （控制台的输入框是 uGUI <c>InputField</c>，键盘照样被它收走，所以必须由这里闸一道）。
         ///
         /// <para>只闸控制台：其余面板不抢键盘，暂停族由 <c>ICsMatch.IsPaused</c> 挡（见
-        /// <see cref="ReadRoamMoveInput"/>）。引擎的面板事件**只有订阅、没有退订**（<c>Game.UI</c>），
-        /// 因此本组件只订阅一次，处理函数对"组件已销毁"做守卫（与 <c>PlayerModule</c> 同形）。</para>
+        /// <see cref="ReadRoamMoveInput"/>）。本组件只订阅一次，销毁时按**同一委托实例**退订
+        /// （<c>Game.UI.OffPanelOpened</c> / <c>OffPanelClosed</c>，见 <see cref="UnhookPanels"/>）。</para>
         /// </summary>
         private void HookPanels()
         {
@@ -332,16 +333,28 @@ namespace Cs16.Module.CameraRig
             _subscribedPanels = true;
         }
 
+        /// <summary>退订面板开关（<see cref="OnDestroy"/>）：组件销毁后不能再被引擎回调。</summary>
+        private void UnhookPanels()
+        {
+            if (!_subscribedPanels) return;
+            _subscribedPanels = false;
+
+            var ui = Game.UI;
+            if (ui == null) return;     // 表现域已先一步释放：订阅表随之没了，无需再退
+            ui.OffPanelOpened(OnPanelOpened);
+            ui.OffPanelClosed(OnPanelClosed);
+        }
+
         /// <summary>面板打开 ⇒ 记名（自由飞行据此停手；见 <see cref="HookPanels"/>）。</summary>
         private void OnPanelOpened(string panelName)
         {
-            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            if (string.IsNullOrEmpty(panelName)) return;
             _openPanels.Add(panelName);
         }
 
         private void OnPanelClosed(string panelName)
         {
-            if (this == null || string.IsNullOrEmpty(panelName)) return;
+            if (string.IsNullOrEmpty(panelName)) return;
             _openPanels.Remove(panelName);
         }
 
