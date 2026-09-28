@@ -19,10 +19,11 @@ namespace Cs16.UI
     ///
     /// <para><b>开孔尺寸与十字线的来源 = 一张原版开镜实机原图</b>：
     /// <c>原版资源/参照物/viewmodel/viewmodel_awp_scoped.png</c>（640×360）逐像素量得
-    /// 开孔半轴 <b>240×135 px</b>（= <see cref="OpenHalfWidth"/> / <see cref="OpenHalfHeight"/> × 屏幕尺寸）、
+    /// 开孔半轴 <b>216×157 px</b>（= <see cref="OpenHalfWidth"/> / <see cref="OpenHalfHeight"/> × 屏幕尺寸；
+    /// 开孔中心 (318,180) ≈ 帧心，x=250 列的边界 y=31 与椭圆预测吻合 ⇒ 真椭圆而非裁切圆）、
     /// 遮罩处像素为纯黑 <c>(0,0,0)</c>、十字线 = 把背景压暗约 0.64~0.77 倍的细线
     /// （≈ <see cref="CrossAlpha"/>，2 px @640 宽）。量法：
-    /// <c>.ai-tmp/test/anim-weapon2/measure-scope4.py</c> 与 <c>measure-cross.py</c>。</para>
+    /// <c>.ai-tmp/test/anim-weapon2/measure-scope-v2.py</c>、<c>measure-mask-edge.py</c> 与 <c>edge-map.py</c>。</para>
     ///
     /// <para><b>它必须压在 3D 画面之上、整组 HUD 之下</b>：原版开镜时金钱/血量/弹药仍在黑底之上，
     /// 所以本控件由调用方塞到面板根节点的第一个子节点（见 <c>HudPanel</c> 的刷新路径）。</para>
@@ -43,11 +44,11 @@ namespace Cs16.UI
         /// <summary>不透明区在右上、透明区朝左下（⇒ 贴右上角）。</summary>
         private const string ArcKeyNe = "scope_arc_ne";
 
-        /// <summary>开孔椭圆半宽（× 屏幕宽）。出处见类注释：原版开镜实机原图量得 240 / 640。</summary>
-        private const float OpenHalfWidth = 0.375f;
+        /// <summary>开孔椭圆半宽（× 屏幕宽）。出处见类注释：原版开镜实机原图量得 216 / 640。</summary>
+        private const float OpenHalfWidth = 0.3375f;
 
-        /// <summary>开孔椭圆半高（× 屏幕高）。出处同 <see cref="OpenHalfWidth"/>：135 / 360。</summary>
-        private const float OpenHalfHeight = 0.375f;
+        /// <summary>开孔椭圆半高（× 屏幕高）。出处同 <see cref="OpenHalfWidth"/>：157 / 360。</summary>
+        private const float OpenHalfHeight = 0.4361f;
 
         /// <summary>十字线厚度（× 屏幕宽）。出处：原版开镜实机原图的线宽 2 px @640 宽。</summary>
         private const float CrossThickness = 2f / 640f;
