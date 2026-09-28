@@ -53,7 +53,6 @@ dust2_build.py	不可得	原版解包/导出脚本	原版资源/ 本机已被清
 in_camera.cpp:619,624	不可得	GoldSrc SDK 源码	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 原版资源/cs16src/cs16game/app/cstrike/spectatormenu.txt	不可得	原版文本数据	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 原版资源/cs16-maps/screenshots/	不可得	原版载体目录	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
-原版资源/解包产物/	不可得	原版载体目录	原版资源/ 本机已被清理，不在盘（实测）	原版资源/清单.md:5-6、:25-31；client/资源欠缺清单.md:76	用户补回 CS 1.6 客户端本体 / HLSDK / 解包产物，或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 # ---- 切片BB（2026-09-22）：差异登记.tsv 里实测不在盘的载体（闸门 reference-table-refs 现在也扫差异登记） ----
 原版资源/cs16-maps/screenshots_to_conv/	不可得	原版实机采集目录（31 张 1920×1080 HUD BMP 的来源目录）	原版资源/ 本机已被清理，不在盘（实测只剩 cs16src/ · hlsdk/ · 备份/ · _moved-out-from-assets/）	策划/差异登记.tsv #23；原版资源/清单.md:5-6、:25-31	用户补回那批原版采集 BMP（或 CS 1.6 客户端本体），或按切片 AL/AM/AR/AW 的做法从公开 repack 重新取回
 teammenu.res	不可得	原版 VGUI 选阵营面板定义（#25/#26/#38 按 basename 引用）	该件属 cstrike/resource/ui/；片AL/AM/AW 取回的 repack 里 cstrike/resource/ 只有子页 .res、无 ui/ 目录 ⇒ 本机不在盘	策划/差异登记.tsv #25/#26/#38；原版资源/清单.md「切片AW」§4（resource 目录枚举）	拿到含 resource/ui/ 的原版客户端（或完整 cstrike ISO）后把引用改成完整路径
