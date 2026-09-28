@@ -42,7 +42,19 @@ namespace Cs16.EditorTools
         /// </summary>
         public const string BreakablesFile = AssetRoot + "/breakables.tsv";
         public const string TextureDir = AssetRoot + "/Textures";
+        /// <summary>
+        /// 原版 gib 模型（<c>models/mil_crategibs.mdl</c>）的 12 张内嵌 miptex 解出的 PNG
+        /// （木箱碎块贴图；文件名 = 原版 miptex 名，如 <c>bootside.png</c> / <c>spade.png</c>）。
+        /// </summary>
+        public const string GibsDir = AssetRoot + "/Gibs";
         public const string SkyboxDir = AssetRoot + "/Skybox";
+        /// <summary>模型网格数据目录（<c>Views</c> 转换链的产物，见 <c>Cs16ModelData</c>）。</summary>
+        public const string ModelDataDir = "Assets/Editor/Views/ModelData";
+        /// <summary>
+        /// 原版 <c>models/mil_crategibs.mdl</c> 的网格数据（金源 1 unit = 0.0254 m 已换算），
+        /// 生成器从它拆木箱碎块（<c>Cs16ModelDataReader</c> 的格式定义见 <c>Cs16ModelData.cs</c>）。
+        /// </summary>
+        public const string CrateGibModelFile = ModelDataDir + "/gibs_mil_crate.cs16mdl";
         /// <summary>由生成器派生的材质球（一处收敛：换贴图在这里换）。</summary>
         public const string MaterialDir = AssetRoot + "/Materials";
 

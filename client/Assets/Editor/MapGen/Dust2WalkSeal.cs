@@ -182,9 +182,16 @@ namespace Cs16.EditorTools
         /// 高度扩张都到不了（格内可站面比四周高出一整层，是上不去的台地）。标记点若被吸附到
         /// 这类格上，机器人会一直拿它当目标却永远求不出路径。</para>
         ///
-        /// <para><b>为什么逐条登记、不按规则自动搬</b>：这类台地全图 132 格，只有下面这 2 格上
+        /// <para><b>为什么逐条登记、不按规则自动搬</b>：这类台地全图 132 格，只有下面这几格上
         /// 摆了标记点；把它们整片封成阻挡会改变人类玩家在同一张位图上的可站判定
         /// （<c>CsMap</c> 的水平阻挡也走位图），而这里有缺陷的只是"标记点的落点"。</para>
+        ///
+        /// <para><b>⛔ 这张表是搬移的**唯一**载体</b>：标记点坐标的产物链是
+        /// <c>de_dust2_geo.bin</c>（原始）→ 场景对象（<c>Dust2Builder.SnapMarkerToWalkable</c>）→
+        /// 烘焙器写 <c>.bytes</c> 的 FlagMarkers 段 → 本表。只改 <c>.bytes</c>（或只改
+        /// <c>de_dust2_markers.bytes</c> 那张镜像表）的搬移**在下一次"生成器 + 重烘"里会全部丢失**
+        /// —— 实测：4 个路线点的手工搬移就是这么被一次重烘回退的（它们又落回台地格，
+        /// 运行时打出 <c>跳过**导航口径走不到**的路点 …（格 (80,93)）</c>）。</para>
         ///
         /// <para><b>判据</b>：逐格复算 <c>BotNavigator.BuildHeightReach</c> 从出生点集合出发的扩张
         /// （几何 = <c>ThirdParty/Dust2/de_dust2_geo.bin</c> 的可站面），再逐标记点归属。</para>
@@ -193,6 +200,12 @@ namespace Cs16.EditorTools
         {
             ("BuyZone_CT", 81, 93, 78, 96),
             ("BuyZone_CT", 84, 90, 83, 88),
+            // 路线点：与原格同一类（落在 2.44 m 台地上，从两组出生点扩张都到不了）。
+            // 目标格 = 同层可达的相邻格（口径见上面的判据），只动 x/z、保留 y。
+            ("Route_CT_Mid", 80, 93, 80, 96),
+            ("Route_Patrol", 21, 125, 21, 122),
+            ("Route_Patrol", 45, 15, 45, 18),
+            ("Route_T_To_A", 80, 91, 83, 88),
         };
 
         private static readonly int[] NeiDx = { 1, -1, 0, 0, 1, 1, -1, -1 };
@@ -200,6 +213,9 @@ namespace Cs16.EditorTools
 
         /// <summary>标记点搬移的最大搜索半径（格）。图外那几个点离可玩区 &gt; 12 格，收得太小会搬不动。</summary>
         private const int MarkerSnapRadius = 64;
+
+        /// <summary>登记搬移的"原格"匹配半径（格）。重烘会重新吸附标记点 ⇒ 原格可能偏一两格，按邻域匹配才稳。</summary>
+        private const int HeightIslandMoveMatchRadius = 4;
 
         // ==================================================================
         //  纯函数：位图变换（烘焙后处理与连通性探针共用同一份）
@@ -437,20 +453,31 @@ namespace Cs16.EditorTools
                                                    int ix, int iz, float ox, float oz, float cell)
         {
             if (string.IsNullOrEmpty(markerName)) return false;
+
+            // 取**最靠近的**那条登记（同名可能有多条：如 BuyZone_CT 有两条），再用半径判定是否算命中。
+            //   ⛔ 不许"命中即用第一条"：两条登记的原格可能只差 3 格，先到先得会搬到错的目标格。
+            var bestI = -1;
+            var bestD = int.MaxValue;
             for (int i = 0; i < HeightIslandMoves.Length; i++)
             {
-                var m = HeightIslandMoves[i];
-                if (m.Marker != markerName || m.FromIx != ix || m.FromIz != iz) continue;
-
-                float x = ox + (m.ToIx + 0.5f) * cell;
-                float z = oz + (m.ToIz + 0.5f) * cell;
-                BitConverter.GetBytes(x).CopyTo(bytes, xyzAt);
-                BitConverter.GetBytes(z).CopyTo(bytes, xyzAt + 8);
-                Debug.Log($"{Tag} 标记点 {markerName} 原格 ({ix},{iz}) 走不到（落脚面比周边高出一层）⇒ " +
-                          $"按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{z:F1})（y 保留）");
-                return true;
+                var row = HeightIslandMoves[i];
+                if (row.Marker != markerName) continue;
+                var d = Mathf.Max(Mathf.Abs(row.FromIx - ix), Mathf.Abs(row.FromIz - iz));
+                if (d < bestD) { bestD = d; bestI = i; }
             }
-            return false;
+            // 原格按**邻域**匹配（半径 HeightIslandMoveMatchRadius）：重烘会先按位图重新吸附标记点，
+            //   同一个点在两次烘焙之间可能偏一两格（吸附半径 64 格），精确匹配会让登记失效
+            //   —— 实测：登记后的一次重烘里 4 条路线点搬移只生效了 3 条（剩下那条的原格偏了）。
+            if (bestI < 0 || bestD > HeightIslandMoveMatchRadius) return false;
+
+            var m = HeightIslandMoves[bestI];
+            float x = ox + (m.ToIx + 0.5f) * cell;
+            float z = oz + (m.ToIz + 0.5f) * cell;
+            BitConverter.GetBytes(x).CopyTo(bytes, xyzAt);
+            BitConverter.GetBytes(z).CopyTo(bytes, xyzAt + 8);
+            Debug.Log($"{Tag} 标记点 {markerName} 原格 ({ix},{iz})（登记原格 {m.FromIx},{m.FromIz}，差 {bestD} 格）" +
+                      $"走不到（落脚面比周边高出一层）⇒ 按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{z:F1})（y 保留）");
+            return true;
         }
 
         private static bool In(int width, int depth, int ix, int iz)

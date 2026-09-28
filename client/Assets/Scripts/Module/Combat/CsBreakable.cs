@@ -12,11 +12,13 @@ namespace Cs16.Module.Combat
     /// de_dust2 这 10 个箱体的 <c>health</c> 键全是 1 ⇒ **一发即碎**（`ThirdParty/Dust2/breakables.tsv`，
     /// 表由 `tools/probes/dust2_breakables.py` 逐条解析 BSP 得到）。</para>
     ///
-    /// <para><b>碎块用什么</b>：原版 <c>gibmodel</c> 是 <c>models/mil_crategibs.mdl</c>，该载体**不在盘**
-    /// （逐条 <c>Test-Path</c> 实测 False：工程与 `原版资源/` 下都只有 player/weapon/shell 的 mdl）。
-    /// 按降级链退到**箱体自己的箱面**：碎块 = 生成器从合并网格里拆出来的箱面三角面，按面法线聚成
-    /// 若干片（轴对齐箱 6 片），顶点/UV/贴图全是原版箱面自己的 ⇒ 画面素材仍是原版的，
-    /// 只是形状不是那个 mdl。差异登记见 `策划/差异登记.tsv`。</para>
+    /// <para><b>碎块用什么</b>：原版 <c>gibmodel</c> 是 <c>models/mil_crategibs.mdl</c>
+    /// （载体在 <c>原版资源/cs16src/valve/models/valve__models__mil_crategibs.mdl</c>：一台军用木箱里的
+    /// 装备堆，12 张内嵌 miptex）。生成器用 Views 转换链把它变成
+    /// <c>Assets/Editor/Views/ModelData/gibs_mil_crate.cs16mdl</c>（金源 1 unit = 0.0254 m），
+    /// 碎块 = 该模型**每张贴图下的全部三角面**各一片（12 片）——顶点 / UV / 法线逐顶点照搬，
+    /// 各片按重心扣在箱体中心、片间相对位置 = 原版模型里的相对位置 ⇒ 几何与贴图都是原版的。
+    /// 片数由模型的贴图数决定，⛔ 不写死数字。差异登记见 `策划/差异登记.tsv`。</para>
     ///
     /// <para><b>碎块运动</b>：出处 = 原版 <c>CBreakable::Die()</c>（Half-Life SDK 游戏逻辑，Valve 版权）：
     /// <c>vecVelocity = (m_Explosion == expDirected) ? g_vecAttackDir * 200.0f : 0</c>；
@@ -41,7 +43,7 @@ namespace Cs16.Module.Combat
         [SerializeField] private int[] _fragStart = null;            // 每个碎片的起始三角面下标
         [SerializeField] private int[] _fragTriangleCount = null;    // 每个碎片的三角面数
         [SerializeField] private Vector3[] _fragCenter = null;       // 每个碎片中心（箱体局部坐标）
-        [SerializeField] private int[] _fragMaterial = null;         // 该碎片用的材质下标（箱体 sharedMaterials）
+        [SerializeField] private Material[] _fragMaterials = null;   // 逐片材质（原版 gib 模型的贴图）
 
         private static int _brokenTotal;
 
@@ -57,7 +59,7 @@ namespace Cs16.Module.Combat
         /// <summary>当前血量（原版 <c>pev->health</c>，de_dust2 全 1）。</summary>
         public float Health => _health;
 
-        /// <summary>碎块片数（生成器按箱面法线聚出来的面数）。</summary>
+        /// <summary>碎块片数（生成器按原版 gib 模型的贴图子网格拆出来的片数）。</summary>
         public int FragmentCount => _fragStart != null ? _fragStart.Length : 0;
 
         /// <summary>箱体尺寸（米）。</summary>
@@ -67,7 +69,7 @@ namespace Cs16.Module.Combat
         public void Configure(int brushModel, float health, string gibModel, Vector3 size,
                               Vector3[] fragVertices, Vector2[] fragUvs, Vector3[] fragNormals,
                               int[] fragStart, int[] fragTriangleCount,
-                              Vector3[] fragCenter, int[] fragMaterial)
+                              Vector3[] fragCenter, Material[] fragMaterials)
         {
             _brushModel = brushModel;
             _health = health;
@@ -79,7 +81,7 @@ namespace Cs16.Module.Combat
             _fragStart = fragStart;
             _fragTriangleCount = fragTriangleCount;
             _fragCenter = fragCenter;
-            _fragMaterial = fragMaterial;
+            _fragMaterials = fragMaterials;
         }
 
         /// <summary>取命中物所属的箱体（不是箱体 ⇒ null）。</summary>
@@ -123,22 +125,20 @@ namespace Cs16.Module.Combat
                 disabled++;
             }
 
-            var renderer = GetComponent<MeshRenderer>();
-            var materials = renderer != null ? renderer.sharedMaterials : null;
             foreach (var r in GetComponentsInChildren<Renderer>(true))
                 if (r != null) r.enabled = false;
 
             var spawnDir = attackDir.sqrMagnitude > 1e-6f ? attackDir.normalized : Vector3.up;
-            var shards = SpawnShards(materials, spawnDir);
+            var shards = SpawnShards(spawnDir);
 
             Game.Logger.Info(LogTag + ".broken",
                 $"木箱 brush{_brushModel} 碎裂：关碰撞体 {disabled} 个｜碎块 {shards} 片" +
                 $"（初速 {CsCombatTuning.BreakGibSpeed:F2} m/s 沿弹道方向，寿命 {CsCombatTuning.BreakGibLife:F1}s）" +
-                $"｜原版 gibmodel「{_gibModel}」不在盘，碎块用箱面自身的原版几何+贴图" +
-                "（差异登记见 策划/差异登记.tsv）");
+                $"｜碎块 = 原版 gibmodel「{_gibModel}」的贴图子网格（几何 / UV / 贴图逐顶点照搬，" +
+                "差异登记见 策划/差异登记.tsv）");
         }
 
-        private int SpawnShards(Material[] materials, Vector3 spawnDir)
+        private int SpawnShards(Vector3 spawnDir)
         {
             if (_fragStart == null || _fragVertices == null || _fragCenter == null) return 0;
 
@@ -179,13 +179,13 @@ namespace Cs16.Module.Combat
                 go.layer = gameObject.layer;
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
                 var mr = go.AddComponent<MeshRenderer>();
-                var mi = _fragMaterial[f];
-                mr.sharedMaterial = materials != null && mi >= 0 && mi < materials.Length ? materials[mi] : null;
+                var mats = _fragMaterials;
+                mr.sharedMaterial = mats != null && f < mats.Length ? mats[f] : null;
                 if (mr.sharedMaterial == null)
                 {
                     Game.Logger.Warn(LogTag + ".shard.nomaterial",
-                        $"碎块 {f} 取不到材质（下标 {mi} / 材质数 {(materials != null ? materials.Length : 0)}）" +
-                        "⇒ 该片不可见，箱面材质组配置有问题");
+                        $"碎块 {f} 取不到材质（片数 {_fragStart.Length} / 材质数 {(mats != null ? mats.Length : 0)}）" +
+                        "⇒ 该片不可见，碎块材质没写进组件");
                 }
 
                 go.AddComponent<CsBreakDebris>()

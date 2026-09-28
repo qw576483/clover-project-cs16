@@ -229,9 +229,12 @@ namespace Cs16.EditorTools
                 ok++;
             }
 
-            int cratesBuilt = BuildCrates(geo, visualRoot, crates, crateTris, ref missingTex);
+            // 碎块数据（原版 gib 模型的贴图子网格）：一次读盘，10 个箱子共用同一份几何 / UV
+            var gibs = LoadGibShards(ref missingTex);
+            int cratesBuilt = BuildCrates(geo, visualRoot, crates, crateTris, gibs, ref missingTex);
             Debug.Log($"{Tag} 几何：{ok} 个材质组已上场景（缺贴图回落到沙色材质 {missingTex} 个）" +
-                      $"｜func_breakable 箱体 {cratesBuilt} 个（箱面已从合并网格拆出，各自独立 MeshCollider）");
+                      $"｜func_breakable 箱体 {cratesBuilt} 个（箱面已从合并网格拆出，各自独立 MeshCollider）" +
+                      $"｜碎块 {gibs?.Center.Length ?? 0} 片（每片 = 原版 gib 模型一张贴图下的全部三角面）");
         }
 
         // ==================================================================
@@ -352,11 +355,11 @@ namespace Cs16.EditorTools
         }
 
         /// <summary>
-        /// 逐箱建游戏对象：网格按源材质组切子网格（一个箱一个 MeshCollider），
-        /// 并把"碎块"数据（按面法线聚出来的片）写进 <see cref="CsBreakable"/>。
+        /// 逐箱建游戏对象：网格按源材质组切子网格（一个箱一个 MeshCollider），并把碎块数据
+        /// （原版 gib 模型的贴图子网格，见 <paramref name="gibs"/>）写进 <see cref="CsBreakable"/>。
         /// </summary>
         private static int BuildCrates(Dust2GeoData geo, GameObject visualRoot, Dust2BreakableBox[] crates,
-            List<CrateTri>[] crateTris, ref int missingTex)
+            List<CrateTri>[] crateTris, GibShardData gibs, ref int missingTex)
         {
             var container = NewChild(visualRoot, CratesRootName);
             var built = 0;
@@ -418,91 +421,196 @@ namespace Cs16.EditorTools
                 // 真几何当碰撞体：菱形箱（brush 3/38/40 绕竖轴 45°）不是轴对齐盒，必须用拆出来的mesh
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
 
-                BuildShardData(tris, subOfGroup, out var fragVerts, out var fragUvs, out var fragNrm,
-                    out var fragStart, out var fragTriCount, out var fragCenter, out var fragMaterial);
+                if (gibs == null || gibs.Center.Length == 0)
+                {
+                    Debug.LogError($"{Tag} 箱 brush{box.BrushModel}：没有碎块数据（gib 模型没读到）" +
+                                   "⇒ 该箱仍可打碎，但不出碎块");
+                    go.AddComponent<CsBreakable>().Configure(box.BrushModel, box.Health, box.GibModel, box.Size,
+                        Array.Empty<Vector3>(), Array.Empty<Vector2>(), Array.Empty<Vector3>(),
+                        Array.Empty<int>(), Array.Empty<int>(), Array.Empty<Vector3>(), Array.Empty<Material>());
+                    built++;
+                    continue;
+                }
+
+                // 碎块就位点 = 箱体中心 + （本片重心 − 整堆重心）：整堆碎块以**几何重心**扣在箱体中心上，
+                // 各片之间的相对位置 = 原版模型里的相对位置（尺寸 1:1，见 LoadGibShards）。
+                var fragCenter = new Vector3[gibs.Center.Length];
+                for (var f = 0; f < fragCenter.Length; f++)
+                    fragCenter[f] = box.Center + (gibs.Center[f] - gibs.PileCenter);
                 go.AddComponent<CsBreakable>().Configure(box.BrushModel, box.Health, box.GibModel, box.Size,
-                    fragVerts, fragUvs, fragNrm, fragStart, fragTriCount, fragCenter, fragMaterial);
+                    gibs.Verts, gibs.Uvs, gibs.Norms, gibs.Start, gibs.TriCount, fragCenter, gibs.Materials);
                 built++;
             }
             return built;
         }
 
-        /// <summary>
-        /// 碎块数据 = 把箱面三角面按**面法线**聚成片（轴对齐箱 6 片、菱形箱同样是 6 片），
-        /// 每片的顶点写成**相对该片中心**（运行时就地生成一块独立 mesh 飞出去）。
-        /// 片数由几何本身决定（箱面法线有几种），⛔ 不写死数字。
-        /// </summary>
-        private static void BuildShardData(List<CrateTri> tris, Dictionary<int, int> subOfGroup,
-            out Vector3[] fragVerts, out Vector2[] fragUvs, out Vector3[] fragNrm,
-            out int[] fragStart, out int[] fragTriCount, out Vector3[] fragCenter, out int[] fragMaterial)
+        /// <summary>原版 gib 模型拆出来的碎块（生成器 → <see cref="CsBreakable"/> 的传输结构）。</summary>
+        private sealed class GibShardData
         {
-            var order = new List<string>();                 // 法线键的出现顺序（确定性）
-            var buckets = new Dictionary<string, List<CrateTri>>();
-            foreach (var tr in tris)
+            /// <summary>逐片顶点（已相对**本片重心**；每个三角面 3 个、连续排列）。</summary>
+            public Vector3[] Verts;
+            public Vector2[] Uvs;
+            public Vector3[] Norms;
+            /// <summary>逐片的起始三角面下标（×3 = 顶点下标）。</summary>
+            public int[] Start;
+            /// <summary>逐片的三角面数。</summary>
+            public int[] TriCount;
+            /// <summary>逐片重心（**模型空间**，米）。</summary>
+            public Vector3[] Center;
+            /// <summary>整堆碎块的几何重心（模型空间）——把整堆扣到箱体中心时的参照点。</summary>
+            public Vector3 PileCenter;
+            /// <summary>逐片材质（= <see cref="Dust2Layout.GibsDir"/> 下同名贴图）。</summary>
+            public Material[] Materials;
+        }
+
+        /// <summary>
+        /// 从原版 gib 模型数据（<see cref="Dust2Layout.CrateGibModelFile"/>，由
+        /// <c>models/mil_crategibs.mdl</c> 转换而来）拆碎块：**每片 = 该模型里同一张贴图下的全部三角面**，
+        /// 顶点 / UV / 法线逐顶点照搬，只按各片重心平移到箱体中心（尺寸 1:1，金源 1 unit = 0.0254 m）。
+        ///
+        /// <para><b>为什么按贴图取、不按 part</b>：原版 mdl 的碎块单位是 bodypart 下的 model
+        /// （<c>wood1..4</c> / <c>boot2</c> / <c>helmet1..2</c> / <c>mre1..2</c> / <c>pouch1..2</c> /
+        /// <c>spade</c> / <c>canteen</c> / <c>bedroll</c>）；而 <c>.cs16mdl</c> 只输出**命中区 part**
+        /// （Leg/Stomach/Chest/Head）这一级 —— 一个零件会被切进多个 part（两顶头盔共 100 个三角面被切成
+        /// 54/19/27 三份）⇒ part 不是可用单位。按贴图合并能把被 part 切开的面拼回同一片
+        /// （12 张贴图 ⇒ 12 片），片内各零件的相对位置 = 原版模型里的相对位置。</para>
+        /// </summary>
+        private static GibShardData LoadGibShards(ref int missingTex)
+        {
+            var model = Cs16ModelDataReader.Read(Dust2Layout.CrateGibModelFile);
+            if (model == null)
             {
-                var n = Vector3.Cross(tr.B - tr.A, tr.C - tr.A).normalized;
-                var key = $"{Mathf.Round(n.x * 100f)}_{Mathf.Round(n.y * 100f)}_{Mathf.Round(n.z * 100f)}";
-                if (!buckets.TryGetValue(key, out var list))
-                {
-                    list = new List<CrateTri>();
-                    buckets[key] = list;
-                    order.Add(key);
-                }
-                list.Add(tr);
+                Debug.LogError($"{Tag} gib 模型数据读不到：{Dust2Layout.CrateGibModelFile}" +
+                               "（木箱碎块数会是 0：箱子仍能打碎，但不出碎块）");
+                return null;
             }
 
+            var order = new List<string>();                       // 贴图出现顺序（确定性）
+            var byTex = new Dictionary<string, List<Cs16SubMesh>>();
+            for (var p = 0; p < model.Parts.Count; p++)
+            {
+                var subs = model.Parts[p].Subs;
+                for (var s = 0; s < subs.Count; s++)
+                {
+                    var sub = subs[s];
+                    if (sub.Tris.Length < 3 || sub.Verts.Length == 0) continue;
+                    if (!byTex.TryGetValue(sub.Texture, out var list))
+                    {
+                        list = new List<Cs16SubMesh>();
+                        byTex[sub.Texture] = list;
+                        order.Add(sub.Texture);
+                    }
+                    list.Add(sub);
+                }
+            }
+            if (order.Count == 0)
+            {
+                Debug.LogError($"{Tag} {Dust2Layout.CrateGibModelFile} 一个三角面都没有 ⇒ 碎块数 0");
+                return null;
+            }
+
+            // 顶点下标先整体校一遍：越界就放弃碎块（不静默生成错几何）
+            for (var t = 0; t < order.Count; t++)
+            {
+                foreach (var sub in byTex[order[t]])
+                {
+                    for (var i = 0; i < sub.Tris.Length; i++)
+                    {
+                        if (sub.Tris[i] >= 0 && sub.Tris[i] < sub.Verts.Length) continue;
+                        Debug.LogError($"{Tag} {Dust2Layout.CrateGibModelFile} 贴图「{sub.Texture}」顶点下标越界 " +
+                                       $"{sub.Tris[i]}（顶点数 {sub.Verts.Length}）⇒ 不用碎块");
+                        return null;
+                    }
+                }
+            }
+
+            var data = new GibShardData
+            {
+                Center = new Vector3[order.Count],
+                Start = new int[order.Count],
+                TriCount = new int[order.Count],
+                Materials = new Material[order.Count],
+            };
             var vlist = new List<Vector3>();
             var ulist = new List<Vector2>();
             var nlist = new List<Vector3>();
-            var starts = new List<int>();
-            var counts = new List<int>();
-            var centers = new List<Vector3>();
-            var mats = new List<int>();
+            var pileSum = Vector3.zero;
+            var pileTris = 0;
 
-            foreach (var key in order)
+            for (var t = 0; t < order.Count; t++)
             {
-                var list = buckets[key];
-                var center = Vector3.zero;
-                foreach (var tr in list) center += tr.A + tr.B + tr.C;
-                center /= list.Count * 3;
+                var subs = byTex[order[t]];
 
-                starts.Add(counts.Count > 0 ? Sum(counts) : 0);
-                counts.Add(list.Count);
-                centers.Add(center);
-                var sub = subOfGroup.TryGetValue(list[0].Group, out var s) ? s : 0;
-                mats.Add(sub);
-                foreach (var tr in list)
+                // 片重心 = 该片**被三角面引用到**的顶点均值（未被引用的顶点不参与）
+                var center = Vector3.zero;
+                var verts = 0;
+                var tris = 0;
+                foreach (var sub in subs)
                 {
-                    var a = tr.A - center; var b = tr.B - center; var c = tr.C - center;
-                    var n = Vector3.Cross(tr.B - tr.A, tr.C - tr.A).normalized;
-                    vlist.Add(a); vlist.Add(b); vlist.Add(c);
-                    ulist.Add(tr.Ua); ulist.Add(tr.Ub); ulist.Add(tr.Uc);
-                    nlist.Add(n); nlist.Add(n); nlist.Add(n);
+                    var seen = new HashSet<int>();
+                    for (var i = 0; i < sub.Tris.Length; i++)
+                    {
+                        var vi = sub.Tris[i];
+                        if (seen.Add(vi)) { center += sub.Verts[vi]; verts++; }
+                    }
+                    tris += sub.Tris.Length / 3;
                 }
+                center /= verts;
+
+                data.Center[t] = center;
+                data.Start[t] = vlist.Count / 3;
+                data.TriCount[t] = tris;
+                foreach (var sub in subs)
+                {
+                    for (var i = 0; i + 2 < sub.Tris.Length; i += 3)
+                    {
+                        for (var k = 0; k < 3; k++)
+                        {
+                            var vi = sub.Tris[i + k];
+                            vlist.Add(sub.Verts[vi] - center);
+                            ulist.Add(sub.Uvs[vi]);
+                            nlist.Add(sub.Norms[vi]);
+                        }
+                    }
+                }
+                data.Materials[t] = LoadOrMakeGibMaterial(order[t], ref missingTex);
+                pileSum += center * tris;
+                pileTris += tris;
             }
 
-            fragVerts = vlist.ToArray();
-            fragUvs = ulist.ToArray();
-            fragNrm = nlist.ToArray();
-            fragStart = starts.ToArray();
-            fragTriCount = counts.ToArray();
-            fragCenter = centers.ToArray();
-            fragMaterial = mats.ToArray();
+            data.Verts = vlist.ToArray();
+            data.Uvs = ulist.ToArray();
+            data.Norms = nlist.ToArray();
+            data.PileCenter = pileTris > 0 ? pileSum / pileTris : Vector3.zero;
+
+            var totalTris = 0;
+            for (var t = 0; t < data.TriCount.Length; t++) totalTris += data.TriCount[t];
+            if (totalTris != model.TriangleCount)
+                Debug.LogError($"{Tag} 碎块三角面 {totalTris} ≠ 模型三角面 {model.TriangleCount} ⇒ 拆片漏面");
+            Debug.Log($"{Tag} 碎块：{Path.GetFileName(Dust2Layout.CrateGibModelFile)} → 按贴图 {order.Count} 片 / " +
+                      $"{totalTris} 三角面（{string.Join("、", order)}）｜贴图 {Dust2Layout.GibsDir}");
+            return data;
         }
 
-        private static int Sum(List<int> xs)
-        {
-            var n = 0;
-            for (var i = 0; i < xs.Count; i++) n += xs[i];
-            return n;
-        }
-
-        /// <summary>贴图 → 材质：先找 <c>ThirdParty/Dust2/Textures/&lt;png&gt;</c>，找不到退回沙色（并报 Error）。</summary>
+        /// <summary>
+        /// 地图贴图 → 材质：先找 <c>ThirdParty/Dust2/Textures/&lt;png&gt;</c>，找不到退回沙色（并报 Error）。
+        /// </summary>
         private static Material LoadOrMakeMaterial(string pngName, ref int missingTex)
+            => LoadOrMakeMaterial(pngName, Dust2Layout.TextureDir, string.Empty, ref missingTex);
+
+        /// <summary>
+        /// 木箱碎块贴图 → 材质：取自 <see cref="Dust2Layout.GibsDir"/>（原版 <c>models/mil_crategibs.mdl</c>
+        /// 的内嵌 miptex），材质球名字加 <c>gib_</c> 前缀，避免与地图同名贴图撞名。
+        /// </summary>
+        private static Material LoadOrMakeGibMaterial(string pngName, ref int missingTex)
+            => LoadOrMakeMaterial(pngName, Dust2Layout.GibsDir, "gib_", ref missingTex);
+
+        /// <summary>贴图目录 + 材质名前缀 → 材质球（<paramref name="texDir"/> 下取不到贴图 ⇒ 报 Error 并留空）。</summary>
+        private static Material LoadOrMakeMaterial(string pngName, string texDir, string matPrefix, ref int missingTex)
         {
             string slug = Path.GetFileNameWithoutExtension(pngName);
-            string matPath = $"{Dust2Layout.MaterialDir}/{slug}.mat";
-            string texPath = $"{Dust2Layout.TextureDir}/{pngName}";
+            string matPath = $"{Dust2Layout.MaterialDir}/{matPrefix}{slug}.mat";
+            string texPath = $"{texDir}/{pngName}";
 
             var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(texPath);
             if (tex == null)
@@ -860,7 +968,7 @@ namespace Cs16.EditorTools
         // ==================================================================
 
         /// <summary>
-        /// 把 <see cref="Dust2Layout.TextureDir"/> 下**所有** PNG 的 <c>TextureImporter.npotScale</c>
+        /// 把 <paramref name="dir"/> 下**所有** PNG 的 <c>TextureImporter.npotScale</c>
         /// 统一成 <see cref="TextureImporterNPOTScale.None"/>（= 导入后尺寸 == 原图尺寸）。
         ///
         /// <para><b>为什么必须由生成器做</b>：GoldSrc 的 miptex 直接按**原始尺寸**贴，没有二次幂要求
@@ -881,18 +989,29 @@ namespace Cs16.EditorTools
         ///
         /// <para>只改**导入设置**，PNG 像素一个字节都不动（改的是 <c>.meta</c>）。</para>
         /// </summary>
+        /// <summary>
+        /// 两处贴图目录都钉一遍口径：<see cref="Dust2Layout.TextureDir"/>（地图贴图）与
+        /// <see cref="Dust2Layout.GibsDir"/>（木箱碎块贴图，12 张里 <c>bedroll</c> / <c>Image9</c> /
+        /// <c>mre1</c> / <c>mre2</c> / <c>mreside</c> / <c>spade</c> 本身不是 POT）。
+        /// </summary>
         private static void NormalizeTextureImporters()
         {
-            if (!AssetDatabase.IsValidFolder(Dust2Layout.TextureDir))
+            NormalizeTextureImportersIn(Dust2Layout.TextureDir);
+            NormalizeTextureImportersIn(Dust2Layout.GibsDir);
+        }
+
+        private static void NormalizeTextureImportersIn(string dir)
+        {
+            if (!AssetDatabase.IsValidFolder(dir))
             {
-                Debug.LogError($"{Tag} 贴图目录不存在：{Dust2Layout.TextureDir} ⇒ 跳过导入设置（地图会整片缺贴图）");
+                Debug.LogError($"{Tag} 贴图目录不存在：{dir} ⇒ 跳过导入设置（该目录的贴图会被缩到最近二次幂）");
                 return;
             }
 
-            var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { Dust2Layout.TextureDir });
+            var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { dir });
             if (guids.Length == 0)
             {
-                Debug.LogError($"{Tag} {Dust2Layout.TextureDir} 下没有任何 Texture2D ⇒ 导入设置无事可做（先跑 dust2_build.py）");
+                Debug.LogError($"{Tag} {dir} 下没有任何 Texture2D ⇒ 导入设置无事可做");
                 return;
             }
 
@@ -917,15 +1036,15 @@ namespace Cs16.EditorTools
             }
 
             int stillNonNone = 0;
-            foreach (var guid in AssetDatabase.FindAssets("t:Texture2D", new[] { Dust2Layout.TextureDir }))
+            foreach (var guid in AssetDatabase.FindAssets("t:Texture2D", new[] { dir }))
             {
                 var imp = AssetImporter.GetAtPath(AssetDatabase.GUIDToAssetPath(guid)) as TextureImporter;
                 if (imp != null && imp.npotScale != TextureImporterNPOTScale.None) stillNonNone++;
             }
             if (stillNonNone > 0)
-                Debug.LogError($"{Tag} 贴图导入设置未落盘：读回仍有 {stillNonNone} 张 npotScale != None");
+                Debug.LogError($"{Tag} 贴图导入设置未落盘：{dir} 读回仍有 {stillNonNone} 张 npotScale != None");
 
-            Debug.Log($"{Tag} 贴图导入：{guids.Length} 张 → npotScale=None" +
+            Debug.Log($"{Tag} 贴图导入 {dir}：{guids.Length} 张 → npotScale=None" +
                       $"（本次改写 {changed} 张 / 原本已是 {already} 张 / 读回仍非 None {stillNonNone} 张 / 非 TextureImporter {bad} 张）" +
                       (changed > 0 ? $"｜改写清单：{string.Join("、", changedNames)}" : "｜（无改写 = 幂等复跑）"));
         }
@@ -940,15 +1059,21 @@ namespace Cs16.EditorTools
         /// </summary>
         private static void AssertTextureSizesMatchSource()
         {
+            AssertTextureSizesMatchSourceIn(Dust2Layout.TextureDir);
+            AssertTextureSizesMatchSourceIn(Dust2Layout.GibsDir);
+        }
+
+        private static void AssertTextureSizesMatchSourceIn(string dir)
+        {
             string absDir = Path.Combine(Application.dataPath,
-                Dust2Layout.TextureDir.Substring("Assets/".Length)).Replace('\\', '/');
+                dir.Substring("Assets/".Length)).Replace('\\', '/');
             var pngs = Directory.Exists(absDir)
                 ? Directory.GetFiles(absDir, "*.png", SearchOption.TopDirectoryOnly)
                 : new string[0];
             Array.Sort(pngs, StringComparer.Ordinal);
             if (pngs.Length == 0)
             {
-                Debug.LogError($"{Tag} 尺寸断言：{absDir} 下没有 PNG ⇒ 断言没跑起来（先跑 dust2_build.py）");
+                Debug.LogError($"{Tag} 尺寸断言：{absDir} 下没有 PNG ⇒ 断言没跑起来（该目录的素材没进工程）");
                 return;
             }
 
@@ -957,7 +1082,7 @@ namespace Cs16.EditorTools
             for (int i = 0; i < pngs.Length; i++)
             {
                 string file = pngs[i];
-                string assetPath = Dust2Layout.TextureDir + "/" + Path.GetFileName(file);
+                string assetPath = dir + "/" + Path.GetFileName(file);
                 int sw, sh;
                 if (!TryReadPngSize(file, out sw, out sh))
                 {
@@ -984,9 +1109,9 @@ namespace Cs16.EditorTools
                 }
             }
             if (diff > 0)
-                Debug.LogError($"{Tag} 尺寸断言失败：{ok}/{pngs.Length} 相等，{diff} 张不等 ⇒ {string.Join("、", bad)}");
+                Debug.LogError($"{Tag} 尺寸断言失败 {dir}：{ok}/{pngs.Length} 相等，{diff} 张不等 ⇒ {string.Join("、", bad)}");
             else
-                Debug.Log($"{Tag} 尺寸断言通过：{pngs.Length}/{pngs.Length} 张「原图 w×h == 导入 w×h」（非 POT 也没被缩放）");
+                Debug.Log($"{Tag} 尺寸断言通过 {dir}：{pngs.Length}/{pngs.Length} 张「原图 w×h == 导入 w×h」（非 POT 也没被缩放）");
         }
 
         /// <summary>读 PNG 文件头 IHDR 的宽高（PNG 签名 8B + 长度 4B + "IHDR" 4B + w/h 各 4B 大端）。</summary>

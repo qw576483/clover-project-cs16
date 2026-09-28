@@ -160,6 +160,9 @@ namespace Cs16.Module.Bot
         private const int InCellCenter = 0;
         /// <summary>带内下界用的探测深度 = <c>CsMap.SampleGround</c> 的默认 <c>maxDrop</c>（Module/Map/CsMap.cs:534）。</summary>
         private const float GroundProbeDepth = 8f;
+
+        /// <summary>起点格吸附落脚面时的上下搜索带（米）。只作用于**起点那一格**：边判据 / 可站立判据 / 探测深度都不受它影响。</summary>
+        private const float StartFaceSnapBand = 2.5f;
         private int _mpCenterFail, _mpSaved, _mpDead;
 
         /// <summary>
@@ -1097,6 +1100,17 @@ namespace Cs16.Module.Bot
                 return null;
             }
 
+            // **起点格吸附落脚面**（本层的第一个不变量）：`SampleGround` 给的是"脚下那一点"的地面，
+            //   而扩张用的每一步都要拿"本格落脚面"当基准（射线起点 = 当前层 + StepUpHeight）。
+            //   两者可以差一整层：格内 5×5 取样只看到台地面、而机器人正站在台沿下/同一格的另一层时，
+            //   基准比邻格的面低 > StepUpHeight ⇒ **邻格一个都探不到** ⇒ 可达集塌成 1 格
+            //   （离线实测：把起点 baseY 调到比本格落地面低 0.5 m ⇒ 4402 格塌到 **1** 格；
+            //   实机形态 = 15:27:33 那条「终点格 (20,90) 在高度一致性层里不存在（从起点 (90,60) 起…）」，
+            //   而 (90,60) 的取样面是 2.438、机器人当时的脚下地面远低于它）。
+            //   所以起点的高度**吸到本格离它最近的合法落脚面**上；吸附不到（本格真的没有面）就保持原值。
+            var startFace = SnapStartFace(from, baseY);
+            if (!float.IsNaN(startFace)) baseY = startFace;
+
             _mpCenterFail = 0; _mpSaved = 0; _mpDead = 0;   // 取样统计计数（只在**重算**时清，命中缓存不改）
 
             var reach = new HashSet<Vector2Int> { from };
@@ -1104,6 +1118,7 @@ namespace Cs16.Module.Bot
             var queue = new Queue<Vector2Int>();
             queue.Enqueue(from);
             var blocked = 0;
+            var relaxations = 0;
 
             while (queue.Count > 0)
             {
@@ -1113,6 +1128,12 @@ namespace Cs16.Module.Bot
                     HeightLayerOff($"可达格数超过上限 {CsBotConst.HeightReachMaxCells}", from, selfPosition);
                     return null;
                 }
+                if (++relaxations > 8 * CsBotConst.HeightReachMaxCells)
+                {
+                    // 松弛是有界的（只允许把高度压低、下方有界），这一条是"契约被改坏时不许死循环"的挡板。
+                    HeightLayerOff($"扩张次数超过上限 {8 * CsBotConst.HeightReachMaxCells}", from, selfPosition);
+                    return null;
+                }
 
                 var cur = queue.Dequeue();
                 var hCur = height[cur];
@@ -1120,7 +1141,6 @@ namespace Cs16.Module.Bot
                 for (var k = 0; k < 8; k++)
                 {
                     var n = new Vector2Int(cur.x + CellStepX[k], cur.y + CellStepZ[k]);
-                    if (reach.Contains(n)) continue;
                     if (!WalkableCell(n)) continue;                 // 层①：位图（语义一字不动）
 
                     var hN = GroundYAbove(n, hCur);                  // 层②：落脚高度
@@ -1141,6 +1161,14 @@ namespace Cs16.Module.Bot
                         blocked++;
                         continue;
                     }
+
+                    // 「先到先得」改成**取更低的层**：每格只存一个高度时，"谁先到"决定了这一格的高度，
+                    //   而"抬腿 ≤ StepUpHeight"这条边判据对**更低的当前层**更宽松 ⇒ 先到的层更高时会把本可通的路判死
+                    //   （实测：同一张图、同一份几何，只换起点基准高度，可达集在 4400 / 4402 / 4404 之间变，
+                    //   判死格集合两两差 0~4 格 —— 同一个问题给出不同答案）。
+                    //   改成松弛：只有把这一格的高度**压低**才重新入队 ⇒ 结论不再依赖到达顺序，
+                    //   且是这条（单向）关系在"每格一个高度"口径下的最大不动点。
+                    if (height.TryGetValue(n, out var hPrev) && hN >= hPrev - 1e-4f) continue;
 
                     reach.Add(n);
                     height[n] = hN;
@@ -1166,6 +1194,52 @@ namespace Cs16.Module.Bot
                     $"（判据出处 Module/Map/CsMap.cs:514-523；取样口径 BotNavigator.cs:GroundYAbove/CellLandingFace，⛔ 不改位图）");
             }
             return reach;
+        }
+
+        /// <summary>
+        /// **起点格吸附落脚面**：在本格（格心 + 格内 5×5 多点）找一个**离 <paramref name="baseY"/> 最近**的合法落脚面，
+        /// 返回它当高度层的基准高度；本格一个合法面都找不到 ⇒ <see cref="float.NaN"/>（调用方保持原值）。
+        ///
+        /// <para><b>为什么必须有</b>：扩张的每条边都拿"当前层 + <see cref="CsConst.StepUpHeight"/>"当射线起点
+        /// （<see cref="GroundYAbove"/>），所以基准高度一旦比本格真正的落脚面低超过一个台阶，
+        /// **邻格一个都探不到**、可达集塌成 1 格（离线实测：起点 baseY 比本格落地面低 0.5 m ⇒ 4402 → **1**）。
+        /// 而 <see cref="ICsMap.SampleGround"/> 给的是"脚下那一点"的地面：格内 5×5 只看到台地面、
+        /// 机器人却站在同一格的另一层 / 台沿下时，两者会差一整层（实机形态 =
+        /// 「终点格 (20,90) 在高度一致性层里不存在（从起点 (90,60) 起…）」，而 (90,60) 的取样面是 2.438）。</para>
+        ///
+        /// <para><b>只放宽"起点这一格"的上下搜索带</b>（<see cref="StartFaceSnapBand"/>，也顺手排除头顶屋顶）：
+        /// 边判据（抬腿 ≤ <see cref="CsConst.StepUpHeight"/>）、可站立判据
+        /// （<see cref="CsConst.MaxStandableSlopeNormalZ"/>）、探测深度（<see cref="GroundProbeDepth"/>）一个都没改。
+        /// 并列取先命中的（遍历顺序 = <see cref="InCellFrac"/> 升序）⇒ 确定性。</para>
+        /// </summary>
+        private float SnapStartFace(Vector2Int cell, float baseY)
+        {
+            var c = CellCenter(cell);
+            var size = Game.Map.CellSize;
+            var band = StartFaceSnapBand;
+            var best = float.NaN;
+            var bestAbs = float.MaxValue;
+
+            for (var i = 0; i < InCellFrac.Length; i++)
+            {
+                for (var k = 0; k < InCellFrac.Length; k++)
+                {
+                    var origin = new Vector3(c.x + InCellFrac[i] * size, baseY + band, c.z + InCellFrac[k] * size);
+                    Vector3 point; Vector3 normal;
+                    if (!_map.TrySampleGround(origin, out point, out normal, band + GroundProbeDepth)) continue;
+                    if (normal.y < CsConst.MaxStandableSlopeNormalZ) continue;   // 陡坡不算落脚面（CsMap.cs:521 同式）
+                    if (point.y > baseY + band || point.y < baseY - GroundProbeDepth) continue;
+
+                    var ad = Mathf.Abs(point.y - baseY);
+                    if (ad < bestAbs - 1e-4f)                                    // 更近（并列保留先命中的 ⇒ 确定性）
+                    {
+                        bestAbs = ad;
+                        best = point.y;
+                    }
+                }
+            }
+
+            return best;
         }
 
         /// <summary>
