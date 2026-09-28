@@ -1304,6 +1304,15 @@ namespace Cs16.Module.Combat
                     $"{def.DisplayName} 的参考态系数仍为 0（比值模型退化，差异 #94）");
             }
 
+            // ---- `spread.no-acc.*` 判据的**等价离线断言**（差异 #94）：该降频日志只在
+            //      "有档位系数、没有 acc 模型"时打（`CsInventory.FireSpread` 的回落分支）⇒
+            //      只要下面这条对**所有**武器成立，那条日志就永远打不出来。
+            foreach (var def in CsWeapons.All)
+            {
+                Assert(def.SpreadStillMul <= 0f || CsWeapons.HasSpreadCoefficients(def),
+                    $"{def.DisplayName} 有档位系数却没有 acc 模型 ⇒ 会打 spread.no-acc.{def.Id}（差异 #94）");
+            }
+
             ExpectRef(CsWeapons.Ak47, 0.2f);                       // 复位口径不变
             ExpectRef(CsWeapons.Mp5, 0.4545434f);                  // 0.45 + 1/(1/0.00454339)
             ExpectRef(CsWeapons.Ump45, 0.5047619f);                // 0.5 + 1/210
