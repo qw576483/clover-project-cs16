@@ -496,6 +496,46 @@ namespace Cs16.Module.Match
                 $"换边已{(halfTimeSwap ? "打开" : "关掉")}（离线取证驱动专用）");
         }
 
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：让**本地角色**按给定瞄向（<paramref name="pitchDeg"/>
+        /// 抬头为正、<paramref name="yawDeg"/>）投出一颗 <paramref name="grenadeId"/> —— 走的是真实投掷的
+        /// **同一条实现**（<see cref="CsInventory.ThrowGrenade"/>：初速 = <c>CsConst.GrenadeThrowSpeed(俯仰)</c>、
+        /// 之后只受重力），只跳过"切到该类手雷 + 扣扳机"的输入链。发射与落地各打一条 Info
+        /// （<c>nade.throw</c> / <c>nade.land</c>），落点坐标就是投掷距离的原始证据。
+        ///
+        /// <para><b>为什么必须有它</b>：<c>_local</c> 与 <c>CsInventory.ThrowGrenade</c> 都是 internal，
+        /// 离线驱动编在独立程序集拿不到（与 <see cref="ApplyBulletHitForTest"/> 同一形状）。</para>
+        ///
+        /// <para><b>返回值语义</b>：<c>true</c> = 确已投出；<c>false</c> = 本地角色不在场 / 已阵亡 /
+        /// id 不是投掷物（此时**不**调用并留 Warn，⛔ 不静默）。弹药不足由本入口补足 1 颗（取证专用）。</para>
+        ///
+        /// <para><b>不改变真实玩家行为</b>：没有任何 Update / 事件会调它。</para>
+        /// </summary>
+        public bool ThrowGrenadeForTest(string grenadeId, float pitchDeg, float yawDeg)
+        {
+            if (_local == null || !_local.IsAlive)
+            {
+                Game.Logger.Warn(Tag,
+                    $"测试入口 ThrowGrenadeForTest：本地角色{(_local == null ? "不在场" : "已阵亡")}，本次投掷已忽略");
+                return false;
+            }
+
+            var def = CsWeapons.Get(grenadeId);
+            if (def == null || def.Class != CsWeaponClass.Grenade)
+            {
+                Game.Logger.Warn(Tag,
+                    $"测试入口 ThrowGrenadeForTest：id=\"{grenadeId}\" 不是投掷物" +
+                    $"（def={(def == null ? "null" : def.Class.ToString())}），本次投掷已忽略");
+                return false;
+            }
+
+            _local.Pitch = pitchDeg;
+            _local.Yaw = yawDeg;
+            _local.SetAmmo(grenadeId, 1, 0);
+            Inventory.ThrowGrenade(_local, def, Now);
+            return true;
+        }
+
         // ==================================================================
         //  内部访问器（供 CsRound / CsEconomy / CsBomb / CsDamage / CsInventory 使用）
         // ==================================================================
@@ -1088,7 +1128,8 @@ namespace Cs16.Module.Match
                     var speed = CsInventory.MovementSpeed(a);
                     // 摩擦 + 逐帧加速（原版 PM_Friction / PM_Accelerate）：不能把速度直接设成目标值，
                     // 否则松手即停、起步瞬间满速，丢掉了原版的惯性。
-                    a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt);
+                    a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt,
+                                                  GroundAheadOf(a));
 
                     if (inp.Jump && a.OnGround)
                     {
@@ -2242,7 +2283,8 @@ namespace Cs16.Module.Match
             var speed = CsInventory.MovementSpeed(a);
             // 摩擦 + 逐帧加速（原版 PM_Friction / PM_Accelerate）：不能把速度直接设成目标值，
             // 否则松手即停、起步瞬间满速，丢掉了原版的惯性。
-            a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt);
+            a.Velocity = CsMovement.Solve(a.Velocity, dir, dir.magnitude * speed, a.OnGround, dt,
+                                          GroundAheadOf(a));
 
             if (inp.Jump && a.OnGround && now >= _localNextJumpTime)
             {
@@ -2265,6 +2307,38 @@ namespace Cs16.Module.Match
 
             // 拾取：走到掉落的 C4 旁自动捡起。
             Bomb.TryPickupDropped(a);
+        }
+
+        /// <summary>
+        /// 「水平速度方向前方一个探测窗口内有没有地面」= 原版 <c>PM_Friction</c> 的 edgefriction 判据
+        /// （机制出处 <c>原版资源/hlsdk/pm_shared/pm_shared.c:1079-1094</c>）：从脚面沿**水平速度方向**前
+        /// <see cref="CsMovement.EdgeProbeForward"/> 处向下探 <see cref="CsMovement.EdgeProbeDrop"/>。
+        ///
+        /// <para>返回 false（探不到地面 = 前方是断崖 / 边缘）⇒ <c>CsMovement.Friction</c> 把本帧摩擦乘上
+        /// <see cref="CsConst.SvEdgeFriction"/>；返回 true ⇒ 只用 <see cref="CsConst.SvFriction"/>。</para>
+        ///
+        /// <para>速度低于原版摩擦的提前返回阈值（<see cref="CsMovement.MinSpeedForFriction"/>）时不探测
+        /// —— 原版 <c>:1074</c> 的 <c>speed &lt; 0.1</c> 在边缘探测之前就 return 了。没有地图时按
+        /// "前方有地面"处理，不引入地图形状之外的手感差异。</para>
+        /// </summary>
+        private bool GroundAheadOf(CsActor a)
+        {
+            if (_map == null || !_map.IsLoaded) return true;
+
+            var horizontal = new Vector3(a.Velocity.x, 0f, a.Velocity.z);
+            var speed = horizontal.magnitude;
+            if (speed <= CsMovement.MinSpeedForFriction) return true;
+
+            var probe = a.Position + horizontal * (CsMovement.EdgeProbeForward / speed);
+            if (_map.TrySampleGround(probe, out _, out _, CsMovement.EdgeProbeDrop)) return true;
+
+            // 前方一个探测窗口内没有地面 ⇒ 本帧摩擦 ×SvEdgeFriction（原版 edgefriction）。
+            // 沿台沿走是常见路径 ⇒ 降频留痕（首次 + 每 N 次）。
+            RateWarn("move.edgefriction",
+                $"{a.Name} 前方 {CsMovement.EdgeProbeForward:F3}m 内探不到地面（下探 {CsMovement.EdgeProbeDrop:F3}m，" +
+                $"水平速度 {speed:F2}m/s）⇒ 本帧地面摩擦按 sv_friction({CsConst.SvFriction:F1}) × " +
+                $"edgefriction({CsConst.SvEdgeFriction:F1}) = {CsConst.SvFriction * CsConst.SvEdgeFriction:F1} 算");
+            return false;
         }
 
         /// <summary>位移 + 重力 + 地面吸附；碰撞走 <see cref="ICsMap.ResolveMove"/>（分轴滑墙 + 台阶）。</summary>
@@ -2346,7 +2420,7 @@ namespace Cs16.Module.Match
             // 之后走的是**既有**的贴地/陡坡闸门，本分支不新增任何逻辑。
             // 只改"能不能探到"，不改任何可站高度语义：抬升上限就是 `CsConst.StepUpHeight`，与 `CanStand` 的
             //    水平准入闸门 `GroundWithinStep`（`point.y - pos.y <= StepUpHeight`）**同一个常量**，
-            //    ⇒ 不会开出"能走进、却站不上"的新几何口子，也不会让人爬上高过 0.45 m 的台沿。
+            //    ⇒ 不会开出"能走进、却站不上"的新几何口子，也不会让人爬上高过 0.4572 m 的台沿。
             // 只在"上一帧还站在地上、且竖直速度不朝上"时用 ⇒ 跳跃上升段、走下断崖（探到的地面在脚面以下）都不受影响。
             if (!hasGround && a.Velocity.y <= 0f && a.OnGround)
             {
@@ -2863,7 +2937,8 @@ namespace Cs16.Module.Match
 
                     var speed = CsInventory.MovementSpeed(a);
                     // 与本地 / 远端共用同一套摩擦与加速（原版 PM_Friction / PM_Accelerate）。
-                    a.Velocity = CsMovement.Solve(a.Velocity, move, move.magnitude * speed, a.OnGround, dt);
+                    a.Velocity = CsMovement.Solve(a.Velocity, move, move.magnitude * speed, a.OnGround, dt,
+                                                  GroundAheadOf(a));
 
                     if (intent.Jump && a.OnGround)
                     {

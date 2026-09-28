@@ -80,6 +80,11 @@ namespace Cs16.Module.View
         /// <para>原版是尸体躺到本局结束、回合重开（复活）时才消失，所以这里**冻在倒地序列最后一帧**、
         /// 不隐藏；若走 <c>OnClipFinished → _hideAfterDeath = true → SetShown(false)</c>，
         /// 倒地序列播完整具身体就没了（连"倒地"这一下都看不完）。</para>
+        ///
+        /// <para><b>停留时长出处</b>：原版由客户端 cvar <c>cl_corpsestay</c> 控制，默认
+        /// <b>600 s</b>（<c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>：注册处 VA <c>0x0194DAF9</c>，
+        /// 默认值串 VA <c>0x019E8C40</c> = <c>"600"</c>，flags = 1 = FCVAR_ARCHIVE）。
+        /// 本工程单局时长远短于它 ⇒ 表现等价于"留到本局结束"，故这里不设倒计时。</para>
         /// </summary>
         private bool _corpseHeld;
 

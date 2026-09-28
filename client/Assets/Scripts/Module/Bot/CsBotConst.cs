@@ -519,12 +519,12 @@ namespace Cs16.Module.Bot
 
         /// <summary>
         /// 投出的最远距离（米）——**由投掷物理定出的上界，不是手感值**：
-        /// 投掷 = 沿瞄向给初速 <c>CsConst.GrenadeThrowForce</c>(12 m/s) + 重力 <c>CsConst.Gravity</c>(20.32 m/s²)
-        /// （<c>CsInventory.ThrowGrenade</c> 与 <c>CsInventory.TickProjectiles</c> 就是这套积分），
-        /// 45° 平射最远 = v²/g = 144/20.32 ≈ 7.09m。取 6.8m 留 0.29m 余量 ⇒ 低弧解算（见
-        /// <c>CsBotBrain.GrenadeAimPoint</c>）在这个窗口内恒有解（6.8m 处所需仰角 ≈ 35°）。
+        /// 初速随瞄向俯仰变化 <c>CsConst.GrenadeThrowSpeed(pitch)</c>（原版口径 <c>(90 - angThrow.x) × 4</c>），
+        /// 之后只受重力 <c>CsConst.Gravity</c>(20.32 m/s²) ⇒ 平抛落点 <c>d(θ) = v(θ)² · sin(2θ) / g</c>。
+        /// 抬头同时抬高仰角与初速 ⇒ 峰值**不再**在 45°：数值扫得峰值 ≈ <b>10.04 m（θ ≈ 55°）</b>。
+        /// 取 9.6 m 留 0.44 m 余量 ⇒ 低弧解算（见 <c>CsBotBrain.GrenadeAimPoint</c>）在这个窗口内恒有解（9.6 m 处所需仰角 ≈ 52°）。
         /// </summary>
-        public const float GrenadeMaxRange = 6.8f;
+        public const float GrenadeMaxRange = 9.6f;
 
         /// <summary>两次投掷之间的最小间隔（秒）：防"一回合把手上几颗雷连着一次性扔光"。
         /// 出处：**本项目新增**。</summary>

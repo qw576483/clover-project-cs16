@@ -21,8 +21,17 @@ namespace Cs16.Module.Match
     /// </summary>
     public static class CsMovement
     {
-        /// <summary>原版摩擦里"速度太小就直接返回"的阈值 = <c>0.1</c> unit/s ⇒ ×0.0254（<c>PM_Friction</c> :1074）。</summary>
-        private const float FrictionMinSpeed = 0.1f * 0.0254f;
+        /// <summary>原版摩擦里"速度太小就直接返回"的阈值 = <c>0.1</c> unit/s ⇒ ×0.0254（<c>PM_Friction</c> :1074）。
+        /// 低于它时原版**不做边缘探测**就返回 ⇒ 调用方（<c>CsMatch.GroundAheadOf</c>）据此跳过探测。</summary>
+        public const float MinSpeedForFriction = 0.1f * 0.0254f;
+
+        /// <summary>原版边缘摩擦的**前向**探测偏移 = <c>16</c> unit ⇒ ×0.0254（<c>PM_Friction</c> :1084，
+        /// <c>start[0/1] = origin + vel/speed * 16</c>）。</summary>
+        public const float EdgeProbeForward = 16f * CsConst.UnitToMeter;
+
+        /// <summary>原版边缘摩擦的**向下**探测深度 = <c>34</c> unit ⇒ ×0.0254（<c>PM_Friction</c> :1087，
+        /// <c>stop[2] = start[2] - 34</c>）。</summary>
+        public const float EdgeProbeDrop = 34f * CsConst.UnitToMeter;
 
         /// <summary>原版"这一步几乎没动就把速度清掉"的阈值 = <c>1.0</c> unit/s ⇒ ×0.0254（<c>PM_WalkMove</c> :985）。</summary>
         private const float MinMoveSpeed = 1.0f * 0.0254f;
@@ -36,8 +45,13 @@ namespace Cs16.Module.Match
         /// <para><paramref name="wishDir"/> = 水平**单位**方向向量（没有输入时是零向量）；
         /// <paramref name="wishSpeed"/> = 本帧期望的水平速度（= 武器档最大速度 × 输入力度，≤ <see cref="CsConst.SvMaxSpeed"/>）。
         /// <paramref name="onGround"/> 取**上一帧**的贴地标志（与原版 <c>pmove-&gt;onground</c> 同口径）。</para>
+        ///
+        /// <para><paramref name="groundAhead"/> = 水平速度方向前一个探测窗口内**有没有地面**
+        /// （原版 <c>PM_Friction</c> 的 edgefriction 判据；探测由 <c>CsMatch.GroundAheadOf</c> 做，
+        /// 本类不碰地图）。false ⇒ 本帧摩擦乘 <see cref="CsConst.SvEdgeFriction"/>。</para>
         /// </summary>
-        public static Vector3 Solve(Vector3 velocity, Vector3 wishDir, float wishSpeed, bool onGround, float dt)
+        public static Vector3 Solve(Vector3 velocity, Vector3 wishDir, float wishSpeed, bool onGround, float dt,
+                                    bool groundAhead)
         {
             if (dt <= 0f) return velocity;
 
@@ -55,7 +69,7 @@ namespace Cs16.Module.Match
 
             if (onGround)
             {
-                velocity = Friction(velocity, dt);
+                velocity = Friction(velocity, dt, groundAhead);
                 velocity = Accelerate(velocity, wishDir, wishSpeed, CsConst.SvAccelerate, dt);
 
                 // PM_WalkMove :985 —— 水平速度小到几乎没有就清掉（否则会无限小地"滑"下去）。
@@ -74,15 +88,17 @@ namespace Cs16.Module.Match
             return velocity;
         }
 
-        /// <summary><c>PM_Friction</c>（:1059-1114）：按"控制速度"减速，每帧丢掉 <c>control × friction × dt</c> 的比例。</summary>
-        private static Vector3 Friction(Vector3 velocity, float dt)
+        /// <summary><c>PM_Friction</c>（:1059-1114）：按"控制速度"减速，每帧丢掉 <c>control × friction × dt</c> 的比例。
+        /// <paramref name="groundAhead"/> = false（前方探不到地面）时摩擦乘 <see cref="CsConst.SvEdgeFriction"/>
+        /// —— 原版 <c>:1091-1094</c> 的 <c>friction = movevars-&gt;friction * movevars-&gt;edgefriction</c>。</summary>
+        private static Vector3 Friction(Vector3 velocity, float dt, bool groundAhead)
         {
             var speed = new Vector2(velocity.x, velocity.z).magnitude;
-            if (speed < FrictionMinSpeed) return velocity;
+            if (speed < MinSpeedForFriction) return velocity;
 
-            // 原版的 edgefriction（前方没地面时 ×2）需要一次前瞻射线，本工程不实现 ⇒ 只取 sv_friction 本体。
+            var friction = groundAhead ? CsConst.SvFriction : CsConst.SvFriction * CsConst.SvEdgeFriction;
             var control = speed < CsConst.SvStopSpeed ? CsConst.SvStopSpeed : speed;
-            var drop = control * CsConst.SvFriction * dt;
+            var drop = control * friction * dt;
 
             var newSpeed = speed - drop;
             if (newSpeed < 0f) newSpeed = 0f;

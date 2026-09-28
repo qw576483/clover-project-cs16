@@ -896,7 +896,8 @@ namespace Cs16.Module.Match
         // ==================================================================
         //  手雷投掷 / 抛射物 / 烟雾
         // ==================================================================
-        private void ThrowGrenade(CsActor a, CsWeaponDef def, float now)
+        // internal：CsMatch 的取证测试入口要经同一条实现投掷（见 CsMatch.ThrowGrenadeForTest）。
+        internal void ThrowGrenade(CsActor a, CsWeaponDef def, float now)
         {
             var count = GrenadeCount(a, def.Id);
             if (count <= 0) return;
@@ -905,19 +906,24 @@ namespace Cs16.Module.Match
             else a.SetAmmo(def.Id, count - 1, 0);
 
             var dir = AimDirection(a);
+            // 初速随瞄向俯仰变化（原版 CBasePlayer::ThrowGrenade 的口径，出处见 GrenadeThrowSpeed）。
+            var speed = CsConst.GrenadeThrowSpeed(a.Pitch);
             var proj = new CsGrenadeProjectile
             {
                 WeaponId = def.Id,
                 OwnerId = a.Id,
                 OwnerTeam = a.Team,
                 Position = a.EyePosition + dir * CsConst.PlayerRadius,
-                Velocity = dir * CsConst.GrenadeThrowForce,
+                Velocity = dir * speed,
                 FuseLeft = CsConst.GrenadeFuse,
                 Landed = false,
             };
             _grenades.Add(proj);
 
-            Game.Logger.Info(Tag, $"{a.Name} 投出 {def.DisplayName}（剩余 {Mathf.Max(0, count - 1)} 颗）");
+            Game.Logger.Info(Tag, $"{a.Name} 投出 {def.DisplayName}（剩余 {Mathf.Max(0, count - 1)} 颗）" +
+                $" nade.throw id={def.Id} pitch={a.Pitch:F1} yaw={a.Yaw:F1} speed={speed:F3} " +
+                $"from=({proj.Position.x:F3},{proj.Position.y:F3},{proj.Position.z:F3}) " +
+                $"v=({proj.Velocity.x:F3},{proj.Velocity.y:F3},{proj.Velocity.z:F3})");
 
             // 手上这颗没了就自动换回武器（官方行为）。
             if (GrenadeCount(a, def.Id) <= 0) SelectBestWeapon(a);
@@ -962,6 +968,8 @@ namespace Cs16.Module.Match
                     {
                         g.Landed = true;
                         g.Velocity = Vector3.zero;
+                        Game.Logger.Info(Tag, $"nade.land id={g.WeaponId} " +
+                            $"at=({to.x:F3},{to.y:F3},{to.z:F3})");
                     }
                     g.Position = to;
                 }

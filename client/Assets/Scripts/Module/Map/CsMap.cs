@@ -590,7 +590,7 @@ namespace Cs16.Module.Map
         /// （该列有地面 ∨ 落点不比脚下低 ∨ 高差 ≤ 一步台阶 ∨ 法线不陡 ∨ 体积不被占 ∨ 膝盖射线通畅）——
         /// 见下面 段：单层 2D 位图对"侧面挡人、顶面能站"的台阶/扶手只有"挡"一个答案，
         /// 硬否决它就是用户报的「台阶上跳一下就卡住」；</item>
-        /// <item>落点地面比当前脚下**高出不超过 <see cref="CsConst.StepUpHeight"/>**（0.45m）——
+        /// <item>落点地面比当前脚下**高出不超过 <see cref="CsConst.StepUpHeight"/>**（0.4572m）——
         /// 高过它就是一堵台沿，不许"神抬腿"迈上去；</item>
         /// <item>落点地面**不是陡坡**（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）——
         /// 原版 `PM_WalkMove` 的下探之后就是拿这个分量判的（`if (trace.plane.normal[2] &lt; 0.7) goto usedown;`），

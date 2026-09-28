@@ -10,7 +10,7 @@ namespace Cs16.Module.Combat
     ///
     /// <para><b>分工</b>（这是与比赛模拟的关键约定）：手雷的飞行、引信、爆炸伤害**全部在比赛模拟里**
     /// （<c>CsInventory.ThrowGrenade / TickProjectiles / Detonate</c> 已实现），本类**不做任何伤害结算**，
-    /// 只按**同一套常量**（<see cref="CsConst.GrenadeThrowForce"/> / <see cref="CsConst.Gravity"/> /
+    /// 只按**同一套常量**（<see cref="CsConst.GrenadeThrowSpeed"/> / <see cref="CsConst.Gravity"/> /
     /// <see cref="CsConst.GrenadeFuse"/>）积分出一个"看得见的手雷"，让玩家能看见它飞、落在哪。</para>
     ///
     /// <para><b>为什么不用 Rigidbody</b>：模拟里那颗手雷是无刚体的纯数据体。再挂一个 Rigidbody
@@ -63,11 +63,14 @@ namespace Cs16.Module.Combat
             else if (def.Id == CsWeapons.Flashbang) visual = _fx.RentSphere(new Color(0.6f, 0.65f, 0.9f, 1f), CsCombatTuning.GrenadeVisualRadius);
             else visual = _fx.RentSphereGrenade(CsCombatTuning.GrenadeVisualRadius);
 
+            // 与模拟同一条初速口径（CsConst.GrenadeThrowSpeed）：俯仰由方向自己给出
+            // （本工程 dir.y = sin(pitch)，故回算 pitch 再查表 —— 视觉与伤害用同一套常量）。
+            var pitchDeg = Mathf.Asin(Mathf.Clamp(dir.y, -1f, 1f)) * Mathf.Rad2Deg;
             var flight = new Flight
             {
                 Go = visual,
                 Position = eyePosition + dir * CsConst.PlayerRadius,
-                Velocity = dir * CsConst.GrenadeThrowForce,
+                Velocity = dir * CsConst.GrenadeThrowSpeed(pitchDeg),
                 FuseLeft = CsConst.GrenadeFuse,
                 WeaponId = def.Id,
             };

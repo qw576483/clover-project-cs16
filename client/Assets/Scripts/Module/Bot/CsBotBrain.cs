@@ -511,7 +511,7 @@ namespace Cs16.Module.Bot
             _nav.SetRoute(_map, routeMarker, self.Position);
 
             //   目标点**不能只判"地图上有这个标记"**：该点可能落在"位图说可走、但从出生点
-            //   按抬腿 ≤ 0.45m 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
+            //   按抬腿 ≤ `CsConst.StepUpHeight` 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
             //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束（实测全程位移 0.00m）。
             //   口径与运行时同一份：BotNavigator.CanReach = SnapToWalkable + WalkableCellHeightAware + AStar。
             if (!string.IsNullOrEmpty(siteMarker) && TryPickGoalPoint(self, siteMarker, plan.GoalOrdinal, out var site))
@@ -1840,7 +1840,7 @@ namespace Cs16.Module.Bot
         ///
         /// <para><b>该不该投</b>：目标（敌人 / 包点 / 本轮目标点）的水平距离必须 ≥ 该类型的下界，
         /// 落点取 <c>min(距离, GrenadeMaxRange)</c>（见 <see cref="TryAimWithinReach"/>）——
-        /// 投掷在本工程里是"沿瞄向给初速 <c>CsConst.GrenadeThrowForce</c>(12m/s) + 重力"，45° 最远 ≈ 7.09m，
+        /// 投掷在本工程里是"沿瞄向给初速 <c>CsConst.GrenadeThrowSpeed(仰角)</c> + 重力"，最远 ≈ 10.04m（仰角 ≈ 55°），
         /// 更远的目标物理上扔不到 ⇒ 落在朝它方向的最远处；
         /// 下界按类型取（烟雾 = <see cref="CsBotConst.GrenadeMinRange"/>，
         /// 高爆/闪光 = <see cref="CsBotConst.GrenadeSelfSafeRange"/>，即"自己不在爆心半径里"）。</para>
@@ -2050,8 +2050,12 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 低弧解算：把瞄点抬到"按这个仰角投出，正好落在目标点水平距离上"的位置。
         /// 解的就是本工程投掷用的那套运动（<c>CsInventory.ThrowGrenade</c> 给初速
-        /// <c>CsConst.GrenadeThrowForce</c>、之后只受 <c>CsConst.Gravity</c>）：
-        /// 平抛落点 d = v²·sin(2θ)/g ⇒ sin(2θ) = d·g/v²，取低弧那一支（近弹道、飞行时间短、不易被墙挡）。
+        /// <c>CsConst.GrenadeThrowSpeed(仰角)</c>、之后只受 <c>CsConst.Gravity</c>）：
+        /// 平抛落点 <c>d(θ) = v(θ)²·sin(2θ)/g</c>，其中 <c>v</c> **自己也是 θ 的函数**
+        /// （原版口径 <c>(90 - angThrow.x) × 4</c>）⇒ 定值 v 的闭式解 <c>sin(2θ) = d·g/v²</c> 不再成立，
+        /// 改为在**单调上升段** <c>[0°, 55°]</c> 上二分求 θ —— 该段的右端点由
+        /// <c>CsBotConst.GrenadeMaxRange</c> 的注释给出（峰值 ≈ 10.04 m @ 55° &gt; 9.6 m 上限
+        /// ⇒ 解必落在该段内）。取上升段那一支 = 低弧（近弹道、飞行时间短、不易被墙挡）。
         /// </summary>
         private static Vector3 GrenadeAimPoint(CsActor self, Vector3 point, out float range)
         {
@@ -2061,9 +2065,17 @@ namespace Cs16.Module.Bot
             range = d;
             if (d < 0.01f) return point;
 
-            var v2 = CsConst.GrenadeThrowForce * CsConst.GrenadeThrowForce;
-            var s = Mathf.Clamp(d * CsConst.Gravity / v2, 0f, 0.98f);
-            var pitch = 0.5f * Mathf.Asin(s);
+            var lo = 0f;
+            var hi = 55f * Mathf.Deg2Rad;
+            for (var i = 0; i < 24; i++)
+            {
+                var mid = (lo + hi) * 0.5f;
+                var v = CsConst.GrenadeThrowSpeed(mid * Mathf.Rad2Deg);
+                var reach = v * v * Mathf.Sin(2f * mid) / CsConst.Gravity;
+                if (reach < d) lo = mid;
+                else hi = mid;
+            }
+            var pitch = (lo + hi) * 0.5f;
 
             return self.EyePosition + flat.normalized * d + Vector3.up * (d * Mathf.Tan(pitch));
         }

@@ -195,7 +195,21 @@ namespace Cs16.Core
         /// </summary>
         public const float Gravity = 20.32f;
         public const float MaxFallSpeed = -30f;
-        public const float StepUpHeight = 0.45f;          // 可迈上的台阶高度
+
+        /// <summary>
+        /// 可迈上的台阶高度 = 引擎 cvar <c>sv_stepsize</c> 的默认值 <b>18</b> unit
+        /// ⇒ <c>18 × 0.0254</c> = <b>0.4572 m</b>。
+        ///
+        /// <para>出处 = 原版 <c>原版资源/cs16src/hw.dll</c> 的 cvar 默认串表：file <c>0x18A058</c>
+        /// 逐字是 <c>sv_stepsize\0 18\0</c>。原版消费点 = <c>pmove-&gt;movevars-&gt;stepsize</c>
+        /// （<c>原版资源/hlsdk/pm_shared/pm_shared.c:1024</c> 上台阶下探 / <c>:1034</c> 复位 /
+        /// <c>:1211</c> 起跳上探）。</para>
+        ///
+        /// <para>本工程消费点 = <c>CsMap.GroundWithinStep</c> / <c>CsMap.TryStepUp</c> /
+        /// <c>CsMatch.StepActorPhysics</c> 的陡坡闸门与"抬一个台阶再探"分支。</para>
+        /// </summary>
+        public const float StepUpHeight = 18f * UnitToMeter;
+
         public const float GroundCheckDistance = 0.12f;
 
         // ---- 移动 cvar（地面摩擦 / 地面加速 / 空中加速 / 停速阈值）----
@@ -207,6 +221,20 @@ namespace Cs16.Core
         /// <summary>地面摩擦 = <c>sv_friction 4</c> · 出处 <c>策划/对照表.md</c> N-12（随包 <c>server.cfg:33</c>）；
         /// 引擎出厂同为 4（<c>原版资源/cs16src/hw.dll</c> 的 cvar 默认串表，<c>sv_friction\0 4\0</c> 在 file 0x18a00c 附近）。</summary>
         public const float SvFriction = 4f;
+
+        /// <summary>
+        /// 边缘摩擦倍率 = 引擎 cvar <c>edgefriction</c> 的默认值 <b>2</b>。出处 = 原版
+        /// <c>原版资源/cs16src/hw.dll</c> 的 cvar 默认串表：file <c>0x18B490</c> 逐字是
+        /// <c>edgefriction\0 2\0</c>。
+        ///
+        /// <para>语义（机制形状出处 <c>原版资源/hlsdk/pm_shared/pm_shared.c:1079-1100</c>）：地面摩擦时，
+        /// 从脚面沿**水平速度方向**前 <c>16</c> unit 处向下探 <c>34</c> unit，探不到任何面
+        /// （<c>trace.fraction == 1.0</c>，= 前方是断崖/边缘）⇒ 本帧摩擦 <c>= sv_friction × 本值</c>；
+        /// 探到面 ⇒ 只用 <c>sv_friction</c>。</para>
+        ///
+        /// <para>消费点 = <c>CsMovement.Friction</c>（探测本身在 <c>CsMatch.GroundAheadOf</c>）。</para>
+        /// </summary>
+        public const float SvEdgeFriction = 2f;
 
         /// <summary>地面加速度 = <c>sv_accelerate 5</c> · 出处 <c>策划/对照表.md</c> N-13（随包 <c>server.cfg:30</c>）。
         /// ⚠️ 引擎出厂是 <b>10</b>（<c>hw.dll</c> cvar 默认串 <c>sv_accelerate\0 10\0</c>）——两套口径本就不同，本工程按随包值 5。</summary>
@@ -433,7 +461,39 @@ namespace Cs16.Core
         public const float KnifeRange = 1.6f;
 
         // ---- 手雷 ----
-        public const float GrenadeThrowForce = 12f;
+
+        /// <summary>
+        /// 投掷初速的**俯仰系数**（unit/s 每度）· 出处 <c>原版资源/cs16src/cstrike/dlls/mp.dll</c>
+        /// 的 <c>.rdata</c> VA <c>0x10142030</c> = <c>4.0f</c> —— 与 VA <c>0x10142184</c> = <c>90.0f</c>
+        /// 同属原版 <c>CBasePlayer::ThrowGrenade</c> 的常量族（该函数口径 = <c>flVel = (90 - angThrow.x) * 4</c>）。
+        /// </summary>
+        public const float GrenadeThrowPitchScale = 4f;
+
+        /// <summary>
+        /// 投掷初速的**上限**（unit/s）· 出处同上 <c>.rdata</c> VA <c>0x10142268</c> = <c>750.0f</c>
+        /// （原版 <c>if (flVel &gt; 750) flVel = 750;</c>）。
+        /// </summary>
+        public const float GrenadeThrowSpeedMax = 750f;
+
+        /// <summary>
+        /// 手雷投掷初速（m/s）= <c>min((90 + pitchDeg) × 4, 750) × UnitToMeter</c>。
+        ///
+        /// <para><b>为什么是俯仰的函数</b>：原版初速 = <c>(90 - angThrow.x) × 4</c> unit/s，
+        /// 其中 <c>angThrow.x</c> 就是**瞄向俯仰**（原版正方向朝下）⇒ 抬头扔得更远。本工程
+        /// <c>CsActor.Pitch</c> 正方向**朝上** ⇒ 原式的 <c>(90 - angThrow.x)</c> 在这里写作
+        /// <c>(90 + pitchDeg)</c>。平视 = 360 unit/s = 9.14 m/s；抬头 89° = 716 unit/s = 18.19 m/s。</para>
+        ///
+        /// <para><b>未取到的部分</b>（⛔ 本工程不实现、不猜）：原版在取角度前对 <c>angThrow.x</c> 还有一次
+        /// 按朝向缩放的钳制（同族常量 <c>10.0f</c> VA <c>0x10142090</c> / <c>-10.0f</c> VA <c>0x101423D0</c> /
+        /// <c>16.0f</c> VA <c>0x101420BC</c> 疑属它），该步在 mp.dll 里的消费点**未逐字节确认**。
+        /// 因此 750 的上限在本工程 ±89° 的可用俯仰范围内不会真正触发，仍照原版保留。</para>
+        /// </summary>
+        public static float GrenadeThrowSpeed(float pitchDeg)
+        {
+            var unitPerSec = (90f + pitchDeg) * GrenadeThrowPitchScale;
+            if (unitPerSec > GrenadeThrowSpeedMax) unitPerSec = GrenadeThrowSpeedMax;
+            return unitPerSec * UnitToMeter;
+        }
         public const float GrenadeFuse = 3.0f;
         public const float GrenadeHeRadius = 5.5f;
         public const float GrenadeHeMaxDamage = 98f;
