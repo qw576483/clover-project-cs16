@@ -196,17 +196,29 @@ namespace Cs16.EditorTools
         /// <para><b>判据</b>：逐格复算 <c>BotNavigator.BuildHeightReach</c> 从出生点集合出发的扩张
         /// （几何 = <c>ThirdParty/Dust2/de_dust2_geo.bin</c> 的可站面），再逐标记点归属。</para>
         /// </summary>
-        public static readonly (string Marker, int FromIx, int FromIz, int ToIx, int ToIz)[] HeightIslandMoves =
+        public static readonly (string Marker, int FromIx, int FromIz, int ToIx, int ToIz, float ToY)[] HeightIslandMoves =
         {
-            ("BuyZone_CT", 81, 93, 78, 96),
-            ("BuyZone_CT", 84, 90, 83, 88),
+            ("BuyZone_CT", 81, 93, 78, 96, KeepY),
+            ("BuyZone_CT", 84, 90, 83, 88, KeepY),
             // 路线点：与原格同一类（落在 2.44 m 台地上，从两组出生点扩张都到不了）。
-            // 目标格 = 同层可达的相邻格（口径见上面的判据），只动 x/z、保留 y。
-            ("Route_CT_Mid", 80, 93, 80, 96),
-            ("Route_Patrol", 21, 125, 21, 122),
-            ("Route_Patrol", 45, 15, 45, 18),
-            ("Route_T_To_A", 80, 91, 83, 88),
+            // 目标格 = 同层可达的相邻格（口径见上面的判据），ToY = KeepY 表示只动 x/z。
+            ("Route_CT_Mid", 80, 93, 80, 96, KeepY),
+            ("Route_Patrol", 21, 125, 21, 122, KeepY),
+            ("Route_Patrol", 45, 15, 45, 18, KeepY),
+            ("Route_T_To_A", 80, 91, 83, 88, KeepY),
+            // T 进攻 B 点：原路点摆在 mid 及其北侧，而位图上 mid 与北侧在 z≈12.5 处被一道错位墙切开
+            //   （相邻两行的缺口不重叠 ⇒ 引擎对角口径下无路可走），从 mid 到这些点只能绕行 8.6 倍路程
+            //   （25.7 m 直线 → 221.6 m 走行），持包机器人因此到不了 B 点。
+            //   目标格 = T 出生点 → B 点的最短路（经隧道沿 x≈-36.5 北上），逐段绕行倍数 1.03~1.28。
+            //   ToY 显式给出，因为这四格的地面高度与原格不同（3.251 / 0.0 / 0.813 / 0.813）。
+            ("Route_T_To_B", 62, 54, 32, 26, 3.251f),
+            ("Route_T_To_B", 62, 70, 26, 43, 0.0f),
+            ("Route_T_To_B", 68, 95, 29, 65, 0.813f),
+            ("Route_T_To_B", 52, 103, 22, 87, 0.813f),
         };
+
+        /// <summary><see cref="HeightIslandMoves"/> 的 <c>ToY</c> 哨兵：原样保留标记点当前的 y。</summary>
+        public const float KeepY = float.NaN;
 
         private static readonly int[] NeiDx = { 1, -1, 0, 0, 1, 1, -1, -1 };
         private static readonly int[] NeiDz = { 0, 0, 1, -1, 1, -1, 1, -1 };
@@ -447,7 +459,8 @@ namespace Cs16.EditorTools
         }
 
         /// <summary>
-        /// <see cref="HeightIslandMoves"/> 的命中判定与写回：名字与"当前格"都对上才搬，写 x/z、保留 y。
+        /// <see cref="HeightIslandMoves"/> 的命中判定与写回：名字与"当前格"都对上才搬。
+        /// 写 x/z = 目标格格心；y 取 <c>ToY</c>（<see cref="KeepY"/> = 保留原值）。
         /// </summary>
         private static bool MoveHeightIslandMarker(byte[] bytes, string markerName, int xyzAt,
                                                    int ix, int iz, float ox, float oz, float cell)
@@ -473,10 +486,13 @@ namespace Cs16.EditorTools
             var m = HeightIslandMoves[bestI];
             float x = ox + (m.ToIx + 0.5f) * cell;
             float z = oz + (m.ToIz + 0.5f) * cell;
+            float y = float.IsNaN(m.ToY) ? BitConverter.ToSingle(bytes, xyzAt + 4) : m.ToY;
             BitConverter.GetBytes(x).CopyTo(bytes, xyzAt);
+            BitConverter.GetBytes(y).CopyTo(bytes, xyzAt + 4);
             BitConverter.GetBytes(z).CopyTo(bytes, xyzAt + 8);
             Debug.Log($"{Tag} 标记点 {markerName} 原格 ({ix},{iz})（登记原格 {m.FromIx},{m.FromIz}，差 {bestD} 格）" +
-                      $"走不到（落脚面比周边高出一层）⇒ 按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{z:F1})（y 保留）");
+                      $"走不到 ⇒ 按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{y:F3},{z:F1})" +
+                      (float.IsNaN(m.ToY) ? "（y 保留）" : "（y = 登记值）"));
             return true;
         }
 
