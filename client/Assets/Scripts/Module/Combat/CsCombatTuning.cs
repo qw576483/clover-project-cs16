@@ -107,8 +107,7 @@ namespace Cs16.Module.Combat
         //  开镜 / 视高 / 受击
         // ==================================================================
         /// <summary>FOV 过渡时间常数（秒）——即"开镜延迟"的可见部分（AWP/Scout）。
-        /// 出处：**本项目新增**（原版开镜 FOV 由 CS 自己的 <c>client.dll</c> 下发，HLSDK 里没有该实现
-        /// ⇒ <c>策划/对照表.md</c> A-05 [BLOCKED]）。</summary>
+        /// 出处：**本项目新增**（原版开镜 FOV 由 CS 自己的 <c>client.dll</c> 下发，HLSDK 里没有该实现）。</summary>
         public const float ZoomTransitionTau = 0.06f;
 
         /// <summary>开镜"稳定"所需时间（秒）：未稳定前不享受开镜精度加成（cs 的 quickscope 惩罚）。

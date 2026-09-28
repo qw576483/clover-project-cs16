@@ -4,7 +4,7 @@
 spr-extract.py -- decode a GoldSrc `.spr` sprite (indexed, 8bpp) and cut a frame region
                    out of it, exactly as `sprites/hud.txt` declares it.
 
-WHY THIS EXISTS (slice cs16-AM, differences #15/#16/#52)
+WHY THIS EXISTS (slice cs16-AM, differences #16/#52)
 --------------------------------------------------------
 `client/Assets/Resources/UI/Art/*.png` (HUD icons, and the FX stand-ins `fx_*.png`) were
 derived from the original carriers back when `原版资源/cs16src/**` was still on disk.

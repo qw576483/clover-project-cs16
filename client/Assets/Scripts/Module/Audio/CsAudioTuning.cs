@@ -283,7 +283,7 @@ namespace Cs16.Module.Audio
         ///
         /// <para><b>本图的后果（如实记）</b>：de_dust2 的 38 个贴图名在原版表里**一个都没有**
         /// （交叉输出见 <c>tools/probes/cs16_materials_table.py</c>）⇒ 本图全图弹着音都落**混凝土族** ——
-        /// 这正是原版对这张图的行为，已登记 <c>策划/差异登记.tsv</c> #171。</para>
+        /// 这正是原版对这张图的行为。</para>
         /// </summary>
         public static string ClassifyImpact(string materialName)
         {
