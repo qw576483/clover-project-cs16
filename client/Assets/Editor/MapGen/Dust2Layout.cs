@@ -36,6 +36,11 @@ namespace Cs16.EditorTools
         /// <summary>转换后的几何/碰撞/标记数据（生成器与烘焙器的输入）。</summary>
         public const string GeoFileName = "de_dust2_geo.bin";
         public const string GeoFile = AssetRoot + "/" + GeoFileName;
+        /// <summary>
+        /// <c>func_breakable</c> 箱体表（10 行，由 <c>tools/probes/dust2_breakables.py</c> 从 BSP 解出）：
+        /// AABB + 该箱箱面的贴图组名 + material/health/gibmodel。生成器据此把箱面从合并网格里拆出来。
+        /// </summary>
+        public const string BreakablesFile = AssetRoot + "/breakables.tsv";
         public const string TextureDir = AssetRoot + "/Textures";
         public const string SkyboxDir = AssetRoot + "/Skybox";
         /// <summary>由生成器派生的材质球（一处收敛：换贴图在这里换）。</summary>

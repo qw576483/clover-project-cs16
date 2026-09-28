@@ -750,6 +750,25 @@ namespace Cs16.Module.Combat
         public const float BreakDecalSize = 48f * CsConst.UnitToMeter;
 
         /// <summary>
+        /// 木箱碎块（原版 <c>TE_BREAKMODEL</c> 的 shard）初速 = **200 units/s** × 0.0254 = <b>5.08 m/s</b>。
+        ///
+        /// <para><b>出处</b>：原版 <c>CBreakable::Die()</c>（Half-Life SDK 游戏逻辑，Valve 版权）
+        /// 里 <c>vecVelocity = (m_Explosion == expDirected) ? g_vecAttackDir * 200.0f : Vector3.zero</c>。
+        /// de_dust2 的 10 个箱体实体**没有 `explosion` 键**（键集逐条见
+        /// <c>ThirdParty/Dust2/breakables.tsv</c> 与 <c>tools/probes/dust2_breakables.py</c> 的输出）
+        /// ⇒ 原版出厂速度是 0，散开由客户端按 <c>randomization = 10</c> 决定（那段在引擎
+        /// <c>hw.dll</c> 里，本工程未复刻）。这里改用**同一条逐字公式** <c>g_vecAttackDir * 200</c>，
+        /// 方向取真实弹道方向 —— 本项目新增口径，已登记 <c>策划/差异登记.tsv</c>。</para>
+        /// </summary>
+        public const float BreakGibSpeed = 200f * CsConst.UnitToMeter;
+
+        /// <summary>
+        /// 木箱碎块寿命 **2.5 s**。出处：原版 <c>CBreakable::Die()</c> 的
+        /// <c>WRITE_BYTE( 25 );// 2.5 seconds</c>（同一个 TE_BREAKMODEL 消息里那一个字节 = 0.1 s 单位）。
+        /// </summary>
+        public const float BreakGibLife = 2.5f;
+
+        /// <summary>
         /// 命中面的弹痕族判据（原版 `client.dll` 的三步选族）。
         ///
         /// <para><b>原版规则</b>（本工程自己反汇编复核过，RVA 可复跑）：`client.dll` 的函数 0x20B0

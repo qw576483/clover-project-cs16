@@ -56,6 +56,7 @@ namespace Cs16.Module.Combat
         private readonly List<Vector3> _impactPoints = new List<Vector3>(16);
         private readonly List<Vector3> _impactNormals = new List<Vector3>(16);
         private readonly List<string> _impactMaterials = new List<string>(16);
+        private readonly List<Collider> _impactColliders = new List<Collider>(16);
         private int _bufferOverflowCount;
 
         /// <summary>本发命中的角色（霰弹一发可能命中多个目标）。</summary>
@@ -81,6 +82,12 @@ namespace Cs16.Module.Combat
         /// </summary>
         public IReadOnlyList<string> ImpactMaterials => _impactMaterials;
 
+        /// <summary>
+        /// 各弹丸打在墙上那一点的**碰撞体**（与 <see cref="ImpactPoints"/> 一一对应）。
+        /// 破坏判定用它取到 <see cref="CsBreakable"/>（木箱那种"打得碎的世界几何"）。
+        /// </summary>
+        public IReadOnlyList<Collider> ImpactColliders => _impactColliders;
+
         // ==================================================================
         //  散布（纯函数，便于自证）
         // ==================================================================
@@ -102,32 +109,46 @@ namespace Cs16.Module.Combat
         /// 与官方 CS 一致的三条手感：移动射击散、跳射更散、开镜极准、蹲下略准。</para>
         /// </summary>
         public static float ComputeSpread(CsWeaponDef def, float moveFactor, bool onGround, bool crouched,
-            int consecutiveShots, bool scopedAccurate, bool silenced = false, bool burst = false)
+            int consecutiveShots, bool scopedAccurate, bool silenced = false, bool burst = false,
+            float acc = -1f)
         {
             if (def == null) return 0f;
 
-            // 差异 #68：基础散布按消音 / 连发档取（M4A1 装消音 ×1.25、Glock18 连发 ×3；口径见 CsWeapons.StaticSpreadFor）。
-            var spread = CsWeapons.StaticSpreadFor(def, silenced, burst);
-            spread += def.MoveSpread * Mathf.Clamp01(moveFactor);
-            if (!onGround) spread += def.MoveSpread * CsCombatTuning.AirSpreadScale;
+            // 差异 #94：档位系数与 acc 模型都取到的武器走原版公式（`Add + Mul×acc` / `Mul×(1−acc)`，
+            // 移动 / 离地由档位本身表达，不再叠加 MoveSpread）；其余武器沿用差异 #68 的两态系数 + 附加。
+            var originalModel = acc >= 0f && CsWeapons.HasSpreadCoefficients(def);
+
+            float spread;
+            if (originalModel)
+            {
+                spread = CsWeapons.SpreadFor(def, acc, onGround, moveFactor > 0f, crouched, silenced, burst);
+            }
+            else
+            {
+                spread = CsWeapons.StaticSpreadFor(def, silenced, burst);
+                spread += def.MoveSpread * Mathf.Clamp01(moveFactor);
+                if (!onGround) spread += def.MoveSpread * CsCombatTuning.AirSpreadScale;
+            }
 
             var recoilPenalty = Mathf.Min(consecutiveShots * CsCombatTuning.RecoilSpreadPerShot,
                 CsCombatTuning.RecoilSpreadMax);
             spread += Mathf.Max(0f, recoilPenalty);
 
-            if (crouched) spread *= CsCombatTuning.CrouchSpreadScale;
+            // 原版公式里蹲档已经在档位系数内（只有手枪族有这一档）⇒ 不再叠一次通用蹲伏收敛。
+            if (crouched && !originalModel) spread *= CsCombatTuning.CrouchSpreadScale;
             if (scopedAccurate) spread *= CsCombatTuning.ZoomSpreadScale;
 
             return spread;
         }
 
-        /// <summary>按 actor 当前状态算散布（口径见上）。</summary>
+        /// <summary>按 actor 当前状态算散布（口径见上；差异 #94 起把 actor 的 acc 一起带进去）。</summary>
         public static float ComputeSpread(CsActor shooter, CsWeaponDef def, bool scopedAccurate)
         {
             if (shooter == null) return ComputeSpread(def, 0f, true, false, 0, scopedAccurate);
 
             return ComputeSpread(def, MoveFactor(shooter), shooter.OnGround, shooter.IsCrouching,
-                shooter.ConsecutiveShots, scopedAccurate, shooter.Silenced, shooter.BurstMode);
+                shooter.ConsecutiveShots, scopedAccurate, shooter.Silenced, shooter.BurstMode,
+                shooter.Accuracy);
         }
 
         /// <summary>按散布角给方向加随机偏移（与比赛模拟内部的 <c>ApplySpread</c> 同口径）。</summary>
@@ -156,6 +177,7 @@ namespace Cs16.Module.Combat
             _impactPoints.Clear();
             _impactNormals.Clear();
             _impactMaterials.Clear();
+            _impactColliders.Clear();
 
             var pellets = req.Pellets > 0 ? req.Pellets : 1;
             var range = req.Range > 0f ? req.Range : FallbackRange;
@@ -256,6 +278,7 @@ namespace Cs16.Module.Combat
                     _impactPoints.Add(h.point);
                     _impactNormals.Add(h.normal);
                     _impactMaterials.Add(ImpactMaterialName(h.collider));
+                    _impactColliders.Add(h.collider);
                 }
                 walls++;
                 end = h.point;

@@ -105,6 +105,19 @@ namespace Cs16.Module.Match
         public float RecoilPitch;       // 当前后坐力抬升（度）
         public float RecoilYaw;
 
+        /// <summary>
+        /// 差异 #94：当前手持武器的**精度**（原版 `m_flAccuracy`，武器对象 `+0xF8`）。逐发由
+        /// <see cref="CsWeapons.AccuracyAfterShot"/> 更新，切枪 / 换弹 / 复活时回到
+        /// <see cref="CsWeapons.ResetAccuracy"/>（原版 Spawn / Reset / Deploy 三处槽写的就是它）。
+        /// </summary>
+        public float Accuracy;
+
+        /// <summary>差异 #94：当前武器的 `m_iShotsFired`（原版武器对象 `+0x100`），逐发 +1。</summary>
+        public int AccuracyShots;
+
+        /// <summary>差异 #94：上一次开火的时刻（秒）。手枪族的 acc 衰减按 <c>now − 本值</c> 算。</summary>
+        public float LastAttackTime = -1f;
+
         /// <summary>后坐力水平偏移当前往哪一侧累加（原版 <c>m_iDirection</c>）：+1 / -1。</summary>
         public int RecoilDir = 1;
         public float FlashEndTime;      // 被闪光弹致盲的结束时间

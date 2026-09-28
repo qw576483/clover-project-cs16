@@ -93,7 +93,7 @@ namespace Cs16.Module.Combat
             _states[clipName] = ClipState.Missing;
             _log.Warn("audio.missing." + clipName,
                 $"音效资源缺失：{ResPaths.SoundSfxPrefix}{clipName}" +
-                $"（约定由 agent-07 装在 Resources/{ResPaths.SoundSfxPrefix}），该音效静音");
+                $"（约定位置 Resources/{ResPaths.SoundSfxPrefix}），该音效静音");
         }
     }
 }

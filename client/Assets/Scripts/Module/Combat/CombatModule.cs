@@ -205,6 +205,15 @@ namespace Cs16.Module.Combat
                 // 必须 GetKeyDown（切换型输入）：用 GetKey(按住) 会在每一帧翻转一次。
                 cmd.Attack2 = input.GetKeyDown(GameKey.MouseRight);
 
+                // ---- attack2 的**切换音**（差异 #68）：原版切换音在客户端层（`cl_dlls/client.dll` 的
+                // `weapons/usp_silencer_on|off.wav`、`m4a1_silencer_on|off.wav`、`famas-burst.wav`），
+                // 所以由这里播，模拟侧只翻状态位。武器没有这条音（Glock18）⇒ Attack2ToggleSound 回空串 ⇒ 静音。
+                if (cmd.Attack2 && def != null && (def.CanSilence || def.CanBurst))
+                {
+                    var turningOn = def.CanSilence ? !local.Silenced : !local.BurstMode;
+                    _audio.Play(CsWeapons.Attack2ToggleSound(def, turningOn));
+                }
+
                 // ---- 左键开火（门槛在模拟里也有一份，这里只是为了不产生必然失败的开火意图）----
                 if (input.GetMouseButton(0) && CanFire(local, def, match))
                 {
@@ -579,6 +588,16 @@ namespace Cs16.Module.Combat
                 // 弹着音分类由 CsAudioTuning.ClassifyImpact 按它分流。
                 var matName = i < impactMaterials.Count ? impactMaterials[i] : null;
                 _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i], matName);
+
+                // 打得碎的世界几何（原版 func_breakable 木箱）：按原版扣血，health 1 ⇒ 一发即碎。
+                // 命中方向取"眼睛 → 落点"，就是这一发自己的弹道方向（原版 g_vecAttackDir 的来源）。
+                var impacts = _firearm.ImpactColliders;
+                var breakable = i < impacts.Count ? CsBreakable.Find(impacts[i]) : null;
+                if (breakable != null)
+                {
+                    breakable.ApplyBulletDamage(CsWeapons.BaseDamage(def, local.Silenced, local.BurstMode),
+                        (impactPoints[i] - eye).normalized, impactPoints[i]);
+                }
 
                 // 弹着音的分族 = 原版口径（CsAudioTuning.ClassifyImpact）：
                 //   ① 材质名在 sound/materials.txt 里 ⇒ 用它那一行的字母给族（M/V = 金属，其余 = 混凝土）；

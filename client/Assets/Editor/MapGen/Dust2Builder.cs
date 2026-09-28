@@ -5,6 +5,7 @@ using System.IO;
 using System.Text;
 using Cs16.Core;
 using Cs16.Module.Bot;
+using Cs16.Module.Combat;
 using Cs16.Module.Map;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -45,6 +46,9 @@ namespace Cs16.EditorTools
     public static class Dust2Builder
     {
         private const string Tag = "[Dust2Builder]";
+
+        /// <summary>箱体容器（挂在 <c>Level/Visual</c> 下：烘焙前关 Visual 碰撞体时它们一起被关）。</summary>
+        private const string CratesRootName = "Breakables";
 
         // ==================================================================
         //  入口
@@ -180,6 +184,11 @@ namespace Cs16.EditorTools
 
         private static void BuildVisual(Dust2GeoData geo, GameObject visualRoot)
         {
+            // 先把 func_breakable 的箱面从"按贴图合并的大网格"里认出来（见 ExtractCrates 的口径），
+            // 再逐组重建合并网格 —— 被拆走的三角面不再留在合并网格里（否则箱子碎掉后碰撞体还在）。
+            var crates = Dust2Breakables.Load();
+            var taken = ExtractCrates(geo, crates, out var crateTris);
+
             int ok = 0, missingTex = 0;
             for (int i = 0; i < geo.Groups.Length; i++)
             {
@@ -188,14 +197,21 @@ namespace Cs16.EditorTools
 
                 var mesh = new Mesh { name = "Dust2_" + Path.GetFileNameWithoutExtension(g.PngName) };
                 if (g.Vertices.Length > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
-                mesh.vertices = g.Vertices;
                 // UV 的单位是**原版 miptex 的原始 w×h**：转换脚本按 `u = …/miptex.w`、`v = 1 − …/miptex.h`
                 //   算（转换脚本本机不在盘，见 `Assets/ThirdParty/Dust2/SOURCES.txt`），不做任何二次幂取整。
                 //   ⇒ 贴图**导入后尺寸必须等于原图尺寸**（`npotScale = None`，见 NormalizeTextureImporters），
                 //   否则 Unity 把非 POT 贴图拉到最近的 2 的幂再上传，UV 却仍按原尺寸走 ⇒ 比例失真。
-                mesh.uv = g.Uvs;
-                mesh.normals = g.Normals;
-                mesh.SetTriangles(g.Indices, 0, true);
+                if (taken[i] == null)
+                {
+                    mesh.vertices = g.Vertices;
+                    mesh.uv = g.Uvs;
+                    mesh.normals = g.Normals;
+                    mesh.SetTriangles(g.Indices, 0, true);
+                }
+                else
+                {
+                    KeepWithoutTakenTriangles(g, taken[i], mesh);
+                }
                 mesh.RecalculateBounds();
 
                 var meshAsset = $"{Dust2Layout.MaterialDir}/mesh_{Path.GetFileNameWithoutExtension(g.PngName)}.asset";
@@ -212,7 +228,273 @@ namespace Cs16.EditorTools
                 GameObjectUtility.SetStaticEditorFlags(go, StaticEditorFlags.BatchingStatic);
                 ok++;
             }
-            Debug.Log($"{Tag} 几何：{ok} 个材质组已上场景（缺贴图回落到沙色材质 {missingTex} 个）");
+
+            int cratesBuilt = BuildCrates(geo, visualRoot, crates, crateTris, ref missingTex);
+            Debug.Log($"{Tag} 几何：{ok} 个材质组已上场景（缺贴图回落到沙色材质 {missingTex} 个）" +
+                      $"｜func_breakable 箱体 {cratesBuilt} 个（箱面已从合并网格拆出，各自独立 MeshCollider）");
+        }
+
+        // ==================================================================
+        //  func_breakable 箱体（箱面从合并网格里拆出来，运行时由 CsBreakable 打碎）
+        // ==================================================================
+
+        /// <summary>一个箱面三角面（复制出来，摆脱离场分组的顶点数组）。</summary>
+        private struct CrateTri
+        {
+            public int Group;                 // 源材质组（= geo.Groups 下标）
+            public Vector3 A, B, C;           // 顶点（世界 = 箱体局部，箱体根在原点、单位旋转）
+            public Vector2 Ua, Ub, Uc;
+        }
+
+        /// <summary>
+        /// 认出每个箱体的箱面三角面。判据两条（都由 <c>breakables.tsv</c> 给的数据决定，⛔ 不猜位置）：
+        /// <list type="number">
+        /// <item>该三角面所属材质组的名字在**这个箱自己的**箱面贴图集合里
+        /// （逐箱不同：7 箱是 MltryCrteSd2/MltryCrteTp，brush36 是 SandCrtSmSd/SandCrtSmTp）；</item>
+        /// <item>三角面 3 个顶点**全部**落在这个箱的 AABB 内（容差 <see cref="CrateBoxEpsilon"/>）。</item>
+        /// </list>
+        /// 3 箱（brush 3 / 38 / 40）是绕竖轴转 45° 的菱形箱：AABB 是它们的外接轴对齐盒，箱面顶点
+        /// 就落在盒的角上 ⇒ 判据 2 依然成立，但**必须拿真几何当碰撞体**，不能用轴对齐盒代替。
+        /// </summary>
+        /// <param name="taken">每组被拆走的三角面下标集合（无拆走的组为 null）。</param>
+        /// <param name="crateTris">逐箱的箱面三角面。</param>
+        private static HashSet<int>[] ExtractCrates(Dust2GeoData geo, Dust2BreakableBox[] crates,
+            out List<CrateTri>[] crateTris)
+        {
+            crateTris = new List<CrateTri>[crates.Length];
+            for (var k = 0; k < crates.Length; k++) crateTris[k] = new List<CrateTri>();
+            var taken = new HashSet<int>[geo.Groups.Length];
+            if (crates.Length == 0) return taken;
+
+            for (var g = 0; g < geo.Groups.Length; g++)
+            {
+                var grp = geo.Groups[g];
+                if (grp.Indices == null || grp.Indices.Length < 3) continue;
+                var slug = Path.GetFileNameWithoutExtension(grp.PngName);
+
+                for (var t = 0; t + 2 < grp.Indices.Length; t += 3)
+                {
+                    var i0 = grp.Indices[t];
+                    var i1 = grp.Indices[t + 1];
+                    var i2 = grp.Indices[t + 2];
+                    var a = grp.Vertices[i0];
+                    var b = grp.Vertices[i1];
+                    var c = grp.Vertices[i2];
+
+                    var owner = -1;
+                    for (var k = 0; k < crates.Length; k++)
+                    {
+                        var box = crates[k];
+                        if (Array.IndexOf(box.Textures, slug) < 0) continue;
+                        if (!InsideBox(a, box) || !InsideBox(b, box) || !InsideBox(c, box)) continue;
+                        owner = k;
+                        break;
+                    }
+                    if (owner < 0) continue;
+
+                    crateTris[owner].Add(new CrateTri
+                    {
+                        Group = g,
+                        A = a, B = b, C = c,
+                        Ua = grp.Uvs[i0], Ub = grp.Uvs[i1], Uc = grp.Uvs[i2],
+                    });
+                    (taken[g] ??= new HashSet<int>()).Add(t / 3);
+                }
+            }
+
+            for (var k = 0; k < crates.Length; k++)
+            {
+                if (crateTris[k].Count == 0)
+                {
+                    Debug.LogError($"{Tag} 箱 brush{crates[k].BrushModel} 一个箱面三角面都没认出来" +
+                                   $"（贴图集合 {string.Join("、", crates[k].Textures)}，AABB " +
+                                   $"{crates[k].Min}..{crates[k].Max}）⇒ 该箱会留在合并网格里、打不碎");
+                }
+            }
+            return taken;
+        }
+
+        /// <summary>箱面归属的坐标容差（米）：1.5 mm ≈ 0.06 unit，远小于原版最短刷面尺寸。</summary>
+        private const float CrateBoxEpsilon = 0.0015f;
+
+        private static bool InsideBox(Vector3 v, Dust2BreakableBox box)
+            => v.x >= box.Min.x - CrateBoxEpsilon && v.x <= box.Max.x + CrateBoxEpsilon &&
+               v.y >= box.Min.y - CrateBoxEpsilon && v.y <= box.Max.y + CrateBoxEpsilon &&
+               v.z >= box.Min.z - CrateBoxEpsilon && v.z <= box.Max.z + CrateBoxEpsilon;
+
+        /// <summary>把"没被拆走"的三角面重建成网格（逐三角面 3 个顶点，不做去重 —— 拆分后顶点表不再共享）。</summary>
+        private static void KeepWithoutTakenTriangles(Dust2GeoData.MeshGroup g, HashSet<int> taken, Mesh mesh)
+        {
+            var triCount = g.Indices.Length / 3;
+            var keep = triCount - taken.Count;
+            var verts = new Vector3[keep * 3];
+            var uvs = new Vector2[keep * 3];
+            var nrm = new Vector3[keep * 3];
+            var idx = new int[keep * 3];
+            var n = 0;
+            for (var t = 0; t < triCount; t++)
+            {
+                if (taken.Contains(t)) continue;
+                for (var k = 0; k < 3; k++)
+                {
+                    var src = g.Indices[t * 3 + k];
+                    verts[n] = g.Vertices[src];
+                    uvs[n] = g.Uvs[src];
+                    nrm[n] = g.Normals[src];
+                    idx[n] = n;
+                    n++;
+                }
+            }
+            mesh.vertices = verts;
+            mesh.uv = uvs;
+            mesh.normals = nrm;
+            mesh.SetTriangles(idx, 0, false);
+        }
+
+        /// <summary>
+        /// 逐箱建游戏对象：网格按源材质组切子网格（一个箱一个 MeshCollider），
+        /// 并把"碎块"数据（按面法线聚出来的片）写进 <see cref="CsBreakable"/>。
+        /// </summary>
+        private static int BuildCrates(Dust2GeoData geo, GameObject visualRoot, Dust2BreakableBox[] crates,
+            List<CrateTri>[] crateTris, ref int missingTex)
+        {
+            var container = NewChild(visualRoot, CratesRootName);
+            var built = 0;
+            for (var k = 0; k < crates.Length; k++)
+            {
+                var tris = crateTris[k];
+                if (tris.Count == 0) continue;
+                var box = crates[k];
+
+                // ---- 子网格：按源材质组分组（顺序固定 = 组下标升序，材质数组与之对齐）----
+                var groups = new List<int>();
+                for (var g = 0; g < geo.Groups.Length; g++)
+                    foreach (var tr in tris) if (tr.Group == g) { groups.Add(g); break; }
+                var subOfGroup = new Dictionary<int, int>();
+                for (var s = 0; s < groups.Count; s++) subOfGroup[groups[s]] = s;
+
+                var vlist = new List<Vector3>();
+                var ulist = new List<Vector2>();
+                var nlist = new List<Vector3>();
+                var trisPerSub = new int[groups.Count];
+                foreach (var g in groups)
+                {
+                    foreach (var tr in tris)
+                    {
+                        if (tr.Group != g) continue;
+                        var nrm = Vector3.Cross(tr.B - tr.A, tr.C - tr.A).normalized;
+                        vlist.Add(tr.A); vlist.Add(tr.B); vlist.Add(tr.C);
+                        ulist.Add(tr.Ua); ulist.Add(tr.Ub); ulist.Add(tr.Uc);
+                        nlist.Add(nrm); nlist.Add(nrm); nlist.Add(nrm);
+                        trisPerSub[subOfGroup[g]]++;
+                    }
+                }
+
+                var mesh = new Mesh { name = "Crate_Brush" + box.BrushModel };
+                mesh.vertices = vlist.ToArray();
+                mesh.uv = ulist.ToArray();
+                mesh.normals = nlist.ToArray();
+                mesh.subMeshCount = groups.Count;
+                var cursor = 0;
+                var materials = new Material[groups.Count];
+                for (var s = 0; s < groups.Count; s++)
+                {
+                    var idx = new int[trisPerSub[s] * 3];
+                    for (var i = 0; i < idx.Length; i++) idx[i] = cursor + i;
+                    mesh.SetTriangles(idx, s, false);
+                    cursor += idx.Length;
+                    materials[s] = LoadOrMakeMaterial(geo.Groups[groups[s]].PngName, ref missingTex);
+                }
+                mesh.RecalculateBounds();
+
+                var meshAsset = $"{Dust2Layout.MaterialDir}/mesh_Crate{box.BrushModel}.asset";
+                AssetDatabase.DeleteAsset(meshAsset);
+                AssetDatabase.CreateAsset(mesh, meshAsset);
+
+                var go = new GameObject($"Breakable_{box.BrushModel}");
+                go.transform.SetParent(container.transform, false);
+                go.AddComponent<MeshFilter>().sharedMesh = mesh;
+                go.AddComponent<MeshRenderer>().sharedMaterials = materials;
+                // 真几何当碰撞体：菱形箱（brush 3/38/40 绕竖轴 45°）不是轴对齐盒，必须用拆出来的mesh
+                go.AddComponent<MeshCollider>().sharedMesh = mesh;
+
+                BuildShardData(tris, subOfGroup, out var fragVerts, out var fragUvs, out var fragNrm,
+                    out var fragStart, out var fragTriCount, out var fragCenter, out var fragMaterial);
+                go.AddComponent<CsBreakable>().Configure(box.BrushModel, box.Health, box.GibModel, box.Size,
+                    fragVerts, fragUvs, fragNrm, fragStart, fragTriCount, fragCenter, fragMaterial);
+                built++;
+            }
+            return built;
+        }
+
+        /// <summary>
+        /// 碎块数据 = 把箱面三角面按**面法线**聚成片（轴对齐箱 6 片、菱形箱同样是 6 片），
+        /// 每片的顶点写成**相对该片中心**（运行时就地生成一块独立 mesh 飞出去）。
+        /// 片数由几何本身决定（箱面法线有几种），⛔ 不写死数字。
+        /// </summary>
+        private static void BuildShardData(List<CrateTri> tris, Dictionary<int, int> subOfGroup,
+            out Vector3[] fragVerts, out Vector2[] fragUvs, out Vector3[] fragNrm,
+            out int[] fragStart, out int[] fragTriCount, out Vector3[] fragCenter, out int[] fragMaterial)
+        {
+            var order = new List<string>();                 // 法线键的出现顺序（确定性）
+            var buckets = new Dictionary<string, List<CrateTri>>();
+            foreach (var tr in tris)
+            {
+                var n = Vector3.Cross(tr.B - tr.A, tr.C - tr.A).normalized;
+                var key = $"{Mathf.Round(n.x * 100f)}_{Mathf.Round(n.y * 100f)}_{Mathf.Round(n.z * 100f)}";
+                if (!buckets.TryGetValue(key, out var list))
+                {
+                    list = new List<CrateTri>();
+                    buckets[key] = list;
+                    order.Add(key);
+                }
+                list.Add(tr);
+            }
+
+            var vlist = new List<Vector3>();
+            var ulist = new List<Vector2>();
+            var nlist = new List<Vector3>();
+            var starts = new List<int>();
+            var counts = new List<int>();
+            var centers = new List<Vector3>();
+            var mats = new List<int>();
+
+            foreach (var key in order)
+            {
+                var list = buckets[key];
+                var center = Vector3.zero;
+                foreach (var tr in list) center += tr.A + tr.B + tr.C;
+                center /= list.Count * 3;
+
+                starts.Add(counts.Count > 0 ? Sum(counts) : 0);
+                counts.Add(list.Count);
+                centers.Add(center);
+                var sub = subOfGroup.TryGetValue(list[0].Group, out var s) ? s : 0;
+                mats.Add(sub);
+                foreach (var tr in list)
+                {
+                    var a = tr.A - center; var b = tr.B - center; var c = tr.C - center;
+                    var n = Vector3.Cross(tr.B - tr.A, tr.C - tr.A).normalized;
+                    vlist.Add(a); vlist.Add(b); vlist.Add(c);
+                    ulist.Add(tr.Ua); ulist.Add(tr.Ub); ulist.Add(tr.Uc);
+                    nlist.Add(n); nlist.Add(n); nlist.Add(n);
+                }
+            }
+
+            fragVerts = vlist.ToArray();
+            fragUvs = ulist.ToArray();
+            fragNrm = nlist.ToArray();
+            fragStart = starts.ToArray();
+            fragTriCount = counts.ToArray();
+            fragCenter = centers.ToArray();
+            fragMaterial = mats.ToArray();
+        }
+
+        private static int Sum(List<int> xs)
+        {
+            var n = 0;
+            for (var i = 0; i < xs.Count; i++) n += xs[i];
+            return n;
         }
 
         /// <summary>贴图 → 材质：先找 <c>ThirdParty/Dust2/Textures/&lt;png&gt;</c>，找不到退回沙色（并报 Error）。</summary>

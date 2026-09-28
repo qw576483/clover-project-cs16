@@ -59,6 +59,9 @@ namespace Cs16.Module.Combat
             CheckMatchFastForward();
             CheckDroppedWeaponWorldEntity();
             CheckAttack2Values();
+            CheckKickbackValues();
+            CheckSpreadValues();
+            CheckAccuracyModel();
 
             var sb = new StringBuilder();
             sb.AppendLine("========== 第一人称操作与射击 自检报告 ==========");
@@ -843,7 +846,8 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 差异 #68 的**数值**判据。出处 = <c>策划/武器右键数值出处.md</c>（载体 = 原版 <c>mp.dll</c>，
         /// 该文件逐条给了 VA / 文件偏移 / 反汇编）：
-        /// ① 逐武器「装 / 不装消音」「连发 / 普通」取到的伤害与射程修正 == 出处表（AK47 = 36 当校验锚）；
+        /// ① 逐武器「装 / 不装消音」「连发 / 普通」取到的伤害、射程修正、射程距离与 attack2 切换音
+        ///    == 出处表（AK47 = 36 当校验锚）；
         /// ② 静止站散布按原版两态系数之比（M4A1 装消音 ×1.25、Glock18 连发 ×3、FAMAS 与 USP 不变）；
         /// ③ 连发一轮**恰好 3 发**，首发 / 续发间隔与循环时间 == 出处表；
         /// ④ 状态位为假（或该武器没有这一档出处）时取到的仍是普通档；
@@ -858,9 +862,11 @@ namespace Cs16.Module.Combat
             if (table.Count == 0)
             {
                 Notes.Add("差异 #68 数值表：伤害 USP 34/30 · M4A1 32/33 · FAMAS 30/34 · Glock18 25（两态同）· " +
-                          "AK47 36（校验锚）；射程修正 USP 0.79/0.79 · M4A1 0.97/0.95 · FAMAS 0.96 · Glock18 0.75" +
-                          "（射程距离 8192）；连发 3 发（Glock18 首发/续发 0.1/0.1 · 循环 0.5，" +
-                          "FAMAS 0.05/0.1 · 循环 0.55/普通 0.0825）；静止站散布比 M4A1 ×1.25 · Glock18 连发 ×3" +
+                          "AK47 36（校验锚）；射程修正 USP 0.79/0.79 · M4A1 0.97/0.95 · FAMAS 0.96 · Glock18 0.75；" +
+                          "射程距离 USP/Deagle 4096 · M4A1/FAMAS/Glock18 8192（差异 #129）；" +
+                          "连发 3 发（Glock18 首发/续发 0.1/0.1 · 循环 0.5，" +
+                          "FAMAS 0.05/0.1 · 循环 0.55/普通 0.0825）；静止站散布比 M4A1 ×1.25 · Glock18 连发 ×3；" +
+                          "切换音 USP/M4A1 各 on/off 两条 · FAMAS 一条 · Glock18 无" +
                           " ⇒ 逐条 == 出处表");
             }
 
@@ -1066,14 +1072,46 @@ namespace Cs16.Module.Combat
             Expect("M4A1 未装消音 ⇒ 仍 32", CsWeapons.BaseDamage(m4, false, false), 32f);
             Expect("AK47 带着消音/连发状态位 ⇒ 仍 36（没出处不许改它）", CsWeapons.BaseDamage(ak, true, true), 36f);
 
-            // ---- 射程修正（出处 §4.1；射程距离各枪同为 8192）----
+            // ---- 射程修正（出处 §4.1）----
             Expect("USP 射程修正·未装", CsWeapons.RangeModifierFor(usp, false), 0.79f);
             Expect("USP 射程修正·装", CsWeapons.RangeModifierFor(usp, true), 0.79f);
             Expect("M4A1 射程修正·未装", CsWeapons.RangeModifierFor(m4, false), 0.97f);
             Expect("M4A1 射程修正·装", CsWeapons.RangeModifierFor(m4, true), 0.95f);
             Expect("FAMAS 射程修正（两态同 0.96）", CsWeapons.RangeModifierFor(famas, true), 0.96f);
             Expect("Glock18 射程修正（两态同 0.75）", CsWeapons.RangeModifierFor(glock, true), 0.75f);
-            Expect("射程修正的距离（各枪 8192）", m4.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+
+            // ---- 射程距离（差异 #129；出处 VALUES.md §4.2 的「射程」列）----
+            var deagle = CsWeapons.Get(CsWeapons.Deagle);
+            if (deagle == null) bad.Add("武器表里缺 deagle，射程距离无法校验（差异 #129）");
+            else Expect("Deagle 射程距离（原版 4096）", deagle.RangeModifierMaxDistance, CsWeapons.RangeMaxDistancePistol);
+            var fiveSeven = CsWeapons.Get(CsWeapons.FiveSeven);
+            if (fiveSeven == null) bad.Add("武器表里缺 fiveseven，射程距离无法校验（差异 #129）");
+            else Expect("FiveSeven 射程距离（原版 4096）", fiveSeven.RangeModifierMaxDistance, CsWeapons.RangeMaxDistancePistol);
+            var p228 = CsWeapons.Get(CsWeapons.P228);
+            if (p228 == null) bad.Add("武器表里缺 p228，射程距离无法校验（差异 #129）");
+            else Expect("P228 射程距离（原版 4096）", p228.RangeModifierMaxDistance, CsWeapons.RangeMaxDistancePistol);
+            var p90 = CsWeapons.Get(CsWeapons.P90);
+            if (p90 == null) bad.Add("武器表里缺 p90，射程距离无法校验（差异 #129）");
+            else Expect("P90 射程距离（原版 8192）", p90.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+            Expect("USP 射程距离（原版 4096）", usp.RangeModifierMaxDistance, CsWeapons.RangeMaxDistancePistol);
+            Expect("M4A1 射程距离（原版 8192）", m4.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+            Expect("FAMAS 射程距离（原版 8192）", famas.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+            Expect("Glock18 射程距离（原版 8192）", glock.RangeModifierMaxDistance, CsWeapons.RangeMaxDistance);
+
+            // ---- attack2 的切换音（差异 #68；出处 = client.dll 的 5 条串，见 ApplyAttack2Values）----
+            void ExpectClip(string what, string actual, string expected)
+            {
+                if (actual != expected) bad.Add($"{what}: 实测 「{actual}」 ≠ 期望 「{expected}」");
+            }
+
+            ExpectClip("USP 装上消音音", CsWeapons.Attack2ToggleSound(usp, true), "sfx/usp_silencer_on");
+            ExpectClip("USP 拆下消音音", CsWeapons.Attack2ToggleSound(usp, false), "sfx/usp_silencer_off");
+            ExpectClip("M4A1 装上消音音", CsWeapons.Attack2ToggleSound(m4, true), "sfx/m4a1_silencer_on");
+            ExpectClip("M4A1 拆下消音音", CsWeapons.Attack2ToggleSound(m4, false), "sfx/m4a1_silencer_off");
+            ExpectClip("FAMAS 切连发音", CsWeapons.Attack2ToggleSound(famas, true), "sfx/famas-burst");
+            ExpectClip("FAMAS 退出连发音", CsWeapons.Attack2ToggleSound(famas, false), "sfx/famas-burst");
+            ExpectClip("Glock18 没有切换音（原版串表里没有）", CsWeapons.Attack2ToggleSound(glock, true), "");
+            ExpectClip("AK47 没有切换音", CsWeapons.Attack2ToggleSound(ak, true), "");
 
             // ---- 静止站散布（出处 §4.2）：原版是"系数 × acc"口径，本工程只能用两态系数之比 ----
             Expect("M4A1 静止站散布比·装消音（0.025 / 0.02）",
@@ -1099,6 +1137,348 @@ namespace Cs16.Module.Combat
             Expect("FAMAS 普通循环时间", CsWeapons.CycleTimeFor(famas, false), 0.0825f);
 
             return bad;
+        }
+
+        /// <summary>
+        /// 差异 #95：后坐力 kickback 的**逐武器实参**判据。出处 = <c>策划/手感参数对照.md</c>
+        /// §5.5（步枪 / 冲锋枪 / 机枪）+ §5.8（手枪 / 狙击 / 霰弹）；归属链见该文件 §5.11。
+        ///
+        /// <para>判据两面都查：① 表里那 21 把的 7 个实参逐条相等；② <c>HasKickback</c> 的开关
+        /// **恰好**等于这张表 —— 未落值的 3 把（G3SG1 / SG550 缺 <c>lateral_base</c>、Glock18 两次解析全 0）
+        /// 必须仍是 false（缺槽不猜，⛔ 不许被"顺手补齐"）。</para>
+        /// </summary>
+        private static void CheckKickbackValues()
+        {
+            // (up_base, lateral_base, up_modifier, lateral_modifier, up_max, lateral_max, direction_change)
+            var expected = new Dictionary<string, float[]>
+            {
+                { CsWeapons.Ak47, new[] { 1.5f, 0.45f, 0.225f, 0.05f, 6.5f, 2.5f, 7f } },
+                { CsWeapons.M4A1, new[] { 1f, 0.45f, 0.28f, 0.045f, 3.75f, 3f, 7f } },
+                { CsWeapons.Galil, new[] { 1f, 0.45f, 0.28f, 0.045f, 3.75f, 3f, 7f } },
+                { CsWeapons.Aug, new[] { 1f, 0.45f, 0.275f, 0.05f, 4f, 2.5f, 7f } },
+                { CsWeapons.Famas, new[] { 1f, 0.45f, 0.275f, 0.05f, 4f, 2.5f, 7f } },
+                { CsWeapons.Sg552, new[] { 1f, 0.45f, 0.28f, 0.04f, 4.25f, 2.5f, 7f } },
+                { CsWeapons.Mp5, new[] { 0.9f, 0.475f, 0.35f, 0.0425f, 5f, 3f, 6f } },
+                { CsWeapons.Tmp, new[] { 1.1f, 0.5f, 0.35f, 0.045f, 4.5f, 3.5f, 6f } },
+                { CsWeapons.Ump45, new[] { 0.125f, 0.65f, 0.55f, 0.0475f, 5.5f, 4f, 10f } },
+                { CsWeapons.Mac10, new[] { 1.3f, 0.55f, 0.4f, 0.05f, 4.75f, 3.75f, 5f } },
+                { CsWeapons.P90, new[] { 0.9f, 0.45f, 0.35f, 0.04f, 5.25f, 3.5f, 4f } },
+                { CsWeapons.M249, new[] { 1.8f, 0.65f, 0.45f, 0.125f, 5f, 3.5f, 8f } },
+                { CsWeapons.Deagle, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.Awp, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.Scout, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.Usp, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.P228, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.FiveSeven, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.Elite, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.M3, new[] { 2.5f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                { CsWeapons.Xm1014, new[] { 0.75f, 0f, 0f, 0f, 0f, 0f, 0f } },
+            };
+
+            const float tol = 0.0001f;
+            var landed = 0;
+            foreach (var kv in expected)
+            {
+                var def = CsWeapons.Get(kv.Key);
+                Assert(def != null, $"武器表里缺 {kv.Key}，kickback 表无法校验（差异 #95）");
+                if (def == null) continue;
+                Assert(def.HasKickback, $"{def.DisplayName} 没打上 HasKickback（差异 #95）");
+                var want = kv.Value;
+                var got = new[]
+                {
+                    def.KickUpBase, def.KickLateralBase, def.KickUpModifier, def.KickLateralModifier,
+                    def.KickUpMax, def.KickLateralMax, def.KickDirectionChange,
+                };
+                for (var i = 0; i < want.Length; i++)
+                {
+                    Assert(Mathf.Abs(got[i] - want[i]) <= tol,
+                        $"{def.DisplayName} kickback 第 {i} 个实参 实测 {got[i]} ≠ 出处 {want[i]}（差异 #95）");
+                }
+                landed++;
+            }
+
+            // 反向：没落值的武器一位都不许有（缺槽不猜）
+            foreach (var def in CsWeapons.All)
+            {
+                if (expected.ContainsKey(def.Id)) continue;
+                Assert(!def.HasKickback,
+                    $"{def.DisplayName} 没有出处却带着 HasKickback（差异 #95；缺槽不许猜）");
+            }
+
+            if (Failures.Count == 0)
+            {
+                Notes.Add($"差异 #95 kickback 实参：{landed} 把逐条 == 出处表（步枪/冲锋枪/机枪 12 + FAMAS + " +
+                          "手枪/狙击/霰弹 8）；G3SG1 / SG550（缺 lateral_base）与 Glock18（解析全 0）" +
+                          "仍 HasKickback=false ⇒ 缺槽不猜");
+            }
+        }
+
+        /// <summary>
+        /// 差异 #94：散布三档系数判据。出处 = <c>策划/手感参数对照.md</c> §5.12（抽取工具
+        /// <c>tools/probes/feel-spread-args.py</c>）。两面都查：① 已取到的 7 把逐条相等；
+        /// ② **未取到的武器这 5 个字段必须全 0**（缺档不许拿别把枪的值顶替）。
+        /// </summary>
+        private static void CheckSpreadValues()
+        {
+            var expected = new Dictionary<string, float[]>
+            {
+                // (airMul, add, moveMul, stillMul, stillSilenced)
+                { CsWeapons.Ak47, new[] { 0.4f, 0.04f, 0.07f, 0.0275f, 0f } },
+                { CsWeapons.Galil, new[] { 0.3f, 0.04f, 0.07f, 0.0375f, 0f } },
+                { CsWeapons.Aug, new[] { 0.4f, 0.035f, 0.07f, 0.02f, 0f } },
+                { CsWeapons.Sg552, new[] { 0.45f, 0.035f, 0.075f, 0.02f, 0f } },
+                { CsWeapons.Famas, new[] { 0.3f, 0.03f, 0.07f, 0.02f, 0f } },
+                { CsWeapons.M249, new[] { 0.5f, 0.045f, 0.095f, 0.03f, 0f } },
+                { CsWeapons.M4A1, new[] { 0.4f, 0.035f, 0.07f, 0.02f, 0.025f } },
+                // 冲锋枪族五把：加数 0（`Mul × acc`）；MAC10/MP5/TMP/UMP45 无移动档（moveMul = 0）。
+                { CsWeapons.Mac10, new[] { 0.375f, 0f, 0f, 0.03f, 0f } },
+                { CsWeapons.Mp5, new[] { 0.2f, 0f, 0f, 0.04f, 0f } },
+                { CsWeapons.Tmp, new[] { 0.25f, 0f, 0f, 0.03f, 0f } },
+                { CsWeapons.Ump45, new[] { 0.24f, 0f, 0f, 0.04f, 0f } },
+                { CsWeapons.P90, new[] { 0.3f, 0f, 0.115f, 0.045f, 0f } },
+            };
+
+            // 手枪族：`Mul × (1 − acc)` 四档（空中 / 移动 / 蹲 / 站）—— 判据同表但公式形态不同。
+            var expectedInv = new Dictionary<string, float[]>
+            {
+                // (airMul, moveMul, duckMul, stillMul)
+                { CsWeapons.Deagle, new[] { 1.5f, 0.25f, 0.115f, 0.13f } },
+                { CsWeapons.P228, new[] { 1.5f, 0.255f, 0.075f, 0.15f } },
+                { CsWeapons.FiveSeven, new[] { 1.5f, 0.255f, 0.075f, 0.15f } },
+                { CsWeapons.Elite, new[] { 1.3f, 0.175f, 0.08f, 0.1f } },
+            };
+
+            const float tol = 0.0001f;
+            foreach (var kv in expected)
+            {
+                var def = CsWeapons.Get(kv.Key);
+                Assert(def != null, $"武器表里缺 {kv.Key}，散布系数无法校验（差异 #94）");
+                if (def == null) continue;
+                var want = kv.Value;
+                var got = new[]
+                {
+                    def.SpreadAirMul, def.SpreadAirAdd, def.SpreadMoveMul,
+                    def.SpreadStillMul, def.SpreadStillMulSilenced,
+                };
+                for (var i = 0; i < want.Length; i++)
+                {
+                    Assert(Mathf.Abs(got[i] - want[i]) <= tol,
+                        $"{def.DisplayName} 散布系数第 {i} 项 实测 {got[i]} ≠ 出处 {want[i]}（差异 #94）");
+                }
+            }
+
+            foreach (var kv in expectedInv)
+            {
+                var def = CsWeapons.Get(kv.Key);
+                Assert(def != null, $"武器表里缺 {kv.Key}，散布系数无法校验（差异 #94）");
+                if (def == null) continue;
+                Assert(def.SpreadInverted, $"{def.DisplayName} 没打上 SpreadInverted（手枪族 = Mul×(1−acc)，差异 #94）");
+                Assert(def.SpreadAirAdd == 0f, $"{def.DisplayName} 是 (1−acc) 族，加数必须为 0（差异 #94）");
+                var want = kv.Value;
+                var got = new[] { def.SpreadAirMul, def.SpreadMoveMul, def.SpreadDuckMul, def.SpreadStillMul };
+                for (var i = 0; i < want.Length; i++)
+                {
+                    Assert(Mathf.Abs(got[i] - want[i]) <= tol,
+                        $"{def.DisplayName} 散布系数(手枪族)第 {i} 项 实测 {got[i]} ≠ 出处 {want[i]}（差异 #94）");
+                }
+            }
+
+            foreach (var def in CsWeapons.All)
+            {
+                if (expected.ContainsKey(def.Id) || expectedInv.ContainsKey(def.Id)) continue;
+                Assert(def.SpreadAirMul == 0f && def.SpreadAirAdd == 0f && def.SpreadMoveMul == 0f &&
+                       def.SpreadDuckMul == 0f && def.SpreadStillMul == 0f && def.SpreadStillMulSilenced == 0f &&
+                       !def.SpreadInverted,
+                    $"{def.DisplayName} 的散布系数没出处却非 0（差异 #94；缺档不许猜）");
+            }
+
+            if (Failures.Count == 0)
+            {
+                Notes.Add("差异 #94 散布系数：16 把逐条 == 出处（步枪族 7 + 冲锋枪族 5：MAC10 0.375/0.03 · " +
+                          "MP5 0.2/0.04 · TMP 0.25/0.03 · UMP45 0.24/0.04（两档无加数）· P90 0.3/0.115/0.045）；步枪族细目：" +
+                          "AK47 0.4/0.04/0.07/0.0275 · Galil 0.3/0.04/0.07/0.0375 · " +
+                          "AUG 0.4/0.035/0.07/0.02 · SG552 0.45/0.035/0.075/0.02 · FAMAS 0.3/0.03/0.07/0.02 · " +
+                          "M249 0.5/0.045/0.095/0.03 · M4A1 静止两态 0.02/0.025；手枪族 4（Mul×(1−acc)、四档含蹲）：" +
+                          "Deagle 1.5/0.25/0.115/0.13 · P228 与 FiveSeven 1.5/0.255/0.075/0.15 · Elite 1.3/0.175/0.08/0.1）；" +
+                          "其余武器各字段仍为 0 ⇒ 缺档不猜");
+            }
+        }
+
+        /// <summary>
+        /// 差异 #94：acc（原版 `m_flAccuracy`，武器对象 `+0xF8`）模型 + 原版散布公式的离线复算判据。
+        ///
+        /// <para>① 逐武器的 `base / div / 次数 / 上限钳制 / 复位值`（步枪族 12 把）与
+        /// `K1 / K2 / 下限 / 上限`（手枪族 6 把）逐条 == 出处（`策划/手感参数对照.md` §5.14，
+        /// 抽取工具 `tools/probes/feel-acc-model.py`）；
+        /// ② 给定「武器 + 连发第 N 发 + 空中 / 移动 / 蹲 / 站 + 装消音」能**逐位**复算出 acc 与散布（度）；
+        /// ③ 反向：没取到 acc 模型的武器一位都不许有。</para>
+        /// </summary>
+        /// <summary>
+        /// **只跑差异 #94 的 acc / 散布判据**并返回报告 —— 供 `unity command eval_file` 调用
+        /// （整跑 <see cref="RunAll"/> 会撞 eval_file 的「主线程 5 s」上限，本入口秒级返回）。
+        /// </summary>
+        public static string RunAccuracyOnly()
+        {
+            Failures.Clear();
+            Notes.Clear();
+            CheckAccuracyModel();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("========== 差异 #94 acc 模型 + 原版散布公式 自检 ==========");
+            for (var i = 0; i < Notes.Count; i++) sb.AppendLine("· " + Notes[i]);
+            if (Failures.Count == 0)
+            {
+                sb.AppendLine(">>> 结论: PASS");
+            }
+            else
+            {
+                sb.AppendLine($">>> 结论: FAIL（{Failures.Count} 项未达标）");
+                for (var i = 0; i < Failures.Count; i++)
+                {
+                    sb.AppendLine("   ✗ " + Failures[i]);
+                    Game.Logger.Error(Tag, Failures[i]);
+                }
+            }
+            sb.AppendLine("==========================================================");
+
+            var text = sb.ToString();
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        private static void CheckAccuracyModel()
+        {
+            // (id, base, div, power, clampMax, reset) —— 出处 = 各武器类开火函数里写 [this+0xF8] 的那段。
+            var rifles = new (string Id, float Base, float Div, int Power, float Clamp, float Reset)[]
+            {
+                (CsWeapons.Ak47, 0.35f, 200f, 3, 1.25f, 0.2f),
+                (CsWeapons.Galil, 0.35f, 200f, 3, 1.25f, 0.2f),
+                (CsWeapons.Aug, 0.3f, 215f, 3, 1f, 0.2f),
+                (CsWeapons.Famas, 0.3f, 215f, 3, 1f, 0.2f),
+                (CsWeapons.M4A1, 0.3f, 220f, 3, 1f, 0.2f),
+                (CsWeapons.Sg552, 0.3f, 220f, 3, 1f, 0.2f),
+                (CsWeapons.M249, 0.4f, 175f, 3, 0.9f, 0.2f),
+                (CsWeapons.Mac10, 0.6f, 200f, 3, 1.65f, 0.15f),
+                (CsWeapons.Tmp, 0.55f, 200f, 3, 1.4f, 0.2f),
+                (CsWeapons.Mp5, 0.45f, 1f / 0.00454339f, 2, 0.75f, 0f),
+                (CsWeapons.P90, 0.45f, 175f, 2, 1f, 0.2f),
+                (CsWeapons.Ump45, 0.5f, 210f, 2, 1f, 0f),
+            };
+
+            const float tol = 0f;
+            foreach (var e in rifles)
+            {
+                var def = CsWeapons.Get(e.Id);
+                Assert(def != null, $"武器表里缺 {e.Id}，acc 模型无法校验（差异 #94）");
+                if (def == null) continue;
+                Assert(def.AccModel && !def.AccTimeDecay, $"{e.Id} 没打上步枪族 acc 模型（差异 #94）");
+                foreach (var (name, got, want) in new[]
+                         {
+                             ("base", def.AccBase, e.Base), ("div", def.AccDiv, e.Div),
+                             ("clampMax", def.AccClampMax, e.Clamp), ("reset", def.AccReset, e.Reset),
+                         })
+                    Assert(Mathf.Abs(got - want) <= tol,
+                        $"{e.Id} acc {name} 实测 {got} ≠ 出处 {want}（差异 #94）");
+                Assert(def.AccPower == e.Power, $"{e.Id} acc 次数 实测 {def.AccPower} ≠ 出处 {e.Power}（差异 #94）");
+            }
+
+            // (id, K1, K2, lo, hi)
+            var pistols = new (string Id, float K1, float K2, float Lo, float Hi)[]
+            {
+                (CsWeapons.Deagle, 0.35f, 0.4f, 0.55f, 0.9f),
+                (CsWeapons.Elite, 0.275f, 0.325f, 0.55f, 0.88f),
+                (CsWeapons.FiveSeven, 0.25f, 0.275f, 0.725f, 0.92f),
+                (CsWeapons.Glock18, 0.275f, 0.325f, 0.6f, 0.9f),
+                (CsWeapons.P228, 0.3f, 0.325f, 0.6f, 0.9f),
+                (CsWeapons.Usp, 0.275f, 0.3f, 0.6f, 0.92f),
+            };
+            foreach (var e in pistols)
+            {
+                var def = CsWeapons.Get(e.Id);
+                Assert(def != null, $"武器表里缺 {e.Id}，acc 模型无法校验（差异 #94）");
+                if (def == null) continue;
+                Assert(def.AccModel && def.AccTimeDecay, $"{e.Id} 没打上手枪族 acc 模型（差异 #94）");
+                foreach (var (name, got, want) in new[]
+                         {
+                             ("K1", def.AccDecayScale, e.K1), ("K2", def.AccDecayRef, e.K2),
+                             ("lo", def.AccClampLo, e.Lo), ("hi", def.AccClampHi, e.Hi),
+                         })
+                    Assert(Mathf.Abs(got - want) <= tol,
+                        $"{e.Id} acc {name} 实测 {got} ≠ 出处 {want}（差异 #94）");
+            }
+
+            // ---- ② 逐发复算：acc = min(base + shots^power / div, clampMax) ----
+            var ak = CsWeapons.Get(CsWeapons.Ak47);
+            foreach (var shots in new[] { 1, 2, 5, 6, 10 })
+            {
+                var want = 0.35f + (float)System.Math.Pow(shots, 3) / 200f;
+                if (want > 1.25f) want = 1.25f;
+                var got = CsWeapons.AccuracyAfterShot(ak, 0f, shots, -1f);
+                Assert(got == want, $"AK47 第 {shots} 发 acc 实测 {got} ≠ 复算 {want}（差异 #94）");
+            }
+
+            var mp5 = CsWeapons.Get(CsWeapons.Mp5);
+            foreach (var shots in new[] { 1, 4 })
+            {
+                var want = 0.45f + (float)System.Math.Pow(shots, 2) / (1f / 0.00454339f);
+                if (want > 0.75f) want = 0.75f;
+                var got = CsWeapons.AccuracyAfterShot(mp5, 0f, shots, -1f);
+                Assert(got == want, $"MP5 第 {shots} 发 acc 实测 {got} ≠ 复算 {want}（差异 #94）");
+            }
+
+            // ---- ② 手枪族复算：acc = clamp(acc − K1 × (K2 − dt), lo, hi) ----
+            var deagle = CsWeapons.Get(CsWeapons.Deagle);
+            foreach (var dt in new[] { 0.15f, 0.4f, 1.0f })
+            {
+                var want = 0.9f - 0.35f * (0.4f - dt);
+                if (want > 0.9f) want = 0.9f;
+                if (want < 0.55f) want = 0.55f;
+                var got = CsWeapons.AccuracyAfterShot(deagle, 0.9f, 1, dt);
+                Assert(got == want, $"Deagle dt={dt} 后 acc 实测 {got} ≠ 复算 {want}（差异 #94）");
+            }
+
+            // ---- ② 散布（度）：原版系数 / 参考态系数，两种公式形态各来一条 ----
+            void CheckSpread(string what, float got, float want)
+                => Assert(got == want, $"{what} 实测 {got} ≠ 复算 {want}（差异 #94）");
+
+            const float accHi = 1.25f;
+            CheckSpread("AK47 静止站", CsWeapons.SpreadFor(ak, accHi, true, false, false, false, false),
+                ak.Spread * ((0.0275f * accHi) / (0.0275f * 0.2f)));
+            CheckSpread("AK47 移动", CsWeapons.SpreadFor(ak, accHi, true, true, false, false, false),
+                ak.Spread * ((0.04f + 0.07f * accHi) / (0.0275f * 0.2f)));
+            CheckSpread("AK47 空中", CsWeapons.SpreadFor(ak, accHi, false, false, false, false, false),
+                ak.Spread * ((0.04f + 0.4f * accHi) / (0.0275f * 0.2f)));
+
+            var m4 = CsWeapons.Get(CsWeapons.M4A1);
+            CheckSpread("M4A1 装消音静止站", CsWeapons.SpreadFor(m4, 1f, true, false, false, true, false),
+                m4.Spread * ((0.025f * 1f) / (0.02f * 0.2f)));
+
+            const float dgAcc = 0.55f;
+            CheckSpread("Deagle 静止站", CsWeapons.SpreadFor(deagle, dgAcc, true, false, false, false, false),
+                deagle.Spread * ((0.13f * (1f - dgAcc)) / (0.13f * (1f - 0.9f))));
+            CheckSpread("Deagle 蹲", CsWeapons.SpreadFor(deagle, dgAcc, true, false, true, false, false),
+                deagle.Spread * ((0.115f * (1f - dgAcc)) / (0.13f * (1f - 0.9f))));
+            CheckSpread("Deagle 空中", CsWeapons.SpreadFor(deagle, dgAcc, false, false, false, false, false),
+                deagle.Spread * ((1.5f * (1f - dgAcc)) / (0.13f * (1f - 0.9f))));
+
+            // ---- ③ 反向：没取到 acc 模型的武器不许带 acc 数据 ----
+            foreach (var def in CsWeapons.All)
+            {
+                if (def.AccModel) continue;
+                Assert(def.AccBase == 0f && def.AccDiv == 0f && def.AccClampMax == 0f &&
+                       def.AccDecayScale == 0f && def.AccDecayRef == 0f,
+                    $"{def.DisplayName} 没有 acc 出处却带着 acc 数据（差异 #94；缺档不许猜）");
+                Assert(CsWeapons.ResetAccuracy(def) == 0f,
+                    $"{def.DisplayName} 没 acc 模型却给得出复位值（差异 #94）");
+            }
+
+            if (Failures.Count == 0)
+            {
+                Notes.Add("差异 #94 acc 模型：步枪族 12 把（base/div/次数/上限/复位）+ 手枪族 6 把（K1/K2/下限/上限）" +
+                          "逐条 == 出处；AK47 第 1/2/5/6/10 发、MP5 第 1/4 发、Deagle dt=0.15/0.4/1.0 的 acc 逐位复算通过；" +
+                          "AK47 静止/移动/空中 + M4A1 装消音 + Deagle 静止/蹲/空中的散布（度）逐位复算通过；" +
+                          "AWP / Scout / G3SG1 / SG550 / M3 / XM1014 无 acc 模型 ⇒ 回落旧散布模型（差异登记见 策划/差异登记.tsv）");
+            }
         }
 
         private sealed class SelfTestMap : Cs16.Module.Map.ICsMap

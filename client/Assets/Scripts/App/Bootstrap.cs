@@ -98,6 +98,10 @@ namespace Cs16.App
             CloverRes.Init(ResourceRootPrefix);
             CloverInput.Init();
 
+            // 引擎署名行（逐字 `by clover-engine`）的常驻件：与面板无关，切页面 / 切场景 / 关面板都在。
+            // 必须早于 AppFlow.Enter()（第一个页面一出现就该有这一行）。
+            CsCreditBadge.Ensure();
+
             // 单机版：这里**没有** CloverNet 的网络初始化。Game.Net 保持 null 是设计如此。
             Game.Logger?.Info(Tag, "单机版启动：按设计未初始化网络（不调用 CloverNet 的网络初始化）");
 

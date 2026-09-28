@@ -97,25 +97,20 @@ namespace Cs16.UI
         public const float HudIconSizePx = 24f;
 
         /// <summary>
-        /// 图标与它右侧数字之间的间距（px）。
+        /// 图标着色 = HUD 橙 <c>#FFB000</c>（<see cref="TextHud"/>）—— 与同一行里的数字同色。
         ///
-        /// <para><b>本项目新增</b>：原版这个间距在 <c>cstrike/cl_dlls/client.dll</c> 里
-        /// （那一排 HUD 的绝对坐标尚未解出，见对照表 F-04 / 验收表差异 #16）⇒ 它**不是**原版值，
-        /// 只负责"图标在数字左边、两者不重叠"。不要把它当成原版对齐的依据。</para>
-        /// </summary>
-        public const float HudIconNumberGapPx = 6f;
-
-        /// <summary>
-        /// 图标着色 = <b>纯白</b>（= 不加颜色调制，直接显示精灵自己的灰阶）。
+        /// <para><b>出处</b>：原版 640×480 第一人称 HUD 帧
+        /// <c>原版资源/参照物/viewmodel/viewmodel_deagle_640x480.png</c> 逐像素量得：
+        /// 血量图标最亮像素 RGB≈(109,73,27)、护甲图标 ≈(174,105,22)、同排数字 ≈(134,89,44)
+        /// —— 同属橙相，与 HUD 橙一致（十字线准星等其它元素同帧取样见
+        /// <c>.ai-tmp/test/probe-icon-color.py</c>）。</para>
         ///
-        /// <para><b>为什么是白</b>：这三张精灵是 GoldSrc 的加性灰阶遮罩（调色板逐项 <c>(i,i,i)</c>），
-        /// 本身不带颜色；原版屏上颜色由渲染时的调制决定，而那个调制值**本工程拿不到**
-        /// —— 原版 HUD 那一排的坐标与颜色都写死在 <c>cstrike/cl_dlls/client.dll</c>，
-        /// 且项目内 31 张原版 1920×1080 截图全是旁观机位（没有这排图标）
-        /// ⇒ 见对照表 F-04 / 验收表差异 #16。故这里**不编**一个颜色，取"无调制"（白）。
-        /// 等拿到一张第一人称、HUD 打开的原版截图后再定色。</para>
+        /// <para>这三张精灵是 GoldSrc 的加性灰阶遮罩（调色板逐项 <c>(i,i,i)</c>），本身不带颜色；
+        /// 屏上像素 = 精灵索引 × 着色。着色取 <see cref="TextHud"/> 是因为原版把图标与数字
+        /// 用同一组 r/g/b 绘制（HLSDK 的 <c>hud_health.cpp</c> 即"图标与数字共用同一个
+        /// <c>UnpackRGB</c> 结果"，本机 <c>原版资源/hlsdk/</c> 未含该文件，故判据落在上面的实机帧）。</para>
         /// </summary>
-        public static readonly Color HudIconTint = Color.white;
+        public static readonly Color HudIconTint = TextHud;
 
         /// <summary>血量低于该值显示红色（规格 H1）。</summary>
         public const int HealthLowThreshold = 25;

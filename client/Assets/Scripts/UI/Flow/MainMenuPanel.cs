@@ -122,9 +122,8 @@ namespace Cs16.UI
             _quitButton = CsUiStyle.CreateMenuItem("Btn_Quit", root, "Quit",
                 new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
 
-            // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
-            // 逐字 `by clover-engine`）：贴底锚点 / 字号 / 字体回退都在那一处，本面板不再自写文案与定位
-            CsUiStyle.CreateCreditLabel(root);
+            // 引擎署名（逐字 `by clover-engine`）不建在这里：它由常驻件 CsCreditBadge 画在面板之上，
+            // 各面板各建一行会漏页（新增面板没人记得补）、且面板一关那一行就没了。
         }
 
         public override void OnOpen(object param)

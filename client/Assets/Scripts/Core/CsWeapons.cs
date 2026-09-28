@@ -104,6 +104,95 @@ namespace Cs16.Core
         /// </summary>
         public bool CanBurst;
 
+        /// <summary>
+        /// 差异 #68：attack2 把状态**切到**"装上消音器 / 进入连发"一侧时播的 SFX 短名
+        /// （<c>ResPaths.SoundSfxPrefix</c> 后面那一段；空串 = 原版该武器没有这条音，⛔ 不许补）。
+        /// 出处 = 原版 <c>cl_dlls/client.dll</c> 的串表（文件偏移见 <see cref="CsWeapons"/> 的
+        /// <c>ApplyAttack2Values</c> 出处表）。
+        /// </summary>
+        public string SoundAttack2On = "";
+
+        /// <summary>差异 #68：attack2 切**回**另一侧（拆下消音器 / 退出连发）时播的 SFX 短名。</summary>
+        public string SoundAttack2Off = "";
+
+        // ==================================================================
+        //  散布（差异 #94）：原版 `PrimaryAttack` 里内联的三档系数
+        //  空中 = SpreadAirAdd + SpreadAirMul × acc ／ 移动>140 = SpreadAirAdd + SpreadMoveMul × acc
+        //  ／ 静止 = SpreadStillMul × acc（acc = `m_flAccuracy`，地址 `[this+0xF8]`）。
+        //  0 = 该武器这一档没取到（⛔ 不许拿别把枪的值顶替）。
+        // ==================================================================
+
+        /// <summary>差异 #94：空中档（`!(pev->flags & FL_ONGROUND)`）的 acc 乘数。</summary>
+        public float SpreadAirMul;
+
+        /// <summary>差异 #94：空中档与移动档共用的加数（原版两条分支共用同一个常量）。</summary>
+        public float SpreadAirAdd;
+
+        /// <summary>
+        /// 差异 #94：**蹲**档（`pev->flags &amp; FL_DUCKING`）的乘数（原版手枪 / 狙击族有这一档，
+        /// 步枪族的三档里没有 ⇒ 步枪这一字段为 0）。
+        /// </summary>
+        public float SpreadDuckMul;
+
+        /// <summary>
+        /// 差异 #94：公式形态 —— <c>false</c> = 步枪族「<c>Add + Mul × acc</c>」；
+        /// <c>true</c> = 手枪 / 狙击族「<c>Mul × (1 − acc)</c>」（这一族 <see cref="SpreadAirAdd"/> 恒为 0）。
+        /// </summary>
+        public bool SpreadInverted;
+
+        /// <summary>差异 #94：移动档（`velocity.Length2D() &gt; 140`）的 acc 乘数。</summary>
+        public float SpreadMoveMul;
+
+        /// <summary>差异 #94：静止档的 acc 乘数。</summary>
+        public float SpreadStillMul;
+
+        /// <summary>差异 #94：静止档在**装消音**状态下的 acc 乘数（只有 M4A1 两者不同；0 = 与未装同）。</summary>
+        public float SpreadStillMulSilenced;
+
+        // ==================================================================
+        //  差异 #94：acc（原版 `m_flAccuracy`，武器对象 +0xF8）模型
+        //  两族：
+        //    步枪 / 机枪 / 冲锋枪 —— `acc = min(AccBase + shots^AccPower / AccDiv, AccClampMax)`
+        //    手枪 —— `acc = clamp(acc − AccDecayScale × (AccDecayRef − dt), AccClampLo, AccClampHi)`
+        //  `shots` = 原版 `m_iShotsFired`（武器对象 +0x100）；`dt` = 距上一次开火的秒数
+        //  （原版读上一次开火时刻，未开过火时不动精度）。0 = 该武器没取到 ⇒ 回落旧模型。
+        //  出处 = `mp.dll` 各武器类开火函数的浮点常量与钳制分支，逐条 VA 见
+        //  `策划/手感参数对照.md` §5.14；抽取工具 `tools/probes/feel-acc-model.py`。
+        // ==================================================================
+
+        /// <summary>差异 #94：acc 更新式的加数（原版 `fadd [const]`）。</summary>
+        public float AccBase;
+
+        /// <summary>差异 #94：acc 更新式的除数（= <c>1 / fmul 常量</c>）。</summary>
+        public float AccDiv;
+
+        /// <summary>差异 #94：<c>m_iShotsFired</c> 的次数 —— 3 = 立方（步枪 / 机枪），2 = 平方（MP5 / P90 / UMP45）。</summary>
+        public int AccPower;
+
+        /// <summary>差异 #94：acc 的**上限**钳制（原版 <c>fcom</c> 后写回的那个常量）。</summary>
+        public float AccClampMax;
+
+        /// <summary>差异 #94：acc 的复位值 —— 原版在 Spawn / Reset / Deploy 三处槽写进 <c>+0xF8</c> 的常量。</summary>
+        public float AccReset;
+
+        /// <summary>差异 #94（手枪族）：衰减系数 K1（原版 <c>fmul</c> 常量）。</summary>
+        public float AccDecayScale;
+
+        /// <summary>差异 #94（手枪族）：参考时长 K2（原版 <c>fsubr</c> 常量），衰减式 <c>−K1 × (K2 − dt)</c>。</summary>
+        public float AccDecayRef;
+
+        /// <summary>差异 #94（手枪族）：acc 的下限钳制。</summary>
+        public float AccClampLo;
+
+        /// <summary>差异 #94（手枪族）：acc 的上限钳制（与 <see cref="AccReset"/> 同值）。</summary>
+        public float AccClampHi;
+
+        /// <summary>差异 #94：该武器有 acc 模型（更新式 + 复位值都取到了）。</summary>
+        public bool AccModel;
+
+        /// <summary>差异 #94：true = 手枪族（按 <c>dt</c> 衰减），false = 步枪族（按发数累加）。</summary>
+        public bool AccTimeDecay;
+
         // ==================================================================
         //  差异 #68：attack2 两态的**数值**（0 = 该武器没有这一档的出处 ⇒ 一律不接）
         //  出处 = 原版 `mp.dll`（基址 0x10000000）的字段常量与分支，逐条见
@@ -123,7 +212,12 @@ namespace Cs16.Core
         /// <inheritdoc cref="RangeModifier"/>
         public float RangeModifierSilenced;
 
-        /// <summary>原版开火时传的射程距离（世界单位，四把枪同为 8192）。</summary>
+        /// <summary>
+        /// 本武器开火时传给 <c>FireBullets3</c> 的**射程距离**（世界单位，不是衰减公式的分母）。
+        /// 逐武器取值：手枪那一档是 4096，其余是 8192（<see cref="CsWeapons.RangeMaxDistance"/> /
+        /// <see cref="CsWeapons.RangeMaxDistancePistol"/>）；出处 = <c>mp.dll</c> 各开火点的射程实参，
+        /// 逐点见 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2 的「射程」列。
+        /// </summary>
         public float RangeModifierMaxDistance;
 
         /// <summary>
@@ -311,6 +405,83 @@ namespace Cs16.Core
             ApplyPenetrationAndFalloffValues();
             ApplyCycleTimes();
             ApplyKickbackValues();
+            ApplySpreadValues();
+            ApplyAccuracyValues();
+        }
+
+        /// <summary>
+        /// 逐武器**精度（acc）模型**（差异 #94）。出处 = 各武器类的开火函数（vtable `slot[87]` 内被
+        /// <c>call</c> ≥2 次的正文目标）里对 <c>[this+0xF8]</c> 的写入，逐条 VA 见
+        /// <c>策划/手感参数对照.md</c> §5.14（抽取工具 <c>tools/probes/feel-acc-model.py</c>）。
+        ///
+        /// <para><b>步枪 / 机枪 / 冲锋枪</b>（立方 / 平方 + 上限钳制）：AK47 0.35+shots³/200≤1.25 ·
+        /// Galil 0.35+shots³/200≤1.25 · AUG 0.3+shots³/215≤1 · FAMAS 0.3+shots³/215≤1 ·
+        /// M4A1 0.3+shots³/220≤1 · SG552 0.3+shots³/220≤1 · M249 0.4+shots³/175≤0.9 ·
+        /// MAC10 0.6+shots³/200≤1.65 · TMP 0.55+shots³/200≤1.4 ·
+        /// MP5 0.45+shots²×0.00454339≤0.75 · P90 0.45+shots²/175≤1 · UMP45 0.5+shots²/210≤1。</para>
+        ///
+        /// <para><b>手枪</b>（按 <c>dt</c> 衰减 + 上下钳制）：Deagle · Elite · FiveSeven · Glock18 ·
+        /// P228 · USP。</para>
+        ///
+        /// <para><b>逐武器的复位值</b>（原版 Spawn / Reset / Deploy 三处槽写进 <c>+0xF8</c> 的常量）：
+        /// 步枪 / 机枪 / 冲锋枪 0.2（MAC10 0.15）；手枪 0.88~0.92；SG550 0.9。
+        /// **AWP / Scout / M3 / XM1014 取不到**（开火函数里没有 <c>+0xF8</c>/<c>+0x100</c> 访问）⇒
+        /// 复位值留 0 ⇒ 该武器回落旧散布模型。</para>
+        /// </summary>
+        private static void ApplyAccuracyValues()
+        {
+            // 步枪 / 机枪 / 冲锋枪：acc = base + shots^power / div，再钳到 ≤ clampMax。
+            void SetRifle(string id, float basev, float div, int power, float clampMax, float reset)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.AccBase = basev;
+                def.AccDiv = div;
+                def.AccPower = power;
+                def.AccClampMax = clampMax;
+                def.AccReset = reset;
+                def.AccModel = true;
+                def.AccTimeDecay = false;
+            }
+
+            SetRifle(Ak47, 0.35f, 200f, 3, 1.25f, 0.2f);      // 0x100D4064 写 / fmul 0.005@0x101419A8 + fadd 0.35@0x10141AB0 / fld 1.25@0x10141CD8
+            SetRifle(Galil, 0.35f, 200f, 3, 1.25f, 0.2f);     // 0x100DA675
+            SetRifle(Aug, 0.3f, 215f, 3, 1f, 0.2f);           // 0x100D4A84 / 0.00465116@0x101419A0 / fld1
+            SetRifle(Famas, 0.3f, 215f, 3, 1f, 0.2f);         // 0x100D8035
+            SetRifle(M4A1, 0.3f, 220f, 3, 1f, 0.2f);          // 0x100DF004 / 0.00454545@0x1014199C
+            SetRifle(Sg552, 0.3f, 220f, 3, 1f, 0.2f);         // 0x100E3044
+            SetRifle(M249, 0.4f, 175f, 3, 0.9f, 0.2f);        // 0x100DDD24 / 0.00571429@0x101419AC
+            SetRifle(Mac10, 0.6f, 200f, 3, 1.65f, 0.15f);     // 0x100DF994 / fld 1.65@0x10141DE8
+            SetRifle(Tmp, 0.55f, 200f, 3, 1.4f, 0.2f);        // 0x100E4304 / fld 1.4@0x10141D20
+            SetRifle(Mp5, 0.45f, 1f / 0.00454339f, 2, 0.75f, 0f);  // 0x100E022F / 单条 imul（平方）/ 0.00454339@0x10141998 · Spawn 0x100DFF5E fldz 写 0
+            SetRifle(P90, 0.45f, 175f, 2, 1f, 0.2f);          // 0x100E13DF
+            SetRifle(Ump45, 0.5f, 210f, 2, 1f, 0f);           // 0x100E4B7F / 0.0047619@0x101419A4 · Spawn 0x100E48BC fldz 写 0
+
+            // 手枪族：acc = clamp(acc − K1 × (K2 − dt), lo, hi)；复位值 = 上限（原版三处槽写的就是上限常量）。
+            void SetPistol(string id, float k1, float k2, float lo, float hi)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.AccDecayScale = k1;
+                def.AccDecayRef = k2;
+                def.AccClampLo = lo;
+                def.AccClampHi = hi;
+                def.AccReset = hi;
+                def.AccModel = true;
+                def.AccTimeDecay = true;
+            }
+
+            SetPistol(Deagle, 0.35f, 0.4f, 0.55f, 0.9f);      // 0x100D6C18 / fmul 0.35@0x10141AB0 fsubr 0.4@0x10141AC0 / fld 0.9@0x10141BC8 / fld 0.55@0x10141AD8
+            SetPistol(Elite, 0.275f, 0.325f, 0.55f, 0.88f);   // 0x100D755D / fld 0.88@0x10141BA4
+            SetPistol(FiveSeven, 0.25f, 0.275f, 0.725f, 0.92f); // 0x100D8948 / fld 0.725@0x10141B18
+            SetPistol(Glock18, 0.275f, 0.325f, 0.6f, 0.9f);   // 0x100DB299
+            SetPistol(P228, 0.3f, 0.325f, 0.6f, 0.9f);        // 0x100E0B98
+            SetPistol(Usp, 0.275f, 0.3f, 0.6f, 0.92f);        // 0x100E56B8
+
+            // SG550 有 acc 写入（0x100E27C2）但函数体里没有 shots 访问 ⇒ 只有复位值可落，逐发更新式不落。
+            if (_byId.TryGetValue(Sg550, out var sg550))
+            {
+                sg550.AccReset = 0.9f;                        // 0x10141BC8，slot0 / slot64 两处写入
+                sg550.AccClampMax = 0f;
+            }
         }
 
         /// <summary>
@@ -345,17 +516,15 @@ namespace Cs16.Core
         /// <summary>
         /// 逐武器**后坐力 kickback 实参**（原版 6 个 float + 1 个方向翻转除数）。
         ///
-        /// <para><b>出处 = <c>策划/手感参数对照.md</c> §5.5</b>（mp.dll 各武器 <c>fire</c> 函数里对
-        /// <c>0x10097F10</c> 的调用点；逐把的调用点 VA 与常量 VA 都列在该节）。这里的 11 把是
-        /// **参数齐全**的那些。</para>
+        /// <para><b>出处 = <c>策划/手感参数对照.md</c> §5.5 / §5.8 + §5.11</b>（mp.dll 各武器
+        /// <c>fire</c> 函数里对 <c>0x10097F10</c> 的调用点；逐把的调用点 VA 与常量 VA 都列在那两节，
+        /// 归属见 §5.11）。这里的 21 把是**归属确证且参数齐全**的那些。</para>
         ///
         /// <para><b>为什么不在这里的武器</b>：</para>
         /// <list type="bullet">
-        /// <item>FAMAS（缺 <c>lateral_modifier</c>）、G3SG1 / SG550（缺 <c>lateral_base</c>）——
-        /// §5.5/§5.8 标 <c>?</c>，缺槽不猜；</item>
+        /// <item>G3SG1 / SG550 —— <c>lateral_base</c> 那一槽未取到（§5.8 标 <c>?</c>），缺槽不猜；</item>
         /// <item>Glock18 —— §5.8 标 BLOCKED（两次解析都得到全 0，与直觉矛盾）；</item>
-        /// <item>手枪系 / 狙击 / 霰弹的其余武器 —— §5.8 的归属只标到"代码邻接标称"，§6 U-3 明确
-        /// **尚未确证**（那 12 个 kickback 站点还没跑过归属判定）⇒ 按"不把未确证的归属当事实改代码"处理。</item>
+        /// <item>其余武器（刀 / C4 / 手雷 / 弹壳等）—— 原版 attack2 与 <c>fire</c> 里根本没有那条调用。</item>
         /// </list>
         /// <para>上面这些一律留 <see cref="CsWeaponDef.HasKickback"/> = false ⇒ 走既有模型。</para>
         /// </summary>
@@ -386,6 +555,93 @@ namespace Cs16.Core
             Set(Mac10, 1.3f, 0.55f, 0.4f, 0.05f, 4.75f, 3.75f, 5);
             Set(P90, 0.9f, 0.45f, 0.35f, 0.04f, 5.25f, 3.5f, 4);
             Set(M249, 1.8f, 0.65f, 0.45f, 0.125f, 5f, 3.5f, 8);
+            Set(Famas, 1f, 0.45f, 0.275f, 0.05f, 4f, 2.5f, 7);
+
+            // 手枪 / 狙击 / 霰弹：原版只给 up_base，其余 5 个槽是 0、方向翻转 0
+            // （`fldz` 连续 `fst` 把 0 写进 5 个槽，最后一个 `fstp` 弹出的是残留的 up_base；
+            //  逐站点原文见 §5.8）。归属由 §5.11 的"与 FireBullets3 开火点同一函数"链确证。
+            Set(Deagle, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(Awp, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(Scout, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(Usp, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(P228, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(FiveSeven, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(Elite, 2f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(M3, 2.5f, 0f, 0f, 0f, 0f, 0f, 0);
+            Set(Xm1014, 0.75f, 0f, 0f, 0f, 0f, 0f, 0);
+        }
+
+        /// <summary>
+        /// 逐武器**散布三档系数**（差异 #94）。出处 = `mp.dll` 各武器类 vtable `slot[87]`（=
+        /// `PrimaryAttack`）里"`fld [this+0xF8]` → `fmul &lt;常量&gt;` →（空中/移动档）`fadd &lt;常量&gt;`
+        /// → `fstp [esp]` → `call &lt;开火函数&gt;`"那几段；逐站点 VA 与常量见
+        /// <c>策划/手感参数对照.md</c> §5.12，抽取工具 <c>tools/probes/feel-spread-args.py</c>。
+        ///
+        /// <para><b>只落已确证的那一档族</b>：模板（空中 / 移动&gt;140 / 静止 三档、空中与移动共用加数）
+        /// 由 `CAK47` 的全量反汇编手写确证（`0x100D3F60`：`test [eax+0x1A4],0x200` → 空中
+        /// `0.4*acc+0.04`；`fcomp 140` 后 → 移动 `0.07*acc+0.04`；否则静止 `0.0275*acc`），
+        /// 且与 §4.2 的 M4A1 / FAMAS 公开源逐条一致。手枪族另有一套模板（`Mul × (1 − acc)`、
+        /// **四档**含蹲），由 `CDEAGLE` 的全量反汇编手写确证。其余武器（冲锋枪 2 站点、AWP/Scout/
+        /// G3SG1/SG550 的 5 站点、USP/Glock18 的 8 站点 = 两棵带状态位的树）**档位语义未确证** ⇒ 不落值。</para>
+        /// </summary>
+        private static void ApplySpreadValues()
+        {
+            void Set(string id, float airMul, float add, float moveMul, float stillMul, float stillSilenced = 0f)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.SpreadAirMul = airMul;
+                def.SpreadAirAdd = add;
+                def.SpreadMoveMul = moveMul;
+                def.SpreadStillMul = stillMul;
+                def.SpreadStillMulSilenced = stillSilenced;
+            }
+
+            Set(Ak47, 0.4f, 0.04f, 0.07f, 0.0275f);
+            Set(Galil, 0.3f, 0.04f, 0.07f, 0.0375f);
+            Set(Aug, 0.4f, 0.035f, 0.07f, 0.02f);
+            Set(Sg552, 0.45f, 0.035f, 0.075f, 0.02f);
+            Set(Famas, 0.3f, 0.03f, 0.07f, 0.02f);
+            Set(M249, 0.5f, 0.045f, 0.095f, 0.03f);
+            // M4A1：静止档两态不同（未装 0.02 / 装消音 0.025），空中与移动档两态相同。
+            Set(M4A1, 0.4f, 0.035f, 0.07f, 0.02f, 0.025f);
+
+            // 手枪族：`Mul × (1 − acc)`，**四档**（空中 / 移动 / 蹲 / 站）。锚点 = CDEAGLE 的全量反汇编
+            // （`0x100D6AF7` 空中 ×1.5 → `0x100D6B40` 移动 ×0.25 → `test edx,0x4000` 后
+            // `0x100D6B5A` 蹲 ×0.115 / 落空路径 `0x100D6B6C` 站 ×0.13）⇒ 常量出现顺序即档位顺序。
+            void SetInv(string id, float airMul, float moveMul, float duckMul, float stillMul)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.SpreadInverted = true;
+                def.SpreadAirMul = airMul;
+                def.SpreadAirAdd = 0f;
+                def.SpreadMoveMul = moveMul;
+                def.SpreadDuckMul = duckMul;
+                def.SpreadStillMul = stillMul;
+            }
+
+            SetInv(Deagle, 1.5f, 0.25f, 0.115f, 0.13f);
+            SetInv(P228, 1.5f, 0.255f, 0.075f, 0.15f);
+            SetInv(FiveSeven, 1.5f, 0.255f, 0.075f, 0.15f);
+            SetInv(Elite, 1.3f, 0.175f, 0.08f, 0.1f);
+
+            // 冲锋枪族：`Mul × acc`，**只有两档**（空中 / 地面，无移动档、无加数）。锚点 = CMAC10 的全量反汇编
+            // （`0x100DF8DC test [eax+0x1A4],0x200` → 空中 `fld acc; fmul 0.375`；落空路径 `fld acc; fmul 0.03`
+            //  —— 函数里**没有** 与 140 的比较 ⇒ 两档）。
+            void SetGround(string id, float airMul, float groundMul)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.SpreadAirMul = airMul;
+                def.SpreadAirAdd = 0f;
+                def.SpreadMoveMul = 0f;
+                def.SpreadStillMul = groundMul;
+            }
+
+            SetGround(Mac10, 0.375f, 0.03f);
+            SetGround(Mp5, 0.2f, 0.04f);
+            SetGround(Tmp, 0.25f, 0.03f);
+            SetGround(Ump45, 0.24f, 0.04f);
+            // P90 三档（同样不含加数）：空中 0.3 / 移动>140 0.115 / 静止 0.045（含与 140 的比较）。
+            Set(P90, 0.3f, 0f, 0.115f, 0.045f);
         }
 
         /// <summary>
@@ -406,6 +662,13 @@ namespace Cs16.Core
         /// </list>
         /// <para>⇒ 可证的语义只有两句：「**USP / M4A1 有一个消音器 on/off 状态**」「**Glock18 / FAMAS 有可切换的
         /// 连发模式**」，而 attack2 就是切换它们的那条输入。</para>
+        ///
+        /// <para><b>切换音</b>：上面那 4 条 `*_silencer_on|off.wav` 与 `famas-burst.wav` 就是 attack2 的
+        /// **切换动作音**（它们与 HUD 提示串 <c>#Switch_To_BurstFire</c> 同段 ⇒ 属客户端 / 视模型层，
+        /// 不是开火音 —— 开火音走 `<c>weapons/&lt;枪&gt;-1.wav</c>` 那一族命名）。
+        /// 落进工程的 5 个文件在 <c>Resources/Sound/SFX/sfx/</c>，短名见
+        /// <see cref="CsWeaponDef.SoundAttack2On"/> / <see cref="CsWeaponDef.SoundAttack2Off"/>；
+        /// 消费点 = <c>CombatModule.FillInput</c>（状态位由模拟侧同一帧翻）。</para>
         ///
         /// <para><b>两态数值的出处</b>（载体 = 原版 <c>原版资源/cs16src/cstrike/dlls/mp.dll</c>，
         /// 逐字节 + 公开源码逐字交叉验证；逐条的 VA/文件偏移/反汇编见
@@ -430,14 +693,17 @@ namespace Cs16.Core
 
             CsWeaponDef Def(string id) => _byId.TryGetValue(id, out var d) ? d : null;
 
-            // USP：装消音只改伤害（34 → 30）；射程修正两态共用 0.79。
+            // USP：装消音只改伤害（34 → 30）；射程修正两态共用 0.79；
+            // 开火点 0x100E58A3 的射程距离是 4096（手枪那一档，差异 #129）。
             var usp = Def(Usp);
             if (usp != null)
             {
                 usp.DamageSilenced = 30;
                 usp.RangeModifier = 0.79f;
                 usp.RangeModifierSilenced = 0.79f;
-                usp.RangeModifierMaxDistance = RangeMaxDistance;
+                usp.RangeModifierMaxDistance = RangeMaxDistancePistol;
+                usp.SoundAttack2On = "sfx/usp_silencer_on";
+                usp.SoundAttack2Off = "sfx/usp_silencer_off";
             }
 
             // M4A1：装消音伤害 32 → 33、射程修正 0.97 → 0.95、静止站散布系数 0.02 → 0.025。
@@ -450,6 +716,8 @@ namespace Cs16.Core
                 m4.RangeModifierMaxDistance = RangeMaxDistance;
                 m4.StaticSpreadFactor = 0.02f;
                 m4.StaticSpreadFactorSilenced = 0.025f;
+                m4.SoundAttack2On = "sfx/m4a1_silencer_on";
+                m4.SoundAttack2Off = "sfx/m4a1_silencer_off";
             }
 
             // FAMAS：连发伤害 30 → 34、射程修正两态共用 0.96、静止站散布两档同系数 0.02；
@@ -468,6 +736,9 @@ namespace Cs16.Core
                 famas.BurstInterval = 0.1f;
                 famas.BurstCycleTime = 0.55f;
                 famas.CycleTime = 0.0825f;
+                // 原版只有一条连发切换音（不是 on/off 两条）⇒ 两个方向同一个短名。
+                famas.SoundAttack2On = "sfx/famas-burst";
+                famas.SoundAttack2Off = "sfx/famas-burst";
             }
 
             // Glock18：伤害两态同为 25（连发不改伤害）、射程修正两态共用 0.75；
@@ -486,6 +757,8 @@ namespace Cs16.Core
                 glock.BurstInterval = 0.1f;
                 glock.BurstCycleTime = 0.5f;
                 glock.CycleTime = 0.15f;
+                // ← 连发切换音留空：原版 `client.dll` 的串表里只有 FAMAS 那一条（`weapons/famas-burst.wav`），
+                //   Glock18 没有对应的音效串 ⇒ 切模式静音（⛔ 不许拿 Famas 的顶替）。
             }
         }
 
@@ -553,10 +826,28 @@ namespace Cs16.Core
             Set(P90, 1, 0.885f, CsConst.FalloffDenom57MM);
             Set(FiveSeven, 1, 0.885f, CsConst.FalloffDenom57MM);
             Set(P228, 1, 0.80f, CsConst.FalloffDenom357SIG);
+
+            // 差异 #129：同表的「射程」列（出处 = VALUES.md §4.2，归属 = PEN-FILL.md §1 的 RTTI 确证）——
+            // Deagle 0x100D6DC9、FiveSeven 0x100D8AF9、P228 0x100E0D49 是 4096；P90 0x100E1560 是 8192。
+            void SetDistance(string id, float units)
+            {
+                if (_byId.TryGetValue(id, out var d2)) d2.RangeModifierMaxDistance = units;
+            }
+
+            SetDistance(Deagle, RangeMaxDistancePistol);
+            SetDistance(FiveSeven, RangeMaxDistancePistol);
+            SetDistance(P228, RangeMaxDistancePistol);
+            SetDistance(P90, RangeMaxDistance);
         }
 
         /// <summary>原版开火时传入的射程距离（世界单位，逐字节：<c>mp.dll</c> <c>0x101422c0</c> = 8192.0）。</summary>
         public const float RangeMaxDistance = 8192f;
+
+        /// <summary>
+        /// 手枪那一档的射程距离（世界单位）：开火点里直接写 4096.0 的那几个点
+        /// —— USP `0x100E58A3`、Deagle `0x100D6DC9`（逐点见 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2）。
+        /// </summary>
+        public const float RangeMaxDistancePistol = 4096f;
 
         // ==================================================================
         //  差异 #68：两态取值的唯一入口（模拟 / 表现 / 自检共用，避免各写一份分支）
@@ -636,6 +927,114 @@ namespace Cs16.Core
             return def.Spread * (factor / def.StaticSpreadFactor);
         }
 
+        /// <summary>差异 #94：原版"移动档"判据的速度阈值 = <b>140 unit/s</b>
+        /// （`CAK47::PrimaryAttack` 0x100D3FAA `fcomp [0x101421B8]`，常量 = 140）。
+        /// 本工程速度是 m/s ⇒ 比较时先按 <see cref="CsConst.UnitToMeter"/> 折回 unit/s。</summary>
+        public const float SpreadMoveSpeedUnits = 140f;
+
+        /// <summary>差异 #94：本武器的散布是否走原版档位公式 —— 要求三档系数与 acc 模型**都**取到。</summary>
+        public static bool HasSpreadCoefficients(CsWeaponDef def)
+            => def != null && def.SpreadStillMul > 0f && def.AccModel;
+
+        /// <summary>
+        /// 差异 #94：本发开火后的 acc（原版 `m_flAccuracy`）。
+        ///
+        /// <para>步枪 / 机枪 / 冲锋枪：<c>min(AccBase + shots^AccPower / AccDiv, AccClampMax)</c>；
+        /// 手枪：<c>clamp(acc − AccDecayScale × (AccDecayRef − dt), AccClampLo, AccClampHi)</c>，
+        /// 其中衰减只在"本发是这一梭的第一发"（原版 <c>m_iShotsFired == 1</c> 分支）且
+        /// <paramref name="dtSinceLastAttack"/> ≥ 0（原版要求开过火）时执行。</para>
+        /// </summary>
+        /// <param name="shotsAfterIncrement">本发之后的 `m_iShotsFired`（从 1 起）。</param>
+        /// <param name="dtSinceLastAttack">距上一次开火的秒数；&lt; 0 = 还没开过火。</param>
+        public static float AccuracyAfterShot(CsWeaponDef def, float prevAcc, int shotsAfterIncrement,
+            float dtSinceLastAttack)
+        {
+            if (def == null || !def.AccModel) return prevAcc;
+
+            if (def.AccTimeDecay)
+            {
+                var acc = prevAcc;
+                if (shotsAfterIncrement <= 1 && dtSinceLastAttack >= 0f)
+                    acc -= def.AccDecayScale * (def.AccDecayRef - dtSinceLastAttack);
+                if (acc > def.AccClampHi) acc = def.AccClampHi;
+                if (acc < def.AccClampLo) acc = def.AccClampLo;
+                return acc;
+            }
+
+            var v = def.AccBase +
+                    (float)System.Math.Pow(shotsAfterIncrement, def.AccPower) / def.AccDiv;
+            return v > def.AccClampMax ? def.AccClampMax : v;
+        }
+
+        /// <summary>
+        /// 差异 #94：原版三档（手枪族四档）的**无量纲散布系数**（就是原版传给 `FireBullets3` 的
+        /// `flSpread` 表达式，逐条代数式见 `策划/手感参数对照.md` §5.12 / §5.13）。
+        /// </summary>
+        /// <param name="moving">原版"移动档"判据：水平速度 &gt; <see cref="SpreadMoveSpeedUnits"/> unit/s。</param>
+        public static float SpreadCoefficient(CsWeaponDef def, float acc, bool onGround, bool moving,
+            bool crouching, bool silenced)
+        {
+            if (def == null || def.SpreadStillMul <= 0f) return 0f;
+
+            if (def.SpreadInverted)
+            {
+                var mul = !onGround ? def.SpreadAirMul
+                    : moving ? def.SpreadMoveMul
+                    : crouching ? def.SpreadDuckMul
+                    : def.SpreadStillMul;
+                return mul * (1f - acc);
+            }
+
+            if (!onGround) return def.SpreadAirAdd + def.SpreadAirMul * acc;
+            // 冲锋枪族（MAC10 / MP5 / TMP / UMP45）原版**没有移动档**（`MoveMul` = 0）：地面不分移动 / 静止。
+            if (moving && def.SpreadMoveMul > 0f) return def.SpreadAirAdd + def.SpreadMoveMul * acc;
+            var still = silenced && def.SpreadStillMulSilenced > 0f
+                ? def.SpreadStillMulSilenced
+                : def.SpreadStillMul;
+            return still * acc;
+        }
+
+        /// <summary>
+        /// 差异 #94：参考态（**静止站 · 未装消音 · acc = <see cref="CsWeaponDef.AccReset"/>**）的系数。
+        /// `CsWeaponDef.Spread`（度）就是按这个态标定的 ⇒ 其余状态 / 其余发数按系数之**比**缩放。
+        ///
+        /// <para>为什么只能用比值：原版系数是 `系数 × acc` 口径的无量纲量（乘的是方向向量扰动），
+        /// 与本工程的"度"不同量纲；比值与量纲无关，且原版公式的全部相对行为（移动/空中更散、
+        /// 连发累计、手枪按 dt 衰减）照样可判。</para>
+        /// </summary>
+        public static float SpreadCoefficientReference(CsWeaponDef def)
+        {
+            if (def == null || def.SpreadStillMul <= 0f) return 0f;
+            return SpreadCoefficient(def, def.AccReset, onGround: true, moving: false,
+                crouching: false, silenced: false);
+        }
+
+        /// <summary>
+        /// 差异 #94：本发**散布（度）**。有原版档位系数与 acc 模型的武器按原版公式相对参考态折算；
+        /// 其余武器回落 <see cref="StaticSpreadFor"/>（调用方再按旧的"移动/离地附加"加
+        /// <see cref="CsWeaponDef.MoveSpread"/>）。
+        /// </summary>
+        public static float SpreadFor(CsWeaponDef def, float acc, bool onGround, bool moving,
+            bool crouching, bool silenced, bool burst)
+        {
+            if (def == null) return 0f;
+
+            var reference = SpreadCoefficientReference(def);
+            if (reference <= 0f) return StaticSpreadFor(def, silenced, burst);
+
+            var spread = def.Spread *
+                         (SpreadCoefficient(def, acc, onGround, moving, crouching, silenced) / reference);
+
+            // 连发档的系数树未逐条确证 ⇒ 只在原版比值（`StaticSpreadFactorBurst / StaticSpreadFactor`）上叠一层。
+            if (burst && def.CanBurst && def.StaticSpreadFactor > 0f && def.StaticSpreadFactorBurst > 0f)
+                spread *= def.StaticSpreadFactorBurst / def.StaticSpreadFactor;
+
+            return spread;
+        }
+
+        /// <summary>差异 #94：该武器的 acc 复位值（原版 Spawn / Reset / Deploy 写进 `+0xF8` 的常量）。</summary>
+        public static float ResetAccuracy(CsWeaponDef def) => def != null && def.AccModel ? def.AccReset : 0f;
+
         /// <summary>连发一轮的发数（非连发模式 / 没出处 ⇒ 0）。</summary>
         public static int BurstShotsFor(CsWeaponDef def, bool burst)
         {
@@ -649,6 +1048,17 @@ namespace Cs16.Core
             if (def == null) return 0f;
             if (followUpIndex <= 1) return def.BurstIntervalFirst;
             return def.BurstInterval > 0f ? def.BurstInterval : def.BurstIntervalFirst;
+        }
+
+        /// <summary>
+        /// attack2 切换动作的 SFX 短名（<paramref name="turningOn"/> = 切向"装上消音器 / 进入连发"一侧）。
+        /// 空串 = 该武器 / 该方向原版没有切换音（如 Glock18）⇒ 调用方静音，⛔ 不许顶替。
+        /// </summary>
+        public static string Attack2ToggleSound(CsWeaponDef def, bool turningOn)
+        {
+            if (def == null) return "";
+            var clip = turningOn ? def.SoundAttack2On : def.SoundAttack2Off;
+            return clip ?? "";
         }
 
         /// <summary>本档的循环时间（秒）：连发模式取 <c>BurstCycleTime</c>，否则 <c>CycleTime</c>，都没有则按 <c>Rpm</c> 推。</summary>

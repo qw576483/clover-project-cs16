@@ -227,10 +227,8 @@ namespace Cs16.UI
 
             ShowTeamPage(false);
 
-            // 必须用底部锚点：左上锚点 + 大负 y 会随画布高度变化掉出屏幕（MainMenuPanel 实测踩过）。
-            // 单一入口 = CsUiStyle.CreateCreditLabel（→ 引擎 UIFactory.CreateCreditLabel，文案取引擎默认值
-            // 逐字 `by clover-engine`）：本面板不再自持文案常量、不再自写贴底定位与尺寸。
-            CsUiStyle.CreateCreditLabel(root);
+            // 引擎署名（逐字 `by clover-engine`）不建在这里：它由常驻件 CsCreditBadge 画在面板之上，
+            // 各面板各建一行会漏页（新增面板没人记得补）、且面板一关那一行就没了。
 
             // 生成期（FlowSetup 造预制体）也设一次字体：动态字体不是工程资产、存不进 .prefab，
             // 因此 OnOpen 还会再设一次；这里只是为了运行期兜底搭布局那条路径不至于少字体。

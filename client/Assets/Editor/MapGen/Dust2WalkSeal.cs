@@ -172,6 +172,29 @@ namespace Cs16.EditorTools
             (22, 123), (23, 124), (23, 125),
         };
 
+        /// <summary>
+        /// **高度一致性层走不到**的标记格 ⇒ 登记好的目标格心（格坐标：
+        /// <c>(标记名, 原格 ix, 原格 iz, 目标格 ix, 目标格 iz)</c>）。
+        ///
+        /// <para><b>为什么要单独一张表</b>：位图判可走的格，不一定"走得到" —— 运行时
+        /// <c>BotNavigator.BuildHeightReach</c> 要求相邻格落脚面高差 ≤ <c>CsConst.StepUpHeight</c>，
+        /// 而单层 2D 位图不认高度。于是存在这样一类格：位图说能站，但从任一出生点出发的
+        /// 高度扩张都到不了（格内可站面比四周高出一整层，是上不去的台地）。标记点若被吸附到
+        /// 这类格上，机器人会一直拿它当目标却永远求不出路径。</para>
+        ///
+        /// <para><b>为什么逐条登记、不按规则自动搬</b>：这类台地全图 132 格，只有下面这 2 格上
+        /// 摆了标记点；把它们整片封成阻挡会改变人类玩家在同一张位图上的可站判定
+        /// （<c>CsMap</c> 的水平阻挡也走位图），而这里有缺陷的只是"标记点的落点"。</para>
+        ///
+        /// <para><b>判据</b>：逐格复算 <c>BotNavigator.BuildHeightReach</c> 从出生点集合出发的扩张
+        /// （几何 = <c>ThirdParty/Dust2/de_dust2_geo.bin</c> 的可站面），再逐标记点归属。</para>
+        /// </summary>
+        public static readonly (string Marker, int FromIx, int FromIz, int ToIx, int ToIz)[] HeightIslandMoves =
+        {
+            ("BuyZone_CT", 81, 93, 78, 96),
+            ("BuyZone_CT", 84, 90, 83, 88),
+        };
+
         private static readonly int[] NeiDx = { 1, -1, 0, 0, 1, 1, -1, -1 };
         private static readonly int[] NeiDz = { 0, 0, 1, -1, 1, -1, 1, -1 };
 
@@ -360,6 +383,7 @@ namespace Cs16.EditorTools
             {
                 int nameLen = BitConverter.ToInt32(bytes, pos);
                 pos += 4;
+                string markerName = Encoding.UTF8.GetString(bytes, pos, nameLen);
                 pos += nameLen;                        // 名字不动
                 int xyzAt = pos;
                 pos += 12;
@@ -370,6 +394,10 @@ namespace Cs16.EditorTools
 
                 int ix = Mathf.FloorToInt((x - ox) / cell);
                 int iz = Mathf.FloorToInt((z - oz) / cell);
+
+                // 先查"高度层走不到的格"登记表（这类格在位图上是可走的，下面的主分量判据抓不到它们）
+                if (MoveHeightIslandMarker(bytes, markerName, xyzAt, ix, iz, ox, oz, cell)) { moved++; continue; }
+
                 if (In(width, depth, ix, iz) && walkable[iz * width + ix] && comp[iz * width + ix] == main)
                     continue;
 
@@ -400,6 +428,29 @@ namespace Cs16.EditorTools
             }
 
             return moved;
+        }
+
+        /// <summary>
+        /// <see cref="HeightIslandMoves"/> 的命中判定与写回：名字与"当前格"都对上才搬，写 x/z、保留 y。
+        /// </summary>
+        private static bool MoveHeightIslandMarker(byte[] bytes, string markerName, int xyzAt,
+                                                   int ix, int iz, float ox, float oz, float cell)
+        {
+            if (string.IsNullOrEmpty(markerName)) return false;
+            for (int i = 0; i < HeightIslandMoves.Length; i++)
+            {
+                var m = HeightIslandMoves[i];
+                if (m.Marker != markerName || m.FromIx != ix || m.FromIz != iz) continue;
+
+                float x = ox + (m.ToIx + 0.5f) * cell;
+                float z = oz + (m.ToIz + 0.5f) * cell;
+                BitConverter.GetBytes(x).CopyTo(bytes, xyzAt);
+                BitConverter.GetBytes(z).CopyTo(bytes, xyzAt + 8);
+                Debug.Log($"{Tag} 标记点 {markerName} 原格 ({ix},{iz}) 走不到（落脚面比周边高出一层）⇒ " +
+                          $"按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{z:F1})（y 保留）");
+                return true;
+            }
+            return false;
         }
 
         private static bool In(int width, int depth, int ix, int iz)

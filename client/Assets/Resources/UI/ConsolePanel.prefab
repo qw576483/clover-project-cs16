@@ -350,7 +350,7 @@ MonoBehaviour:
     m_HorizontalOverflow: 1
     m_VerticalOverflow: 1
     m_LineSpacing: 1
-  m_Text: "\u547D\u4EE4\uFF1Abot_add [easy|normal|hard]\u3000\xB7\u3000bot_kick\u3000\xB7\u3000bot_difficulty <easy|normal|hard>"
+  m_Text: "\u547D\u4EE4\uFF1Abot_add [easy|normal|hard]\u3000\xB7\u3000bot_kick\u3000\xB7\u3000bot_difficulty <easy|normal|hard>\u3000\xB7\u3000spec_mode <1|2|3|4>\u3000\xB7\u3000spec_player <\u540D\u5B57|#\u5E8F\u53F7>\u3000\xB7\u3000spec_next\u3000\xB7\u3000spec_prev\u3000\xB7\u3000spec_autodirector"
 --- !u!114 &8838321660306531787
 MonoBehaviour:
   m_ObjectHideFlags: 0
@@ -558,9 +558,9 @@ MonoBehaviour:
   m_OnValueChanged:
     m_PersistentCalls:
       m_Calls: []
-  m_CaretColor: {r: 0.9098039, g: 0.6392157, b: 0.23921569, a: 1}
+  m_CaretColor: {r: 1, g: 0.6901961, b: 0, a: 1}
   m_CustomCaretColor: 1
-  m_SelectionColor: {r: 0.9098039, g: 0.6392157, b: 0.23921569, a: 0.4}
+  m_SelectionColor: {r: 1, g: 0.6901961, b: 0, a: 0.4}
   m_Text: 
   m_CaretBlinkRate: 0.85
   m_CaretWidth: 1

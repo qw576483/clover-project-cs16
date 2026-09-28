@@ -161,6 +161,7 @@ namespace Cs16.Module.Match
             a.RecoilDir = 1;
             a.BurstShotsLeft = 0;
             a.NextBurstShotTime = 0f;
+            ResetAccuracy(a);            // 差异 #94：卸装 = acc 与 m_iShotsFired 归位
         }
 
         /// <summary>默认装备：刀恒有 + 阵营默认手枪（T=Glock18 / CT=USP）。</summary>
@@ -491,6 +492,7 @@ namespace Cs16.Module.Match
             a.ActiveWeapon = weaponId;
             a.SwitchEndTime = now + SwitchTimeFor(def);
             a.ReloadEndTime = 0f;
+            ResetAccuracy(a);            // 差异 #94：切枪 = 原版 Deploy ⇒ acc 与 m_iShotsFired 归位
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
@@ -552,6 +554,7 @@ namespace Cs16.Module.Match
             // 差异 #72：单调序号 = 表现层判"换弹开始"的唯一信号。ReloadEndTime 会被 ① 结算归零
             // ② 切枪归零 ③ 同帧跨完 而漏掉边沿；序号不会被这三种情况吃掉。
             a.ReloadSeq++;
+            ResetAccuracy(a);            // 差异 #94：原版换弹结束会重新 Deploy ⇒ acc 与 m_iShotsFired 归位
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
             a.RecoilYaw = 0f;
@@ -709,6 +712,8 @@ namespace Cs16.Module.Match
             }
 
             a.ConsecutiveShots++;
+            // 差异 #94：精度逐发推进（原版 m_flAccuracy），必须在 FireGun 取散布之前。
+            UpdateAccuracy(a, def, now);
             // 后坐力：逐发累加 + 按上限夹住 + 水平方向位翻转（原版 KickBack 的机制形状，解算见 CsRecoil）。
             AccumulateRecoil(a, def);
 
@@ -726,10 +731,9 @@ namespace Cs16.Module.Match
             var origin = a.EyePosition;
             var baseDir = AimDirection(a);
 
-            // 差异 #68：散布按当前的消音 / 连发状态取（M4A1 装消音 ×1.25、Glock18 连发 ×3）。
-            var spread = CsWeapons.StaticSpreadFor(def, a.Silenced, a.BurstMode);
-            if (a.Velocity.x != 0f || a.Velocity.z != 0f) spread += def.MoveSpread;
-            if (!a.OnGround) spread += def.MoveSpread;
+            // 差异 #94：有原版档位系数 + acc 模型的武器走原版公式（acc 由 UpdateAccuracy 逐发更新）；
+            // 其余武器沿用旧的"两态系数 + 移动 / 离地附加"。
+            var spread = FireSpread(a, def);
 
             var range = def.Range > 0f ? def.Range : CsConst.BotVisionRange;
             var pellets = def.Pellets > 0 ? def.Pellets : 1;
@@ -741,6 +745,56 @@ namespace Cs16.Module.Match
                 if (victim == null) continue;
                 _m.Damage.ApplyHit(a, victim, def, hitbox, point, dist, false);
             }
+        }
+
+        /// <summary>
+        /// 差异 #94：本发**散布（度）**。有原版三档 / 四档系数且 acc 模型取到的武器，按原版公式
+        /// （`Add + Mul × acc` / `Mul × (1 − acc)`）相对参考态折算 —— 代数式与逐条 VA 见
+        /// <c>策划/手感参数对照.md</c> §5.12 / §5.13 / §5.14。其余武器沿用旧模型
+        /// （<c>StaticSpreadFor</c> 的消音 / 连发两态 + 移动 / 离地各加一份 <c>MoveSpread</c>）。
+        /// </summary>
+        private float FireSpread(CsActor a, CsWeaponDef def)
+        {
+            if (def == null) return 0f;
+
+            if (CsWeapons.HasSpreadCoefficients(def))
+            {
+                var speedUnits = new Vector2(a.Velocity.x, a.Velocity.z).magnitude / CsConst.UnitToMeter;
+                return CsWeapons.SpreadFor(def, a.Accuracy, a.OnGround,
+                    speedUnits > CsWeapons.SpreadMoveSpeedUnits, a.IsCrouching, a.Silenced, a.BurstMode);
+            }
+
+            // 非预期分支：原版这三档系数**已取到**、acc 模型**没取到** ⇒ 该武器这一发拿不到原版散布。
+            if (def.SpreadStillMul > 0f)
+                _m.RateInfo("spread.no-acc." + def.Id,
+                    $"{def.DisplayName} 有三档散布系数但没有 acc 模型 ⇒ 本发回落旧散布模型（差异 #94）");
+
+            var spread = CsWeapons.StaticSpreadFor(def, a.Silenced, a.BurstMode);
+            if (a.Velocity.x != 0f || a.Velocity.z != 0f) spread += def.MoveSpread;
+            if (!a.OnGround) spread += def.MoveSpread;
+            return spread;
+        }
+
+        /// <summary>
+        /// 差异 #94：逐发更新 acc（原版 `m_flAccuracy`）。累加 `m_iShotsFired`，再按武器族的更新式算
+        /// （步枪族按发数、手枪族按距上一次开火的秒数），并记下本次开火时刻。
+        /// </summary>
+        private static void UpdateAccuracy(CsActor a, CsWeaponDef def, float now)
+        {
+            if (a == null || def == null || !def.AccModel) return;
+            var dt = a.LastAttackTime >= 0f ? now - a.LastAttackTime : -1f;
+            a.AccuracyShots++;
+            a.Accuracy = CsWeapons.AccuracyAfterShot(def, a.Accuracy, a.AccuracyShots, dt);
+            a.LastAttackTime = now;
+        }
+
+        /// <summary>差异 #94：把 acc 与 `m_iShotsFired` 归位（原版 Spawn / Reset / Deploy 三处槽的口径）。</summary>
+        private static void ResetAccuracy(CsActor a)
+        {
+            if (a == null) return;
+            a.AccuracyShots = 0;
+            a.LastAttackTime = -1f;
+            a.Accuracy = CsWeapons.ResetAccuracy(a.ActiveDef);
         }
 
         /// <summary>
@@ -790,6 +844,7 @@ namespace Cs16.Module.Match
             a.BurstShotsLeft--;
             a.BurstAutoShots++;
             a.ConsecutiveShots++;
+            UpdateAccuracy(a, def, now);   // 差异 #94：续发同样推进 m_flAccuracy
             AccumulateRecoil(a, def);
             a.NextBurstShotTime = a.BurstShotsLeft > 0 ? now + CsWeapons.BurstIntervalFor(def, shotIndex) : 0f;
 

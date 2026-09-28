@@ -27,10 +27,45 @@ namespace Cs16.UI
     public class HudPanel : CsPanelBase
     {
         // ─────────── 布局常量（参考分辨率 1920x1080；只放布局，不放玩法数值）───────────
+        // 左下那排（血量 / 护甲 / 金钱）在原版里是**同一行**、贴屏幕底边。量化出处 =
+        // `原版资源/参照物/viewmodel/viewmodel_deagle_640x480.png`（640×480 第一人称 + HUD）：
+        // 三组元素的墨迹同在 y=456..473（距屏底 6..23 px），距屏左 = 血量图标 10 / 数字 30、
+        // 护甲图标 128 / 数字 150、金钱 282。×（1080/480 = 2.25）即下面的取值。
         private const float Margin = 24f;
-        private const float MoneyY = 128f;
-        private const float HealthY = 74f;
-        private const float ArmorY = 26f;
+
+        /// <summary>原版 HUD 的基准高（<c>sprites/hud.txt</c> 的行首分辨率档是 <c>640</c>，设计空间 640×480）。</summary>
+        private const float HudDesignHeight = 480f;
+
+        /// <summary>原版设计像素 → 本工程画布像素（1080 / 480 = 2.25，与 <c>CsUiStyle.ResScale</c> 同值）。</summary>
+        private const float HudScale = 1080f / HudDesignHeight;
+
+        /// <summary>那排文本的底边距屏底（原版墨迹底 6 px × <see cref="HudScale"/>）。</summary>
+        private const float HudRowTextY = 6f * HudScale;
+
+        /// <summary>那排图标的底边：与文本行同心（文本高 40 ⇒ 中心 +20，图标 24 ⇒ 底 −12）。</summary>
+        private const float HudRowIconY = HudRowTextY + 20f - 12f;
+
+        /// <summary>血量图标左边距（原版 10 px × <see cref="HudScale"/>）。</summary>
+        private const float HealthIconX = 10f * HudScale;
+
+        /// <summary>血量数字左边距（原版 30 px × <see cref="HudScale"/>）。</summary>
+        private const float HealthTextX = 30f * HudScale;
+
+        /// <summary>护甲图标左边距（原版 128 px × <see cref="HudScale"/>）。</summary>
+        private const float ArmorIconX = 128f * HudScale;
+
+        /// <summary>护甲数字左边距（原版 150 px × <see cref="HudScale"/>）。</summary>
+        private const float ArmorTextX = 150f * HudScale;
+
+        /// <summary>金钱左边距（原版 282 px × <see cref="HudScale"/>）。</summary>
+        private const float MoneyX = 282f * HudScale;
+
+        /// <summary>血量条（本项目新增的显示件）叠在那排之上，不压住数字。</summary>
+        private const float HealthBarY = 56f;
+
+        /// <summary>护甲条（同上）叠在血量条之下、那排之上。</summary>
+        private const float ArmorBarY = 44f;
+
         private const int MessageLines = 3;
         private const float MessageLineHeight = 26f;
 
@@ -146,42 +181,42 @@ namespace Cs16.UI
             UIFactory.Stretch(hud);
             _hudRoot = hud;
 
-            // ---- 左下：血量 / 护甲 / 金钱（H1 / H2）----
+            // ---- 左下：血量 / 护甲 / 金钱（H1 / H2）—— 三组**同一行**，出处见顶部布局常量那段 ----
             // 图标 = **原版位图精灵**（hud.txt:121/135/137，各 24×24），数字排在图标右边；
             // 先 enabled=false：**没有 sprite 的 Image 会被 uGUI 画成实心白块**，必须等 sprite 到手再开。
             _healthIcon = CsHudTheme.CreateBlock("HealthIcon", hud,
                 Vector2.zero, Vector2.zero,
-                new Vector2(Margin, HealthY + 20f - CsHudTheme.HudIconSizePx * 0.5f),
+                new Vector2(HealthIconX, HudRowIconY),
                 new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.HudIconTint);
             _healthIcon.enabled = false;
 
             _healthText = CsHudTheme.CreateText("Health", hud, "100", 36,
                 TextAnchor.MiddleLeft, CsHudTheme.HealthOk);
             CsHudTheme.PlaceBottomLeft(_healthText.rectTransform,
-                new Vector2(Margin + CsHudTheme.HudIconSizePx + CsHudTheme.HudIconNumberGapPx, HealthY),
+                new Vector2(HealthTextX, HudRowTextY),
                 new Vector2(300f, 40f));
 
             _healthBar = CsHudTheme.CreateBar("HealthBar", hud, Vector2.zero, Vector2.zero,
-                new Vector2(Margin, HealthY - 16f), new Vector2(150f, 8f), CsHudTheme.HealthOk);
+                new Vector2(HealthIconX, HealthBarY), new Vector2(150f, 8f), CsHudTheme.HealthOk);
 
             _armorIcon = CsHudTheme.CreateBlock("ArmorIcon", hud,
                 Vector2.zero, Vector2.zero,
-                new Vector2(Margin, ArmorY + 15f - CsHudTheme.HudIconSizePx * 0.5f),
+                new Vector2(ArmorIconX, HudRowIconY),
                 new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.HudIconTint);
             _armorIcon.enabled = false;
 
             _armorText = CsHudTheme.CreateText("Armor", hud, "100", 26,
                 TextAnchor.MiddleLeft, CsHudTheme.ArmorColor);
             CsHudTheme.PlaceBottomLeft(_armorText.rectTransform,
-                new Vector2(Margin + CsHudTheme.HudIconSizePx + CsHudTheme.HudIconNumberGapPx, ArmorY),
+                new Vector2(ArmorTextX, HudRowTextY),
                 new Vector2(260f, 30f));
 
             _armorBar = CsHudTheme.CreateBar("ArmorBar", hud, Vector2.zero, Vector2.zero,
-                new Vector2(Margin, ArmorY - 14f), new Vector2(110f, 6f), CsHudTheme.ArmorColor);
+                new Vector2(ArmorIconX, ArmorBarY), new Vector2(110f, 6f), CsHudTheme.ArmorColor);
 
             _moneyText = CsHudTheme.CreateText("Money", hud, "$800", 32, TextAnchor.MiddleLeft,
                 CsHudTheme.MoneyNormal);
-            CsHudTheme.PlaceBottomLeft(_moneyText.rectTransform, new Vector2(Margin, MoneyY),
+            CsHudTheme.PlaceBottomLeft(_moneyText.rectTransform, new Vector2(MoneyX, HudRowTextY),
                 new Vector2(320f, 38f));
 
             // ---- 底部左侧：`Time Left: … min. Next Map: …`（原版实机帧 hud_ingame_1024x768.jpg 实测）----
@@ -192,14 +227,16 @@ namespace Cs16.UI
                 new Vector2(CsHudTheme.TimeLeftBoxWidthPx, CsHudTheme.TimeLeftBoxHeightPx));
 
             // ---- 右下：弹药 / 武器名（H3）----
+            // 弹药与原版同排（原版弹药墨迹距屏底 7 px × 2.25 ≈ 15.75；同一帧的距屏右 = 10 px × 2.25 = 22.5，
+            // 由 Margin = 24 承担）；武器名叠在弹药之上。
             _ammoText = CsHudTheme.CreateText("Ammo", hud, "0 / 0", 38, TextAnchor.MiddleRight,
                 CsHudTheme.TextHud);
-            CsHudTheme.PlaceBottomRight(_ammoText.rectTransform, new Vector2(-Margin, ArmorY),
+            CsHudTheme.PlaceBottomRight(_ammoText.rectTransform, new Vector2(-Margin, HudRowTextY),
                 new Vector2(300f, 44f));
 
             _weaponText = CsHudTheme.CreateText("Weapon", hud, string.Empty, 22, TextAnchor.MiddleRight,
                 CsHudTheme.TextDim);
-            CsHudTheme.PlaceBottomRight(_weaponText.rectTransform, new Vector2(-Margin, HealthY - 6f),
+            CsHudTheme.PlaceBottomRight(_weaponText.rectTransform, new Vector2(-Margin, HudRowTextY + 44f),
                 new Vector2(360f, 28f));
 
             // ---- 右上角：比分两行 + 回合计时（H4 / H5）----
