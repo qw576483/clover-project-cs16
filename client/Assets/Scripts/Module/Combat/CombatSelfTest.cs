@@ -1343,6 +1343,21 @@ namespace Cs16.Module.Combat
         /// **只跑差异 #94 的 acc / 散布判据**并返回报告 —— 供 `unity command eval_file` 调用
         /// （整跑 <see cref="RunAll"/> 会撞 eval_file 的「主线程 5 s」上限，本入口秒级返回）。
         /// </summary>
+        /// <summary>只跑差异 #94 的**散布档位系数 + 参考态**判据（离线 / run_script 用，不进 Play）。</summary>
+        public static string RunSpreadOnly()
+        {
+            Failures.Clear();
+            Notes.Clear();
+            CheckSpreadValues();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("========== 差异 #94 「散布档位系数 + 参考态 acc」数值自检 ==========");
+            for (var i = 0; i < Notes.Count; i++) sb.AppendLine("· " + Notes[i]);
+            for (var i = 0; i < Failures.Count; i++) sb.AppendLine("× " + Failures[i]);
+            sb.AppendLine(Failures.Count == 0 ? ">>> 结论: PASS" : $">>> 结论: FAIL（{Failures.Count} 项）");
+            return sb.ToString();
+        }
+
         public static string RunAccuracyOnly()
         {
             Failures.Clear();
