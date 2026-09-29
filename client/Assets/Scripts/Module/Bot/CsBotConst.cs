@@ -90,16 +90,6 @@ namespace Cs16.Module.Bot
         public const float PathReplanInterval = 1f;
 
         /// <summary>
-        /// "A* 路径已求"日志（<c>BotNavigator.PathLog</c>）的每 bot 最小间隔（秒）。
-        ///
-        /// <para>为什么不能逐次打：路径每 <see cref="PathReplanInterval"/> 秒就可能重求一次，8 个 bot ⇒ 每秒 8 行。
-        /// 5 s 一行的量级足以回答"寻路层在不在给方向"，又不会淹没其它日志。</para>
-        ///
-        /// <para>出处：**本项目新增**（日志降频参数；被降频的事件 = <c>AStar.FindSmoothed</c> 求路径成功）。</para>
-        /// </summary>
-        public const float PathLogInterval = 5f;
-
-        /// <summary>
         /// "起点/终点格不可走时"向外找最近可走格的半径（格）。
         ///
         /// <para>必要性：引擎 <c>AStar.Find</c> 对"起点不可走"直接返回 null ⇒ 机器人被挤进位图判阻挡的格子

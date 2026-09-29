@@ -70,7 +70,6 @@ namespace Cs16.Module.Bot
         private Vector3 _lastDir;          // 上一次真正提交出去的方向（判"哪个方向走不动"用）
 
         private Vector3 _diagLastDir;      // 上一次提交出去的方向（判"翻转 >120°"用）
-        private float _diagNextLogAt;      // 本 bot 下一行 [BOTFLIP] 的最早时刻（0.5s 降频）
         private int _diagFlips;            // 本 bot 累计翻转次数（换路线时归零）
         private Vector3 _blockedDir;       // 最近一次"想走却走不动"的方向
         private float _blockedUntil;
@@ -86,10 +85,8 @@ namespace Cs16.Module.Bot
         private float _nextRepathAt;
         /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
         private float _nextPathFailLogAt;
-        /// <summary>本 bot 求路径成功的次数（写进 <see cref="PathLog"/> 那行，是"这条移动由 A* 给出"的计数）。</summary>
+        /// <summary>本 bot 求路径成功的次数（"这条移动由 A* 给出"的计数）。</summary>
         private int _replanCount;
-        /// <summary><see cref="PathLog"/> 的时间闸：路径每 <see cref="CsBotConst.PathReplanInterval"/> 秒可能重求一次，逐次打会刷屏。</summary>
-        private float _nextPathLogAt;
 
         /// <summary>
         /// 8 邻接的格偏移（与引擎 <see cref="AStar"/> 的邻接一致：4 正 + 4 斜）。只用于
@@ -99,11 +96,68 @@ namespace Cs16.Module.Bot
         private static readonly int[] CellStepZ = { 0, 1, 1, 1, 0, -1, -1, -1 };
 
         /// <summary>
-        /// <see cref="_heightReachCache"/> 的条目上限（**内存护栏**，不是玩法阈值）：一个条目 ≈ 可达格数 × 每格
-        /// 一个 <c>Vector2Int</c>（实测主分量 ~4.4k 格 ≈ 70 KB）⇒ 8 条 ≈ 0.6 MB；满了**整表清空**
-        /// （代价只是下一次多打一遍射线，比"无上限增长"安全）。出处：**本项目新增**。
+        /// <see cref="_heightReachCache"/> 的条目上限（**内存护栏**，不是玩法阈值）：一个条目 = 一份可达集
+        /// （实测主分量 ~4.4k 格 ⇒ <c>HashSet&lt;Vector2Int&gt;</c> ≈ 140 KB）⇒ 64 条 ≈ 9 MB。
+        /// 满了**淘汰最旧的那一条**（不是整表清空）：键不再被用到就自然被挤掉。
         /// </summary>
-        private const int HeightReachCacheCap = 8;
+        private const int HeightReachCacheCap = 64;
+
+        /// <summary>
+        /// 可达集的备忘键 = **起点格 + 该格的基准落脚高度**（后者 = <c>SampleGround(位置)</c> 再经
+        /// <see cref="SnapStartFace"/> 吸附；两者都只是"位置 / 格 → 数"的纯函数）。
+        /// 扩张（<see cref="BuildHeightReach"/>）从头到尾只依赖这两个量 + 世界几何（比赛内不变）
+        /// ⇒ 同一个键命中的结果与"不缓存直接重算"**逐值相同**。
+        /// </summary>
+        private readonly struct HeightKey : System.IEquatable<HeightKey>
+        {
+            public readonly int X, Y, BaseBits;
+
+            public HeightKey(Vector2Int cell, float baseY)
+            {
+                X = cell.x;
+                Y = cell.y;
+                BaseBits = System.BitConverter.SingleToInt32Bits(baseY);
+            }
+
+            public bool Equals(HeightKey o) => X == o.X && Y == o.Y && BaseBits == o.BaseBits;
+            public override bool Equals(object o) => o is HeightKey k && Equals(k);
+            public override int GetHashCode() => ((X * 397) ^ Y) * 397 ^ BaseBits;
+        }
+
+        /// <summary>备忘条目：那份可达集 + 最近一次被用到的序号（淘汰最旧用）。</summary>
+        private struct ReachEntry
+        {
+            public HashSet<Vector2Int> Set;
+            public long Used;
+        }
+
+        /// <summary>
+        /// <see cref="CanReach"/> 的布尔备忘键 = 起点格 + 终点格 + **判据本身**（可达集对象引用；null = 本帧无高度层）。
+        /// <c>AStar.Find</c> 的结果只依赖 (walkable 回调, 起点格, 终点格, maxNodes)，而 walkable 回调由
+        /// 位图（随地图）+ <c>_hasHeightReach</c> + 那一份可达集唯一确定 ⇒ 同一个键的结果与重算逐值相同。
+        /// </summary>
+        private readonly struct ReachQuery : System.IEquatable<ReachQuery>
+        {
+            public readonly int FX, FY, TX, TY;
+            public readonly HashSet<Vector2Int> Reach;
+
+            public ReachQuery(Vector2Int from, Vector2Int to, HashSet<Vector2Int> reach)
+            {
+                FX = from.x; FY = from.y; TX = to.x; TY = to.y; Reach = reach;
+            }
+
+            public bool Equals(ReachQuery o)
+                => FX == o.FX && FY == o.FY && TX == o.TX && TY == o.TY && ReferenceEquals(Reach, o.Reach);
+
+            public override bool Equals(object o) => o is ReachQuery q && Equals(q);
+
+            public override int GetHashCode()
+                => (((FX * 397) ^ FY) * 397 ^ TX) * 397 ^ TY
+                   ^ (Reach != null ? System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Reach) : 0);
+        }
+
+        /// <summary><see cref="_canReachMemo"/> 的条目上限（内存护栏）：一个条目只有两个格 + 一个 bool，满了整表清空。</summary>
+        private const int CanReachMemoCap = 8192;
 
         /// <summary>
         /// "从当前位置按**抬升 ≤ <see cref="CsConst.StepUpHeight"/>** 逐格走得到"的格集合
@@ -111,11 +165,32 @@ namespace Cs16.Module.Bot
         /// </summary>
         private HashSet<Vector2Int> _heightReach;
         private Vector2Int _heightReachFrom;
+        /// <summary>当前这份 <see cref="_heightReach"/> 对应的基准落脚高度（与 <see cref="_heightReachFrom"/> 合成备忘键）。</summary>
+        private int _heightReachBaseBits;
         private bool _hasHeightReach;
-        /// <summary><see cref="_heightReach"/> 的备忘（键 = 起点格）：卡住的 bot 会一直从同一格重求，命中它就不必重算。</summary>
-        private readonly Dictionary<Vector2Int, HashSet<Vector2Int>> _heightReachCache =
-            new Dictionary<Vector2Int, HashSet<Vector2Int>>(8);
-        private IMapData _heightCachedMap;
+        /// <summary>
+        /// 共享的"可达集"备忘（键 = 起点格 + 基准落脚高度，见 <see cref="HeightKey"/>）。
+        /// 结论只依赖 (地图, 起点格, 基准高度, 世界几何) 四个量、与是哪个 bot 无关 ⇒ 同一张地图上
+        /// 所有 <see cref="BotNavigator"/> **共用一份**：同一个键 ⇒ 与"不缓存重算"逐值相同的结果；
+        /// 满了淘汰**最旧**一条（<see cref="ReachEntry.Used"/>）。
+        /// </summary>
+        private sealed class ReachTables
+        {
+            /// <summary>本表对应的地图（换图 ⇒ 换一份表）。</summary>
+            public IMapData Map;
+            public readonly Dictionary<HeightKey, ReachEntry> Cache =
+                new Dictionary<HeightKey, ReachEntry>(HeightReachCacheCap);
+            /// <summary>LRU 时刻（<see cref="ReachEntry.Used"/> 的比较基准）。</summary>
+            public long Used;
+        }
+
+        /// <summary>当前地图的可达集备忘（<see cref="BuildHeightReach"/> 里按地图建立 / 替换）。</summary>
+        private static ReachTables _sharedReach;
+        private static ReachTables Reaches => _sharedReach;
+
+        /// <summary><see cref="CanReach"/> 的布尔备忘（键见 <see cref="ReachQuery"/>）；满了整表清空（只是多算一次，结论不变）。</summary>
+        private readonly Dictionary<ReachQuery, bool> _canReachMemo = new Dictionary<ReachQuery, bool>(1024);
+        private IMapData _canReachMemoMap;
         /// <summary>"高度层这次为何没生效"的时间闸（同原因 <see cref="CsBotConst.StuckWarnCooldown"/> 内只报一条）。</summary>
         private float _nextHeightLogAt;
 
@@ -164,6 +239,87 @@ namespace Cs16.Module.Bot
         /// <summary>起点格吸附落脚面时的上下搜索带（米）。只作用于**起点那一格**：边判据 / 可站立判据 / 探测深度都不受它影响。</summary>
         private const float StartFaceSnapBand = 2.5f;
         private int _mpCenterFail, _mpSaved, _mpDead;
+
+        // ==================================================================
+        //  「格内采样点 → 该列有哪些向上的面」备忘（把逐格射线换成查表）
+        // ==================================================================
+        //
+        // 本层不改任何判据，只改"面从哪来"：原来每一格都现场打一根向下射线，现在同一格内采样点
+        // 只枚举一次、把该列的面向下有序记下来，之后按 `origin.y` 直接取"起点之下最高的那个面" ——
+        // 这正是 `Physics.Raycast(origin, Vector3.down, …, maxDrop + GroundCheckDistance)` 的定义
+        // （向下射线只命中"从上方看得到"的面，竖面与向下射线平行、不参与；`queriesHitBackfaces`
+        //  默认 false ⇒ 盒体底面的背面不被命中，所以"人站在盒体内部"那种情形与现场射线一致）。
+        // 于是命中高度、命中与否、法线 y 三个字段与现场射线逐值相同，调用方的带内判据一个字没动。
+        //
+        // 表按 (格, 格内采样点下标) 建，键与 `CellCenter + InCellFrac[i/k] × CellSize` 一一对应，
+        // 所以 `SnapStartFace` / `GroundYAbove` / `CellLandingFace` 三处共用同一份。
+        // 世界几何（CsWorld 层，见 `Module/Map/CsMap.cs` 的 `GroundMask`）在比赛内不变。
+
+        /// <summary>一列记忆的"向上的面"个数上限；到顶 ⇒ 记 <see cref="Column.Overflow"/>、该列走现场射线。</summary>
+        private const int ColMaxFaces = 6;
+        /// <summary>枚举一列时的第一根射线起点（世界 y，取在整张图所有面之上）。</summary>
+        private const float ColProbeTopY = 128f;
+        /// <summary>枚举时单根射线的射程（米）：从 <see cref="ColProbeTopY"/> 起要能一路探到图底。</summary>
+        private const float ColProbeDrop = 400f;
+        /// <summary>枚举下一根射线相对上一个命中点的下移量（米）：正好贴面起步会自交，下移一点跳过它。</summary>
+        private const float ColFaceEps = 0.01f;
+        /// <summary>
+        /// <see cref="ColumnTables.Insets"/> 的条目上限（内存护栏，不是玩法阈值）：满了**不再新增**条目
+        /// （已建好的照旧命中，新列当场枚举、不入表）—— 整表清空会让每个 bot 重新枚举同一批列。
+        /// </summary>
+        private const int ColCacheCap = 400000;
+        /// <summary><see cref="Cols.State"/> 里"该列面数超上限"的标记（这一列回退现场射线）。</summary>
+        private const byte ColStateOverflow = 0xFF;
+
+        /// <summary>一个格内采样点所在竖直列上的"向上的面"，按 y **降序**。</summary>
+        private struct Column
+        {
+            public int Count;
+            public bool Overflow;
+            public float Y0, Y1, Y2, Y3, Y4, Y5;
+            public float Ny0, Ny1, Ny2, Ny3, Ny4, Ny5;
+        }
+
+        /// <summary>
+        /// 共享的"列面表"：列面只依赖 (地图, 格, 格内采样点) 三个量，**与是哪个 bot 无关** ⇒
+        /// 同一张地图上所有 <see cref="BotNavigator"/> 共用一份，取到的值逐字相同（少打的是重复射线）。
+        /// </summary>
+        private sealed class ColumnTables
+        {
+            /// <summary>本表对应的地图（换图 ⇒ 换一份表）。</summary>
+            public IMapData Map;
+            /// <summary>位图尺寸各加 1 格外框（= <see cref="GeoIdx"/> 的步长 / 行数）。</summary>
+            public int W, D;
+            /// <summary>格**心**列 × 格 → 面数 + 1；0 = 未建立，<see cref="ColStateOverflow"/> = 溢出。</summary>
+            public byte[] State;
+            public float[] Y;
+            public float[] Ny;
+            /// <summary>格**内**其余 24 个采样点的列（只有"格心失败"的格才会用到），键见 <see cref="ColumnKey"/>。</summary>
+            public readonly Dictionary<long, Column> Insets = new Dictionary<long, Column>(8192);
+        }
+
+        /// <summary>当前地图的列面表（<see cref="EnsureGeoArrays"/> 按地图建立 / 替换）。</summary>
+        private static ColumnTables _sharedCols;
+        /// <summary>本实例上次见到的列面表（表一换 ⇒ 本实例的扩张代次作废）。</summary>
+        private ColumnTables _colsSeen;
+
+        private static ColumnTables Cols => _sharedCols;
+
+        /// <summary>扩张时每格的最小落脚高度 / 代次（按格下标索引，避免逐格哈希表操作）。</summary>
+        private float[] _gH;
+        private int[] _gStamp;
+        /// <summary>可达集（按格下标索引）：值 == <see cref="_gGen"/> ⇒ 本代可达（= <see cref="WalkableCellHeightAware"/> 的判据）。</summary>
+        private int[] _gReach;
+        private int _gGen;
+        /// <summary>上面这些数组的步长/行数（= 位图尺寸各加 1 格外框）。</summary>
+        private int _gW, _gD;
+        private readonly Queue<Vector2Int> _gQueue = new Queue<Vector2Int>(8192);
+
+        /// <summary><see cref="_walkBitmap"/> 对应的地图。</summary>
+        private IMapData _walkMap;
+        /// <summary>位图展开成数组（键 = <c>iz * Width + ix</c>）：与 <c>IMapData.WalkableAt(格心)</c> 同值。</summary>
+        private bool[] _walkBitmap;
+        private int _walkW, _walkD;
 
         /// <summary>
         /// 最近一次被判为"**与起点格不连通**"的终点格（`AStar.Find` 在两端都可走时仍返回 null）。
@@ -887,22 +1043,10 @@ namespace Cs16.Module.Bot
             return true;
         }
 
-        /// <summary>
-        /// 记一行"这条移动是引擎 A* 给出的路径"（按 <see cref="CsBotConst.PathLogInterval"/> 降频）：
-        /// 起点格 / 终点格 / 拉直后的节点数 / 首个拐点 / 本 bot 累计重求次数。
-        /// 它不是玩法逻辑，只回答"寻路层到底有没有在给方向"。
-        /// </summary>
+        /// <summary>累计本 bot 成功求出路径的次数（<see cref="_replanCount"/> 的唯一自增口）。</summary>
         private void PathLog(Vector2Int from, Vector2Int to, List<Vector2Int> path)
         {
             _replanCount++;
-            if (Time.time < _nextPathLogAt) return;
-            _nextPathLogAt = Time.time + CsBotConst.PathLogInterval;
-
-            var first = path.Count > 0 ? CellCenter(path[0]) : Vector3.zero;
-            Game.Logger.Info(Tag,
-                $"[A*] {_ownerName} 路径已求：起点格 {from} → 终点格 {to}，节点 {path.Count} 个" +
-                $"（引擎 AStar.FindSmoothed，含视线拉直），首个拐点 ({first.x:F1},{first.z:F1})，" +
-                $"路线 '{_marker ?? "无"}'，本 bot 累计重求 {_replanCount} 次");
         }
 
         /// <summary>
@@ -934,7 +1078,22 @@ namespace Cs16.Module.Bot
             if (from == to) return true;
 
             BuildHeightReach(from, fromPosition);          // null ⇒ _hasHeightReach=false ⇒ 与 WalkableCell 等价
-            return AStar.Find(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes) != null;
+
+            // **确定性函数的备忘**：结果只依赖 (walkable 回调, 起点格, 终点格, maxNodes)，而回调由
+            // 地图 + 上面这一份可达集唯一确定（键里带上可达集对象引用）⇒ 命中的答案与重算逐值相同。
+            if (!ReferenceEquals(_canReachMemoMap, map))
+            {
+                _canReachMemoMap = map;
+                _canReachMemo.Clear();
+            }
+
+            var query = new ReachQuery(from, to, _hasHeightReach ? _heightReach : null);
+            if (_canReachMemo.TryGetValue(query, out var known)) return known;
+
+            var ok = AStar.Find(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes) != null;
+            if (_canReachMemo.Count >= CanReachMemoCap) _canReachMemo.Clear();
+            _canReachMemo[query] = ok;
+            return ok;
         }
 
         /// <summary>
@@ -1020,8 +1179,298 @@ namespace Cs16.Module.Bot
         {
             var map = Game.Map;
             if (map == null || map.CellSize <= 0f) return false;
+
+            if (EnsureWalkBitmap(map))
+            {
+                var ix = cell.x;
+                var iz = cell.y;
+                if (ix < 0 || iz < 0 || ix >= _walkW || iz >= _walkD) return false;   // 图外 = 不可走（IMapData.WalkableAt 同口径）
+                return _walkBitmap[iz * _walkW + ix];
+            }
+
             var c = CellCenter(cell);
             return _map != null ? _map.WalkableAt(c.x, c.z) : map.WalkableAt(c.x, c.z);
+        }
+
+        /// <summary>
+        /// 把可走位图一次性展开成数组（<c>bool[iz * Width + ix]</c>），值 = <c>IMapData.WalkableAt(格心)</c>。
+        /// 位图在整场比赛内不变 ⇒ 只建一次；换图 / 未加载 ⇒ 返回 false（调用方退回逐次查询）。
+        /// </summary>
+        private bool EnsureWalkBitmap(IMapData map)
+        {
+            if (ReferenceEquals(_walkMap, map) && _walkBitmap != null) return true;
+            if (!map.Loaded || map.Width <= 0 || map.Depth <= 0 || map.CellSize <= 0f) return false;
+
+            _walkMap = map;
+            _walkW = map.Width;
+            _walkD = map.Depth;
+            var bits = new bool[_walkW * _walkD];
+            var size = map.CellSize;
+            var ox = map.Origin.x;
+            var oz = map.Origin.z;
+            for (var iz = 0; iz < _walkD; iz++)
+            {
+                var z = oz + (iz + 0.5f) * size;
+                var row = iz * _walkW;
+                for (var ix = 0; ix < _walkW; ix++)
+                {
+                    bits[row + ix] = map.WalkableAt(ox + (ix + 0.5f) * size, z);
+                }
+            }
+
+            _walkBitmap = bits;
+            return true;
+        }
+
+        /// <summary>
+        /// 按地图尺寸准备列备忘 / 扩张用的定长数组（换图 ⇒ 整表作废）。返回 false = 位图不可用。
+        /// </summary>
+        private bool EnsureGeoArrays(IMapData map)
+        {
+            if (!EnsureWalkBitmap(map)) return false;
+
+            _gW = _walkW + 2;
+            _gD = _walkD + 2;
+            var n = _gW * _gD;
+
+            var cols = _sharedCols;
+            if (cols == null || cols.W != _gW || cols.D != _gD || !ReferenceEquals(cols.Map, map))
+            {
+                cols = new ColumnTables
+                {
+                    Map = map,
+                    W = _gW,
+                    D = _gD,
+                    State = new byte[n],
+                    Y = new float[n * ColMaxFaces],
+                    Ny = new float[n * ColMaxFaces],
+                };
+                _sharedCols = cols;
+            }
+
+            if (_gH == null || _gH.Length != n)
+            {
+                _gReach = new int[n];
+                _gStamp = new int[n];
+                _gH = new float[n];
+                _gGen = 0;
+                _colsSeen = cols;
+                return true;
+            }
+
+            if (!ReferenceEquals(_colsSeen, cols))
+            {
+                _colsSeen = cols;
+                System.Array.Clear(_gReach, 0, n);
+                System.Array.Clear(_gStamp, 0, n);
+                _gGen = 0;
+            }
+
+            return true;
+        }
+
+        /// <summary>淘汰最旧的一条可达集备忘（<see cref="ReachEntry.Used"/> 最小者）——表满时用，不是整表清空。</summary>
+        private void EvictOldestReach()
+        {
+            var oldest = long.MaxValue;
+            var victim = default(HeightKey);
+            foreach (var kv in Reaches.Cache)
+            {
+                if (kv.Value.Used >= oldest) continue;
+                oldest = kv.Value.Used;
+                victim = kv.Key;
+            }
+            Reaches.Cache.Remove(victim);
+        }
+
+        /// <summary>把一份可达集标进本代的 <see cref="_gReach"/>（缓存命中时用：判据从此只读数组）。</summary>
+        private void MarkReach(HashSet<Vector2Int> set)
+        {
+            foreach (var cell in set)
+            {
+                var idx = GeoIdx(cell);
+                if (idx >= 0) _gReach[idx] = _gGen;
+            }
+        }
+
+        /// <summary>代次到顶 ⇒ 清一次数组重来（否则旧代的标记会被当成新代）。</summary>
+        private void ResetGen()
+        {
+            System.Array.Clear(_gReach, 0, _gReach.Length);
+            System.Array.Clear(_gStamp, 0, _gStamp.Length);
+            _gGen = 1;
+        }
+
+        /// <summary>格内采样点（<see cref="InCellFrac"/> 的二维下标压成一维）× 格 → 列备忘的键。</summary>
+        private static long ColumnKey(Vector2Int cell, int offIdx)
+            => (((long)(cell.x + 4096) << 20) | (long)(cell.y + 4096)) * 32L + (uint)offIdx;
+
+        /// <summary>
+        /// 格内第 <paramref name="offIdx"/> 个采样点（<c>i = offIdx / 5</c>、<c>k = offIdx % 5</c>）的世界坐标，
+        /// 与既有三处现场射线的起点**同式同序**（<c>CellCenter + InCellFrac[·] × CellSize</c>）。
+        /// </summary>
+        private Vector3 ProbeOrigin(Vector2Int cell, int offIdx, float y)
+        {
+            var c = CellCenter(cell);
+            var size = Game.Map.CellSize;
+            return new Vector3(c.x + InCellFrac[offIdx / InCellFrac.Length] * size, y,
+                               c.z + InCellFrac[offIdx % InCellFrac.Length] * size);
+        }
+
+        private static float FaceY(in Column col, int k)
+            => k == 0 ? col.Y0 : k == 1 ? col.Y1 : k == 2 ? col.Y2 : k == 3 ? col.Y3 : k == 4 ? col.Y4 : col.Y5;
+
+        private static float FaceNy(in Column col, int k)
+            => k == 0 ? col.Ny0 : k == 1 ? col.Ny1 : k == 2 ? col.Ny2 : k == 3 ? col.Ny3 : k == 4 ? col.Ny4 : col.Ny5;
+
+        /// <summary>格坐标 → 列备忘 / 扩张数组的下标（带 1 格外框，好让图外一格的邻格也能查；超出返回 -1）。</summary>
+        private int GeoIdx(Vector2Int cell)
+        {
+            var ix = cell.x + 1;
+            var iz = cell.y + 1;
+            if (ix < 0 || iz < 0 || ix >= _gW || iz >= _gD) return -1;
+            return iz * _gW + ix;
+        }
+
+        /// <summary>
+        /// 枚举一列的面。建立方式 = 从 <see cref="ColProbeTopY"/> 起反复"探到面 → 下移 <see cref="ColFaceEps"/> 再探"，
+        /// 与一根连续向下的射线逐次命中**同一串面**；到 <see cref="ColMaxFaces"/> 还没探完 ⇒
+        /// <see cref="Column.Overflow"/>（该列回退现场射线）。
+        /// </summary>
+        private void BuildColumnFaces(float px, float pz, ref Column col)
+        {
+            col.Count = 0;
+            col.Overflow = false;
+            var y = ColProbeTopY;
+            for (var k = 0; k < ColMaxFaces; k++)
+            {
+                Vector3 point; Vector3 normal;
+                if (!_map.TrySampleGround(new Vector3(px, y, pz), out point, out normal, ColProbeDrop)) break;
+                switch (k)
+                {
+                    case 0: col.Y0 = point.y; col.Ny0 = normal.y; break;
+                    case 1: col.Y1 = point.y; col.Ny1 = normal.y; break;
+                    case 2: col.Y2 = point.y; col.Ny2 = normal.y; break;
+                    case 3: col.Y3 = point.y; col.Ny3 = normal.y; break;
+                    case 4: col.Y4 = point.y; col.Ny4 = normal.y; break;
+                    default: col.Y5 = point.y; col.Ny5 = normal.y; break;
+                }
+                col.Count = k + 1;
+                // <see cref="ICsMap.TrySampleGround"/> 把起点抬 <see cref="CsConst.GroundCheckDistance"/>，
+                // 所以"下一根射线的起点"要把这个抬高量扣掉再减 <see cref="ColFaceEps"/>，否则会再次命中同一个面。
+                y = point.y - CsConst.GroundCheckDistance - ColFaceEps;
+            }
+
+            // 面数到顶且"再探一根还有"才叫溢出；到顶后正好探空 ⇒ 这一列就是满 6 个面，照旧可用。
+            if (col.Count == ColMaxFaces)
+            {
+                Vector3 point; Vector3 normal;
+                col.Overflow = _map.TrySampleGround(
+                    new Vector3(px, col.Y5 - CsConst.GroundCheckDistance - ColFaceEps, pz),
+                    out point, out normal, ColProbeDrop);
+            }
+        }
+
+        /// <summary>格心列（扩张的热路径）：第一次查到时建立，之后是两次数组读。</summary>
+        private void EnsureCenterColumn(int idx)
+        {
+            var cell = new Vector2Int(idx % _gW - 1, idx / _gW - 1);
+            var origin = ProbeOrigin(cell, 0, ColProbeTopY);
+            var col = default(Column);
+            BuildColumnFaces(origin.x, origin.z, ref col);
+
+            var b = idx * ColMaxFaces;
+            Cols.Y[b + 0] = col.Y0; Cols.Ny[b + 0] = col.Ny0;
+            Cols.Y[b + 1] = col.Y1; Cols.Ny[b + 1] = col.Ny1;
+            Cols.Y[b + 2] = col.Y2; Cols.Ny[b + 2] = col.Ny2;
+            Cols.Y[b + 3] = col.Y3; Cols.Ny[b + 3] = col.Ny3;
+            Cols.Y[b + 4] = col.Y4; Cols.Ny[b + 4] = col.Ny4;
+            Cols.Y[b + 5] = col.Y5; Cols.Ny[b + 5] = col.Ny5;
+            Cols.State[idx] = col.Overflow ? ColStateOverflow : (byte)(col.Count + 1);
+        }
+
+        /// <summary>格内其余 24 个采样点的列（字典）：只有"格心失败"的格才会走到。</summary>
+        private Column GetInsetColumn(Vector2Int cell, int offIdx)
+        {
+            var key = ColumnKey(cell, offIdx);
+            if (Cols.Insets.TryGetValue(key, out var col)) return col;
+
+            var origin = ProbeOrigin(cell, offIdx, ColProbeTopY);
+            col = default(Column);
+            BuildColumnFaces(origin.x, origin.z, ref col);
+
+            if (Cols.Insets.Count < ColCacheCap) Cols.Insets[key] = col;
+            return col;
+        }
+
+        /// <summary>
+        /// 与 <c>ICsMap.TrySampleGround(pos, out point, out normal, maxDrop)</c> **同口径**的落地探测
+        /// （起点抬 <see cref="CsConst.GroundCheckDistance"/>、向下射 <c>maxDrop + GroundCheckDistance</c>、
+        /// 只打 CsWorld 层、忽略 trigger），只是把射线换成查列备忘：
+        /// 命中 = 起点之下**最高**的那个面；它低于射程 ⇒ 与现场射线一样判"探不到"。
+        /// 表不可用 / 该列溢出 ⇒ 现场射线，参数逐字同原调用。
+        /// </summary>
+        private bool TryProbeGround(Vector2Int cell, int offIdx, float posY, float maxDrop,
+                                   out float hitY, out float hitNy)
+        {
+            hitY = float.NaN;
+            hitNy = 1f;
+
+            var top = posY + CsConst.GroundCheckDistance;
+            var bottom = posY - maxDrop;
+
+            if (offIdx == 0 && Cols != null && Cols.State != null)
+            {
+                var idx = GeoIdx(cell);
+                if (idx >= 0)
+                {
+                    var st = Cols.State[idx];
+                    if (st == 0)
+                    {
+                        EnsureCenterColumn(idx);
+                        st = Cols.State[idx];
+                    }
+                    if (st != ColStateOverflow)
+                    {
+                        var cnt = st - 1;
+                        var b = idx * ColMaxFaces;
+                        for (var k = 0; k < cnt; k++)
+                        {
+                            var fy = Cols.Y[b + k];
+                            if (fy > top) continue;         // 面在起点之上：向下的射线够不到它
+                            if (fy < bottom) return false;  // 起点之下最高的那个面已经低于射程 ⇒ 无命中
+                            hitY = fy;
+                            hitNy = Cols.Ny[b + k];
+                            return true;
+                        }
+                        return false;
+                    }
+                }
+            }
+            else if (offIdx != 0 && Cols != null)
+            {
+                var col = GetInsetColumn(cell, offIdx);
+                if (!col.Overflow)
+                {
+                    for (var k = 0; k < col.Count; k++)
+                    {
+                        var fy = FaceY(col, k);
+                        if (fy > top) continue;
+                        if (fy < bottom) return false;
+                        hitY = fy;
+                        hitNy = FaceNy(col, k);
+                        return true;
+                    }
+                    return false;
+                }
+            }
+
+            if (_map == null) return false;
+            Vector3 point; Vector3 normal;
+            if (!_map.TrySampleGround(ProbeOrigin(cell, offIdx, posY), out point, out normal, maxDrop)) return false;
+            hitY = point.y;
+            hitNy = normal.y;
+            return true;
         }
 
         // ==================================================================
@@ -1033,7 +1482,12 @@ namespace Cs16.Module.Bot
         /// <para>没有可用的高度层（<see cref="_hasHeightReach"/> == false）⇒ 与 <see cref="WalkableCell"/> 等价。</para>
         /// </summary>
         private bool WalkableCellHeightAware(Vector2Int cell)
-            => WalkableCell(cell) && (!_hasHeightReach || _heightReach.Contains(cell));
+        {
+            if (!WalkableCell(cell)) return false;
+            if (!_hasHeightReach || _gReach == null) return true;
+            var idx = GeoIdx(cell);
+            return idx >= 0 && _gReach[idx] == _gGen;
+        }
 
         /// <summary>
         /// 建立"抬起腿 ≤ <see cref="CsConst.StepUpHeight"/> 逐格走得到"的格集合（高度一致性层的**全部**内容）。
@@ -1070,26 +1524,21 @@ namespace Cs16.Module.Bot
         /// <returns>可达格集合；null = 本帧不加这一层（调用方按既有行为走）。</returns>
         private HashSet<Vector2Int> BuildHeightReach(Vector2Int from, Vector3 selfPosition)
         {
-            _hasHeightReach = false;
-
             var map = Game.Map;
-            if (map == null || !map.Loaded || map.CellSize <= 0f) return null;
-            if (_map == null || !_map.IsLoaded) return null;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) { _hasHeightReach = false; return null; }
+            if (_map == null || !_map.IsLoaded) { _hasHeightReach = false; return null; }
+            if (!EnsureGeoArrays(map)) { _hasHeightReach = false; return null; }
 
-            // 换图 ⇒ 位图换了 ⇒ 高度层整片作废（不许拿旧图的结论判新图）。
-            if (!ReferenceEquals(_heightCachedMap, map))
-            {
-                _heightCachedMap = map;
-                _heightReachCache.Clear();
-            }
+            // 换图 ⇒ 位图换了 ⇒ 高度层整片作废（不许拿旧图的结论判新图）。备忘键不含地图对象，所以换图即换表。
+            if (_sharedReach == null || !ReferenceEquals(_sharedReach.Map, map))
+                _sharedReach = new ReachTables { Map = map };
 
-            if (_heightReachCache.TryGetValue(from, out var cached))
-            {
-                _heightReach = cached;
-                _heightReachFrom = from;
-                _hasHeightReach = true;
-                return cached;
-            }
+            // 先留住上一次的结论：连续同键的快路径要用它（下面的重算失败会把 _hasHeightReach 置回 false）。
+            var prevHas = _hasHeightReach;
+            var prevSet = _heightReach;
+            var prevFrom = _heightReachFrom;
+            var prevBase = _heightReachBaseBits;
+            _hasHeightReach = false;
 
             // 基准高度 = 机器人**脚下的地面**（产品同源：ICsMap.SampleGround → Module/Map/CsMap.cs:534）。
             // 探不到（人在空中 / 图外）⇒ 本帧不加这一层（不许瞎猜一个基准高度）。
@@ -1111,11 +1560,40 @@ namespace Cs16.Module.Bot
             var startFace = SnapStartFace(from, baseY);
             if (!float.IsNaN(startFace)) baseY = startFace;
 
+            // **精确备忘**：键 = (起点格, 基准落脚高度)。扩张只依赖这两个量 + 世界几何 ⇒ 命中即
+            // 与"不缓存直接重算"逐值相同；预算里省掉的是重算本身，不是判据。
+            var key = new HeightKey(from, baseY);
+            if (prevHas && prevSet != null && prevFrom == from && prevBase == key.BaseBits) return prevSet;
+            if (Reaches.Cache.TryGetValue(key, out var cached))
+            {
+                cached.Used = ++Reaches.Used;
+                Reaches.Cache[key] = cached;
+                if (++_gGen == int.MaxValue) ResetGen();
+                MarkReach(cached.Set);
+                _heightReach = cached.Set;
+                _heightReachFrom = from;
+                _heightReachBaseBits = key.BaseBits;
+                _hasHeightReach = true;
+                return cached.Set;
+            }
+
             _mpCenterFail = 0; _mpSaved = 0; _mpDead = 0;   // 取样统计计数（只在**重算**时清，命中缓存不改）
 
+            if (++_gGen == int.MaxValue) ResetGen();
+            var gen = _gGen;
+
             var reach = new HashSet<Vector2Int> { from };
-            var height = new Dictionary<Vector2Int, float> { { from, baseY } };
-            var queue = new Queue<Vector2Int>();
+            var height = _gH;                     // 本代：格 → 最小落脚高度（按格下标索引，不用逐格哈希表）
+            var stamps = _gStamp;                 // 本代："这一格有高度"的标记
+            var queue = _gQueue;
+            queue.Clear();
+            var fromIdx = GeoIdx(from);
+            if (fromIdx >= 0)
+            {
+                height[fromIdx] = baseY;
+                stamps[fromIdx] = gen;
+                _gReach[fromIdx] = gen;
+            }
             queue.Enqueue(from);
             var blocked = 0;
             var relaxations = 0;
@@ -1136,7 +1614,8 @@ namespace Cs16.Module.Bot
                 }
 
                 var cur = queue.Dequeue();
-                var hCur = height[cur];
+                var curIdx = GeoIdx(cur);
+                var hCur = curIdx >= 0 ? height[curIdx] : baseY;
 
                 for (var k = 0; k < 8; k++)
                 {
@@ -1168,30 +1647,34 @@ namespace Cs16.Module.Bot
                     //   判死格集合两两差 0~4 格 —— 同一个问题给出不同答案）。
                     //   改成松弛：只有把这一格的高度**压低**才重新入队 ⇒ 结论不再依赖到达顺序，
                     //   且是这条（单向）关系在"每格一个高度"口径下的最大不动点。
-                    if (height.TryGetValue(n, out var hPrev) && hN >= hPrev - 1e-4f) continue;
+                    var idx = GeoIdx(n);
+                    if (stamps[idx] == gen && hN >= height[idx] - 1e-4f) continue;
 
                     reach.Add(n);
-                    height[n] = hN;
+                    height[idx] = hN;
+                    stamps[idx] = gen;
+                    _gReach[idx] = gen;
                     queue.Enqueue(n);
                 }
             }
 
-            if (_heightReachCache.Count >= HeightReachCacheCap) _heightReachCache.Clear();
-            _heightReachCache[from] = reach;
+            // 精确备忘入库：满了淘汰**最旧**的一条（不是整表清空）。
+            if (Reaches.Cache.Count >= HeightReachCacheCap) EvictOldestReach();
+            Reaches.Cache[key] = new ReachEntry { Set = reach, Used = ++Reaches.Used };
 
             _heightReach = reach;
             _heightReachFrom = from;
+            _heightReachBaseBits = key.BaseBits;
             _hasHeightReach = true;
 
-            if (Time.time >= _nextHeightLogAt)
+            // 退化留痕（非预期分支）：可达集塌成 1 格 ⇒ 扩张一步都没走通，是一条"走不动"的直接证据。
+            if (reach.Count <= 1 && Time.time >= _nextHeightLogAt)
             {
                 _nextHeightLogAt = Time.time + CsBotConst.StuckWarnCooldown;
-                Game.Logger.Info(Tag,
-                    $"{_ownerName} 高度一致性层：从格 {from}（脚下地面 y={baseY:F3}）起按抬升 ≤ " +
-                    $"CsConst.StepUpHeight（{CsConst.StepUpHeight:F2}）扩张 ⇒ 可达 {reach.Count} 格，" +
-                    $"被高度判死 {blocked} 格；其中**格心口径**探不到带内落脚面 {_mpCenterFail} 格 → " +
-                    $"格内 5×5 多点**救回** {_mpSaved} 格 / 多点也判死 {_mpDead} 格" +
-                    $"（判据出处 Module/Map/CsMap.cs:514-523；取样口径 BotNavigator.cs:GroundYAbove/CellLandingFace，⛔ 不改位图）");
+                Game.Logger.Warn(Tag,
+                    $"{_ownerName} 高度一致性层的可达集塌成 {reach.Count} 格：从格 {from}（脚下地面 y={baseY:F3}）" +
+                    $"按抬升 ≤ {CsConst.StepUpHeight:F2} 一个邻格都扩张不出去（被高度判死 {blocked} 格，" +
+                    $"格心探不到带内落脚面 {_mpCenterFail} 格、格内 5×5 多点救回 {_mpSaved} 格）");
             }
             return reach;
         }
@@ -1214,8 +1697,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float SnapStartFace(Vector2Int cell, float baseY)
         {
-            var c = CellCenter(cell);
-            var size = Game.Map.CellSize;
             var band = StartFaceSnapBand;
             var best = float.NaN;
             var bestAbs = float.MaxValue;
@@ -1224,17 +1705,17 @@ namespace Cs16.Module.Bot
             {
                 for (var k = 0; k < InCellFrac.Length; k++)
                 {
-                    var origin = new Vector3(c.x + InCellFrac[i] * size, baseY + band, c.z + InCellFrac[k] * size);
-                    Vector3 point; Vector3 normal;
-                    if (!_map.TrySampleGround(origin, out point, out normal, band + GroundProbeDepth)) continue;
-                    if (normal.y < CsConst.MaxStandableSlopeNormalZ) continue;   // 陡坡不算落脚面（CsMap.cs:521 同式）
-                    if (point.y > baseY + band || point.y < baseY - GroundProbeDepth) continue;
+                    float hitY; float hitNy;
+                    if (!TryProbeGround(cell, i * InCellFrac.Length + k, baseY + band,
+                                        band + GroundProbeDepth, out hitY, out hitNy)) continue;
+                    if (hitNy < CsConst.MaxStandableSlopeNormalZ) continue;      // 陡坡不算落脚面（CsMap.cs:521 同式）
+                    if (hitY > baseY + band || hitY < baseY - GroundProbeDepth) continue;
 
-                    var ad = Mathf.Abs(point.y - baseY);
+                    var ad = Mathf.Abs(hitY - baseY);
                     if (ad < bestAbs - 1e-4f)                                    // 更近（并列保留先命中的 ⇒ 确定性）
                     {
                         bestAbs = ad;
-                        best = point.y;
+                        best = hitY;
                     }
                 }
             }
@@ -1260,14 +1741,12 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float GroundYAbove(Vector2Int cell, float fromY)
         {
-            var c = CellCenter(cell);
-
             // 层②a —— **格心口径，一字不动**：命中、且落在带内就直接返回。刻意**不加**任何新判据。
-            Vector3 point; Vector3 normal;
-            if (_map.TrySampleGround(new Vector3(c.x, fromY + CsConst.StepUpHeight, c.z), out point, out normal))
+            float hitY; float hitNy;
+            if (TryProbeGround(cell, 0, fromY + CsConst.StepUpHeight, GroundProbeDepth, out hitY, out hitNy))
             {
-                var dy = point.y - fromY;
-                if (dy <= CsConst.StepUpHeight && dy >= -GroundProbeDepth) return point.y;
+                var dy = hitY - fromY;
+                if (dy <= CsConst.StepUpHeight && dy >= -GroundProbeDepth) return hitY;
             }
 
             // 这不是放宽：陡坡（normal.y < CsConst.MaxStandableSlopeNormalZ）在回退分支里依然不算落脚面。
@@ -1290,16 +1769,17 @@ namespace Cs16.Module.Bot
         /// <c>TryStepUp</c>；探到与否仍只由 <see cref="ICsMap.TrySampleGround"/> 的 bool 给出，
         /// 出处 <c>Module/Map/CsMap.cs:542-557</c>）。
         /// </summary>
-        private bool SampleLandingFace(Vector3 origin, float fromY, out float y)
+        private bool SampleLandingFace(Vector2Int cell, int offIdx, float fromY, out float y)
         {
             y = float.NaN;
-            Vector3 point; Vector3 normal;
-            if (!_map.TrySampleGround(origin, out point, out normal)) return false;
-            var dy = point.y - fromY;
+            float hitY; float hitNy;
+            if (!TryProbeGround(cell, offIdx, fromY + CsConst.StepUpHeight, GroundProbeDepth, out hitY, out hitNy))
+                return false;
+            var dy = hitY - fromY;
             if (dy > CsConst.StepUpHeight) return false;                            // 抬升超一个台阶 ⇒ 不是落脚面
             if (dy < -GroundProbeDepth) return false;                               // 深过探测深度 ⇒ 不在带内
-            if (normal.y < CsConst.MaxStandableSlopeNormalZ) return false;           // 陡坡不算地面（CsMap.cs:521 同式）
-            y = point.y;
+            if (hitNy < CsConst.MaxStandableSlopeNormalZ) return false;              // 陡坡不算地面（CsMap.cs:521 同式）
+            y = hitY;
             return true;
         }
 
@@ -1313,8 +1793,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float CellLandingFace(Vector2Int cell, float fromY)
         {
-            var c = CellCenter(cell);
-            var size = Game.Map.CellSize;
             var best = float.NaN;
             var bestAbs = float.MaxValue;
 
@@ -1324,9 +1802,7 @@ namespace Cs16.Module.Bot
                 {
                     if (i == InCellCenter && k == InCellCenter) continue;      // 格心刚才已经试过
                     float h;
-                    var origin = new Vector3(c.x + InCellFrac[i] * size, fromY + CsConst.StepUpHeight,
-                                             c.z + InCellFrac[k] * size);
-                    if (!SampleLandingFace(origin, fromY, out h)) continue;
+                    if (!SampleLandingFace(cell, i * InCellFrac.Length + k, fromY, out h)) continue;
 
                     var ad = Mathf.Abs(h - fromY);
                     if (ad < bestAbs - 1e-4f)                                   // 更近（并列保留先命中的 ⇒ 确定性）
@@ -1943,12 +2419,8 @@ namespace Cs16.Module.Bot
 
         // ==================================================================
         /// <summary>
-        /// 记一行"本帧的 Move 方向相对上一帧翻了 >120°"的现场：**这一行回答"抖动来自哪一层"** ——
-        /// <c>angDesiredVsDir</c> ≈ 180° 说明方向是被避障/逃逸反过来的；<c>ownCell=1</c> 说明追的点
-        /// 就是"自己脚下这一格"（<see cref="AdvancePath"/> 的游标陷阱）；<c>flips</c> 是本次累计翻转数。
-        ///
-        /// <para>降频口径：每个 bot 每 <see cref="CsBotConst.StuckCheckInterval"/> 秒最多一行 —— 抖动本身
-        /// 是 ~30 帧一次的高频事件，全量打印会刷爆 Console（skill §3 第 3 条"高频回调只报一次"）。</para>
+        /// 统计"本帧的 Move 方向相对上一帧翻了 &gt;120°"的次数（<see cref="_diagFlips"/>），
+        /// <c>_diagLastDir</c> 记上一帧方向。改向是 ~30 帧一次的高频事件，只计数、不逐条打印。
         /// </summary>
         private void DiagFlip(Vector3 pos, Vector3 desired, Vector3 dir, Vector3 goal, Vector3 target,
             string branch, float now)
@@ -1957,30 +2429,6 @@ namespace Cs16.Module.Bot
                 Vector3.Angle(_diagLastDir, dir) > 120f)
             {
                 _diagFlips++;
-                if (now >= _diagNextLogAt)
-                {
-                    _diagNextLogAt = now + CsBotConst.StuckCheckInterval;
-                    var dGoal = goal - pos;
-                    dGoal.y = 0f;
-                    var dTarget = target - pos;
-                    dTarget.y = 0f;
-                    var ownCell = 0;
-                    var mapData = Game.Map;
-                    if (mapData != null && _path != null && _pathIndex >= 0 && _pathIndex < _path.Count &&
-                        CellOf(mapData, pos) == _path[_pathIndex]) ownCell = 1;
-                    Game.Logger.Warn(Tag,
-                        $"[BOTFLIP] {_ownerName} branch={branch}" +
-                        $" angDesiredVsDir={Vector3.Angle(desired, dir):F1}" +
-                        $" angDirVsTarget={Vector3.Angle(dir, dTarget):F1}" +
-                        $" angDirVsGoal={Vector3.Angle(dir, dGoal):F1}" +
-                        $" pathIdx={_pathIndex}/{(_path == null ? 0 : _path.Count)}" +
-                        $" routeIdx={_index}/{_route.Count} ownCell={ownCell}" +
-                        $" esc={(IsEscaping(now) ? 1 : 0)} probe={_probeAngle:F0}" +
-                        $" probeLeft={(now < _probeUntil ? _probeUntil - now : 0f):F2}" +
-                        $" dir=({dir.x:F2},{dir.z:F2}) desired=({desired.x:F2},{desired.z:F2})" +
-                        $" target=({target.x:F1},{target.z:F1}) pos=({pos.x:F2},{pos.z:F2})" +
-                        $" flips={_diagFlips}");
-                }
             }
 
             if (dir.sqrMagnitude > 0.5f) _diagLastDir = dir;

@@ -10,11 +10,11 @@
 
 | 主菜单 | 队伍选择 |
 |---|---|
-| ![主菜单](docs/images/33_mainmenu.png) | ![队伍选择](docs/images/33_teamselect.png) |
+| ![主菜单](策划/images/33_mainmenu.png) | ![队伍选择](策划/images/33_teamselect.png) |
 
 | 游戏内（A 点） | HUD（1920×1080） |
 |---|---|
-| ![A 点](docs/images/60_bombsite_a.png) | ![HUD](docs/images/23_hud_1920.png) |
+| ![A 点](策划/images/60_bombsite_a.png) | ![HUD](策划/images/23_hud_1920.png) |
 
 > 截图取自本工程复刻版的**实际运行画面**（非原版素材）。
 
@@ -29,9 +29,8 @@
 | 路径 | 内容 |
 |---|---|
 | `client/` | Unity 工程（复刻本体；`Library/` `Temp/` `Logs/` 等生成物不入库） |
-| `策划/` | 复刻规格（`策划案/CS1.6单机参考规格.md`）、对照表、验收表、原版基线图（dust2 自由视角 / HUD / 天盒贴图） |
+| `策划/` | 项目总纲（`项目总纲.md`）、复刻规格（`策划案/CS1.6单机参考规格.md`）、对照表、验收表、原版基线图（dust2 自由视角 / HUD / 天盒贴图）、实机图（`images/`） |
 | `tools/` | 判据与工具：`verify.ps1`、探针与量法脚本 |
-| `docs/` | 项目总纲（方向、架构与开发约定）+ 实机图 |
 
 ## 声明
 

@@ -285,25 +285,13 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// 12 块**全部**就绪时，逐块打一条 Info（文件名 + 原图尺寸 + 原设计坐标 + 本帧画布块尺寸），
-        /// 末尾再补一条汇总（设计空间 → 画布的缩放比）。只打一次。
+        /// 12 块**全部**就绪时打一条汇总（设计空间 → 画布的缩放比）。只打一次。
         /// </summary>
         private void LogTilesOnce(string how)
         {
             if (_logged) return;
             if (ReadyCount != Specs.Length) return;
             _logged = true;
-
-            for (var i = 0; i < Specs.Length; i++)
-            {
-                var img = _tiles[i];
-                var size = img != null && img.rectTransform != null ? img.rectTransform.rect.size : Vector2.zero;
-                Game.Logger?.Info(Tag,
-                    $"[{Owner}] 原版菜单背景拼图 [{i + 1}/{Specs.Length}] 就绪：" +
-                    $"Resources/{ResPaths.BackgroundMenuTile(Specs[i].Name)}.tga" +
-                    $"（原图 {Specs[i].Width:0}×{Specs[i].Height:0}，原设计坐标 {Specs[i].X:0},{Specs[i].Y:0}" +
-                    $" → 画布块 {size.x:0.#}×{size.y:0.#}）[{how}]");
-            }
 
             var rt = transform as RectTransform;
             var canvas = rt != null ? rt.rect.size : Vector2.zero;

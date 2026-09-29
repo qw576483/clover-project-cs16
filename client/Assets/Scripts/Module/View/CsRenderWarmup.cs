@@ -74,6 +74,12 @@ namespace Cs16.Module.View
         private const int ShaderNameLogLimit = 12;
 
         /// <summary>
+        /// 已知"没有该 pass 类型"的 (shader, pass) 组合（key = shader 名 + pass 类型）。
+        /// 记下来之后同一组合不再重复构造变体，省掉反复抛 <see cref="System.ArgumentException"/> 的开销。
+        /// </summary>
+        private static readonly HashSet<string> ShaderMissingPass = new HashSet<string>();
+
+        /// <summary>
         /// 编译"此刻真的挂在物体上"的那批着色器变体。返回耗时毫秒（跳过 / 抛异常时返回 0 或已耗时）。
         ///
         /// <para><b>为什么不是 <c>Shader.WarmupAllShaders()</c></b>：后者编译**所有已加载 shader 的全部
@@ -166,9 +172,32 @@ namespace Cs16.Module.View
             var keywordKey = keywords == null ? string.Empty : string.Join(",", keywords);
             for (var p = 0; p < WarmPassTypes.Length; p++)
             {
-                var key = shader.name + "|" + (int)WarmPassTypes[p] + "|" + keywordKey;
+                var pass = WarmPassTypes[p];
+                var key = shader.name + "|" + (int)pass + "|" + keywordKey;
                 if (!seen.Add(key)) continue;
-                _inUseVariants.Add(new ShaderVariantCollection.ShaderVariant(shader, WarmPassTypes[p], keywords));
+
+                // 不是每个 shader 都有全部内置 pass：构造变体会抛 ArgumentException。只跳过这一个
+                // 变体 —— 预热整体必须继续，未收进来的变体由首帧付代价（<see cref="Enabled"/> 的 A/B 口径不变）。
+                var missKey = shader.name + "|" + (int)pass;
+                if (ShaderMissingPass.Contains(missKey))
+                {
+                    seen.Remove(key);
+                    continue;
+                }
+
+                ShaderVariantCollection.ShaderVariant variant;
+                try
+                {
+                    variant = new ShaderVariantCollection.ShaderVariant(shader, pass, keywords);
+                }
+                catch (System.ArgumentException)
+                {
+                    ShaderMissingPass.Add(missKey);
+                    seen.Remove(key);
+                    continue;
+                }
+
+                _inUseVariants.Add(variant);
             }
 
             usedShaders.Add(shader);

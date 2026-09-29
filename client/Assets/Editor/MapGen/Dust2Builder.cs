@@ -625,7 +625,13 @@ namespace Cs16.EditorTools
                 Debug.LogError($"{Tag} 缺贴图 {texPath} → 该材质组用沙色兜底（画面会偏平，检查是不是资源被清了）");
             }
 
-            var mat = new Material(Shader.Find("Standard"));
+            // 材质资产按路径**复用**，同一次生成里被多个物体引用时才能指向同一个 GUID。
+            var mat = AssetDatabase.LoadAssetAtPath<Material>(matPath);
+            if (mat == null)
+            {
+                mat = new Material(Shader.Find("Standard"));
+                AssetDatabase.CreateAsset(mat, matPath);
+            }
             mat.name = slug;
             // 出处：原版 GoldSrc 渲染管线**没有「材质色乘算」这一级** —— miptex 贴图本身即 albedo，
             // 亮度只由 lightmap / 顶点光（BSP light_environment）决定（见 策划/对照表.md 的 T-08 / B-03）。
@@ -635,9 +641,7 @@ namespace Cs16.EditorTools
             mat.SetFloat("_Glossiness", 0.05f);                   // 沙土/砖墙：几乎无高光
             mat.SetFloat("_Metallic", 0f);
             if (tex != null) mat.mainTexture = tex;
-
-            AssetDatabase.DeleteAsset(matPath);
-            AssetDatabase.CreateAsset(mat, matPath);
+            EditorUtility.SetDirty(mat);
             return mat;
         }
 

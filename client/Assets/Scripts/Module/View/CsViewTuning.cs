@@ -202,6 +202,19 @@ namespace Cs16.Module.View
         /// <summary>世界掉落武器模型的额外缩放（1 = 按 HL 单位换算后的真实尺寸）。</summary>
         public const float WorldModelScale = 1f;
 
+        /// <summary>
+        /// 第三人称手持武器的挂点（<c>Body</c> 局部坐标，米）。
+        ///
+        /// <para><b>出处与降级</b>：原版第三人称武器 = 引擎把 <c>models/p_*.mdl</c> 自动对齐到
+        /// <c>player.mdl</c> 的手部骨骼上（<c>原版资源/cs16src/hlsdk</c> 的
+        /// <c>CBasePlayerItem::SetModel</c> + studiomdl 骨骼对齐）；本工程的角色预制体是
+        /// **命中盒式**（<see cref="ActorView"/> 层级约定：Body + 4 个 Hitbox，无手部骨骼）
+        /// ⇒ 没有骨骼可挂，退到按用户实机截图量测：持枪姿态双手位于胸前 ≈ <c>0.72 × 身高</c>
+        /// = <c>1.8 × 0.72 ≈ 1.30 m</c>、武器居中偏右 <c>0.10 m</c>、身前 <c>0.18 m</c>。
+        /// 已登记 <c>策划/差异登记.tsv</c>（与 #75 同族的挂点降级）。</para>
+        /// </summary>
+        public static readonly Vector3 HeldWeaponLocalPosition = new Vector3(0.10f, 1.30f, 0.18f);
+
         /// <summary>当前手持武器的视图预制体不存在时，退到哪里（避免"手上空着"）。</summary>
         public const string ViewModelFallbackWeapon = CsWeapons.Knife;
 

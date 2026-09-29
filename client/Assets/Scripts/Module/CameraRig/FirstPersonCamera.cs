@@ -774,9 +774,17 @@ namespace Cs16.Module.CameraRig
         /// <c>CsConst.SpecRoamMaxSpeed</c>）、朝向 = 观察者自己的鼠标角。</item>
         /// </list>
         /// </summary>
+        /// <summary>观战机位诊断行的抽样间隔（秒）：机位是连续量，逐帧打印只会刷屏。</summary>
+        private const float SpectateLogInterval = 10f;
+        private float _nextSpectateLogAt;
+
         private void LogSpectateDiagnostics()
         {
             if (_camera == null || !_camera.enabled) return;
+
+            // 机位是连续量、本方法每帧都被调用：按固定间隔抽样留一条现场，不逐帧打印。
+            if (Time.time < _nextSpectateLogAt) return;
+            _nextSpectateLogAt = Time.time + SpectateLogInterval;
 
             var camPos = _camera.transform.position;
 

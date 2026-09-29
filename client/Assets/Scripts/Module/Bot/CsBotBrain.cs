@@ -2288,9 +2288,9 @@ namespace Cs16.Module.Bot
                     }
                 }
 
-                if (now >= _lastUseLogAt)
+                // 持包推进是每 tick 都会走到的常态分支：按时间闸留一条现场，不逐 tick 打印。
+                if (CloverEngine.LogThrottle.ShouldLog("bot.c4.charge:" + _name, 30f))
                 {
-                    _lastUseLogAt = now + CsBotConst.StateLogMinInterval;
                     Game.Logger.Info(Tag,
                         $"[C4] {_name} 携带 C4 冲向包点：目标={aim} 距最近包点标记 {zoneDist:F2}m " +
                         $"(> {CsBotConst.SiteRadius:F0}m) 停步半径={CsBotConst.PlantStopRadius:F1}m");
@@ -2652,10 +2652,14 @@ namespace Cs16.Module.Bot
             _holdSlot = next;
             _holdSwapCount++;
 
-            Game.Logger.Info(Tag,
-                $"守点换位：{_name}（CT）包点 {_holdSiteMarker} 第 {_holdSwapCount} 次换位 " +
-                $"守位 {from + 1}→{next + 1}/{_holdSpots.Count} 新位置={_holdSpots[next]} " +
-                $"（下次换位 {CsBotConst.HoldSwapSeconds:F0}s 后）");
+            // 守点换位按 HoldSwapSeconds 周期发生（每个守卫每轮都会走到）：按时间闸留一条现场。
+            if (CloverEngine.LogThrottle.ShouldLog("bot.holdswap:" + _name, 15f))
+            {
+                Game.Logger.Info(Tag,
+                    $"守点换位：{_name}（CT）包点 {_holdSiteMarker} 第 {_holdSwapCount} 次换位 " +
+                    $"守位 {from + 1}→{next + 1}/{_holdSpots.Count} 新位置={_holdSpots[next]} " +
+                    $"（下次换位 {CsBotConst.HoldSwapSeconds:F0}s 后）");
+            }
         }
 
         /// <summary>

@@ -125,7 +125,7 @@ function Invoke-Checks {
   #   * budget: .ai-tmp measured at 3372 files / 990.7 MB on 2026-09-24 (11x the file budget);
   #   * stray .cs: `client/_dev/` accumulated ~100 probe files;
   #   * escaped artifacts: a project file created OUTSIDE the project tree (workspace root / brain zone);
-  #   * handoff docs: files named docs/<handover>-*.md / NEXT.md were actually written
+  #   * handoff docs: files named <handover>-*.md / NEXT.md were actually written
   #     (a future agent was told to pick up the rest -- exactly what the ruling forbids);
   #   * ps1-ascii: a Chinese string literal inside a BOM-less .ps1 -- PS 5.1 reads it as ANSI,
   #     the pattern silently never matches, and "nothing found" looks exactly like PASS;

@@ -102,6 +102,12 @@ namespace Cs16.Module.View
         private int _preReloadSeq;
         private string _preWeapon;
 
+        /// <summary>当前挂着的第三人称武器模型实例与武器 id（换枪 / 死亡 / 池复用时归还，见 <see cref="EnsureHeldWeapon"/>）。</summary>
+        private GameObject _heldWeapon;
+        private string _heldKey;
+        /// <summary>武器挂点节点（挂在 <see cref="_body"/> 下，跟着蹲下压扁与逐帧贴地走）。</summary>
+        private Transform _weaponSocket;
+
         /// <summary>上一帧的权威血量。掉血 = 中了没死的一发（阵亡走 <see cref="PlayDeath"/>），
         /// 用来触发原版受击抖动 <see cref="PlayFlinch"/>。</summary>
         private int _preHealth;
@@ -190,6 +196,7 @@ namespace Cs16.Module.View
             _preReloadSeq = 0;
             _preHealth = 0;
             _reloadAnimsPlayed = 0;
+            ReleaseHeldWeapon();
             _anim = null;
             _fitScale = 1f;
             _modelLift = 0f;
@@ -426,10 +433,88 @@ namespace Cs16.Module.View
             {
                 _lastState = want;
                 _anim.CrossFade(want, CsViewTuning.AnimCrossFade);
-                _log.Info("anim.loco",
-                    $"角色视图「{name}」位移状态 → {want}（水平速度 {HorizontalSpeed(actor):F3} m/s，" +
-                    $"蹲={actor.IsCrouching} 离地={!actor.OnGround}）");
+                // 位移态是逐帧重算的连续量：按时间抽样留一条现场，不每次切换都打。
+                if (CloverEngine.LogThrottle.ShouldLog("view.loco:" + name, 5f))
+                {
+                    _log.Info("anim.loco",
+                        $"角色视图「{name}」位移状态 → {want}（水平速度 {HorizontalSpeed(actor):F3} m/s，" +
+                        $"蹲={actor.IsCrouching} 离地={!actor.OnGround}）");
+                }
             }
+        }
+
+        // ==================================================================
+        //  第三人称手持武器（差异 #75 同族：别的角色手里要看得见那把枪）
+        // ==================================================================
+        /// <summary>
+        /// 让**别的角色**手里看得见那把枪：模型走与掉落物同一套降级链
+        /// （<c>Art/world_&lt;武器id&gt;</c>，没有世界模型的武器（原版并非每把都有 w_*.mdl）
+        /// 退 <c>Art/{阵营}/viewmodel_&lt;武器id&gt;</c>，与 <c>ViewModule.EnsureDropView</c> 同口径），
+        /// 挂点 = <see cref="CsViewTuning.HeldWeaponLocalPosition"/>（<see cref="_body"/> 局部）。
+        ///
+        /// <para>挂上去的实例照 <c>EnsureDropView</c> / <c>ViewModelRig</c> 的口径**剥掉全部 Collider**
+        /// —— 世界物件绝不能参与射线（否则子弹会打中"一把悬空的枪"）。</para>
+        ///
+        /// <para>池加载是异步友好的：两级都取不到就**保持未挂**、下一帧自动重试
+        /// （与 <c>EnsureDropView</c> 的"首次发起加载、下一帧补上"同款，不阻塞）。</para>
+        /// </summary>
+        private void EnsureHeldWeapon(CsActor actor)
+        {
+            var weaponId = actor.ActiveWeapon;
+            if (string.IsNullOrEmpty(weaponId)) { ReleaseHeldWeapon(); return; }
+            if (_heldKey == weaponId && _heldWeapon != null) return;   // 同一把枪，不用换
+
+            ReleaseHeldWeapon();
+
+            if (_weaponSocket == null)
+            {
+                _weaponSocket = new GameObject("HeldWeapon").transform;
+                _weaponSocket.SetParent(_body != null ? _body : transform, false);
+                _weaponSocket.localPosition = CsViewTuning.HeldWeaponLocalPosition;
+            }
+
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Warn("held.pool.null", "Game.Pool 为 null（Game.Launch 未执行？），第三人称武器模型无法生成");
+                return;
+            }
+
+            var folder = Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
+            var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + weaponId;
+            var go = pool.Spawn(path, _weaponSocket, "cs16.heldweapon");
+            if (go == null)
+            {
+                // 掉落物同一套降级：没有世界模型 → 退第一人称模型，至少"有把枪"。
+                path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + weaponId;
+                go = pool.Spawn(path, _weaponSocket, "cs16.heldweapon");
+            }
+            if (go == null) return;      // 两级都没有（或资源还在异步加载）→ 下一帧自动重试
+
+            go.name = "HeldWeapon_" + weaponId;
+            go.transform.localScale = Vector3.one * CsViewTuning.WorldModelScale;
+            go.transform.localPosition = Vector3.zero;
+            go.transform.localRotation = Quaternion.identity;
+
+            var cols = go.GetComponentsInChildren<Collider>(true);
+            for (var i = 0; i < cols.Length; i++)
+            {
+                if (cols[i] != null) Destroy(cols[i]);
+            }
+
+            _heldWeapon = go;
+            _heldKey = weaponId;
+        }
+
+        /// <summary>归还当前挂着的武器模型（换枪 / 死亡 / 池复用前调）。</summary>
+        private void ReleaseHeldWeapon()
+        {
+            _heldKey = null;
+            if (_heldWeapon == null) return;
+            var pool = Game.Pool;
+            if (pool != null) pool.Despawn(_heldWeapon);
+            else Destroy(_heldWeapon);
+            _heldWeapon = null;
         }
 
         /// <summary>
@@ -684,6 +769,8 @@ namespace Cs16.Module.View
 
             if (!_alive)
             {
+                // 原版死亡即掉枪（DroppedWeapons 系统会生成掉落物）⇒ 手上那把同时消失。
+                ReleaseHeldWeapon();
                 if (!_deathPlayed)
                 {
                     _deathPlayed = true;
@@ -711,6 +798,9 @@ namespace Cs16.Module.View
 
             // ---- 骨骼动画：按权威状态切原版序列 ----
             UpdateAnim(actor);
+
+            // ---- 手里的枪：换枪/拾枪时把模型换掉（别人手里要看得见那把枪，差异 #75 同族）----
+            EnsureHeldWeapon(actor);
 
             // ---- 脚底贴地：按**当前姿态**（idle / walk / crouch 各有各的最低点）对齐，见 AlignFeetToGround ----
             if (actor.OnGround) AlignFeetToGround();
