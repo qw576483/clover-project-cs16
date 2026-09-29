@@ -35,12 +35,12 @@ param(
 function Fail([string]$msg) { Write-Host ('FAIL: ' + $msg); exit 1 }
 
 if ($Project -eq '') { $Project = Split-Path -Parent $PSScriptRoot }
-if (!(Test-Path -LiteralPath $Project)) { Fail ('-Project 不存在: ' + $Project) }
+if (!(Test-Path -LiteralPath $Project)) { Fail ('-Project does not exist: ' + $Project) }
 $Project = (Resolve-Path -LiteralPath $Project).Path
 $client = Join-Path $Project 'client'
-if (!(Test-Path -LiteralPath $client)) { Fail ('找不到 client/: ' + $client) }
+if (!(Test-Path -LiteralPath $client)) { Fail ('client/ not found: ' + $client) }
 
-if (!(Test-Path -LiteralPath $File)) { Fail ('-File 不存在: ' + $File) }
+if (!(Test-Path -LiteralPath $File)) { Fail ('-File does not exist: ' + $File) }
 $src = (Resolve-Path -LiteralPath $File).Path
 
 # ---- 编辑器版本 / 安装根 ----
@@ -63,17 +63,17 @@ foreach ($r in $roots) {
   if ($r -and (Test-Path -LiteralPath (Join-Path $r 'Data\Managed\UnityEngine'))) { $root = $r; break }
 }
 if ($root -eq '') {
-  Fail ('自动探测不到 Unity 编辑器（ProjectVersion 读到 "' + $ver + '"）⇒ 用 -UnityRoot <编辑器根> 显式指定，' +
-        '例如 "C:\Program Files\Unity\Hub\Editor\6000.6.0f1\Editor"')
+  Fail ('Unity editor not auto-detected (ProjectVersion = "' + $ver + '") => pass -UnityRoot <editor-root>, ' +
+        'e.g. "C:\Program Files\Unity\Hub\Editor\6000.6.0f1\Editor"')
 }
 
 $csc = Get-ChildItem -LiteralPath (Join-Path $root 'Data\DotNetSdk\sdk') -Recurse -Filter 'csc.dll' -ErrorAction SilentlyContinue |
        Where-Object { $_.FullName -match 'Roslyn\\bincore' } | Sort-Object FullName | Select-Object -Last 1
-if (!$csc) { Fail ('找不到 Roslyn 的 csc.dll（在 ' + (Join-Path $root 'Data\DotNetSdk\sdk') + ' 下）') }
+if (!$csc) { Fail ('Roslyn csc.dll not found (under ' + (Join-Path $root 'Data\DotNetSdk\sdk') + ')') }
 # 必须取字符串：把 FileInfo 喂给原生命令会得到 "The command could not be loaded" 这种与源码无关的报错
 $csc = $csc.FullName
 $dotnet = Join-Path $root 'Data\NetCoreRuntime\dotnet.exe'
-if (!(Test-Path -LiteralPath $dotnet)) { Fail ('找不到 dotnet.exe: ' + $dotnet) }
+if (!(Test-Path -LiteralPath $dotnet)) { Fail ('dotnet.exe not found: ' + $dotnet) }
 Write-Host ('csc     = ' + $csc)
 Write-Host ('dotnet  = ' + $dotnet)
 
@@ -90,11 +90,11 @@ $refDirs = @(
 $refs = @()
 foreach ($d in $refDirs) {
   if (!(Test-Path -LiteralPath $d)) {
-    Fail ('引用目录缺失: ' + $d + '  ⇒ 先在 Unity 里打开并编译过一次本项目（ScriptAssemblies 由编辑器产出）')
+    Fail ('reference dir missing: ' + $d + '  => open and compile this project once in Unity (ScriptAssemblies is produced by the editor)')
   }
   foreach ($f in (Get-ChildItem -LiteralPath $d -Filter *.dll)) { $refs += ('-r:"' + $f.FullName + '"') }
 }
-if ($refs.Count -eq 0) { Fail '引用集为空' }
+if ($refs.Count -eq 0) { Fail 'reference set is empty' }
 
 # ---- 响应文件（见脚本头 ②）----
 $work = Join-Path $Project '.ai-tmp\test\compile-file'
@@ -105,10 +105,10 @@ $lines = @('-nologo', '-t:library', '-langversion:9.0', '-noconfig', ('-out:"' +
 $lines += $refs
 $lines += ('"' + $src + '"')
 $enc = 'ASCII'
-if (($lines -join '') -match '[^\x00-\x7F]') { $enc = 'UTF8' }   # 路径含中文时 ASCII 会写坏；csc 认 UTF-8 BOM
+if (($lines -join '') -match '[^\x00-\x7F]') { $enc = 'UTF8' }   # ASCII would corrupt a CJK path; csc accepts UTF-8 BOM
 if (Test-Path -LiteralPath $outDll) { Remove-Item -LiteralPath $outDll -Force }
 Set-Content -LiteralPath $rsp -Value $lines -Encoding $enc
-Write-Host ('refs    = ' + $refs.Count + ' 个引用（rsp: ' + $rsp + '）')
+Write-Host ('refs    = ' + $refs.Count + ' reference(s) (rsp: ' + $rsp + ')')
 
 # ---- 编译 ----
 $raw = & $dotnet $csc ('@' + $rsp) 2>&1 | Out-String
@@ -116,23 +116,23 @@ $all = @($raw -split "`r?`n" | Where-Object { $_ -match ': error CS' })
 $real = @()
 $fake = 0
 foreach ($e in $all) {
-  if ($e -match 'CS0012' -and $e -match 'netstandard') { $fake++; continue }   # 见脚本头 ③
+  if ($e -match 'CS0012' -and $e -match 'netstandard') { $fake++; continue }   # see header item 3
   $real += $e
 }
 
 Write-Host ''
 if ($fake -gt 0) {
-  Write-Host ('过滤假错: CS0012(netstandard) x' + $fake + ' —— 缺 netstandard 引用会让编译器把 Object/Enum/ValueType 报成"未定义"，与源码无关')
+  Write-Host ('filtered fake error: CS0012(netstandard) x' + $fake + ' -- a missing netstandard reference makes the compiler report Object/Enum/ValueType as undefined, unrelated to the source')
 }
 if ($real.Count -eq 0) {
   if (!(Test-Path -LiteralPath $outDll)) {
-    Write-Host 'FAIL: 没有真错，但也没产出程序集（编译器可能压根没跑起来）—— 原始输出：'
+    Write-Host 'FAIL: no real error, but no assembly was produced (the compiler probably did not run) -- raw output:'
     Write-Host $raw
     exit 1
   }
-  Write-Host ('PASS  真错 = 0（产出 ' + (Get-Item -LiteralPath $outDll).Length + ' B: ' + $outDll + '）')
+  Write-Host ('PASS  real errors = 0 (produced ' + (Get-Item -LiteralPath $outDll).Length + ' B: ' + $outDll + ')')
   exit 0
 }
-Write-Host ('FAIL  真错 = ' + $real.Count)
+Write-Host ('FAIL  real errors = ' + $real.Count)
 $real | Select-Object -First 30 | ForEach-Object { Write-Host ('  ' + $_) }
 exit 1
