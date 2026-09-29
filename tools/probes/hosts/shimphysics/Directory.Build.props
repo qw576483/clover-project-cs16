@@ -1,0 +1,34 @@
+<!-- ─────────────────────────────────────────────────────────────────────────────
+     tools/probes/hosts/shimphysics/Directory.Build.props
+
+     本宿主**故意不 import 上级** `hosts/Directory.Build.props`：那一个只服务
+     「引用 Unity 托管 DLL 的真编译」宿主（compilecheck 族），会在
+     ResolveAssemblyReferences 前检查 `UnityEngine.CoreModule.dll` 存在。
+     本宿主**不引用任何 Unity 程序集** —— `UnityEngine` 的名字空间由
+     `Shim/UnityShim.cs` 自己给（见该文件头），所以那条检查对本宿主是错的。
+
+     为什么不引用 Unity DLL：`UnityEngine.Physics` 的方法在 Unity 里是
+     `[FreeFunction]` native extern，编辑器外一调用就抛 ⇒ 想离线**跑**真
+     `CsMap.cs`（而不只是编过它），就必须让 `Physics` 这层换成我们自己的实现。
+     MSBuild 会在每个工程目录向上找**最近的** Directory.Build.props 并停在那里，
+     所以本文件会顶替上级那一个。
+     ───────────────────────────────────────────────────────────────────────────── -->
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- 与 Unity 编 Cs16 时的宏口径一致（只压掉「未使用的私有字段」这类永不是错误的告警） -->
+    <NoWarn>CS0649;CS0169;CS0414;CS0067</NoWarn>
+    <DefineConstants>DEBUG;TRACE;UNITY_EDITOR;UNITY_EDITOR_64;UNITY_EDITOR_WIN;UNITY_64;UNITY_STANDALONE;UNITY_STANDALONE_WIN</DefineConstants>
+    <Cs16ProjectRoot>$(MSBuildThisFileDirectory)..\..\..\..\</Cs16ProjectRoot>
+    <Cs16ClientDir>$(Cs16ProjectRoot)client\</Cs16ClientDir>
+  </PropertyGroup>
+
+</Project>

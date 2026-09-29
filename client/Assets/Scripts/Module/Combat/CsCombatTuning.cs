@@ -77,12 +77,14 @@ namespace Cs16.Module.Combat
         public const float RecoilSpreadMax = 2.4f;
 
         // ---- 穿墙 ----
-        /// <summary>允许继续穿透的武器门槛（<c>CsWeaponDef.ArmorPenetration</c> 高于它才可穿）。
-        /// 出处：**本项目新增**（原版护甲穿透是 <c>mp.dll</c> 里逐武器写死的浮点立即数，见 <c>策划/对照表.md</c> §6 BLOCKED-2）。</summary>
+        /// <summary>没有开火点证据的武器（刀 / 装备）能否穿墙的护甲穿透门槛：
+        /// <c>CsWeaponDef.ArmorPenetration</c> 高于它才可穿。有证据的武器走原版
+        /// <c>iPenetration</c>（见 <c>Firearm.CanPenetrate</c>），不用本值。
+        /// 出处：**本项目新增**（只是那几把无证据武器的回落判据）。</summary>
         public const float PenetrationArmorThreshold = 0.6f;
 
-        /// <summary>最多穿过几层"墙"（命中非角色的碰撞体算一层）。
-        /// 出处：**本项目新增**（实现容量上限：原版穿透是逐武器 <c>PrimaryAttack</c> 里的射线循环，层数上限未解出）。</summary>
+        /// <summary>无证据武器回落时的层数上限（有证据的武器 = 原版 <c>iPenetration</c>，逐武器取值）。
+        /// 出处：**本项目新增**（回落档的容量值）。</summary>
         public const int MaxPenetrationLayers = 2;
 
         /// <summary>单发最多接受的射线命中数（缓冲上限；超出即丢弃，见 <c>Firearm</c>）。
@@ -648,8 +650,8 @@ namespace Cs16.Module.Combat
 
         /// <summary>自旋角速度逐轴区间（度/秒）= 引擎侧 <c>RANDOM_FLOAT(-512,511) / (-256,255) / (-256,255)</c>。
         /// 出处：hw.dll RVA 0x2F16C（cl_enginefuncs 表 +0xC0 = 生成 tempent 的引擎例程）。
-        /// 原版把这个向量再整体乘一个正整数，该整数来自 client.dll 生成器的实参表、
-        /// **未回溯到具体值** ⇒ 这里取 RANDOM 原式（等价于乘 1），即原版量级的下界。</summary>
+        /// 引擎侧还会把这个向量再整体乘一个正整数（在 <c>client.dll</c> 生成器的实参表里）
+        /// ⇒ 本工程取 RANDOM 原式（等价于乘 1 = 原版量级的下界）。</summary>
         public const float ShellSpinXMin = -512f;
         public const float ShellSpinXMax = 511f;
         public const float ShellSpinYMin = -256f;
@@ -665,8 +667,8 @@ namespace Cs16.Module.Combat
         /// 出处：**本项目新增**（取载体半径量级 0.4 GoldSrc 单位 ≈ 0.01 m 的下侧）。</summary>
         public const float ShellRadius = 0.006f;
 
-        /// <summary>撞面后速度保留比例。出处：**未取到**（原版 tempent 每帧的碰撞反射在 hw.dll 里
-        /// 没有可定位锚点）⇒ 保持工程原值，缺口见 策划/差异登记.tsv。</summary>
+        /// <summary>撞面后速度保留比例。原版弹壳的逐帧碰撞反射在引擎 tempent 内部（<c>hw.dll</c>，
+        /// 游戏 DLL 侧没有该系数）⇒ 本工程自定。</summary>
         public const float ShellBounceDamping = 0.35f;
 
         /// <summary>低于该速率（米/秒）即"躺下"（贴面静止）。出处：**本项目新增**。</summary>

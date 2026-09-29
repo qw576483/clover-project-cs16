@@ -24,15 +24,15 @@ namespace Cs16.Core
     /// ⇒ 按"未验证"处理，见 <c>策划/对照表.md</c> BLOCKED-2。</para>
     ///
     /// <para><b>逐武器穿墙层数与距离衰减</b>：<see cref="CsWeaponDef.Penetration"/>（原版 <c>iPenetration</c>）、
-    /// <see cref="CsWeaponDef.RangeModifier"/> 与 <see cref="CsWeaponDef.FalloffDenominator"/>（弹种分母）
-    /// 只在**确证了武器归属**的那 22 把上落值，落值处见 <c>CsWeapons.ApplyPenetrationAndFalloffValues</c>
-    /// （出处 <c>.ai-tmp/test/mpdll-reverse/PEN-FILL.md</c>）。</para>
+    /// <see cref="CsWeaponDef.RangeModifier"/> 与 <see cref="CsWeaponDef.FalloffDenominator"/>（原版固定 500）
+    /// 在**确证了武器归属的全部 24 把**上落值（含霰弹枪的确证"不可穿墙"），落值处见
+    /// <c>CsWeapons.ApplyPenetrationAndFalloffValues</c>（出处 <c>.ai-tmp/test/mpdll-reverse/PEN-FILL.md</c>
+    /// ＋ 公开源 <c>regamedll/dlls/weapons.h</c> / <c>wpn_shared/*.cpp</c>）。</para>
     ///
-    /// <para><b>未取到出处的项一律回落工程旧行为</b>（⛔ 不是"未知即零"）：没有
-    /// <see cref="CsWeaponDef.FalloffDenominator"/> 的武器走 <see cref="CsWeaponDef.FalloffPerMeter"/>
-    /// 的线性衰减（见 <c>CsWeapons.DistanceFalloff</c>）；没有 <see cref="CsWeaponDef.Penetration"/>
-    /// 的武器走旧的穿墙判据（见 <c>Firearm.CanPenetrate</c>）。两处都登记在 <c>策划/差异登记.tsv</c>
-    /// 待取到出处后切换。</para>
+    /// <para><b>没有证据的武器按可判定口径回落</b>（⛔ 不是"未知即零"）：<see cref="CsWeaponDef.PenetrationResolved"/>
+    /// 为 false 的武器（只有刀 / 装备等没有开火点的存在）走护甲穿透系数判据（见 <c>Firearm.CanPenetrate</c>）；
+    /// <see cref="CsWeaponDef.FalloffDenominator"/> 为 0 的武器走 <see cref="CsWeaponDef.FalloffPerMeter"/>
+    /// 的线性衰减（见 <c>CsWeapons.DistanceFalloff</c>）。</para>
     /// </summary>
     public sealed class CsWeaponDef
     {
@@ -48,16 +48,21 @@ namespace Cs16.Core
 
         /// <summary>
         /// 原版 <c>FireBullets3</c> 的 <c>iPenetration</c>：本武器一发能穿过的墙层数。
-        /// 0 = 该武器未取到值 ⇒ **回落工程旧穿墙判据**（护甲穿透系数 + 固定 2 层），
-        /// 见 <c>Firearm.CanPenetrate</c>；登记见 <c>策划/差异登记.tsv</c>。
+        /// 只有 <see cref="PenetrationResolved"/> 为 true 时本值才是结论（0 = 确证不可穿墙）。
         ///
         /// <para>出处 = <c>原版资源/cs16src/cstrike/dlls/mp.dll</c> 各武器开火点对 <c>FireBullets3</c>
         /// （VA <c>0x10026420</c>）的第 3 实参；逐武器调用点 VA 见
-        /// <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2。</para>
+        /// <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2 与 <c>PEN-FILL.md</c> §1。</para>
         ///
         /// <para>消费点 = <c>Firearm.ResolvePellet</c>（可穿与否 + 层数上限）。</para>
         /// </summary>
         public int Penetration;
+
+        /// <summary>
+        /// <see cref="Penetration"/> 是否已确证（true = 已按原版取证，含"确证为 0 = 不可穿墙"）。
+        /// false = 本武器没有开火点证据 ⇒ <c>Firearm.CanPenetrate</c> 按护甲穿透系数回落。
+        /// </summary>
+        public bool PenetrationResolved;
         public int Rpm;                    // 每分钟射速（0 = 不可连发）
         public int Magazine;               // 弹匣容量
         public int ReserveAmmo;            // 备弹
@@ -221,13 +226,10 @@ namespace Cs16.Core
         public float RangeModifierMaxDistance;
 
         /// <summary>
-        /// 距离衰减公式 <c>pow(rangeModifier, dist_in_units / 本值)</c> 的分母，**按弹种取**。
-        /// 0 = 该武器的弹种未取到 ⇒ **回落 <see cref="FalloffPerMeter"/> 的线性衰减**
-        /// （见 <see cref="CsWeapons.DistanceFalloff"/>；登记见 <c>策划/差异登记.tsv</c>）。
-        ///
-        /// <para>出处 = <c>原版资源/cs16src/cstrike/dlls/mp.dll</c> 子弹模拟函数 VA <c>0x10025640</c>
-        /// 的按弹种参数表（逐弹种的 float 与本字段的对应关系见
-        /// <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.3）。</para>
+        /// 距离衰减公式 <c>pow(rangeModifier, dist_in_units / 本值)</c> 的分母 = 原版固定 <c>500</c>
+        /// （与弹种无关，出处见 <see cref="CsConst.DamageFalloffDenominator"/>）。
+        /// 0 = 该武器不按底数衰减（如霰弹枪的原版链路）⇒ 走 <see cref="FalloffPerMeter"/> 的线性衰减
+        /// （见 <see cref="CsWeapons.DistanceFalloff"/>）。
         /// </summary>
         public float FalloffDenominator;
 
@@ -763,69 +765,69 @@ namespace Cs16.Core
         }
 
         /// <summary>
-        /// 逐武器的**穿墙层数**与**距离衰减**：原版 <c>iPenetration</c> 与
-        /// （<c>flRangeModifier</c> + 弹种分母）。
+        /// 逐武器的**穿墙层数**（原版 <c>iPenetration</c>）与**距离衰减**（原版 <c>flRangeModifier</c>）。
         ///
-        /// <para><b>出处 = <c>.ai-tmp/test/mpdll-reverse/PEN-FILL.md</c></b>（载体
-        /// <c>原版资源/cs16src/cstrike/dlls/mp.dll</c>）。该文件 §1 表逐把给出开火点 VA、调用者函数
-        /// 与类 vtable 槽、push 的 <c>bulletType</c> / <c>iPenetration</c> 原始字节、以及
-        /// <c>flRangeModifier</c>；武器归属由两条独立硬链（类代码区间锚点 + MSVC RTTI 恢复的类 vtable
-        /// 槽）交叉确证，22 把一致。这 22 把都在这里落值。</para>
+        /// <para><b>出处</b> = 载体 <c>原版资源/cs16src/cstrike/dlls/mp.dll</c> 的逐武器开火点的
+        /// <c>FireBullets3</c> 实参（逐点 VA 与原始字节见 <c>.ai-tmp/test/mpdll-reverse/PEN-FILL.md</c> §1；
+        /// 武器归属由「类代码区间锚点」与「MSVC RTTI 恢复的类 vtable 槽」两条独立硬链交叉确证，
+        /// 24 个开火点一致）＋ 公开源 <c>regamedll/dlls/weapons.h</c> 的逐武器 <c>*_RANGE_MODIFER</c>
+        /// 常量、<c>regamedll/dlls/wpn_shared/wpn_*.cpp</c> 的 <c>FireBullets3</c> 实参（两者逐条吻合）。</para>
         ///
-        /// <para><b>弹种分母</b>：9MM=800 / 45ACP=500 / 556MM=4000 / 762MM=5000 / 338MAG=8000 /
-        /// 50AE=1000（<c>CsConst.FalloffDenom*</c>）；<c>0xE</c>（5.7mm）= 2000、<c>0xF</c>（.357SIG）= 800
-        /// —— 这两格取自 <c>FireBullets3</c> 内部按弹种参数表第 14/15 格（<c>PEN-FILL.md</c> §3 旁证 /
-        /// <c>VALUES.md</c> §4.3）：同表 6 个已知弹种（9MM/45ACP/338MAG/762MM/556MM/50AE）逐条吻合
-        /// ⇒ **同表内插，非外部估算**，置信度低于逐字节直读（这两格没有独立的第二出处）。
-        /// <c>elite</c> 的分母有（9MM）但 <c>flRangeModifier</c> 未取到（PEN-FILL §1 记 "(寄存器)"）
-        /// ⇒ 距离衰减走 <see cref="CsWeaponDef.FalloffPerMeter"/> 的线性回落（见 <see cref="DistanceFalloff"/>）。</para>
+        /// <para><b>距离衰减分母</b>一律 <c>CsConst.DamageFalloffDenominator</c>（原版固定 500，与弹种无关，
+        /// 出处见该常量）。</para>
         ///
-        /// <para><b>归属未确证的武器不落值</b>：<c>m3</c> / <c>xm1014</c> 的 <c>PrimaryAttack</c> 内部
-        /// 没有 <c>FireBullets3</c> 直接调用（子弹走 ReGameDLL 钩子链派发器 <c>0x10026710</c>，弹种在
-        /// 运行期填）⇒ 两把两条轴都留 0、走回落。登记见 <c>策划/差异登记.tsv</c>。</para>
+        /// <para><b>霰弹枪（m3 / xm1014）</b>：原版这两把**不走** <c>FireBullets3</c>，走
+        /// <c>CBaseEntity::FireBuckshots</c> —— 8 参、**没有 <c>iPenetration</c> 形参**，
+        /// m3 = 9 弹丸 / 射程 3000、xm1014 = 6 弹丸 / 射程 3048，弹种均为 <c>BULLET_PLAYER_BUCKSHOT</c>
+        /// （<c>regamedll/dlls/cbase.cpp</c> 的 <c>FireBuckshots</c>；<c>wpn_m3.cpp</c> / <c>wpn_xm1014.cpp</c>）
+        /// ⇒ 语义上不透墙，落 <c>Penetration = 0</c> + <c>PenetrationResolved = true</c>。</para>
         /// </summary>
         private static void ApplyPenetrationAndFalloffValues()
         {
-            void Set(string id, int penetration, float rangeModifier, float falloffDenominator)
+            void Set(string id, int penetration, float rangeModifier)
             {
                 if (!_byId.TryGetValue(id, out var def)) return;
                 def.Penetration = penetration;
+                def.PenetrationResolved = true;
                 def.RangeModifier = rangeModifier;
-                def.FalloffDenominator = falloffDenominator;
+                def.FalloffDenominator = CsConst.DamageFalloffDenominator;
             }
 
-            // 弹种 9MM（0x1，分母 800）：mp.dll 开火点 0x100DB443 / 0x100E0394 / 0x100E446B / 0x100D7787
-            Set(Glock18, 1, 0.75f, CsConst.FalloffDenom9MM);
-            Set(Mp5, 1, 0.84f, CsConst.FalloffDenom9MM);
-            Set(Tmp, 1, 0.85f, CsConst.FalloffDenom9MM);
-            // Elite 的 rangeModifier 未取到（PEN-FILL §1 记 "(寄存器)"）⇒ 距离衰减走回落
-            Set(Elite, 1, 0f, CsConst.FalloffDenom9MM);
-            // 弹种 45ACP（0x9，分母 500）：0x100E58A3 / 0x100DFB1B / 0x100E4CE0
-            Set(Usp, 1, 0.79f, CsConst.FalloffDenom45ACP);
-            Set(Mac10, 1, 0.82f, CsConst.FalloffDenom45ACP);
-            Set(Ump45, 1, 0.82f, CsConst.FalloffDenom45ACP);
-            // 弹种 50AE（0xD，分母 1000）
-            Set(Deagle, 2, 0.81f, CsConst.FalloffDenom50AE);
-            // 弹种 556MM（0xC，分母 4000）：0x100D81C4 / 0x100DF1D8 / 0x100D4C07 / 0x100E31C7 / 0x100E2943 / 0x100DA7DC / 0x100DDEAB
-            Set(Famas, 2, 0.96f, CsConst.FalloffDenom556MM);
-            Set(M4A1, 2, 0.97f, CsConst.FalloffDenom556MM);
-            Set(Aug, 2, 0.96f, CsConst.FalloffDenom556MM);
-            Set(Sg552, 2, 0.955f, CsConst.FalloffDenom556MM);
-            Set(Sg550, 2, 0.98f, CsConst.FalloffDenom556MM);
-            Set(Galil, 2, 0.98f, CsConst.FalloffDenom556MM);
-            Set(M249, 2, 0.97f, CsConst.FalloffDenom556MM);
-            // 弹种 762MM（0xB，分母 5000）：0x100D41CB / 0x100E1F89 / 0x100D9F8D
-            Set(Ak47, 2, 0.98f, CsConst.FalloffDenom762MM);
-            Set(Scout, 3, 0.98f, CsConst.FalloffDenom762MM);
-            Set(G3sg1, 3, 0.98f, CsConst.FalloffDenom762MM);
-            // 弹种 338MAG（0xA，分母 8000）
-            Set(Awp, 3, 0.99f, CsConst.FalloffDenom338MAG);
-            // 弹种 0xE（5.7mm）分母 = 2000、弹种 0xF（.357SIG）分母 = 800：取自 FireBullets3 内部
-            // 按弹种参数表第 14/15 格（PEN-FILL.md §3 旁证 / VALUES.md §4.3）；同表 6 个已知弹种
-            // （9MM/45ACP/338MAG/762MM/556MM/50AE）逐条吻合 ⇒ 同表内插，非外部估算（置信度低于直读）
-            Set(P90, 1, 0.885f, CsConst.FalloffDenom57MM);
-            Set(FiveSeven, 1, 0.885f, CsConst.FalloffDenom57MM);
-            Set(P228, 1, 0.80f, CsConst.FalloffDenom357SIG);
+            // 弹种 9MM（0x1）：mp.dll 开火点 0x100DB443 / 0x100E0394 / 0x100E446B / 0x100D7787
+            Set(Glock18, 1, 0.75f);
+            Set(Mp5, 1, 0.84f);
+            Set(Tmp, 1, 0.85f);
+            // Elite 的两处开火点（0x100D7787 左 / 0x100D787B 右）rangeModifier 在寄存器里给出，
+            // 值见公开源 regamedll/dlls/weapons.h 的 ELITE_RANGE_MODIFER = 0.75f（与 GLOCK18 同档）
+            Set(Elite, 1, 0.75f);
+            // 弹种 45ACP（0x9）：0x100E58A3 / 0x100DFB1B / 0x100E4CE0
+            Set(Usp, 1, 0.79f);
+            Set(Mac10, 1, 0.82f);
+            Set(Ump45, 1, 0.82f);
+            // 弹种 50AE（0xD）
+            Set(Deagle, 2, 0.81f);
+            // 弹种 556MM（0xC）：0x100D81C4 / 0x100DF1D8 / 0x100D4C07 / 0x100E31C7 / 0x100E2943 / 0x100DA7DC / 0x100DDEAB
+            Set(Famas, 2, 0.96f);
+            Set(M4A1, 2, 0.97f);
+            Set(Aug, 2, 0.96f);
+            Set(Sg552, 2, 0.955f);
+            Set(Sg550, 2, 0.98f);
+            Set(Galil, 2, 0.98f);
+            Set(M249, 2, 0.97f);
+            // 弹种 762MM（0xB）：0x100D41CB / 0x100E1F89 / 0x100D9F8D
+            Set(Ak47, 2, 0.98f);
+            Set(Scout, 3, 0.98f);
+            Set(G3sg1, 3, 0.98f);
+            // 弹种 338MAG（0xA）
+            Set(Awp, 3, 0.99f);
+            // 弹种 57MM（0xE）与 357SIG（0xF）各一把（P90 / FiveSeven 与 P228）
+            Set(P90, 1, 0.885f);
+            Set(FiveSeven, 1, 0.885f);
+            Set(P228, 1, 0.80f);
+            // 霰弹枪：原版走 FireBuckshots、无穿墙（弹种 BULLET_PLAYER_BUCKSHOT）；
+            // RangeModifier 留 0 —— 原版该链路不按距离衰减底数算伤害（见 DistanceFalloff 的线性回落）
+            Set(M3, 0, 0f);
+            Set(Xm1014, 0, 0f);
 
             // 差异 #129：同表的「射程」列（出处 = VALUES.md §4.2，归属 = PEN-FILL.md §1 的 RTTI 确证）——
             // Deagle 0x100D6DC9、FiveSeven 0x100D8AF9、P228 0x100E0D49 是 4096；P90 0x100E1560 是 8192。
@@ -874,16 +876,16 @@ namespace Cs16.Core
         }
 
         /// <summary>
-        /// 距离衰减系数（0~1）：<c>pow(rangeModifier, dist_in_units / 弹种分母)</c>。
+        /// 距离衰减系数（0~1）：<c>pow(rangeModifier, dist_in_units / 500)</c>
+        /// （分母 = 原版固定 <c>500</c>，出处见 <see cref="CsConst.DamageFalloffDenominator"/>）。
         ///
         /// <para><b>量纲</b>：<paramref name="distMeters"/> 是米，原版公式里的距离是 GoldSrc unit
         /// ⇒ 先 <c>/ CsConst.UnitToMeter</c> 折成 unit 再进公式（<c>rangeModifier</c> 与分母都是原版量纲，
         /// 不能直接吃米）。</para>
         ///
-        /// <para><b>取不到出处时回落旧行为</b>：<c>FalloffDenominator</c> 或 <c>RangeModifier</c>
-        /// 为 0（弹种 / 射程修正未取到）的武器走 <see cref="CsWeaponDef.FalloffPerMeter"/> 的线性模型
-        /// —— ⛔ 不能返回 1（那是把"未知"当成"已知为零"，会让这些枪的远距伤害反而变高；
-        /// 哪些武器缺出处见 <c>策划/差异登记.tsv</c>）。</para>
+        /// <para><b>线性回落的两种情形</b>：<c>FalloffDenominator</c> 为 0（如霰弹枪的原版链路不按底数衰减）
+        /// 或 <c>RangeModifier</c> 为 0 的武器走 <see cref="CsWeaponDef.FalloffPerMeter"/> 的线性模型
+        /// —— ⛔ 这两个情形都不能返回 1（那会让这些枪的远距伤害反而变高）。</para>
         ///
         /// <para>消费点 = <c>CsDamage.ApplyHit</c>。</para>
         /// </summary>
@@ -901,7 +903,7 @@ namespace Cs16.Core
             return (float)System.Math.Pow(rangeModifier, units / def.FalloffDenominator);
         }
 
-        /// <summary>旧的线性衰减模型（每米），用于弹种 / 射程修正未取到的武器。</summary>
+        /// <summary>线性衰减模型（每米），用于不走底数模型的那几把（见 <see cref="DistanceFalloff"/>）。</summary>
         private static float LinearFalloff(CsWeaponDef def, float distMeters)
         {
             var falloff = 1f - def.FalloffPerMeter * distMeters;

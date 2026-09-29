@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.IO;
 using System.Text;
 using UnityEngine;
@@ -188,8 +189,9 @@ namespace Cs16.EditorTools
         ///
         /// <para><b>⛔ 这张表是搬移的**唯一**载体</b>：标记点坐标的产物链是
         /// <c>de_dust2_geo.bin</c>（原始）→ 场景对象（<c>Dust2Builder.SnapMarkerToWalkable</c>）→
-        /// 烘焙器写 <c>.bytes</c> 的 FlagMarkers 段 → 本表。只改 <c>.bytes</c>（或只改
-        /// <c>de_dust2_markers.bytes</c> 那张镜像表）的搬移**在下一次"生成器 + 重烘"里会全部丢失**
+        /// 烘焙器写 <c>.bytes</c> 的 FlagMarkers 段 → 本表。只改 <c>.bytes</c> 的搬移
+        /// **在下一次"生成器 + 重烘"里会全部丢失**（<c>de_dust2_markers.bytes</c> 那张镜像表
+        /// 由 <see cref="SyncMarkerMirror"/> 从 <c>.bytes</c> 重写，改它同样不保留）
         /// —— 实测：4 个路线点的手工搬移就是这么被一次重烘回退的（它们又落回台地格，
         /// 运行时打出 <c>跳过**导航口径走不到**的路点 …（格 (80,93)）</c>）。</para>
         ///
@@ -379,10 +381,58 @@ namespace Cs16.EditorTools
             try { File.WriteAllBytes(path, bytes); }
             catch (Exception e) { Debug.LogError($"{Tag} 写 {path} 失败：{e.Message}"); return false; }
 
+            SyncMarkerMirror(path, bytes, markerOffset, markerCount);
+
             int walk = 0;
             for (int i = 0; i < next.Length; i++) if (next[i]) walk++;
             Debug.Log($"{Tag} {path}：封 {sealedCount} 格 / 开 {openedCount} 格 / 标记点搬 {moved} 个 ⇒ 可走 {walk} 格");
             return true;
+        }
+
+        /// <summary>
+        /// 把**标记点镜像表**（与 <paramref name="mapPath"/> 同目录、名字 = 地图名 + <c>_markers.bytes</c>）
+        /// 与刚写回的 <c>.bytes</c> 的 FlagMarkers 段对齐：同一份空间事实只由 <c>.bytes</c> 说话，
+        /// 镜像表是它的**派生产物**（给人看的 <c>标记名 x y z</c> 文本表，运行时读的是 <c>.bytes</c>）。
+        ///
+        /// <para><b>为什么要由生成器写</b>：镜像表曾经是一次性产物，标记点一旦被本类搬移
+        /// （<see cref="HeightIslandMoves"/>）就与 <c>.bytes</c> 脱节；放在这里 = 每次后处理都重新对齐一遍。
+        /// 表头沿用镜像表现有的第一行（没建过就不凭空造一个文件）。</para>
+        /// </summary>
+        private static void SyncMarkerMirror(string mapPath, byte[] bytes, int markerOffset, int markerCount)
+        {
+            var dir = Path.GetDirectoryName(mapPath);
+            if (string.IsNullOrEmpty(dir)) return;
+            var mirror = Path.Combine(dir, Path.GetFileNameWithoutExtension(mapPath) + "_markers.bytes");
+            if (!File.Exists(mirror)) return;
+
+            string header;
+            try
+            {
+                var first = File.ReadAllLines(mirror);
+                header = first.Length > 0 ? first[0] : "# clover cs16 markers v1 (marker x y z)";
+            }
+            catch (Exception e) { Debug.LogError($"{Tag} 读镜像表 {mirror} 失败：{e.Message}"); return; }
+
+            var sb = new StringBuilder();
+            sb.Append(header).Append('\n');
+            int at = markerOffset + 4;
+            for (int i = 0; i < markerCount; i++)
+            {
+                int nameLen = BitConverter.ToInt32(bytes, at); at += 4;
+                var name = Encoding.UTF8.GetString(bytes, at, nameLen); at += nameLen;
+                float x = BitConverter.ToSingle(bytes, at);
+                float y = BitConverter.ToSingle(bytes, at + 4);
+                float z = BitConverter.ToSingle(bytes, at + 8);
+                at += 12;
+                sb.Append(name).Append(' ')
+                  .Append(x.ToString("F3", CultureInfo.InvariantCulture)).Append(' ')
+                  .Append(y.ToString("F3", CultureInfo.InvariantCulture)).Append(' ')
+                  .Append(z.ToString("F3", CultureInfo.InvariantCulture)).Append('\n');
+            }
+
+            try { File.WriteAllText(mirror, sb.ToString(), new UTF8Encoding(false)); }
+            catch (Exception e) { Debug.LogError($"{Tag} 写镜像表 {mirror} 失败：{e.Message}"); return; }
+            Debug.Log($"{Tag} 标记镜像表已同步：{mirror}（{markerCount} 行）");
         }
 
         /// <summary>把位图里不在主分量（或不可走）的标记点搬到最近的主分量可走格（只改 x/z，保留 y）。</summary>

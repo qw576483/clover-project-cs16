@@ -67,8 +67,20 @@ namespace Cs16.Core
         /// （另一口径：<c>mp.dll</c> 出厂默认 <b>45</b> · <c>mp.dll:0x11b9d8</c>；<c>settings.scr</c> 未收录该 cvar）。
         /// </summary>
         public const float BombTimer = 35f;
+        /// <summary>下包耗时（秒）。出处 = 原版 <c>CC4::PrimaryAttack</c> 的
+        /// <c>m_fArmedTime = gpGlobals->time + C4_ARMING_ON_TIME</c>（进度条时长同用该常量），
+        /// <c>C4_ARMING_ON_TIME = 3.0f</c>（<c>regamedll/dlls/wpn_shared/wpn_c4.cpp</c> +
+        /// <c>regamedll/dlls/weapons.h</c>）。</summary>
         public const float PlantTime = 3f;
+
+        /// <summary>拆包耗时（秒）· 无拆弹器。出处 = 原版 <c>mp.dll</c> VA <c>0x10043D1B</c>
+        /// <c>push 10</c> + VA <c>0x10043D1F</c> <c>fadd [0x10142090]</c>（常量 <c>10.0f</c>），
+        /// 字符串锚点 <c>Begin_Bomb_Defuse_Without_Kit</c>（<c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §3.1）。</summary>
         public const float DefuseTime = 10f;
+
+        /// <summary>拆包耗时（秒）· 有拆弹器。出处 = 原版 <c>mp.dll</c> VA <c>0x10043CA8</c>
+        /// <c>push 5</c> + VA <c>0x10043CAC</c> <c>fadd [0x10142054]</c>（常量 <c>5.0f</c>），
+        /// 字符串锚点 <c>Begin_Bomb_Defuse_With_Kit</c>（<c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §3.1）。</summary>
         public const float DefuseTimeWithKit = 5f;
         /// <summary>蜂鸣间隔的衰减系数：每响一次，后续间隔 ×0.9（原版节奏不是"按剩余秒数分档"）。
         /// 出处：原版 <c>mp.dll:0x100449D8</c> 的 <c>fmul [0x10141BC8]</c>，
@@ -81,13 +93,12 @@ namespace Cs16.Core
         /// 跳表 <c>0x10044DD0</c>、递增点 <c>0x10044AD1</c>（<c>inc [edi+0x1B8]</c>）。</summary>
         public const int BombBeepTierCount = 5;
 
-        /// <summary>首响前的等待（= 首响用的间隔，秒）。<b>本项目自定 · 原版未取证</b>：
-        /// 原版 <c>m_flNextFreqInterval</c> 的初值（写点）在 <c>mp.dll</c> 里未定位到
-        /// （<c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §6）。取 <see cref="BombTimer"/> / 11 的依据：
-        /// 间隔按"每响 ×<see cref="BombBeepIntervalDecay"/>"衰减时，各次蜂鸣时刻之和收敛于 11 × 初值
-        /// （首响 1 份 + 之后 1/(1−0.9) = 10 份），35/11 ≈ 3.18 s 让最后一响落在引信耗尽处，
-        /// 而不是间隔衰减到 0 后每帧一响。登记在 <c>策划/差异登记.tsv</c>。</summary>
-        public const float BombBeepIntervalInitial = BombTimer / 11f;
+        /// <summary>首响用的间隔（秒）= C4 倒计时 ÷ 4。出处 = 原版安放炸弹处
+        /// <c>pGrenade->m_flNextFreqInterval = float(CSGameRules()->m_iC4Timer / 4);</c>
+        /// （<c>regamedll/dlls/ggrenade.cpp</c> 的 <c>CGrenade::C4Think</c> 建立段），
+        /// 与 <c>m_flNextFreq = gpGlobals->time</c> 一起决定首响时刻；之后每响一次
+        /// 间隔 ×<see cref="BombBeepIntervalDecay"/>（= 原版的 ×0.9）。</summary>
+        public const float BombBeepIntervalInitial = BombTimer / 4f;
 
         // ---- 单位换算 ----
         /// <summary>GoldSrc 世界单位 → 米：1 unit = 1 inch = <b>0.0254 m</b>
@@ -100,24 +111,30 @@ namespace Cs16.Core
         public const float HitChest = 1.0f;
         public const float HitStomach = 1.25f;
         public const float HitLeg = 0.75f;
-        public const float ArmorAbsorbRatio = 0.5f;   // 有甲吸收
-        public const float ArmorDamageRatio = 0.5f;   // 护甲损耗比例
-        // ---- 距离衰减：按弹种取分母（公式 pow(rangeModifier, dist_in_units / 分母)）----
+        // 护甲两系数同源（regamedll/dlls/player.h）：
+        //   const float ARMOR_RATIO = 0.5f;   // Armor Takes 50% of the damage
+        //   const float ARMOR_BONUS = 0.5f;   // Each Point of Armor is work 1/x points of health
+        // 原版 TakeDamage 里 flRatio = ARMOR_RATIO、flBonus = ARMOR_BONUS，护甲块为
+        //   flNew = flRatio * flDamage; flArmor = (flDamage - flNew) * flBonus;
+        // （regamedll/dlls/player.cpp 的 CBasePlayer::TakeDamage；本机 mp.dll 同段为 VA 0x10064075-fm。
+        //  门控 = armorvalue≠0 且 !(bitsDamageType & (DMG_FALL|DMG_DROWN))，逐字节见 VALUES.md §8）。
+        /// <summary>护甲吸收比例 = 原版 <c>ARMOR_RATIO</c>（0.5）。</summary>
+        public const float ArmorAbsorbRatio = 0.5f;
+        /// <summary>护甲损耗比例 = 原版 <c>ARMOR_BONUS</c>（0.5）。</summary>
+        public const float ArmorDamageRatio = 0.5f;
+        // ---- 距离衰减的分母（公式 pow(rangeModifier, dist_in_units / 分母)）----
         //
-        // 出处 = 原版资源/cs16src/cstrike/dlls/mp.dll 的子弹模拟函数 VA 0x10025640 里的按弹种参数表，
-        // 逐弹种的 float 读数见 .ai-tmp/test/mpdll-reverse/VALUES.md §4.3。
-        // 弹种 → 分母由 CsWeaponDef.FalloffDenominator 携带；消费点 = CsWeapons.DistanceFalloff。
-        public const float FalloffDenom9MM = 800f;      // 弹种 1
-        public const float FalloffDenom45ACP = 500f;    // 弹种 9
-        public const float FalloffDenom556MM = 4000f;   // 弹种 12（0xC）
-        public const float FalloffDenom762MM = 5000f;   // 弹种 11（0xB）
-        public const float FalloffDenom338MAG = 8000f;  // 弹种 10（0xA）
-        public const float FalloffDenom50AE = 1000f;    // 弹种 13（0xD）
-        // 弹种 14（0xE，5.7mm）与 15（0xF，.357SIG）：取自**同一张**按弹种参数表的第 14/15 格
-        // （PEN-FILL.md §3 旁证 / VALUES.md §4.3）；同表 6 个已知弹种逐条吻合 ⇒ 同表内插，
-        // 非外部估算。置信度低于逐字节直读（这两格没有独立的第二出处）。
-        public const float FalloffDenom57MM = 2000f;    // 弹种 14（0xE）
-        public const float FalloffDenom357SIG = 800f;   // 弹种 15（0xF）
+        // 分母是**固定 500、与弹种无关**：出处 = 原版 FireBullets3 的
+        //   iCurrentDamage *= Q_pow(flRangeModifier, flCurrentDistance / 500);
+        // （公开源 regamedll/dlls/cbase.cpp 的 CBaseEntity::FireBullets3；本机载体 mp.dll 为同一构建，
+        //  其子弹模拟函数 VA 0x10025640 同位置的分母即该常量）。
+        // 注意区分：同一张按弹种的表里的那几个 float（9MM 800 / 45ACP 500 / 556MM 4000 / 762MM 5000 /
+        // 338MAG 8000 / 50AE 1000 / 57MM 2000 / 357SIG 800）是**穿透距离** flPenetrationDistance
+        // （与 iPenetrationPower 21/15/35/39/45/30/30/25 同表，命中距离超过它即停止继续穿透），
+        // 不是衰减分母。
+        //
+        // 消费点 = CsWeapons.DistanceFalloff；CsWeaponDef.FalloffDenominator 携带本值。
+        public const float DamageFalloffDenominator = 500f;
 
         // ---- 坠落伤害（原版落地判定）----
         // 出处：原版资源/hlsdk/pm_shared/pm_shared.c:124-126
@@ -494,10 +511,36 @@ namespace Cs16.Core
             if (unitPerSec > GrenadeThrowSpeedMax) unitPerSec = GrenadeThrowSpeedMax;
             return unitPerSec * UnitToMeter;
         }
-        public const float GrenadeFuse = 3.0f;
-        public const float GrenadeHeRadius = 5.5f;
-        public const float GrenadeHeMaxDamage = 98f;
-        public const float GrenadeFlashDuration = 3.5f;
+        /// <summary>手雷引信（秒）：从脱手到爆炸。出处 = 原版三种手雷的投掷调用
+        /// <c>m_pPlayer->ThrowGrenade(this, vecSrc, vecThrow, 1.5, m_usCreateExplosion)</c> ——
+        /// HE / 闪光 / 烟雾的第 4 实参同为 <b>1.5</b>（载体 = <c>regamedll/dlls/wpn_shared/wpn_hegrenade.cpp</c>、
+        /// <c>wpn_flashbang.cpp</c>、<c>wpn_smokegrenade.cpp</c> 的公开源；本机 <c>mp.dll</c> 为同一构建）。</summary>
+        public const float GrenadeFuse = 1.5f;
+
+        /// <summary>HE 爆炸的最大伤害（爆心、无遮挡）。出处 = 原版 HE 投掷工厂
+        /// <c>CGrenade::ShootTimed2</c> 里的 <c>pGrenade->pev->dmg = 100.0f;</c>
+        /// （<c>regamedll/dlls/ggrenade.cpp</c> 公开源）。</summary>
+        public const float GrenadeHeMaxDamage = 100f;
+
+        /// <summary>HE 爆炸的作用半径（米）= 原版 <b>350 GoldSrc 单位</b> × <see cref="UnitToMeter"/>。
+        /// 出处 = 原版 <c>RadiusDamage</c> 的线性衰减形状（
+        /// <c>flAdjustedDamage = flDamage - length * (flDamage / flRadius)</c>，<c>regamedll/dlls/combat.cpp</c>）
+        /// 落在本机载体 <c>mp.dll</c> 的那一处常量：VA <c>0x10066976</c> 在 <c>sqrt(Δ²)</c> 之后做
+        /// <c>350 - dist</c>（<c>350.0f</c> 的字节见 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §5）。</summary>
+        public const float GrenadeHeRadius = 350f * UnitToMeter;
+
+        /// <summary>闪光弹**最近距离、正对**时的致盲时长（秒）。出处 = 原版
+        /// <c>regamedll/dlls/combat.cpp</c> 的 <c>RadiusFlash</c> / <c>PlayerBlind</c>：
+        /// <c>flDamage</c> 恒为 <b>4</b>（<c>ggrenade.cpp</c> 的
+        /// <c>RadiusFlash(pev->origin, pev, pevOwner, 4, CLASS_NONE, bitsDamageType)</c>），
+        /// 正对分支取 <c>fadeTime = flAdjustedDamage * 3</c>（近距 ⇒ <c>flAdjustedDamage ≈ 4</c>）、
+        /// 再 <c>flDurationTime = fadeTime * 0.33</c> ⇒ 4 × 3 × 0.33 ≈ 3.96 s。</summary>
+        public const float GrenadeFlashDuration = 4f;
+
+        /// <summary>烟球存活时长（秒）：原版服务端只按事件推进烟雾贴片
+        /// （<c>TE_SMOKE</c> 的 scale 15.0 / 2.5 / 3.5 + framerate 8 / 6 / 12，出处
+        /// <c>regamedll/dlls/ggrenade.cpp</c> 的 <c>CGrenade::Smoke</c> / <c>Smoke2</c> / <c>Smoke3_A|B|C</c>），
+        /// 烟球本体由**客户端事件脚本**决定 ⇒ 属客户端表现层差异，本工程按 12 s 落地。</summary>
         public const float GrenadeSmokeDuration = 12f;
 
         // ---- 机器人 ----

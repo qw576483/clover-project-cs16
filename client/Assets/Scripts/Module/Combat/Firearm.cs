@@ -193,21 +193,24 @@ namespace Cs16.Module.Combat
         /// <summary>
         /// 本武器能否穿墙、最多穿几层墙 —— 唯一的穿墙判据，闸门与层数上限都从这里取。
         ///
-        /// <para><b>有出处</b>（<see cref="CsWeaponDef.Penetration"/> &gt; 0，原版 <c>iPenetration</c>）⇒
-        /// 直接用它当层数上限；<b>未取到</b>（<c>Penetration</c> == 0）⇒ **回落工程旧判据**：
-        /// 护甲穿透系数 &gt; <see cref="CsCombatTuning.PenetrationArmorThreshold"/> 才可穿、
-        /// 层数上限 <see cref="CsCombatTuning.MaxPenetrationLayers"/> —— ⛔ 不把"未知"当成"已知为零"
-        /// （否则这些枪会凭空失去原有的穿墙能力）。登记见 <c>策划/差异登记.tsv</c>。</para>
+        /// <para><b>已确证</b>（<see cref="CsWeaponDef.PenetrationResolved"/>，原版 <c>iPenetration</c>
+        /// 逐武器取证）⇒ 用它当层数上限；<c>Penetration == 0</c> 就是**确证不能穿墙**
+        /// （原版霰弹枪走 <c>FireBuckshots</c>、该链路没有穿透参数，见
+        /// <see cref="CsWeapons.ApplyPenetrationAndFalloffValues"/>）。</para>
+        ///
+        /// <para><b>没有开火点证据的武器</b>（刀 / 装备）按护甲穿透系数判：
+        /// &gt; <see cref="CsCombatTuning.PenetrationArmorThreshold"/> 才可穿、层数上限
+        /// <see cref="CsCombatTuning.MaxPenetrationLayers"/> —— ⛔ 不把"无证据"当成"已知为零"。</para>
         /// </summary>
         public static bool CanPenetrate(CsWeaponDef def, out int maxLayers)
         {
             maxLayers = 0;
             if (def == null) return false;
 
-            if (def.Penetration > 0)
+            if (def.PenetrationResolved)
             {
                 maxLayers = def.Penetration;
-                return true;
+                return def.Penetration > 0;
             }
 
             if (def.ArmorPenetration > CsCombatTuning.PenetrationArmorThreshold)

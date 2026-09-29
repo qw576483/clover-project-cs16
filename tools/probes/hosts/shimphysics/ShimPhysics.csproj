@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ───────────────────────────────────────────────────────────────────────
+       shim-physics 宿主：**跑真 CsMap.cs** 的离线物理判据宿主。
+
+       · 真：`client/Assets/Scripts/Module/Map/CsMap.cs`、`Module/Map/ICsMap.cs`、
+             `Core/CsConst.cs` —— 源码逐字编译，不做任何文本替换 / 不生成副本。
+       · 假：`UnityEngine`（`Shim/UnityShim.cs` 给类型、`Shim/PhysicsShim.cs` 给
+             `Physics.Raycast` / `Physics.CheckCapsule` 的解析几何实现）、
+             `CloverEngine`（`Game.Map` / `Game.Logger` 的可注入替身）。
+       · 世界：`Shim/ShimWorld.cs` 的解析几何（AABB + 地面平面 + 位图），
+             与 `tools/probes/phys-stuck-probe.py` 同一套参数（缝宽 0.50 m）。
+
+       用法：dotnet run -p tools/probes/hosts/shimphysics/ShimPhysics.csproj
+       判据：末行 `RESULT-SHIMSTUCK: PASS|FAIL`；exit 0 = PASS。
+       ─────────────────────────────────────────────────────────────────────── -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ShimPhysics</AssemblyName>
+    <RootNamespace>ShimPhysics</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Shim\UnityShim.cs" />
+    <Compile Include="Shim\PhysicsShim.cs" />
+    <Compile Include="Shim\ShimWorld.cs" />
+    <Compile Include="Shim\EngineStub.cs" />
+    <Compile Include="Program.cs" />
+    <!-- 真源码（逐字，不改一行） -->
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Module\Map\CsMap.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Module\Map\ICsMap.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsConst.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsWeapons.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsEnums.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsRng.cs" />
+    <!-- 引擎的随机器（CsRng 派生自它；引擎源码逐字，只这一份文件、无 Unity 依赖） -->
+    <Compile Include="$(Cs16ProjectRoot)..\clover-client-unity-engine\Runtime\Core\Rng.cs" />
+    <Compile Include="$(Cs16ProjectRoot)..\clover-client-unity-engine\Runtime\Core\LogThrottle.cs" />
+  </ItemGroup>
+
+</Project>

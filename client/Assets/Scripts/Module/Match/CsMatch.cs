@@ -107,9 +107,36 @@ namespace Cs16.Module.Match
         public const float RecoilRecoverSpeed = 6f;
 
         // ---- 穿透 ----
-        /// <summary>穿墙命中时伤害保留比例（简化：不区分材质）。
-        /// 出处：**本项目新增**（原版穿透伤害同 <c>策划/对照表.md</c> §6 BLOCKED-2）。</summary>
+        /// <summary>
+        /// 穿墙命中时伤害保留比例 = 原版 <c>FireBullets3</c> 的默认档
+        /// <c>flDamageModifier = 0.5</c>（<c>regamedll/dlls/cbase.cpp</c> 的 <c>CBasePlayer::FireBullets3</c>）。
+        ///
+        /// <para>原版在穿过一层墙时按**命中面材质**覆写该值，见 <see cref="PenetrationMaterialScale"/>
+        /// —— 伤害层只拿得到"是否穿墙"（见 <c>CsDamage.ApplyDamage</c> 的 <c>throughWall</c>），
+        /// 拿不到命中面材质 ⇒ 消费点用默认档 0.5，逐材质档由 <see cref="PenetrationMaterialScale"/> 提供。</para>
+        /// </summary>
         public const float PenetrationDamageScale = 0.5f;
+
+        /// <summary>
+        /// 逐材质的穿透伤害倍率 —— 原版 <c>FireBullets3</c> 内按 <c>UTIL_TextureHit</c> 返回的材质字母
+        /// 分支覆写 <c>flDamageModifier</c>（<c>regamedll/dlls/cbase.cpp</c>）：
+        /// 金属 <c>M</c> 0.2 / 格栅 <c>G</c> 0.4 / 通风 <c>V</c> 0.45 / 电脑 <c>P</c> 0.45 / 瓷砖 <c>T</c> 0.3 /
+        /// 木 <c>W</c> 0.6 / 混凝土 <c>C</c> 与其余字符保持进入本层前的值（默认 <see cref="PenetrationDamageScale"/>）。
+        /// 材质字母表 = <c>sound/materials.txt</c>（<c>pm_shared.c</c> 的 <c>CHAR_TEX_*</c>）。
+        /// </summary>
+        public static float PenetrationMaterialScale(char materialLetter)
+        {
+            switch (materialLetter)
+            {
+                case 'M': return 0.2f;    // CHAR_TEX_METAL
+                case 'G': return 0.4f;    // CHAR_TEX_GRATE
+                case 'V': return 0.45f;   // CHAR_TEX_VENT
+                case 'P': return 0.45f;   // CHAR_TEX_COMPUTER
+                case 'T': return 0.3f;    // CHAR_TEX_TILE
+                case 'W': return 0.6f;    // CHAR_TEX_WOOD
+                default: return PenetrationDamageScale;
+            }
+        }
 
         // ---- 移动 ----
         /// <summary>两次跳跃之间的最小间隔（防连跳）。
@@ -149,18 +176,23 @@ namespace Cs16.Module.Match
         public const int MaxKillFeedStore = 12;
 
         // ---- 手雷/烟雾 ----
-        /// <summary>闪光弹致盲的最大半径（复用 HE 半径 —— CsConst 未单独定义）。
-        /// 出处：<c>Core/CsConst.cs</c> 的 <c>GrenadeHeRadius</c>（本值即该常量，不另立数值）。</summary>
-        public const float FlashRadius = CsConst.GrenadeHeRadius;
-        /// <summary>烟雾体积半径（简化球体；CsConst 未定义）。
-        /// 出处：**本项目新增**（原版烟是 <c>func_smokevolume</c> 粒子体积，载体不在盘）。</summary>
+        /// <summary>闪光弹作用半径（米）= 原版 <b>1500 GoldSrc 单位</b>（= 37.5 单位的球搜索 + 线性衰减分母）。
+        /// 出处 = 原版 <c>regamedll/dlls/combat.cpp</c> 的 <c>RadiusFlash</c>：
+        /// <c>float flRadius = 1500;</c> + <c>UTIL_FindEntityInSphere(pEntity, vecSrc, 1500.0)</c> +
+        /// <c>falloff = flDamage / flRadius</c>；本工程 <c>CsDamage.ApplyFlash</c> 的
+        /// <c>1 - dist/radius</c> 与该线性衰减同形。</summary>
+        public const float FlashRadius = 1500f * CsConst.UnitToMeter;
+
+        /// <summary>烟雾体积半径（简化球体）。原版服务端只发 <c>TE_SMOKE</c> 事件
+        /// （scale 15.0 世界单位 + framerate 8，出处 <c>regamedll/dlls/ggrenade.cpp</c> 的 <c>CGrenade::Smoke2</c>；
+        /// 另有 scale 3.5 / 2.5 的收尾档），烟球体积由客户端粒子推进 ⇒ 属客户端表现层，
+        /// 本工程用固定球体近似。</summary>
         public const float SmokeRadius = 3.5f;
-        /// <summary>视线被烟雾遮挡的判定半径。
-        /// 出处：**本项目新增**（遮挡判定半径，与 <c>SmokeRadius</c> 同值）。</summary>
+        /// <summary>视线被烟雾遮挡的判定半径（与 <see cref="SmokeRadius"/> 同值，见该常量的口径）。</summary>
         public const float SmokeBlockRadius = 3.5f;
         /// <summary>烟雾球从爆开到长满 <see cref="SmokeBlockRadius"/> 的时长（秒）——生长期间遮挡半径按它线性插值。
-        /// 出处：**本项目自定、原版未取证**（原版烟是 <c>func_smokevolume</c> 粒子体积，生长曲线在载体 <c>mp.dll</c> 里，
-        /// 载体不在盘）。视觉层 <c>Module/Combat/GrenadeThrower</c> 用同一常量同步生长。</summary>
+        /// 视觉层 <c>Module/Combat/GrenadeThrower</c> 用同一常量同步生长；原版烟球生长由客户端粒子推进
+        /// （服务端只发 <c>TE_SMOKE</c>）。</summary>
         public const float SmokeGrowSeconds = 1f;
         /// <summary>投掷物之间的碰撞半径（两颗雷的球心距小于两倍该值即视为相撞）。
         /// 出处：与视觉体半径同值 <c>Module/Combat/CsCombatTuning.GrenadeVisualRadius</c>（本值 = 那个常量，不另立数值；
