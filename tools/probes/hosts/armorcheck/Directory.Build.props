@@ -1,0 +1,27 @@
+<!-- ─────────────────────────────────────────────────────────────────────────────
+     tools/probes/hosts/armorcheck/Directory.Build.props
+
+     本宿主**故意不 import 上级** `hosts/Directory.Build.props`：那一个只服务
+     「引用 Unity 托管 DLL 的真编译」宿主（compilecheck 族）。本宿主不引用任何
+     Unity 程序集 —— `UnityEngine` 的名字空间由 shimphysics 的 Shim/UnityShim.cs
+     提供（CsConst.cs 用到 Vector3）。MSBuild 会在每个工程目录向上找**最近的**
+     Directory.Build.props 并停在那里，所以本文件会顶替上级那一个。
+     ───────────────────────────────────────────────────────────────────────────── -->
+<Project>
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>9.0</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <NoWarn>CS0649;CS0169;CS0414;CS0067</NoWarn>
+    <DefineConstants>DEBUG;TRACE;UNITY_EDITOR;UNITY_EDITOR_64;UNITY_EDITOR_WIN;UNITY_64;UNITY_STANDALONE;UNITY_STANDALONE_WIN</DefineConstants>
+    <Cs16ProjectRoot>$(MSBuildThisFileDirectory)..\..\..\..\</Cs16ProjectRoot>
+    <Cs16ClientDir>$(Cs16ProjectRoot)client\</Cs16ClientDir>
+  </PropertyGroup>
+
+</Project>

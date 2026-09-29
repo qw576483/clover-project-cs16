@@ -69,8 +69,8 @@ namespace Cs16.Core
         public const float BombTimer = 35f;
         /// <summary>下包耗时（秒）。出处 = 原版 <c>CC4::PrimaryAttack</c> 的
         /// <c>m_fArmedTime = gpGlobals->time + C4_ARMING_ON_TIME</c>（进度条时长同用该常量），
-        /// <c>C4_ARMING_ON_TIME = 3.0f</c>（<c>regamedll/dlls/wpn_shared/wpn_c4.cpp</c> +
-        /// <c>regamedll/dlls/weapons.h</c>）。</summary>
+        /// 见 <c>regamedll/dlls/wpn_shared/wpn_c4.cpp:143</c> 与 <c>:156</c>（<c>SetProgressBarTime</c> 同参）；
+        /// <c>const float C4_ARMING_ON_TIME = 3.0f;</c> 见 <c>regamedll/dlls/weapons.h:860</c>。</summary>
         public const float PlantTime = 3f;
 
         /// <summary>拆包耗时（秒）· 无拆弹器。出处 = 原版 <c>mp.dll</c> VA <c>0x10043D1B</c>
@@ -111,16 +111,19 @@ namespace Cs16.Core
         public const float HitChest = 1.0f;
         public const float HitStomach = 1.25f;
         public const float HitLeg = 0.75f;
-        // 护甲两系数同源（regamedll/dlls/player.h）：
+        // 护甲两系数同源（regamedll/dlls/player.h:66-67）：
         //   const float ARMOR_RATIO = 0.5f;   // Armor Takes 50% of the damage
         //   const float ARMOR_BONUS = 0.5f;   // Each Point of Armor is work 1/x points of health
         // 原版 TakeDamage 里 flRatio = ARMOR_RATIO、flBonus = ARMOR_BONUS，护甲块为
         //   flNew = flRatio * flDamage; flArmor = (flDamage - flNew) * flBonus;
-        // （regamedll/dlls/player.cpp 的 CBasePlayer::TakeDamage；本机 mp.dll 同段为 VA 0x10064075-fm。
+        // （regamedll/dlls/player.cpp:912-913 取系数、:992-993 落护甲块，CBasePlayer::TakeDamage；
+        //  本机 mp.dll 同段为 VA 0x10064075-fm。
         //  门控 = armorvalue≠0 且 !(bitsDamageType & (DMG_FALL|DMG_DROWN))，逐字节见 VALUES.md §8）。
-        /// <summary>护甲吸收比例 = 原版 <c>ARMOR_RATIO</c>（0.5）。</summary>
+        /// <summary>原版 <c>ARMOR_RATIO</c>（0.5）：护甲吸收后**留下**的伤害比例（吸收掉的是 <c>1 − 它</c>）。
+        /// 逐武器还会再乘一个比率（原版 <c>TakeDamage</c> 的 <c>switch (iGunType)</c>，见
+        /// <c>CsWeaponDef.ArmorRatioScale</c>）。</summary>
         public const float ArmorAbsorbRatio = 0.5f;
-        /// <summary>护甲损耗比例 = 原版 <c>ARMOR_BONUS</c>（0.5）。</summary>
+        /// <summary>护甲损耗比例 = 原版 <c>ARMOR_BONUS</c>（0.5）：每 1 点护甲折 2 点伤害。</summary>
         public const float ArmorDamageRatio = 0.5f;
         // ---- 距离衰减的分母（公式 pow(rangeModifier, dist_in_units / 分母)）----
         //
@@ -513,34 +516,40 @@ namespace Cs16.Core
         }
         /// <summary>手雷引信（秒）：从脱手到爆炸。出处 = 原版三种手雷的投掷调用
         /// <c>m_pPlayer->ThrowGrenade(this, vecSrc, vecThrow, 1.5, m_usCreateExplosion)</c> ——
-        /// HE / 闪光 / 烟雾的第 4 实参同为 <b>1.5</b>（载体 = <c>regamedll/dlls/wpn_shared/wpn_hegrenade.cpp</c>、
-        /// <c>wpn_flashbang.cpp</c>、<c>wpn_smokegrenade.cpp</c> 的公开源；本机 <c>mp.dll</c> 为同一构建）。</summary>
+        /// HE / 闪光 / 烟雾的第 4 实参同为 <b>1.5</b>（公开源 <c>regamedll/dlls/wpn_shared/wpn_hegrenade.cpp:201</c>、
+        /// <c>wpn_flashbang.cpp:199</c>、<c>wpn_smokegrenade.cpp:202</c>；本机 <c>mp.dll</c> 为同一构建）。</summary>
         public const float GrenadeFuse = 1.5f;
 
         /// <summary>HE 爆炸的最大伤害（爆心、无遮挡）。出处 = 原版 HE 投掷工厂
         /// <c>CGrenade::ShootTimed2</c> 里的 <c>pGrenade->pev->dmg = 100.0f;</c>
-        /// （<c>regamedll/dlls/ggrenade.cpp</c> 公开源）。</summary>
+        /// （<c>regamedll/dlls/ggrenade.cpp:965</c> 公开源）。</summary>
         public const float GrenadeHeMaxDamage = 100f;
 
         /// <summary>HE 爆炸的作用半径（米）= 原版 <b>350 GoldSrc 单位</b> × <see cref="UnitToMeter"/>。
-        /// 出处 = 原版 <c>RadiusDamage</c> 的线性衰减形状（
-        /// <c>flAdjustedDamage = flDamage - length * (flDamage / flRadius)</c>，<c>regamedll/dlls/combat.cpp</c>）
-        /// 落在本机载体 <c>mp.dll</c> 的那一处常量：VA <c>0x10066976</c> 在 <c>sqrt(Δ²)</c> 之后做
+        /// 半径由 <c>CBaseMonster::RadiusDamage</c> 在 <c>flDamage &gt; 80</c> 时取 <c>flRadius = flDamage * 3.5</c>
+        /// （<c>regamedll/dlls/basemonster.cpp:555-556</c>；HE 的 <c>pev->dmg = 100.0f</c> ⇒ 100 × 3.5 = <b>350</b>；
+        /// <c>CGrenade : public CBaseMonster</c> 见 <c>regamedll/dlls/weapons.h:171</c>）。衰减形状 = 原版
+        /// <c>RadiusDamage</c> 的线性式（<c>flAdjustedDamage = flDamage - length * (flDamage / flRadius)</c>，
+        /// <c>regamedll/dlls/combat.cpp:243-335</c>）。同一 350 落在本机载体 <c>mp.dll</c> 的常量：
+        /// VA <c>0x10066976</c> 在 <c>sqrt(Δ²)</c> 之后做
         /// <c>350 - dist</c>（<c>350.0f</c> 的字节见 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §5）。</summary>
         public const float GrenadeHeRadius = 350f * UnitToMeter;
 
         /// <summary>闪光弹**最近距离、正对**时的致盲时长（秒）。出处 = 原版
         /// <c>regamedll/dlls/combat.cpp</c> 的 <c>RadiusFlash</c> / <c>PlayerBlind</c>：
-        /// <c>flDamage</c> 恒为 <b>4</b>（<c>ggrenade.cpp</c> 的
+        /// <c>flDamage</c> 恒为 <b>4</b>（<c>ggrenade.cpp:63</c> 的
         /// <c>RadiusFlash(pev->origin, pev, pevOwner, 4, CLASS_NONE, bitsDamageType)</c>），
-        /// 正对分支取 <c>fadeTime = flAdjustedDamage * 3</c>（近距 ⇒ <c>flAdjustedDamage ≈ 4</c>）、
-        /// 再 <c>flDurationTime = fadeTime * 0.33</c> ⇒ 4 × 3 × 0.33 ≈ 3.96 s。</summary>
+        /// 正对分支取 <c>fadeTime = flAdjustedDamage * 3</c>（<c>combat.cpp:144</c>；近距 ⇒ <c>flAdjustedDamage ≈ 4</c>）、
+        /// 再 <c>flDurationTime = fadeTime * 0.33</c>（<c>combat.cpp:23</c>）⇒ 4 × 3 × 0.33 ≈ 3.96 s。</summary>
         public const float GrenadeFlashDuration = 4f;
 
-        /// <summary>烟球存活时长（秒）：原版服务端只按事件推进烟雾贴片
-        /// （<c>TE_SMOKE</c> 的 scale 15.0 / 2.5 / 3.5 + framerate 8 / 6 / 12，出处
-        /// <c>regamedll/dlls/ggrenade.cpp</c> 的 <c>CGrenade::Smoke</c> / <c>Smoke2</c> / <c>Smoke3_A|B|C</c>），
-        /// 烟球本体由**客户端事件脚本**决定 ⇒ 属客户端表现层差异，本工程按 12 s 落地。</summary>
+        /// <summary>烟球存活时长（秒）：原版服务端只按事件推进烟雾贴片（<c>TE_SMOKE</c> 逐档实参见
+        /// <c>regamedll/dlls/ggrenade.cpp</c>：<c>CGrenade::Smoke2</c>（<c>:463</c> 字节 150 = scale 15.0、
+        /// <c>:464</c> framerate 8）、<c>CGrenade::Smoke</c>（<c>:485</c> 字节 25 = 2.5、<c>:486</c> framerate 6）、
+        /// <c>CGrenade::Smoke3_A</c>（<c>:443</c> 字节 15+rand(0,10)、<c>:444</c> framerate 12）、
+        /// <c>CGrenade::Smoke3_B</c>（<c>:420</c> 同 scale、<c>:421</c> framerate 10）、
+        /// <c>CGrenade::Smoke3_C</c>（<c>:398</c> 字节 35+rand(0,10)、<c>:399</c> framerate 5）），
+        /// 烟球本体体积由**客户端事件脚本**决定 ⇒ 属客户端表现层差异，本工程按 12 s 落地。</summary>
         public const float GrenadeSmokeDuration = 12f;
 
         // ---- 机器人 ----

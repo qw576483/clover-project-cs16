@@ -14,7 +14,9 @@ namespace Cs16.Core
     /// <para><b>已取到原版出处的几组</b>（载体同 <c>mp.dll</c>，逐条 VA / 反汇编见
     /// <c>策划/手感参数对照.md</c>）：<see cref="CsWeaponDef.ReloadTime"/>（§5.9，21 把）、
     /// <see cref="CsWeaponDef.MaxSpeed"/>（§5.4，逐武器类）、<see cref="CsWeaponDef.CycleTime"/>（§2），
-    /// 以及 AK47 / AUG / SG552 / M249 的 <see cref="CsWeaponDef.Damage"/>（§5.2）。</para>
+    /// 以及 AK47 / AUG / SG552 / M249 的 <see cref="CsWeaponDef.Damage"/>（§5.2）。
+    /// 另有逐武器 <see cref="CsWeaponDef.ArmorRatioScale"/>（护甲比率乘数，出处 = 公开源
+    /// <c>regamedll/dlls/player.cpp</c>，见 <see cref="CsWeapons.ApplyArmorRatioValues"/>）。</para>
     ///
     /// <para><b>仍无原版出处的几组</b>：<see cref="CsWeaponDef.ArmorPenetration"/> /
     /// <see cref="CsWeaponDef.Rpm"/> / <see cref="CsWeaponDef.Range"/> / <see cref="CsWeaponDef.Spread"/> /
@@ -43,8 +45,22 @@ namespace Cs16.Core
         public int Price;
         public int Damage;                 // 基础伤害（近距离、无甲）
 
-        /// <summary>0~1，越高越无视护甲（只作用于护甲吸收）；穿墙与否与之无关。</summary>
+        /// <summary>
+        /// 无开火点证据的武器能否**穿墙**的回落判据（**本项目新增**，降级链第 4 级；
+        /// 阈值见 <c>CsCombatTuning.PenetrationArmorThreshold</c>），只被 <c>Firearm.CanPenetrate</c> 消费。
+        /// 护甲吸收不用本值 —— 那一条走 <see cref="ArmorRatioScale"/>。
+        /// </summary>
         public float ArmorPenetration;
+
+        /// <summary>
+        /// 原版 <c>CBasePlayer::TakeDamage</c> 里逐武器护甲比率的乘数：<c>flRatio = ARMOR_RATIO × 本值</c>，
+        /// 其后 <c>flNew = flRatio × flDamage</c>（<c>flDamage − flNew</c> 即护甲抵掉的伤害）。
+        /// <b>1</b> = 该武器不在原版那张表里（<c>switch</c> 落空 ⇒ 伤害被护甲吃掉一半）。
+        ///
+        /// <para>逐武器取值与出处见 <see cref="CsWeapons.ApplyArmorRatioValues"/>；
+        /// 消费点 = <see cref="CsWeapons.ArmorAbsorb"/>。</para>
+        /// </summary>
+        public float ArmorRatioScale = 1f;
 
         /// <summary>
         /// 原版 <c>FireBullets3</c> 的 <c>iPenetration</c>：本武器一发能穿过的墙层数。
@@ -405,6 +421,7 @@ namespace Cs16.Core
             foreach (var w in _all) _byId[w.Id] = w;
             ApplyAttack2Values();
             ApplyPenetrationAndFalloffValues();
+            ApplyArmorRatioValues();
             ApplyCycleTimes();
             ApplyKickbackValues();
             ApplySpreadValues();
@@ -777,9 +794,11 @@ namespace Cs16.Core
         /// 出处见该常量）。</para>
         ///
         /// <para><b>霰弹枪（m3 / xm1014）</b>：原版这两把**不走** <c>FireBullets3</c>，走
-        /// <c>CBaseEntity::FireBuckshots</c> —— 8 参、**没有 <c>iPenetration</c> 形参**，
-        /// m3 = 9 弹丸 / 射程 3000、xm1014 = 6 弹丸 / 射程 3048，弹种均为 <c>BULLET_PLAYER_BUCKSHOT</c>
-        /// （<c>regamedll/dlls/cbase.cpp</c> 的 <c>FireBuckshots</c>；<c>wpn_m3.cpp</c> / <c>wpn_xm1014.cpp</c>）
+        /// <c>CBaseEntity::FireBuckshots</c> —— 8 参、**没有 <c>iPenetration</c> 形参**
+        /// （<c>regamedll/dlls/cbase.cpp:1170</c>；<c>wpn_m3.cpp:132</c> = 9 弹丸 / 射程 3000、
+        /// <c>wpn_xm1014.cpp:130</c> = 6 弹丸 / 射程 3048）。弹种为 <c>BULLET_PLAYER_BUCKSHOT</c>
+        /// （<c>wpn_m3.cpp:134</c> / <c>wpn_xm1014.cpp:132</c> 的 <c>FireBullets</c> 分支），该弹种在
+        /// <c>FireBullets3</c> 的按弹种表里落 <c>default</c> ⇒ 穿透力 / 穿透距离 = 0（<c>cbase.cpp:1321-1323</c>）
         /// ⇒ 语义上不透墙，落 <c>Penetration = 0</c> + <c>PenetrationResolved = true</c>。</para>
         /// </summary>
         private static void ApplyPenetrationAndFalloffValues()
@@ -798,7 +817,9 @@ namespace Cs16.Core
             Set(Mp5, 1, 0.84f);
             Set(Tmp, 1, 0.85f);
             // Elite 的两处开火点（0x100D7787 左 / 0x100D787B 右）rangeModifier 在寄存器里给出，
-            // 值见公开源 regamedll/dlls/weapons.h 的 ELITE_RANGE_MODIFER = 0.75f（与 GLOCK18 同档）
+            // 值见公开源 regamedll/dlls/weapons.h:1811 的 ELITE_RANGE_MODIFER = 0.75f（与 GLOCK18 同档）；
+            // 对应公开源开火调用 regamedll/dlls/wpn_shared/wpn_elite.cpp:178-179 / 190-191
+            //（9MM、iPenetration 1、射程 8192）
             Set(Elite, 1, 0.75f);
             // 弹种 45ACP（0x9）：0x100E58A3 / 0x100DFB1B / 0x100E4CE0
             Set(Usp, 1, 0.79f);
@@ -842,6 +863,49 @@ namespace Cs16.Core
             SetDistance(P90, RangeMaxDistance);
         }
 
+        /// <summary>
+        /// 逐武器的**护甲比率乘数**（原版 <c>CBasePlayer::TakeDamage</c> 里那台
+        /// <c>switch (iGunType)</c>，<c>iGunType = pAttack->m_pActiveItem->m_iId</c>）。
+        ///
+        /// <para><b>出处</b> = 公开源 <c>rehlds/ReGameDLL_CS</c> 的
+        /// <c>regamedll/dlls/player.cpp</c>（<c>CBasePlayer::TakeDamage</c> 的护甲块）：
+        /// <c>https://cdn.jsdelivr.net/gh/rehlds/ReGameDLL_CS@master/regamedll/dlls/player.cpp</c>。
+        /// 基础值 <c>flRatio = ARMOR_RATIO</c>（0.5，见 <see cref="CsConst.ArmorAbsorbRatio"/>），
+        /// <c>switch</c> 再按武器乘一个数；表里没有的武器（MP5 / UMP45 / TMP / USP / M3 / XM1014 /
+        /// 手雷 / C4 …）落 <c>default</c> ⇒ 乘数保持 1。</para>
+        ///
+        /// <para><b>含义</b>：<c>flNew = flRatio × flDamage</c>、护甲抵掉的伤害 = <c>flDamage − flNew</c>
+        /// ⇒ 乘数越大越穿甲（AWP 1.95 ⇒ 护甲只挡 2.5%）；MAC10 的 0.95 是全场唯一小于 1 的
+        /// （护甲吸收得比基准更多）。</para>
+        /// </summary>
+        private static void ApplyArmorRatioValues()
+        {
+            void Set(string id, float scale)
+            {
+                if (_byId.TryGetValue(id, out var def)) def.ArmorRatioScale = scale;
+            }
+
+            Set(Aug, 1.4f);          // case WEAPON_AUG / WEAPON_M4A1
+            Set(M4A1, 1.4f);
+            Set(Awp, 1.95f);         // case WEAPON_AWP
+            Set(G3sg1, 1.65f);       // case WEAPON_G3SG1
+            Set(Sg550, 1.45f);       // case WEAPON_SG550
+            Set(M249, 1.5f);         // case WEAPON_M249
+            Set(Elite, 1.05f);       // case WEAPON_ELITE
+            Set(Deagle, 1.5f);       // case WEAPON_DEAGLE
+            Set(Glock18, 1.05f);     // case WEAPON_GLOCK18
+            Set(FiveSeven, 1.5f);    // case WEAPON_FIVESEVEN / WEAPON_P90
+            Set(P90, 1.5f);
+            Set(Mac10, 0.95f);       // case WEAPON_MAC10
+            Set(P228, 1.25f);        // case WEAPON_P228
+            Set(Scout, 1.7f);        // case WEAPON_SCOUT / WEAPON_KNIFE
+            Set(Knife, 1.7f);
+            Set(Famas, 1.4f);        // case WEAPON_FAMAS / WEAPON_SG552
+            Set(Sg552, 1.4f);
+            Set(Galil, 1.55f);       // case WEAPON_GALIL / WEAPON_AK47
+            Set(Ak47, 1.55f);
+        }
+
         /// <summary>原版开火时传入的射程距离（世界单位，逐字节：<c>mp.dll</c> <c>0x101422c0</c> = 8192.0）。</summary>
         public const float RangeMaxDistance = 8192f;
 
@@ -873,6 +937,44 @@ namespace Cs16.Core
             if (def == null) return 0f;
             if (silenced && def.CanSilence && def.RangeModifierSilenced > 0f) return def.RangeModifierSilenced;
             return def.RangeModifier;
+        }
+
+        /// <summary>
+        /// 本武器的护甲比率乘数；未列入原版那张表的武器（含 <paramref name="def"/> 为 null 的
+        /// 手雷 / 坠落 / C4 这几种没有开火武器的伤害）一律 1。
+        /// </summary>
+        public static float ArmorRatioScaleFor(CsWeaponDef def)
+            => def != null && def.ArmorRatioScale > 0f ? def.ArmorRatioScale : 1f;
+
+        /// <summary>
+        /// 原版 <c>CBasePlayer::TakeDamage</c> 的护甲块（纯函数；「有没有甲 / 头盔」那道门由调用方判）：
+        /// <c>flRatio = ARMOR_RATIO × ArmorRatioScaleFor(def)</c> → <c>flNew = flRatio × damage</c>；
+        /// 护甲应抵 <c>flArmor = (damage − flNew) × ARMOR_BONUS</c>；护甲不够时按
+        /// <c>flNew = damage − armor × (1 / ARMOR_BONUS)</c> 折算、护甲清零（原版「护甲不足」分支）。
+        ///
+        /// <para>出处同 <see cref="ApplyArmorRatioValues"/>；<c>ARMOR_BONUS</c> 见
+        /// <see cref="CsConst.ArmorDamageRatio"/>。消费点 = <c>CsDamage.ApplyDamage</c>。</para>
+        /// </summary>
+        /// <param name="armor">受击者当前护甲点数；0 ⇒ 伤害原样返回（原版同一分支：护甲 0 时
+        /// <c>flArmor &gt; armorvalue</c> 成立，护甲不抵伤害）。</param>
+        /// <param name="armorLoss">实际扣掉的护甲点数（护甲不足时 = 剩下的全部护甲）。</param>
+        /// <returns>护甲吸收后的伤害（原版 <c>flNew</c>），不小于 0。</returns>
+        public static float ArmorAbsorb(CsWeaponDef def, float damage, int armor, out int armorLoss)
+        {
+            var ratio = CsConst.ArmorAbsorbRatio * ArmorRatioScaleFor(def);
+            var flNew = ratio * damage;
+            var flArmor = (damage - flNew) * CsConst.ArmorDamageRatio;
+
+            if (flArmor > armor)
+            {
+                armorLoss = armor > 0 ? armor : 0;
+                flNew = damage - armorLoss * (1f / CsConst.ArmorDamageRatio);
+            }
+            else
+            {
+                armorLoss = (int)System.Math.Round(flArmor);
+            }
+            return flNew < 0f ? 0f : flNew;
         }
 
         /// <summary>

@@ -1,0 +1,31 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ───────────────────────────────────────────────────────────────────────
+       armorcheck 宿主：跑**真** `Core/CsWeapons.cs` 的护甲结算入口，逐武器核对
+       原版逐武器护甲比率表，并复算 AWP / M4A1 / ELITE 的代表性结算。
+
+       · 真：`client/Assets/Scripts/Core/{CsWeapons,CsConst,CsEnums}.cs` 逐字编译。
+       · 假：`UnityEngine` 的 Vector3 等类型 —— 直接复用 shimphysics 的 Shim/UnityShim.cs
+             （该目录不引用任何 Unity 程序集，CsConst.cs 只需要 Vector3 这个类型存在）。
+
+       用法：dotnet run -p tools/probes/hosts/armorcheck/ArmorCheck.csproj
+       判据：末行 `RESULT-ARMOR: PASS|FAIL`；exit 0 = PASS。
+       ─────────────────────────────────────────────────────────────────────── -->
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <AssemblyName>ArmorCheck</AssemblyName>
+    <RootNamespace>ArmorCheck</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <!-- 真源码（逐字，不改一行） -->
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsWeapons.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsConst.cs" />
+    <Compile Include="$(Cs16ClientDir)Assets\Scripts\Core\CsEnums.cs" />
+    <!-- UnityEngine 的最小替身（与 shimphysics 同一份，⛔ 不复制第二份） -->
+    <Compile Include="..\shimphysics\Shim\UnityShim.cs" />
+  </ItemGroup>
+
+</Project>

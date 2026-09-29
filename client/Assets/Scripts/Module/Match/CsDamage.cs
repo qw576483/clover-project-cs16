@@ -12,8 +12,8 @@ namespace Cs16.Module.Match
     /// <para>公式：<c>base = CsWeapons.BaseDamage(def, 消音, 连发)</c>（差异 #68：USP 34/30、M4A1 32/33、
     /// FAMAS 30/34）→ × 部位倍率 → × 距离衰减
     /// <c>pow(rangeModifier, dist_in_units / 弹种分母)</c>（<see cref="CsWeapons.DistanceFalloff"/>）
-    /// → × 穿墙保留 → 护甲吸收
-    /// <c>(1 - ArmorAbsorbRatio * (1 - def.ArmorPenetration))</c>，护甲损耗 <c>damage * ArmorDamageRatio</c>。
+    /// → × 穿墙保留 → 护甲吸收（原版 <c>CBasePlayer::TakeDamage</c> 的护甲块：
+    /// <c>flRatio = ARMOR_RATIO × 逐武器乘数</c>，见 <see cref="CsWeapons.ArmorAbsorb"/>）。
     /// 头盔只减免头部。</para>
     ///
     /// <para><b>高频降频</b>：伤害日志按「首次 + 每 50 次」输出（见 <see cref="CsMatch.RateInfo"/>）。</para>
@@ -127,16 +127,13 @@ namespace Cs16.Module.Match
             var dmg = rawDamage;
             if (throughWall) dmg *= CsMatchConst.PenetrationDamageScale;
 
-            var armorPen = def != null ? def.ArmorPenetration : 0f;
-
             // 头盔只减免头部：头部命中且无头盔时护甲不生效。
             var armorApplies = !ignoreArmor && victim.Armor > 0 &&
                                (box != CsHitbox.Head || victim.HasHelmet);
             var armorLoss = 0;
             if (armorApplies)
             {
-                armorLoss = Mathf.RoundToInt(dmg * CsConst.ArmorDamageRatio);
-                dmg *= 1f - CsConst.ArmorAbsorbRatio * (1f - armorPen);
+                dmg = CsWeapons.ArmorAbsorb(def, dmg, victim.Armor, out armorLoss);
             }
 
             var final = Mathf.RoundToInt(dmg);
