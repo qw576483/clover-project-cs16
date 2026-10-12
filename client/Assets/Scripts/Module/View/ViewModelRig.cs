@@ -120,8 +120,7 @@ namespace Cs16.Module.View
             CurrentWeaponId = null;
             _anim = null;
             _animator = null;
-            _overrideState = null;
-            _lastState = null;
+            ClearOverride("teardown");
             _haveSnapshot = false;
             _preLocal = null;              // 换相机后本地玩家基线一并作废
             _preReloadSeq = 0;
@@ -175,6 +174,172 @@ namespace Cs16.Module.View
             ApplyBob(local);
             ProbeReloadAnim();
             SettleReload();
+            CheckOverrideFinished();
+            TraceOverride();
+        }
+
+        // ==================================================================
+        //  覆盖态（一次性动作）的结束判定
+        // ==================================================================
+        /// <summary>
+        /// 覆盖态 = 「一个一次性动作（抬起 / 开火 / 换弹）正在播，播完之前不回 idle」。
+        /// 清它有两个口子：引擎的 OnComplete 回调（<see cref="OnClipFinished"/>）与这里的逐帧比对，
+        /// 互为冗余。
+        ///
+        /// <para><b>为什么逐帧比对不能省</b>：<c>_anim.Play()</c> 之后的**第一帧**
+        /// <c>GetCurrentAnimatorStateInfo(0)</c> 仍描述**上一段**剪辑（引擎 <c>Animation.cs</c> 的
+        /// <c>Play()</c> 只是把 <c>_completeFired</c> 归 false，状态机的切换要等下一次求值）。
+        /// 若上一段恰好已经播完（归一化时间 ≥ 1），引擎会在那一帧就派发一次 OnComplete ——
+        /// 那次派发属于上一段剪辑，被 <see cref="OnClipFinished"/> 的陈旧判定挡掉，
+        /// 而引擎的"已派发"标志已经被消费掉；这一段剪辑真正播完时归一化时间仍 ≥ 1，
+        /// 引擎的"小于 1 就重新武装"那一行也不会触发 ⇒ <b>完成回调可能再也不来</b>，
+        /// <c>_overrideState</c> 就停在原地（枪停在那一段的末帧）。
+        /// 逐帧读 Animator 的真状态不经过那个标志，因此不受它影响。</para>
+        ///
+        /// <para><b>判据</b>（全部要先满足"这一段确实在播"= 观察到过归一化时间 &lt; 1，见
+        /// <c>_overrideSeen</c> —— 它同时挡住"Play 之后那一两帧读到的仍是上一段"与
+        /// "同一段被连着播两次时读到的是上一次的收尾"这两种假结束）：
+        /// ① 报的就是覆盖态这一段且已播到头（归一化时间 ≥ 1）⇒ 结束；
+        /// ② 它现在报的是别的状态 ⇒ 这一段离开了状态机 ⇒ 结束；
+        /// ③ 以上都不成立、且占用时间超过「片段时长（没读到则用 <see cref="OverrideMaxSeconds"/>）+
+        /// <see cref="OverrideStuckGrace"/>」⇒ 强制结束并留 Warn（非预期分支）。</para>
+        /// </summary>
+        private void CheckOverrideFinished()
+        {
+            if (_overrideState == null || _animator == null) return;
+
+            var si = _animator.GetCurrentAnimatorStateInfo(0);
+            if (si.IsName(_overrideState))
+            {
+                if (si.normalizedTime < 1f)
+                {
+                    _overrideSeen = true;
+                    if (si.length > 0f) _overrideLen = si.length;
+                }
+                else if (_overrideSeen)
+                {
+                    ClearOverride("stateDone");
+                    return;
+                }
+            }
+            else if (_overrideSeen)
+            {
+                ClearOverride("stateLeft");
+                return;
+            }
+
+            if (IsOverrideOverdue())
+            {
+                _log.Warn("viewmodel.override.timeout",
+                    $"一次性动作 {_overrideState} 已占用 {Time.time - _overrideSetAt:F2}s" +
+                    $"（上限 {OverrideLimit:F2}s）仍未拿到完成回调，Animator 报的是 {CurrentStateName(si)}" +
+                    $"（归一化时间 {si.normalizedTime:F2}）⇒ 强制归位");
+                _overrideTimeoutAt = Time.time;
+                ClearOverride("timeout");
+            }
+        }
+
+        /// <summary>覆盖态允许占用的上限（秒）：片段时长（没读到则 <see cref="OverrideMaxSeconds"/>）+ 宽限。</summary>
+        private float OverrideLimit => (_overrideLen > 0f ? _overrideLen : OverrideMaxSeconds) + OverrideStuckGrace;
+
+        /// <summary>
+        /// 覆盖态是不是**超期未清**（占用时间超过 <see cref="OverrideLimit"/>）。
+        /// 这是"真卡住"的硬判据：判据 J-R6 与逐帧清态两条路都用它，⛔ 不许放宽。
+        /// </summary>
+        private bool IsOverrideOverdue()
+        {
+            if (_overrideState == null) return false;
+            return Time.time - _overrideSetAt > OverrideLimit;
+        }
+
+        /// <summary>状态名是不是换弹那一段（<see cref="CsViewTuning.VmStateReload"/> 的候选表）。</summary>
+        private static bool IsReloadState(string state)
+        {
+            if (state == null) return false;
+            var cand = CsViewTuning.VmStateReload;
+            for (var i = 0; i < cand.Length; i++)
+            {
+                if (string.Equals(cand[i], state, System.StringComparison.Ordinal)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>下发一个覆盖态（一次性动作开始）：记录起点与"片段时长未知"。</summary>
+        private void SetOverride(string state)
+        {
+            _overrideState = state;
+            _overrideSeen = false;
+            _overrideLen = 0f;
+            _overrideSetAt = Time.time;
+            _overrideTimeoutAt = 0f;
+        }
+
+        /// <summary>清掉覆盖态并让下一帧回到 idle；<paramref name="why"/> 只用于诊断读数。</summary>
+        private void ClearOverride(string why)
+        {
+            _overrideClearedBy = why;
+            _overrideState = null;
+            _lastState = null;      // 强制下一帧回到 idle
+        }
+
+        /// <summary>Animator 是否已经真的切到本次覆盖态（跨过 Play 之后那一两帧的陈旧读数）。</summary>
+        private bool _overrideSeen;
+
+        /// <summary>本次覆盖态下发的时刻（诊断 / 兜底判据用）。</summary>
+        private float _overrideSetAt;
+
+        /// <summary>本次覆盖态对应片段的时长（秒；<c>AnimatorStateInfo.length</c>，读到之前为 0）。</summary>
+        private float _overrideLen;
+
+        /// <summary>上一次覆盖态是被哪个口子清的（诊断读数）。</summary>
+        private string _overrideClearedBy;
+
+        /// <summary>一次性动作还没读到片段时长时允许占用的上限（秒）——最长的一次性动作是换弹
+        /// （<c>vm_glock18_reload.anim</c> 2.171s）。</summary>
+        private const float OverrideMaxSeconds = 3f;
+
+        /// <summary>判"该清未清"前在片段时长上再加的宽限（秒）。</summary>
+        private const float OverrideStuckGrace = 0.5f;
+
+        // ==================================================================
+        //  覆盖态读数（判据 J-R5 / J-R6 的原始证据）
+        // ==================================================================
+        /// <summary>把状态机的已知状态名反读出来（诊断用；各视模型控制器的状态名见 <c>CsViewTuning.VmState*</c>）。</summary>
+        private static readonly string[] TraceStates =
+        {
+            "idle", "fire1", "fire2", "fire3", "firelast", "reload", "draw",
+        };
+
+        /// <summary>当前 <see cref="AnimatorStateInfo"/> 对应的状态名；都不匹配 ⇒ <c>&lt;其他&gt;</c>。</summary>
+        private string CurrentStateName(AnimatorStateInfo si)
+        {
+            for (var i = 0; i < TraceStates.Length; i++)
+            {
+                if (si.IsName(TraceStates[i])) return TraceStates[i];
+            }
+            return "<其他>";
+        }
+
+        /// <summary>上一次打进日志的读数（只在读数变化时打一行，避免逐帧刷屏）。</summary>
+        private string _traceKey;
+
+        /// <summary>
+        /// 逐帧读「覆盖态 / Animator 真状态名 / 归一化时间到没到头」，**只在读数变化时**留一行。
+        /// 为什么要它：<c>_overrideState</c> 卡住时，光看"末帧卡住"这个现象分不出卡的是哪一段、
+        /// 状态机当时在报什么；逐帧读数把"清没清、谁清的"变成读得出来的字段。
+        /// </summary>
+        private void TraceOverride()
+        {
+            if (_animator == null) return;
+            var si = _animator.GetCurrentAnimatorStateInfo(0);
+            var cur = CurrentStateName(si);
+            var key = (_overrideState ?? "-") + "|" + cur + "|" + (si.normalizedTime >= 1f ? "1" : "0");
+            if (string.Equals(key, _traceKey, System.StringComparison.Ordinal)) return;
+            _traceKey = key;
+            _log.Always(
+                $"viewmodel.override.trace t={Time.time:F2} over={_overrideState ?? "-"} si={cur} " +
+                $"nT={si.normalizedTime:F2} len={si.length:F2} active={_reloadAnimActive} " +
+                $"clearedBy={_overrideClearedBy ?? "-"} own={Time.time - _overrideSetAt:F2}");
         }
 
         /// <summary>
@@ -270,6 +435,7 @@ namespace Cs16.Module.View
                     // 若这 0.6 s 内又起了一次换弹，UpdateAnim 的播放分支会把 _reloadSettleAt 归零，
                     // 不会把"新一次换弹的覆盖态"误判成"上一次没清"。
                     _reloadSettleAt = Time.time + ReloadSettleDelay;
+                    _reloadSettleArmedAt = Time.time;
                     _reloadSettleSeq = local.ReloadSeq;
                 }
                 return;
@@ -302,22 +468,49 @@ namespace Cs16.Module.View
 
         /// <summary>换弹跑完之后再过 <see cref="ReloadSettleDelay"/> 秒取一次覆盖态样本（判据 J-R6）。</summary>
         private float _reloadSettleAt;
+
+        /// <summary>本次取样窗口的起点（换弹到点那一刻）；用来判"这个窗口内有没有发生过超期强制清"。</summary>
+        private float _reloadSettleArmedAt;
+
         private int _reloadSettleSeq;
         private const float ReloadSettleDelay = 0.6f;
 
+        /// <summary>上一次「超期未清 ⇒ 强制归位」发生的时刻（<see cref="SetOverride"/> 归零）。</summary>
+        private float _overrideTimeoutAt;
+
         /// <summary>
-        /// 必须已经清成 `-`（否则枪定格在换弹末帧）。用 Always：一次换弹只该有一行。
+        /// 判据 J-R6 取样：换弹结束后 <see cref="ReloadSettleDelay"/> 秒。语义是**换弹末帧卡住**，
+        /// 不是"存在任何覆盖态"：
+        /// 红 = 覆盖态仍是换弹那一段（没清），或**任何**覆盖态**超期未清**（<see cref="IsOverrideOverdue"/>，
+        /// 或本窗口内刚发生过超期强制清 ⇒ <c>clearedBy=timeout</c>）——这两条是硬判据，⛔ 不放宽；
+        /// 绿 = 覆盖态已归位（<c>over=-</c>），或已经切到之后才开始、且还在自己片段时长内的合法一次性动作
+        /// （原版开火序列 <c>fire1</c>/<c>fire2</c> 实测 0.775 s &gt; 本取样延迟 0.6 s，撞上属正常行为）。
+        /// 用 Always：一次换弹只该有一行。
         /// </summary>
         private void SettleReload()
         {
             if (_reloadSettleAt <= 0f || Time.time < _reloadSettleAt) return;
             _reloadSettleAt = 0f;
+
+            var over = _overrideState;
+            var stillReload = IsReloadState(over);
+            var timedOutHere = _reloadSettleArmedAt > 0f && _overrideTimeoutAt >= _reloadSettleArmedAt;
+            var overdue = IsOverrideOverdue() || timedOutHere;
+            var red = stillReload || overdue;
+
+            var why = stillReload
+                ? "⛔（覆盖态仍是换弹段 = 换弹末帧卡住，判据 J-R6 红）"
+                : overdue
+                    ? "⛔（覆盖态超期未清 = 卡住，判据 J-R6 红）"
+                    : over == null
+                        ? "（覆盖态已归位 = 判据 J-R6 绿）"
+                        : "（已切到之后的一次性动作、仍在片段时长内 = 判据 J-R6 绿）";
+
             _log.Always(
                 $"viewmodel.reload.settle 换弹结束后 {ReloadSettleDelay:F1}s：seq={_reloadSettleSeq} " +
-                $"over={_overrideState ?? "-"} active={_reloadAnimActive}" +
-                (_overrideState == null
-                    ? "（覆盖态已归位 = 判据 J-R6 绿）"
-                    : "⛔（覆盖态没清 = 换弹末帧卡住，判据 J-R6 红）"));
+                $"over={over ?? "-"} active={_reloadAnimActive} " +
+                $"clearedBy={_overrideClearedBy ?? "-"} own={(over != null ? Time.time - _overrideSetAt : 0f):F2} " +
+                $"len={(over != null ? _overrideLen : 0f):F2} overdue={overdue} " + why);
         }
 
         /// <summary>上一帧走的闸门（闸门切换才留一条日志）。</summary>
@@ -543,8 +736,7 @@ namespace Cs16.Module.View
         {
             _animator = _model != null ? _model.GetComponent<Animator>() : null;
             _anim = null;
-            _overrideState = null;
-            _lastState = null;
+            ClearOverride("newModel");
             _shotIndex = 0;
             _stateWarned = false;
 
@@ -577,7 +769,7 @@ namespace Cs16.Module.View
             if (st != null)
             {
                 _anim.Play(st, 0f);
-                _overrideState = st;
+                SetOverride(st);
             }
             else
             {
@@ -615,11 +807,14 @@ namespace Cs16.Module.View
             if (_animator != null)
             {
                 var si = _animator.GetCurrentAnimatorStateInfo(0);
+                // same=False 就是"这次回调属于上一段剪辑"（陈旧完成）的现场证据。
+                _log.Always(
+                    $"viewmodel.oncomplete over={_overrideState} si={CurrentStateName(si)} " +
+                    $"nT={si.normalizedTime:F2} same={si.IsName(_overrideState)}");
                 if (!si.IsName(_overrideState)) return;   // 这条回调属于上一段剪辑（陈旧完成）
                 if (si.normalizedTime < 1f) return;       // 当前这段还在播
             }
-            _overrideState = null;
-            _lastState = null;      // 强制下一帧回到 idle
+            ClearOverride("oncomplete");
         }
 
         /// <summary>按候选顺序取 Animator 里真实存在的状态（各武器序列命名不统一，实测见回报）。</summary>
@@ -708,7 +903,7 @@ namespace Cs16.Module.View
                 if (st != null)
                 {
                     _anim.Play(st, 0f);
-                    _overrideState = st;
+                    SetOverride(st);
                     _reloadAnimActive = true;
                     _reloadAnimsPlayed++;
                     // 新一次换弹 ⇒ 上一次的"归位取样"作废（否则会把新覆盖态误判成旧的一次没清）。
@@ -751,7 +946,7 @@ namespace Cs16.Module.View
                 _shotIndex = (_shotIndex + 1) % 3;
 
                 var st = ResolveState(cand);
-                if (st != null) { _anim.Play(st, 0f); _overrideState = st; }
+                if (st != null) { _anim.Play(st, 0f); SetOverride(st); }
             }
             _preNextFireTime = local.NextFireTime;
 

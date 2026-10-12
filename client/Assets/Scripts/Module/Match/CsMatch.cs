@@ -60,6 +60,42 @@ namespace Cs16.Module.Match
         public const float FallRecoverY = -6f;
 
         /// <summary>
+        /// 水平方向（|x| 或 |z|）超过它就视为"被推出地图"，拉回一个**轮换过的**出生点。
+        /// 与 <see cref="FallRecoverY"/> 同形，但管的是**水平**越界 —— 垂直掉图有兜底、水平一直没有。
+        ///
+        /// <para><b>依据（实测）</b>：某场 Play 里 4 个 bot（Cliffe/Minh/Gooseman/ZBot）被带到
+        /// <c>x≈-1459, z≈4004</c>（离图数千格）、四点间距恒 <c>1.07m</c>（= 出生点阵型整体被平移），
+        /// 且 <c>Velocity=0</c>：图外是真空，位图全判挡 ⇒ <c>ResolveMove</c> 每帧位移 0 ⇒
+        /// 它们既走不动也回不来，全程"站着"直到回合结束（StuckWarn 只看到"前方 4.2m 内都没有可走的地面"）。
+        /// 而 y 一直正常（-3.25）⇒ 只按 y 判的掉图兜底永不触发。</para>
+        ///
+        /// <para><b>取值 200m</b>：de_dust2 可用范围约 x∈[-64,80] / z∈[-72,60]（位图 origin ≈ (-64,-72)、
+        /// 边长 ≈ 1m）⇒ 200m 已是图对角的两倍以上，正常玩法（含被挤、滑墙、逃逸）不可能达到；
+        /// 取宽是为了**只拦真正的"被推出世界"**，不影响任何合法贴边行为。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航自恢复的安全网，原版 A 无 bot AI）。</para>
+        /// </summary>
+        public const float HorizontalRecoverBound = 200f;
+
+        /// <summary>
+        /// 水平越界判定的**边界外余量**（米）—— 实际判据是"位图包围盒 + 它"，见 <see cref="IsOutOfMapHorizontal"/>。
+        ///
+        /// <para><b>为什么不直接用一个绝对米数</b>：本图包围盒是 x∈[-63,64] / z∈[-72,73]（离线解
+        /// <c>de_dust2.bytes</c> 头部：CellSize=1.0 / Origin=(-63,-10,-72) / Width=127 / Depth=145），
+        /// 而异常位点已经出现过 <c>z=-103.64</c>（**已出图却小于 200m**）⇒ 绝对米数要么拦不住、
+        /// 要么就得收紧到需要逐个地图调参。</para>
+        ///
+        /// <para><b>为什么取 2m</b>：合法的"出格"只有两类 —— ① 角色间推开（量级 ≤
+        /// 2×<see cref="CsConst.PlayerRadius"/> = 0.72m）；② <c>ResolveMove</c> 的"几何放行"通路
+        /// （允许走进"位图判挡但几何有地面"的带，宽度受 <see cref="CsConst.StepUpHeight"/>=0.457m
+        /// 与 1.4m 前探约束）。2m ≈ 5×玩家半径、> 2 格：远大于上述量级，又远小于本次异常（数百米）。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航自恢复的安全网；边界字段来自引擎
+        /// <c>IMapData.CellSize/Origin/Width/Depth</c>）。</para>
+        /// </summary>
+        public const float HorizontalRecoverMarginMeters = 2f;
+
+        /// <summary>
         /// 下落终端速度（米/秒）= 原版引擎的全局速度钳制 <c>sv_maxvelocity</c>。
         ///
         /// <para><b>出处</b>：随包官方配置 <c>原版资源/cs16src/cs16game/app/cstrike/server.cfg:29</c>
@@ -2392,7 +2428,14 @@ namespace Cs16.Module.Match
                 return;
             }
 
-            a.Velocity.y -= CsConst.Gravity * dt;
+            // 一帧重力拆成**前后各半帧**（前一半在这里、后一半在贴地判定之后）：
+            // 原版 `PM_AddCorrectGravity`（`原版资源/hlsdk/pm_shared/pm_shared.c:2559` 调用、`:737`
+            // `velocity[2] -= ent_gravity * gravity * 0.5 * frametime;`）→ 位移 → `PM_FixupGravityVelocity`
+            // （`:2637` 调用、`:756` `velocity[2] -= ent_gravity * gravity * frametime * 0.5;`）。
+            // **中点法**：峰值 = v²/(2g) = 45u = 1.143 m（`PM_Jump` `:2157` `sqrt(2*800*45)`），且与帧率无关。
+            // 整帧一次扣在位移之前（半隐式欧拉）会让峰值少 v·dt/2 —— 1/64 帧差 0.053 m、1/30 帧差 0.114 m，
+            // 于是原版跳得上去的 32u（0.813 m）矮墙我们会跳不上去，且掉帧越多越明显。
+            a.Velocity.y -= CsConst.Gravity * dt * 0.5f;
             if (a.Velocity.y < CsConst.MaxFallSpeed) a.Velocity.y = CsConst.MaxFallSpeed;
             // 原版口径的硬上限（`sv_maxvelocity`，出处见 CsMatchConst.TerminalFallSpeed）：
             // 既有的 CsConst.MaxFallSpeed(-30) 更严格 ⇒ 实际生效的仍是它 —— 这里不放宽既有钳制。
@@ -2541,6 +2584,14 @@ namespace Cs16.Module.Match
                 }
             }
 
+            // 这一帧重力的**后半帧**：原版 `PM_FixupGravityVelocity`
+            // （`原版资源/hlsdk/pm_shared/pm_shared.c:2637` 调用、`:756`
+            // `velocity[2] -= ent_gravity * gravity * frametime * 0.5;`），
+            // 随后才是 `:2640-2643` 的 `if (onground != -1) velocity[2] = 0;` —— **顺序不能反**
+            // （贴地帧必须先补后半帧、再清 0，否则地面帧的竖直速度会留下一个负值）。
+            a.Velocity.y -= CsConst.Gravity * dt * 0.5f;
+            if (a.OnGround) a.Velocity.y = 0f;
+
             a.Position = resolved;
 
             // 掉图兜底：一旦某帧的落体距离超过 SampleGround 的探测深度（默认 8m），就再也探不到地面，
@@ -2563,6 +2614,28 @@ namespace Cs16.Module.Match
                 SetSoftFloor(a.Id, back.y);
             }
 
+            // 水平越界兜底：与上面的掉图兜底同形，管的是**水平**这侧（原先只有垂直有闸）。
+            // 为什么必须补：图外是真空 —— 位图全判挡 ⇒ `ResolveMove` 每帧位移 0 ⇒ 一旦被推出去就
+            // **永远走不回来**。实测某场 4 个 bot（Cliffe/Minh/Gooseman/ZBot）停在 x≈-1459 / z≈4004
+            // （四点间距恒 1.07m = 出生点阵型被整体平移）、Velocity=0，y 却一直正常（-3.25）⇒
+            // 只按 y 判的 fall.recover 永不触发，它们全程"站着"直到回合结束。这里把它们救回来。
+            if (IsOutOfMapHorizontal(a.Position))
+            {
+                var outAt = a.Position;
+                var back = FindRecoverPoint(a, out var verified, "bounds");
+                RateWarn("bounds.recover",
+                    $"{a.Name} 被推出地图（位置 ({outAt.x:F1},{outAt.y:F1},{outAt.z:F1})，" +
+                    $"|x| 或 |z| 超过 {CsMatchConst.HorizontalRecoverBound:F0}m），已拉回 {back}" +
+                    (verified ? "（落点已校验）" : "（⚠️ 无校验通过的候选点，沿用标记点）"));
+                Game.Logger.Info(Tag,
+                    $"{a.Name} 越界恢复：从 ({outAt.x:F2},{outAt.y:F2},{outAt.z:F2}) 拉回到 " +
+                    $"({back.x:F2},{back.y:F2},{back.z:F2})（{a.Team}）");
+                a.Position = back;
+                a.Velocity = Vector3.zero;
+                a.OnGround = false;
+                SetSoftFloor(a.Id, back.y);
+            }
+
             // ── 落地结算（坠落伤害）────────────────────────────────────────────
             // 原版只在 `FL_ONGROUND` 由假变真的那一帧结算一次（消费完 `flFallVelocity` 立即清零）
             // ⇒ 这里同样只看 0→1 边沿，⛔ 不是每帧扣。放在掉图兜底之后：兜底会把 OnGround 置回 false，
@@ -2579,6 +2652,33 @@ namespace Cs16.Module.Match
         /// 出处与后果见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>。
         /// </summary>
         private static bool IsStandableGround(Vector3 normal) => normal.y >= CsConst.MaxStandableSlopeNormalZ;
+
+        /// <summary>
+        /// 这个位置是不是已经**出了地图**（水平）—— 按**位图包围盒 + <see cref="CsMatchConst.HorizontalRecoverMarginMeters"/>
+        /// 余量**判，而不是"绝对米数"。
+        ///
+        /// <para>口径来源：引擎 <c>IMapData</c> 暴露的 <c>CellSize / Origin / Width / Depth</c>
+        /// （客户端 <c>Game.Map</c> 直接可读，与 <c>CsMap.WalkableAt</c> 用的是同一个对象）。
+        /// 地图不可用（未加载）时退回绝对阈值 <see cref="CsMatchConst.HorizontalRecoverBound"/> 兜底 ——
+        /// 那时没有边界可信，宁可放宽也不要拿"猜的边界"把合法位置判成越界。</para>
+        /// </summary>
+        private bool IsOutOfMapHorizontal(Vector3 pos)
+        {
+            var m = Game.Map;
+            if (m == null || !m.Loaded)
+            {
+                return Mathf.Abs(pos.x) > CsMatchConst.HorizontalRecoverBound
+                    || Mathf.Abs(pos.z) > CsMatchConst.HorizontalRecoverBound;
+            }
+
+            var o = m.Origin;
+            var w = m.Width * m.CellSize;
+            var d = m.Depth * m.CellSize;
+            const float margin = CsMatchConst.HorizontalRecoverMarginMeters;
+
+            return pos.x < o.x - margin || pos.x > o.x + w + margin
+                || pos.z < o.z - margin || pos.z > o.z + d + margin;
+        }
 
         // ---- 角色间推开的临时数组（每个 CsActor 一个圆；按帧复用，不在每帧路径上分配）----
         private readonly CsActorSeparation.ActorCircle[] _sepScratch =
@@ -2733,7 +2833,12 @@ namespace Cs16.Module.Match
         /// 每次都用**同一个点**，一旦那个点正好是坏点（标记悬空 / 压在建筑里）就成了
         /// "掉 → 拉回坏点 → 再掉"的死循环（`a.Id % 点数` 是确定性的，见 <see cref="FindSpawnPoint"/>）。</para>
         /// </summary>
-        private Vector3 FindRecoverPoint(CsActor a, out bool verified)
+        /// <param name="why">
+        /// 触发这条恢复的原因标签（"fall" = 垂直掉图 / "bounds" = 水平越界）。只用于**留痕**：
+        /// 两条路径若不分开，就会共用同一个 <c>RateWarn</c> key 而互相压制（垂直那条先报过之后，
+        /// 水平越界的留痕要被压到每 <c>LogRateEvery</c> 次才出一条，文案还写着"掉图恢复"）。
+        /// </param>
+        private Vector3 FindRecoverPoint(CsActor a, out bool verified, string why = "fall")
         {
             verified = false;
 
@@ -2758,9 +2863,9 @@ namespace Cs16.Module.Match
             // 一个候选都没校验通过（例如标记表整体不可信）⇒ 回到标记 Y ——
             // 它仍是 BSP 脚底，比"继续往外掉"好得多，但必须留痕。
             var fallback = pts[start];
-            RateWarn("spawn.recover.unverified",
-                $"掉图恢复：{pts.Length} 个候选出生点没有一个能探到与标记 Y 一致的面，沿用标记点 " +
-                $"({fallback.x:F1},{fallback.y:F1},{fallback.z:F1})（{a.Name}）");
+            RateWarn("spawn.recover.unverified." + why,
+                $"{(why == "bounds" ? "越界恢复" : "掉图恢复")}：{pts.Length} 个候选出生点没有一个能探到" +
+                $"与标记 Y 一致的面，沿用标记点 ({fallback.x:F1},{fallback.y:F1},{fallback.z:F1})（{a.Name}）");
             return fallback;
         }
 

@@ -341,8 +341,13 @@ namespace Cs16.EditorTools
                 weights[i] = new BoneWeight { boneIndex0 = bi, weight0 = 1f };
             }
 
+            // 双面展开 + **副本顶点沿法线外移极小量**（见 ExpandDoubleSided）：这一步会**追加 n 个副本顶点**，
+            // 所以必须在"赋给 mesh"之前做完（否则 mesh.vertices 与索引对不上）。
+            var indices = ExpandDoubleSided(sub.Tris, ref verts, ref uvs, ref norms, ref weights, skinned);
+
             mesh.Clear();
-            if (n > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
+            var total = verts.Length;
+            if (total > 65000) mesh.indexFormat = UnityEngine.Rendering.IndexFormat.UInt32;
             mesh.vertices = verts;
             mesh.uv = uvs;
             mesh.normals = norms;
@@ -351,7 +356,7 @@ namespace Cs16.EditorTools
                 mesh.boneWeights = weights;
                 mesh.bindposes = bindposes;
             }
-            mesh.triangles = ExpandDoubleSided(sub.Tris);
+            mesh.triangles = indices;
             mesh.RecalculateBounds();
         }
 
@@ -408,28 +413,71 @@ namespace Cs16.EditorTools
         }
 
         /// <summary>
-        /// 三角形正反各一份（几何层面的双面）。
-        /// <para>MDL 的三角形是 tristrip 命令流（<c>hlsdk/utils/studiomdl/tristrip.c::BuildTris</c>），
-        /// 条带里相邻三角形绕序交替；<c>cs16_build.py</c> 按"顺序取三点"解出后绕序被拉平
-        /// （实测与 MDL 自带法线的同向率只有 44%~52%、且逐对严格交替）。
-        /// 条带边界在 <c>.cs16anim</c> 里没有保留 ⇒ 无法在生成器里可靠还原绕序；
-        /// 而 Unity 内置 Standard 着色器**没有 `_Cull` 材质属性**（实测），关不掉背面剔除。
-        /// 双面展开对观感无损（背面那份与正面共面、被 Z 缓冲挡住），
-        /// 受光仍用 MDL 自带的外向法线。</para>
+        /// 双面展开的副本相对正片的**外移量**（米）。
+        ///
+        /// <para><b>为什么必须有它（0 = 共面 = 前面那个 bug）</b>：副本与正片**同顶点、同深度**时，
+        /// 深度缓冲分不出谁在前 ⇒ 哪一片赢取决于浮点精度 ⇒ **随机碎片化的破洞 + 能透过身体看到背景**
+        /// （用户报的"像个沥水框，全是洞"就是它）。0.002 m 肉眼不可见，但足以让深度缓冲把两片
+        /// 稳定分开（正面恒在前、副本恒在后）。</para>
         /// </summary>
-        private static int[] ExpandDoubleSided(uint[] tris)
+        private const float DoubleSidedOffsetMeters = 0.002f;
+
+        /// <summary>
+        /// 三角形正反各一份（几何层面的双面），**副本顶点沿法线外移 <see cref="DoubleSidedOffsetMeters"/>**。
+        ///
+        /// <para><b>为什么是"几何展开"而不是"关背面剔除"</b>：MDL 的三角形是 tristrip 命令流
+        /// （<c>hlsdk/utils/studiomdl/tristrip.c::BuildTris</c>），条带里相邻三角形绕序交替；
+        /// <c>cs16_build.py</c> 按"顺序取三点"解出后绕序被拉平（实测与 MDL 自带法线的同向率只有
+        /// 44%~52%、且逐对严格交替），条带边界在 <c>.cs16anim</c> 里没有保留 ⇒ 无法可靠还原绕序；
+        /// 而 Unity 内置 Standard 着色器**没有 `_Cull` 材质属性**（实测）⇒ 关不掉背面剔除。</para>
+        ///
+        /// <para><b>代价</b>：顶点数翻倍（三角形本来就翻倍）。受光仍用 MDL 自带的外向法线。</para>
+        /// </summary>
+        /// <param name="tris">源三角形索引（每 3 个一个面）。</param>
+        /// <param name="verts">顶点表（**会被替换成"正片 + 副本"两份**）。</param>
+        /// <param name="uvs">UV 表（同上）。</param>
+        /// <param name="norms">法线表（跟上，副本**沿用**原法线 —— 受光口径不变）。</param>
+        /// <param name="weights">蒙皮权重表（同上；静态网格传 <c>null</c>）。</param>
+        /// <param name="skinned">是否蒙皮网格（决定要不要复制权重表）。</param>
+        private static int[] ExpandDoubleSided(uint[] tris, ref Vector3[] verts, ref Vector2[] uvs,
+                                               ref Vector3[] norms, ref BoneWeight[] weights, bool skinned)
         {
             if (tris == null || tris.Length < 3) return new int[0];
+
+            var n = verts.Length;
+            var v2 = new Vector3[n * 2];
+            var u2 = new Vector2[n * 2];
+            var nr2 = new Vector3[n * 2];
+            var w2 = skinned ? new BoneWeight[n * 2] : null;
+
+            for (var i = 0; i < n; i++)
+            {
+                var nrm = norms[i].sqrMagnitude > 1e-8f ? norms[i].normalized : Vector3.up;
+                v2[i] = verts[i];
+                v2[i + n] = verts[i] + nrm * DoubleSidedOffsetMeters;   // 副本：沿法线外移
+                u2[i] = uvs[i];
+                u2[i + n] = uvs[i];
+                nr2[i] = norms[i];
+                nr2[i + n] = norms[i];                                   // 法线不偏移（受光不变）
+                if (skinned)
+                {
+                    w2[i] = weights[i];
+                    w2[i + n] = weights[i];
+                }
+            }
+
             var outIdx = new int[tris.Length * 2];
             for (int i = 0, j = 0; i + 2 < tris.Length; i += 3, j += 6)
             {
                 outIdx[j] = (int)tris[i];
                 outIdx[j + 1] = (int)tris[i + 1];
                 outIdx[j + 2] = (int)tris[i + 2];
-                outIdx[j + 3] = (int)tris[i];
-                outIdx[j + 4] = (int)tris[i + 2];
-                outIdx[j + 5] = (int)tris[i + 1];
+                outIdx[j + 3] = (int)tris[i] + n;          // 副本：用外移过的顶点，且绕序反向
+                outIdx[j + 4] = (int)tris[i + 2] + n;
+                outIdx[j + 5] = (int)tris[i + 1] + n;
             }
+
+            verts = v2; uvs = u2; norms = nr2; weights = w2;
             return outIdx;
         }
 

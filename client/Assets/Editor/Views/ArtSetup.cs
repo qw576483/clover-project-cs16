@@ -223,6 +223,23 @@ namespace Cs16.EditorTools
         // ==================================================================
         //  只读自检
         // ==================================================================
+        /// <summary>
+        /// **只重建网格资产**（<c>Art/Mesh/*.asset</c> **就地覆盖**，GUID 与预制体引用都不变），
+        /// 不动材质 / 动画 / 预制体。
+        ///
+        /// <para>用途：改了"网格怎么建"的口径后（例如 <c>AnimSetup.ExpandDoubleSided</c> 的
+        /// 双面副本外移量），不必跑整棵资产树（<c>Art</c> 下 4000+ 文件、会顺带重写预制体），
+        /// 只把网格刷一遍就能验证。可被 <c>unity command run_script</c> 直接调用（public static）。</para>
+        /// </summary>
+        [MenuItem("Clover/CS16/只重建网格（就地覆盖）", false, 33)]
+        public static void RebuildMeshesOnly()
+        {
+            var n = AnimSetup.RebuildMeshAssetsFromModelData(ModelDataDir, out var report);
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"{LogTag} 只重建网格：{n} 块\n{report}");
+        }
+
         [MenuItem("Clover/CS16/校验视图与音效资源（只读）", false, 31)]
         public static void Verify()
         {

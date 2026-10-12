@@ -5,6 +5,7 @@ using Cs16.Module.Audio;
 using Cs16.Module.CameraRig;
 using Cs16.Module.Match;
 using Cs16.Module.Player;
+using Cs16.Module.View;
 using UnityEngine;
 
 namespace Cs16.Module.Combat
@@ -42,6 +43,13 @@ namespace Cs16.Module.Combat
 
         private ICsMatch _match;
         private FirstPersonCamera _view;
+
+        /// <summary>
+        /// 当前活着的战斗模块（装配点唯一）。供 <c>ActorView</c> 把"别的角色开火了"这条信号送进来做
+        /// 第三人称枪口表现 —— 射击队列只带武器 id、不带射手（<see cref="ICsMatch.ConsumeShotFired"/>），
+        /// 射手只能由视图侧给。取不到就是 null，取用方自己判空。
+        /// </summary>
+        public static CombatModule Instance { get; private set; }
 
         // ---- 本帧输入快照（必须在模拟 Tick 之前取）----
         private bool _fireRequested;
@@ -89,6 +97,7 @@ namespace Cs16.Module.Combat
         {
             _match = match;
             _view = view;
+            Instance = this;
             _fx.Init();
             _nades.Init(_fx);
 
@@ -151,6 +160,7 @@ namespace Cs16.Module.Combat
 
         private void OnDestroy()
         {
+            if (Instance == this) Instance = null;
             if (_match != null) _match.OnBulletHit -= OnBulletHit;
             _nades.Dispose();
             _fx.Dispose();
@@ -507,6 +517,38 @@ namespace Cs16.Module.Combat
             _log.Warn("shot.unmatched",
                 $"本地射击未被队列确认（第 {_unmatchedShotCount} 次）：手持={_preWeapon ?? "null"} " +
                 $"本帧消费={consumed} 条，本发不做射线（避免打到别人的记录上）");
+        }
+
+        /// <summary>
+        /// 别的角色开火时的**世界空间**枪口表现（枪口火焰）：落点 = 射手的枪口节点
+        /// （<c>ActorView.TryGetMuzzle</c>；位置逐武器来自原版 <c>models/p_*.mdl</c> 的枪口骨）。
+        ///
+        /// <para><b>为什么由视图侧驱动</b>：射击记录只带武器 id、不带射手
+        /// （<see cref="ICsMatch.ConsumeShotFired"/>），这里拿不到"这一发是谁打的"；
+        /// 而 <c>ActorView</c> 侧本来就有逐 actor 的权威开火信号（<c>CsActor.NextFireTime</c> 前推，
+        /// 它也是那里播 <c>ref_shoot_*</c> 的判据）。</para>
+        ///
+        /// <para><b>与本地玩家不重叠</b>：本地那一发走 <see cref="HandleLocalShot"/> 的第一人称路径；
+        /// <c>ActorView</c> 对自己（<c>IsLocal</c>）不调本方法。</para>
+        /// </summary>
+        internal void FxRemoteShot(ActorView shooter, string weaponId)
+        {
+            if (shooter == null || string.IsNullOrEmpty(weaponId)) return;
+            var def = CsWeapons.Get(weaponId);
+            if (def == null) return;
+            // 原版只有"开枪"才有枪口火焰：刀 / 手雷 / C4 都没有。
+            if (def.Class == CsWeaponClass.Knife || def.Class == CsWeaponClass.Grenade ||
+                def.Class == CsWeaponClass.Bomb) return;
+
+            if (!shooter.TryGetMuzzle(out var pos, out _))
+            {
+                _log.Warn("shot.remote.nomuzzle",
+                    $"角色视图「{shooter.name}」开火时还没有枪口节点（武器模型尚未挂上），本发没有火光");
+                return;
+            }
+            _log.Info("shot.remote.flash",
+                $"角色视图「{shooter.name}」开火：武器 {weaponId} 枪口世界坐标 {pos} → 第三人称枪口火焰");
+            _fx.MuzzleFlashWorld(pos, weaponId);
         }
 
         private void HandleLocalShot(string weaponId, CsActor local, Vector3 eye, Vector3 aim, ICsMatch match)

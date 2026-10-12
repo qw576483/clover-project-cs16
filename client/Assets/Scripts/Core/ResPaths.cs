@@ -361,6 +361,18 @@ namespace Cs16.Core
         public const string DecalAlphaClipShader = "Shaders/CsDecalAlphaClip";
 
         /// <summary>
+        /// 枪口火焰贴片用的**加色**精灵着色器（真实文件 <c>Resources/Shaders/CsFxAdditive.shader</c>）。
+        ///
+        /// <para><b>为什么必须要它</b>：原版四张枪口火焰载体 <c>sprites/muzzleflash{1,2,3,4}.spr</c>
+        /// 的 <c>textureFormat</c> 全是 <c>1</c> = <b>SPR_ADDITIVE</b>（逐张读表头，见
+        /// <c>tools/probes/spr-extract.py</c> 的断言），即原版把这张图的亮度**加到背景上**；
+        /// <c>SpriteRenderer</c> 自带的 <c>Sprites/Default</c> 是 alpha 混合，把亮斑与背景做插值
+        /// ⇒ 火焰在明亮地面上的读感被拉平（实测单帧只多 ~150 个近白像素、肉眼不可辨）。
+        /// 与 <see cref="DecalAlphaClipShader"/> 同一处置：走 Resources（⛔ 不用 <c>Shader.Find</c>）。</para>
+        /// </summary>
+        public const string FxAdditiveShader = "Shaders/CsFxAdditive";
+
+        /// <summary>
         /// 菜单背景拼图**目录前缀**（注意带尾斜杠；真实文件 <c>Resources/Background/*.tga</c>）。
         /// 用法固定是"前缀 + 短名"，与 <see cref="SoundSfxPrefix"/> 同款（不改调用点语义）。
         /// </summary>

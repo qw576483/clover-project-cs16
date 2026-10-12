@@ -559,5 +559,38 @@ namespace Cs16.Module.Bot
         /// 回合中途加入的 bot 造成的重合，而 28 对比较/tick 的开销可忽略。
         /// 出处：**本项目新增**（A 无 bot AI，同差异 #67）。</summary>
         public const float RouteAuditIntervalSeconds = 1f;
+
+        /// <summary>
+        /// 路线审计那两条 Warn（"同队路线撞车" / "同队非分工路线共用"）的**日志**降频间隔（秒）。
+        ///
+        /// <para><b>为什么需要</b>：<see cref="RouteAuditIntervalSeconds"/> = 1s，审计每次**逐对**比较
+        /// 4 个槽位 ⇒ 一旦真的撞车，同一秒内会打出最多 6 条 Warn（原先没有闸）。而
+        /// <c>CsBotBrain.TryRouteObjective</c> 的"最后一档兜底"会**有意**点开被队友占着的家族
+        /// （无空家族 + 本槽位换不出目标点时的自恢复），撞车对随之为真 ⇒ 不打闸就是刷屏。</para>
+        ///
+        /// <para>计数（<c>BotModule.RouteCollisionPairs</c> / <c>RouteOffPlanPairs</c>）**照旧逐对累计**，
+        /// 这里只限速日志 —— 判据与可见性都不动。</para>
+        ///
+        /// <para>取值 10s：比审计间隔密一个量级就够抓"何时开始撞"，而 10s 一条对排查足够；
+        /// 出处：**本项目新增**（日志降频口径）。</para>
+        /// </summary>
+        public const float RouteCollisionWarnIntervalSeconds = 10f;
+
+        /// <summary>
+        /// 逃逸跑道的地面预检允许的**最大下降量**（米）：预检点在"该方向 <see cref="EscapeRunwayStep"/>×2"
+        /// 处，命中地面比脚下低超过它 ⇒ 这个方向不算跑道。
+        ///
+        /// <para><b>为什么不能取 <see cref="CsConst.StepUpHeight"/>(0.457)</b>：那等于"1.4m 水平内下降
+        /// 超过 0.457m 就否"，换算成坡度是 <b>&gt; 18.1° 一律否</b> —— 而本图有大量 20~30° 斜坡
+        /// （T 出生坡道 / 中路 / A 大道），还有"从箱顶/矮墙朝地面走"这类**物理本来就走得下去**的形态。
+        /// 更糟的是预检只在 `run &lt;= 0`（位图沿该向全判挡）时生效，而坡道/台沿正是"位图误挡"的原用例
+        /// 多发地带 ⇒ 会把本方法要救的情形误杀，退回"位图说挡就原地不动"。</para>
+        ///
+        /// <para><b>为什么取 1.2m</b>：≈ 一个箱子高（<c>0.9~1.2m</c>），足以放行坡道与矮台下落，
+        /// 又明显小于本图**图内层间落差 6.8m**，更拦得住"图外真空/下整层"这类真正的假跑道。</para>
+        ///
+        /// <para>出处：**本项目新增**（导航自恢复实现参数，原版 A 无 bot AI）。</para>
+        /// </summary>
+        public const float EscapeRunwayMaxStepDown = 1.2f;
     }
 }

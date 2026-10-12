@@ -305,6 +305,13 @@ namespace Cs16.Module.Map
         }
 
         /// <summary>
+        /// 该点正下方有没有**真实地面**（往下 <see cref="TrySampleGround"/> 的默认探查距离内命中几何）。
+        /// <para>用途：把"图外/真空"与"位图判挡但脚下有地"分开 —— 前者不许作为几何放行的依据
+        /// （见 <see cref="ResolveMoveCore"/> 里几何放行那一段的注释）。</para>
+        /// </summary>
+        private bool HasGroundUnder(Vector3 pos) => TrySampleGround(pos, out _, out _);
+
+        /// <summary>
         /// 身体高度带复核 = **整身体积（一次，中心）** + **9 点零宽射线**（中心 + 8 向）：
         /// <list type="number">
         /// <item><see cref="BodyVolumeBlocked"/>：以玩家半径的胶囊覆盖身高带 —— 抓"身体被实体占据"
@@ -473,8 +480,11 @@ namespace Cs16.Module.Map
             Action<int, Vector3, Vector3, Vector3> trace, float radius = CsConst.PlayerRadius)
             => ResolveMoveCore(from, to, radius, trace);
 
+        /// <param name="allowStepUpWalk">是否允许"抬起一个台阶再走一遍"的第二遍（见方法末尾）。
+        /// 第二遍自己再调本方法时必须传 <c>false</c> —— 否则被钳住时会无限递归。</param>
         private Vector3 ResolveMoveCore(Vector3 from, Vector3 to, float radius,
-                                        Action<int, Vector3, Vector3, Vector3> trace)
+                                        Action<int, Vector3, Vector3, Vector3> trace,
+                                        bool allowStepUpWalk = true)
         {
             if (!IsLoaded)
             {
@@ -550,8 +560,15 @@ namespace Cs16.Module.Map
                     }
                 }
                 var probe = new Vector3(want.x, cur.y, want.z);
+                // 放行的**第一道闸必须是"这里有真实地面"**：位图外的世界是**空的**（没有几何），
+                // BodyHeightClear 对真空一律通畅、GroundWithinStep 对"探不到地面"也不否决 ⇒ 两条都通过 ⇒
+                // 这一段每帧都放行 ⇒ 角色被逃逸/滑墙带着**走出地图**（实测 bot 被带到 (-483,-177)，
+                // 离图 480 m；出图后 SampleGround 恒为 -inf ⇒ 高度一致性层失效 ⇒ A* 起点吸附失败 ⇒
+                // 路径永远求不出 ⇒ 退化成直线走 ⇒ 卡死）。位图外 WalkableAt=false 只说明"不可走"，
+                // 拦不住这条几何放行通路，所以这里用"正下方有没有地面"把真空与真实地面分开。
+                // 跳跃/下落的帧不受影响：8 m 探查范围内脚下必有地面（跳跃高度约 1.2 m）。
                 if (!advanced && cur.x == prev.x && cur.z == prev.z &&
-                    BodyHeightClear(probe, radius) && GroundWithinStep(probe))
+                    HasGroundUnder(probe) && BodyHeightClear(probe, radius) && GroundWithinStep(probe))
                 {
                     cur = probe;
                     curDepth = 0f;                   // 放行判据本身要求身高带干净（体积不重叠）
@@ -560,7 +577,54 @@ namespace Cs16.Module.Map
                 // 两轴都推不动 ⇒ 直线上更远的点都必须先穿过这一段（那正是要禁掉的跨步），本帧到此为止
                 if (cur.x == prev.x && cur.z == prev.z) break;
             }
-            return new Vector3(cur.x, to.y, cur.z);
+            var straight = new Vector3(cur.x, to.y, cur.z);
+
+            // ── 台阶「抬着走」（原版 `PM_WalkMove` 的 usedown 口径：贴地走一遍 + 抬起 STEPSIZE 再走一遍、
+            //    取走得更远的那个；本工程自己引它见 Module/Match/CsMatch.cs 的台阶上抬探测注释）。
+            //    上面那遍只做了"抬腿的**判**"（<see cref="TryStepUp"/> 放行这一次水平推进），没做"抬腿的**走**"：
+            //    水平推进到台阶侧面后，胶囊在**旧脚高**下钻进台阶实体 ⇒ 下面的深度闸门撤销该段 ⇒ 净位移 0。
+            //    实机形态：B 通那道 0.406 m 台阶（≤ StepUpHeight，原版与本工程几何逐点一致）上 T 方 bot 永久卡死。
+            //    只有"第一遍真的在某轴上被钳住"时才做第二遍 ⇒ 正常帧零额外扫掠（帧时间不变）。
+            if (allowStepUpWalk)
+            {
+                var wantFlat = new Vector2(to.x - from.x, to.z - from.z);
+                var gotFlat = new Vector2(straight.x - from.x, straight.z - from.z);
+                if (wantFlat.sqrMagnitude > 1e-8f && gotFlat.sqrMagnitude < wantFlat.sqrMagnitude - 1e-6f)
+                {
+                    var liftY = from.y + CsConst.StepUpHeight;
+                    var lifted = ResolveMoveCore(new Vector3(from.x, liftY, from.z),
+                                                 new Vector3(to.x, liftY, to.z), radius, trace, false);
+                    var liftedFlat = new Vector2(lifted.x - from.x, lifted.z - from.z);
+                    if (liftedFlat.sqrMagnitude > gotFlat.sqrMagnitude + 1e-6f)
+                    {
+                        // 采纳条件（缺一不可）：① 抬高处推进更多（上面已判）；
+                        //   ② 落点地面必须 ∈ [脚面, 脚面 + <see cref="CsConst.StepUpHeight"/>]；
+                        //   ③ 落点可站（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）；
+                        //   ④ 落点体积不被其它实体占（<see cref="BodyVolumeBlocked"/>）。
+                        //
+                        //   ⚠️ 地面探测的**射线起点必须在台阶顶之上**：<see cref="TrySampleGround"/> 是从
+                        //   `pos.y + GroundCheckDistance` 朝下打（见本文件 :673-676）。拿**原始脚高**去探，
+                        //   起点会落在台阶实体内部 ⇒ PhysX（queriesHitBackfaces=false）不给交点 ⇒ -inf ⇒ 漏检
+                        //   （同一形态见 BotNavigator.BuildHeightReach 的 -inf 退化分支）。
+                        var probe = new Vector3(lifted.x, liftY, lifted.z);
+                        if (TrySampleGround(probe, out var gp, out var gn,
+                                            CsConst.StepUpHeight + CsConst.GroundCheckDistance)
+                            && gp.y >= from.y - 1e-4f
+                            && gp.y - from.y <= CsConst.StepUpHeight
+                            && gn.y >= CsConst.MaxStandableSlopeNormalZ
+                            && !BodyVolumeBlocked(new Vector3(lifted.x, gp.y, lifted.z)))
+                        {
+                            // 只采纳**水平**位移：y 仍照本方法的契约用 `to.y`，抬高后的贴地由调用方
+                            // CsMatch.StepActorPhysics 的"常规贴地落空 ⇒ 抬一个台阶再探"分支收尾。
+                            WarnOnce("move.stepupwalk",
+                                "上台阶：抬起一个 StepUpHeight 再走一遍并采纳水平位移（原版 PM_WalkMove usedown 口径）");
+                            return new Vector3(lifted.x, to.y, lifted.z);
+                        }
+                    }
+                }
+            }
+
+            return straight;
         }
 
         /// <summary>走一小步（≤0.25m）：分轴滑墙（先 X 后 Z）+ 台阶。</summary>

@@ -134,6 +134,14 @@ namespace Cs16.Module.Combat
         private bool _decalMatWarned;
 
         /// <summary>
+        /// 枪口火焰贴片用的加色材质（由 <see cref="ResPaths.FxAdditiveShader"/> 现造一次，
+        /// 出处见该常量的注释：载体 <c>textureFormat = 1 = SPR_ADDITIVE</c>）。取不到时为 null
+        /// ⇒ 火焰退回 <c>Sprites/Default</c>（alpha 混合，只在远景下对比度差些，不会看不见）。
+        /// </summary>
+        private Material _fxAdditiveMat;
+        private bool _fxAdditiveWarned;
+
+        /// <summary>
         /// 贴片"自带"的那份材质（<c>AddComponent&lt;SpriteRenderer&gt;</c> 时 Unity 给的默认件，
         /// 名为 <c>Sprites-Default</c> / 着色器 <c>Sprites/Default</c>）：贴片每次从池里借出都复位成它。
         /// </summary>
@@ -143,9 +151,6 @@ namespace Cs16.Module.Combat
         private readonly List<string> _puffFrames = new List<string>(CsCombatTuning.BloodSprayMinCount);
 
         // ---- 颜色 ----
-        /// <summary>枪口点光色（原版 spr 是暖白偏黄，照亮近处墙面）。</summary>
-        private static readonly Color FlashColor = new Color(1f, 0.93f, 0.62f, 1f);
-
         /// <summary>
         /// 血雾贴片的染色 = 原版血液载体的基色 **#8B0000 (139,0,0)**。
         ///
@@ -224,6 +229,9 @@ namespace Cs16.Module.Combat
             // 材质在这里现造一次并设死 _Cutoff，之后所有墙上的贴花共用它。
             res.LoadAsset<Shader>(ResPaths.DecalAlphaClipShader, s => _decalMat = BuildDecalMaterial(s));
 
+            // 枪口火焰的加色材质：同一条路（Resources 里的 .shader，⛔ 不是 Shader.Find）。
+            res.LoadAsset<Shader>(ResPaths.FxAdditiveShader, s => _fxAdditiveMat = s != null ? new Material(s) : null);
+
             // 弹痕五变体：按 ResPaths 的**字面量 key 表**逐个加载（不拼串：拼出来的 key
             // 在静态扫描里看不见 ⇒ 闸门 coverage-diff/D1 会把这些贴图判成"文件在盘上但无人读"）。
             for (var i = 0; i < ResPaths.FxBulletHoleKeys.Length; i++)
@@ -294,6 +302,13 @@ namespace Cs16.Module.Combat
             if (_decalMatWarned) return;
             _decalMatWarned = true;
             _log.Warn("fx.decal.material", message);
+        }
+
+        private void WarnAdditiveOnce(string message)
+        {
+            if (_fxAdditiveWarned) return;
+            _fxAdditiveWarned = true;
+            _log.Warn("fx.additive.material", message);
         }
 
         /// <summary>从一组贴图里**均匀随机**取一张非空的（原版是五变体随机；不用"最旧的一张"之类的假随机）。</summary>
@@ -431,13 +446,34 @@ namespace Cs16.Module.Combat
         /// <param name="weaponId">当前武器 id（决定轴向距离 / 尺寸 / 时长，以及用哪张原版贴图；未知/为空走默认档）</param>
         public void MuzzleFlash(Vector3 eyePosition, Quaternion viewRotation, string weaponId)
         {
+            SpawnMuzzleFlash(
+                eyePosition + viewRotation * new Vector3(
+                    CsCombatTuning.MuzzleLateral(weaponId),
+                    CsCombatTuning.MuzzleVertical(weaponId),
+                    CsCombatTuning.MuzzleForward(weaponId)),
+                weaponId);
+        }
+
+        /// <summary>
+        /// **世界坐标版**枪口火焰：落点由调用方直接给世界位置（第三人称 = 射手的枪口节点，
+        /// 见 <c>ActorView.TryGetMuzzle</c>）。
+        ///
+        /// <para>与 <see cref="MuzzleFlash"/> 的差别**只有落点怎么算**：贴图 / 尺寸 / 时长 / 点光
+        /// 是同一套 —— 逐武器的那些量都出自 <see cref="CsCombatTuning"/>，与"谁在看"无关。</para>
+        /// </summary>
+        public void MuzzleFlashWorld(Vector3 worldPosition, string weaponId)
+        {
+            SpawnMuzzleFlash(worldPosition, weaponId);
+        }
+
+        /// <summary>枪口火焰的唯一实现（<see cref="MuzzleFlash"/> / <see cref="MuzzleFlashWorld"/> 共用）。</summary>
+        private void SpawnMuzzleFlash(Vector3 pos, string weaponId)
+        {
             var radial = CsCombatTuning.MuzzleLateral(weaponId);
             var vertical = CsCombatTuning.MuzzleVertical(weaponId);
             var forward = CsCombatTuning.MuzzleForward(weaponId);
             var sizeMeters = CsCombatTuning.MuzzleFlashSize(weaponId);
             var duration = CsCombatTuning.MuzzleFlashDuration(weaponId);
-
-            var pos = eyePosition + viewRotation * new Vector3(radial, vertical, forward);
 
             var sprite = PickMuzzleFlash(weaponId);
 
@@ -448,18 +484,23 @@ namespace Cs16.Module.Combat
             item.Sprite.sprite = sprite;
             item.Sprite.enabled = sprite != null;
             item.Billboard = true;
+            // 加色（出处 = 载体 textureFormat = SPR_ADDITIVE，见 CsFxAdditive.shader 头）：
+            // 材质取不到就保持池里复位过的 Sprites/Default，只报一次。
+            if (_fxAdditiveMat != null) item.Sprite.sharedMaterial = _fxAdditiveMat;
+            else WarnAdditiveOnce($"枪口火焰加色着色器缺失：Resources/{ResPaths.FxAdditiveShader}.shader（退回 alpha 混合）");
             // 必须按贴片自己的宽度反算倍率（见 SpriteScaleForMeters）：直接写米会小 1/PPU 倍。
             item.Tr.localScale = Vector3.one * SpriteScaleForMeters(sprite, sizeMeters);
             if (sprite == null) WarnSpriteOnce($"枪口火焰贴图缺失：Resources/{ResPaths.FxMuzzleFlash}.png（只保留点光）");
 
-            if (item.Light != null)
-            {
-                // 点光**要**开：原版枪口火焰同时照亮近处墙面，是第一人称里最主要的"开枪了"读感。
-                item.Light.enabled = true;
-                item.Light.color = FlashColor;
-                item.Light.range = 8f;
-                item.Light.intensity = 4f;
-            }
+            // 枪口**不带点光**。出处：原版 muzzle flash 例程（`原版资源/cs16src/hw.dll`，VA 0x1D30BF0）
+            // 写下的那条记录只有三个旋钮 —— 白（0x1D30C99–0x1D30CBD 连写 `0xFF`×3）、存活 0.01 s
+            // （`[0x1E498A0]` = f64 0.01）、`scale = (arg/10) × 0.1`（`[0x1E49910]`，默认 0.5f）
+            // —— **没有强度 / 半径 / 衰减**这类点光参数。本工程此前那盏 `Light`（intensity 4 / range 8）
+            // 没有任何载体出处，实机上把开火那一帧打成一屏近白（1.0 m 机位近白占屏 55%、mean 200.7，
+            // 同机位基线 0~33 / 47.5~102.8），而原版录像同一次开火的整帧亮度增量只有 +34%
+            // ⇒ 按"写不出出处的量不许进工程"去掉；火焰的读感由**加色贴片**承担。
+            // 缺口与两侧读数登记：`策划/差异登记.tsv` #178。
+            if (item.Light != null) item.Light.enabled = false;
 
             // 可核对字段（判据 = flashAxial / flashSize / flashDur 逐武器**不恒定**、且 flashAxial 不小于
             // 该武器枪口轴向距离）：落点落在枪身几何之内时"没有火焰"，只看得见这三个数。

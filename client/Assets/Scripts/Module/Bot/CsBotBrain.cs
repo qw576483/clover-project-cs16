@@ -846,6 +846,12 @@ namespace Cs16.Module.Bot
         /// </summary>
         private bool TryRouteObjective(CsActor self, string reason, float now)
         {
+            // **进入本函数时** nav 装的是哪条路线：本函数内每一档都会在**筛选期间**尝试换路线
+            // （`SetRouteKeepProgress` 一旦发现标记不同就立即 SetRoute 重排 + 游标归零），所以必须在这里 ——
+            // 而不是在中途某一档 —— 记住"前值"，否则抓到的已经是前面档位的尝试结果。最终若一个都没选中，
+            // 末尾把它恢复回来（"没选中 ⇒ 不改变 nav 状态"）。
+            var prevMarker = _nav.RouteMarker;
+
             // 「路线家族」是同队的**共享资源**：计划表保证开局 4 只各占一格，轮转也必须遵守同一条互斥，
             // 否则一只卡住的 bot 会轮转进队友正走着的路（日志形态：两只**都活着**的 bot 同时走同一条
             // 'Route_T_*'，即用户看到的"路线都一样"）。
@@ -866,15 +872,23 @@ namespace Cs16.Module.Bot
                 if (string.IsNullOrEmpty(routeMarker)) continue;
                 if (k < CsBotPlans.Slots && routeMarker == _planRoute) continue;   // 刚走完的那条最后再试
 
-                _nav.SetRouteKeepProgress(_map, routeMarker, self.Position);
-                if (!_nav.HasRoute)
+                var routePts = _map.Points(routeMarker);
+                if (routePts == null || routePts.Length == 0)
                 {
                     RateWarn("replan.route.empty",
                         $"{_name} 换路线 '{routeMarker}'（槽位 {plan.Slot}）失败（地图上没有该标记的路点）→ 试下一条");
                     continue;
                 }
 
+                // **先只读筛、选定后才切路线**：`TryPickGoalPoint` / `TryPickReachable` 都只用
+                // `_nav.CanReach`（"问一句"这一点能不能走得到），与 nav 当前装的是**哪条**路线无关 ⇒
+                // 完全可以在切路线之前就把目标点定下来。原先"先切再筛"的写法里，切完若筛不出目标点就
+                // `continue`，此时 nav 已经停在这条**没被选中**的家族上；末尾虽然能靠 `RestoreRouteMarker`
+                // 兜回来，但那次恢复是"按当前位置最近邻重排 + 游标归零"，属于白付的代价。
+                //
                 //   不直接用 `_nav.RouteEnd` / 裸包点标记点：这两者都可能是"可走但走不到"的格。
+                //   （这里**不传** `avoidTeammates`：本档挑的是"没有活队友在走的空家族"，
+                //    取点不存在与队友撞同一点的问题 —— 需要排除队友占位的是下面"抢家族"的两档。）
                 var goal = Vector3.zero;
                 var isSite = false;
 
@@ -884,7 +898,7 @@ namespace Cs16.Module.Bot
                     goal = site;
                     isSite = plan.GoalIsSite;
                 }
-                else if (TryPickReachable(self, _map.Points(routeMarker), 0f, false, out var end))
+                else if (TryPickReachable(self, routePts, 0f, false, out var end))
                 {
                     goal = end;
                 }
@@ -896,6 +910,18 @@ namespace Cs16.Module.Bot
                     continue;
                 }
 
+                _nav.SetRouteKeepProgress(_map, routeMarker, self.Position);
+                if (!_nav.HasRoute)
+                {
+                    // 这里**不必**恢复 nav：本分支必然 `continue`，而后面无论"某一条选中"（会在 return 前
+                    // 再切一次路线）还是"全都没选中"（末尾统一 `RestoreRouteMarker`）都会把状态收干净 ——
+                    // 每多调一次恢复就多跑一次 `SetRoute`（内含逐点 A* 的 DropUnreachableWaypoints）。
+                    // key 与上面的"前置判空"分开，避免两件事共用同一份降频计数。
+                    RateWarn("replan.route.empty.nav",
+                        $"{_name} 换路线 '{routeMarker}'（槽位 {plan.Slot}）后 nav 仍没有路线（标记异常）→ 试下一条");
+                    continue;
+                }
+
                 _planSlot = plan.Slot;
                 ApplyObjective(self, routeMarker, goal, isSite,
                     $"换一条路线（槽位 {plan.Slot}={plan.RouteLabel}→{plan.GoalLabel}#{plan.GoalOrdinal}；{reason}）", now);
@@ -904,12 +930,16 @@ namespace Cs16.Module.Bot
 
             // ---- 退一档：4 条家族都被**活着的**队友占着（全队都活着 = 常态）⇒ 不抢队友的路，
             //      留在自己的槽位、只把**目标点**换成同一条路线上另一个点（序号也要与队友互斥）。----
+            //
             var mySlot = from;
             var myPlan = CsBotPlans.For(self.Team, mySlot, _match.RoundNumber);
             if (!string.IsNullOrEmpty(myPlan.RouteMarker))
             {
-                _nav.SetRouteKeepProgress(_map, myPlan.RouteMarker, self.Position);
-                if (_nav.HasRoute)
+                // 与第一档同形：**先只读筛（不碰 nav）、选定后才切路线**。本档筛的全是只读判据
+                // （`GoalCandidateCount` / `NextFreeGoalOrdinal` / `TryPickGoalPoint` / `TryPickReachable`，
+                // 后者只用 `_nav.CanReach`），与 nav 当前装的是哪条路线无关。
+                var myRoutePts = _map.Points(myPlan.RouteMarker);
+                if (myRoutePts != null && myRoutePts.Length > 0)
                 {
                     var count = GoalCandidateCount(myPlan.GoalMarker);
                     var goal = Vector3.zero;
@@ -931,13 +961,31 @@ namespace Cs16.Module.Bot
                         }
                     }
 
-                    if (!picked && TryPickReachable(self, _map.Points(myPlan.RouteMarker), 0f, false, out var end))
+                    if (!picked && TryPickReachable(self, myRoutePts, 0f, false,
+                                                    out var end, avoidTeammates: true))
                     {
                         goal = end;
                         picked = true;
                         RateWarn("replan.inslot.gofallback",
                             $"{_name} 留在槽位 {mySlot}（'{myPlan.RouteLabel}'）但目标标记 '{myPlan.GoalMarker}' " +
                             "上的序号都被占/走不到 → 退化为该路线上离自己最近的走得到的路点");
+                    }
+
+                    if (picked)
+                    {
+                        // 选定之后才真正切路线（此前一律不碰 nav）
+                        _nav.SetRouteKeepProgress(_map, myPlan.RouteMarker, self.Position);
+                        if (!_nav.HasRoute)
+                        {
+                            // 极罕见（`myRoutePts` 非空 + 地图已加载时 `SetRoute` 必留下路点 ⇒ `HasRoute` 必真）。
+                            // 处理方式：撤销"已选中"并**继续落到下面的兜底档**（改前落到兜底档，现在保持一致），
+                            // 而不是直接 `return false` 把这一帧的机会丢掉。
+                            RateWarn("replan.inslot.nav",
+                                $"{_name} 选定留在槽位 {mySlot}（'{myPlan.RouteLabel}'）后 nav 仍没有路线" +
+                                "（标记异常）→ 放弃本档，继续试兜底档");
+                            RestoreRouteMarker(prevMarker, self);
+                            picked = false;
+                        }
                     }
 
                     if (picked)
@@ -951,7 +999,99 @@ namespace Cs16.Module.Bot
                 }
             }
 
+            // ---- 最后一档兜底（**本项目新增**）：走到这里说明 ① 没有空家族（4 条都被活着的队友占着），
+            //      ② 连自己槽位的"换目标点"也换不出来（目标标记上的序号被占满，且本路线没有任何
+            //      走得到的标记点 —— TryPickReachable 全失败）。
+            //
+            //      原先直接 `return false` ⇒ 上层拿不到新目标 ⇒ 只能继续朝那个**走不到**的点直线走 ⇒
+            //      被几何卡住就是永久 0.00m（实测日志：6 条「卡住：0.5s 内位移 0.00m（剩余路点 0）」，
+            //      另有 29 条停在上面的「无空路线…只换目标点」一档）。
+            //
+            //      这一档允许**点开一条被活队友占着的家族**，且只取"离自己最近的、走得到的路点"
+            //      （序号互斥仍在，不抢队友的目标点）—— 宁可跟队友同路，也不许原地卡死。
+            //      （原版 bot 同样允许与队友走同一条路；出处：本项目新增，导航自恢复的最后一档。）
+            //
+            //      起点**必须与本 bot 的 `_planSlot` 无关**（这里用"队内序号算出的槽位"）：
+            //      ① 若一律从 slot 0 扫起，全队候选顺序完全相同（只有"刚走过的那条"会跳过）⇒ 同时卡住的
+            //         几只都会在第一轮选中同一个家族，必然撞车（并触发同队路线撞车审计）；
+            //      ② 若从 `mySlot = _planSlot` 起推也不行 —— **兜底成功后 `_planSlot` 会被写成抢到的那个
+            //         槽位**（= 真主人的槽位），于是抢家者与被抢者的起点序列**完全相同** ⇒ 下一次必然再次
+            //         选中同一家族（自我固化、撞车周期性复发）。`SlotOf(_ordinal, carrier)` 只依赖自己
+            //         的队内序号，抢家者与被抢者的 `_ordinal` 必不同 ⇒ 起点必不同。
+            var startSlot = CsBotPlans.SlotOf(_ordinal, carrier);
+            for (var i = 0; i < CsBotPlans.Slots; i++)
+            {
+                var slot = ((startSlot + 1 + i) % CsBotPlans.Slots + CsBotPlans.Slots) % CsBotPlans.Slots;
+                var plan = CsBotPlans.For(self.Team, slot, _match.RoundNumber);
+                var marker = plan.RouteMarker;
+                if (string.IsNullOrEmpty(marker) || marker == _planRoute) continue;   // 刚走完的那条最后再试
+
+                // **先只读筛**（不碰 nav）：`TryPickReachable` 只"问一句"这个家族有没有走得到的路点
+                // （内含一次 A*），不改 nav 的路线。原先是边扫边 `SetRouteKeepProgress` —— 任何一次
+                // continue 都会把 nav 的路线留在**没被选中**的那个家族上，而 `_planRoute`/`_goalPos`
+                // 还是旧的 ⇒ 下一帧 Advance 会沿一条自己没选的路线走格子（残留副作用，必须避免）。
+                // 本函数的三档（第一档换家族 / 退一档换目标点 / 本档抢家族）**现在统一是这个形状**，
+                // 所以 `RestoreRouteMarker` 的恢复分支实际只剩"进来时本来没路线"那条路径会走到。
+                var points = _map.Points(marker);
+                if (points == null || points.Length == 0) continue;
+                if (!TryPickReachable(self, points, 0f, false, out var end, avoidTeammates: true)) continue;
+
+                // 选定之后才真正切路线；此后不再 continue，nav 与 `_planRoute` 一致地换到这一条。
+                _nav.SetRouteKeepProgress(_map, marker, self.Position);
+                if (!_nav.HasRoute)
+                {
+                    RateWarn("replan.route.grab.nav",
+                        $"{_name} 兜底选中家族 '{plan.RouteLabel}' 后 nav 仍没有路线（标记异常）→ 放弃本档");
+                    RestoreRouteMarker(prevMarker, self);   // 早退同样要对齐 nav（否则停在没选中的家族上）
+                    return false;
+                }
+
+                _planSlot = plan.Slot;
+                RateWarn("replan.route.grab",
+                    $"{_name} 无空路线、且本槽位换不出目标点 ⇒ 兜底点开被队友占着的家族 " +
+                    $"'{plan.RouteLabel}'（槽位 {plan.Slot}），只取离自己最近的可走路点（{reason}）");
+                ApplyObjective(self, marker, end, false,
+                    $"兜底：点开被占家族 {plan.RouteLabel}（槽位 {plan.Slot}）= 最近可走路点；{reason}", now);
+                return true;
+            }
+
+            // 全部档都没选中 ⇒ nav 不许留下任何"筛选时的痕迹"（见函数开头 prevMarker 的说明）。
+            RestoreRouteMarker(prevMarker, self);
+
             return false;
+        }
+
+        /// <summary>
+        /// 把 nav 的路线标记对齐回 <paramref name="prevMarker"/> —— "没选中任何家族 ⇒ 不改变 nav 状态"。
+        ///
+        /// <para>两种形态都要处理：① 进来时本来没路线（<c>null</c>）⇒ 必须清掉中途被装上的那条
+        /// （否则 nav 停在自己没选的家族上，下一帧 <c>Advance</c>/<c>ResolveNextTarget</c> 会沿它走格子）；
+        /// ② 进来时有路线 ⇒ 恢复那条 —— 注意 <see cref="BotNavigator.SetRouteKeepProgress"/> 内部是
+        /// "按当前位置最近邻重排"，恢复的是**标记**、游标会归零（比"沿一条自己没选的路线走"轻，可接受）。</para>
+        ///
+        /// <para><b>代价（已知，登记在此，别当 bug 查）</b>：<c>SetRoute</c> 内部会
+        /// <c>ClearEscape()</c> + <c>ClearStuckState()</c> + <c>InvalidatePath()</c> ⇒
+        /// "兜底全失败 ⇒ 恢复"这一帧会把**刚攒够的卡住判据清掉**，下一次换目标/逃逸要再等一个
+        /// <c>StuckCheckInterval</c>(0.5s)；且重排取"离当前位置最近的标记点"，而巡逻家族是**环线** ⇒
+        /// 那个点可能是**已经走过**的一个（表现为走一小段回头路，一个路点间距，不是 U 形掉头）。
+        /// ⇒ ⛔ 不要把 <c>StuckWarn</c> 的计数当成"卡住"的性能指标（它会被这里清掉一部分）。</para>
+        /// </summary>
+        private void RestoreRouteMarker(string prevMarker, CsActor self)
+        {
+            if (_nav == null) return;
+
+            if (prevMarker == null)
+            {
+                // **无条件清**（不能只在 `HasRoute` 时清）："兜底选中后 nav 仍没有路线"那条早退路径上
+                // `_route` 本来就是空的（`HasRoute` 为假），但 `SetRoute` 已经把 `_marker` 设成了新标记
+                // ⇒ 只判 `HasRoute` 会留下"标记是刚抢的家族、路点却是空"的**假状态**：
+                // 行为上无害（后续 `SetRouteKeepProgress` 要求 `_route.Count > 0` ⇒ 必走重建），
+                // 但读 `_nav.RouteMarker` 的探针/审计会把"没选中"读成"选中了那个家族"。
+                _nav.ClearRoute();
+                return;
+            }
+
+            if (_nav.RouteMarker != prevMarker) _nav.SetRouteKeepProgress(_map, prevMarker, self.Position);
         }
 
         /// <summary>
@@ -981,6 +1121,12 @@ namespace Cs16.Module.Bot
         /// </summary>
         private bool TryPatrolObjective(CsActor self, string reason, float now)
         {
+            // 进入本函数时 nav 装的是哪条路线（与 `TryRouteObjective` 同口径）：本函数会切到
+            // `Route_Patrol`，若之后没能选中目标就必须恢复 —— 否则 `ReplanObjective` 紧接着调
+            // `TryRouteObjective` 时，它开头的 `prevMarker` 会抓到 `Route_Patrol` 这个残留，
+            // 而那个残留又可能被它末尾"恢复/固化"成合法状态（同一形状的传播链，见那里注释）。
+            var prevMarker = _nav.RouteMarker;
+
             var pts = _map.Points(CsMarkers.Patrol);
             if (pts == null || pts.Length == 0)
             {
@@ -1005,8 +1151,13 @@ namespace Cs16.Module.Bot
                 }
             }
 
-            _nav.SetRouteKeepProgress(_map, CsMarkers.Patrol, self.Position);
-            if (!_nav.HasRoute) return false;
+            // 与 `TryRouteObjective` 同形：**先只读筛、选定后才切路线**。
+            // 原先是先 `SetRouteKeepProgress(Patrol)` 再筛，两次 `TryPickReachable` 都失败就 `return false`
+            // ⇒ nav 停在 `Route_Patrol` 而 brain 的 `_planRoute` 还是旧家族（同一类残留）；更糟的是它会
+            // **跨函数传播**：`ReplanObjective` 紧接着调 `TryRouteObjective`，后者开头抓到的 `prevMarker`
+            // 就是这个残留，一旦它最终没选中，末尾会把残留**恢复/固化**成"合法状态"
+            // （于是"没选中 ⇒ 不改 nav"这条不变量在这一整条链上都不成立）。
+            // （`TryPickReachable` 只用 `_nav.CanReach`，与 nav 当前装的是哪条路线无关 ⇒ 可以先筛。）
 
             // 近的优先（不再"专挑最远"）：门口那个走得到的巡点，比 80m 外走不到的那个有用。
             if (!TryPickReachable(self, pts, CsBotConst.MinPatrolDistance, false, out var goal))
@@ -1017,12 +1168,24 @@ namespace Cs16.Module.Bot
                     RateWarn("replan.patrol.unreachable",
                         $"{_name} 的巡逻点**没有一个走得到**（'{CsMarkers.Patrol}' 标记点全没过 " +
                         $"BotNavigator.CanReach：位图可走但高度一致性层到不了 / 或真孤岛）→ 试其它目标");
-                    return false;
+                    return false;   // ⛔ 这条路径**不碰 nav**（残留问题见上）
                 }
 
                 RateWarn("replan.patrol.nofar",
                     $"{_name} 的巡逻点里没有「≥ {CsBotConst.MinPatrolDistance:F0}m 且走得到」的点 → " +
                     $"退化为最近的那个走得到的巡点 {goal}");
+            }
+
+            _nav.SetRouteKeepProgress(_map, CsMarkers.Patrol, self.Position);
+            if (!_nav.HasRoute)
+            {
+                // 极罕见（`pts` 已在 :1125 判过非空 ⇒ `SetRoute` 必留下路点 ⇒ `HasRoute` 必真）。
+                // 仍按"没选中 ⇒ 不改 nav"处理：恢复进来时的那条再返回，别把 `Route_Patrol` 残留
+                // 传给紧接着调用的 `TryRouteObjective`。
+                RateWarn("replan.patrol.nav",
+                    $"{_name} 切到 '{CsMarkers.Patrol}' 后 nav 仍没有路线（标记异常）→ 放弃本档并恢复原路线");
+                RestoreRouteMarker(prevMarker, self);
+                return false;
             }
 
             ApplyObjective(self, CsMarkers.Patrol, goal, false, $"去巡逻（{reason}）", now);
@@ -1181,7 +1344,11 @@ namespace Cs16.Module.Bot
         /// <param name="pts">候选点（地图标记点；null / 空 ⇒ false）</param>
         /// <param name="minDistance">水平距离下限（米）</param>
         /// <param name="farthest">false = 取"走得到的里面最近的"；true = 取最远的</param>
-        private bool TryPickReachable(CsActor self, Vector3[] pts, float minDistance, bool farthest, out Vector3 point)
+        /// <param name="avoidTeammates">true = 跳过"已被同队活体站着的点"（见 <see cref="TeammateOccupies"/>）。
+        /// 默认 false ⇒ 既有调用点行为逐字不变；只有"最后一档兜底 / 退一档 fallback"这类
+        /// **可能两只同时选点**的路径才传 true。</param>
+        private bool TryPickReachable(CsActor self, Vector3[] pts, float minDistance, bool farthest,
+                                      out Vector3 point, bool avoidTeammates = false)
         {
             point = Vector3.zero;
             if (pts == null || pts.Length == 0) return false;
@@ -1191,6 +1358,7 @@ namespace Cs16.Module.Bot
             for (var i = 0; i < pts.Length; i++)
             {
                 if (!_map.CanStand(pts[i])) continue;                  // 层①：本格站得住（与路线过滤同一口径）
+                if (avoidTeammates && TeammateOccupies(self, pts[i])) continue;   // 层①'：队友正站在那儿
 
                 var d = pts[i] - self.Position;
                 d.y = 0f;
@@ -1204,6 +1372,42 @@ namespace Cs16.Module.Bot
             }
 
             return best >= 0f;
+        }
+
+        /// <summary>
+        /// 该点是否被**同队活体**占着 —— 只给"可能两只同时选点"的路径用（见 <see cref="TryPickReachable"/>）。
+        ///
+        /// <para><b>为什么需要</b>：路线标记点**没有序号互斥表**（<c>CsBotPlans.NextFreeGoalOrdinal</c>
+        /// 只覆盖"目标标记"的计划序号），所以两只卡在同一角落时会选中**同一个最近路点**，然后互相挤开
+        /// （<c>CsMatch.SeparateFromOtherActors</c>）并被 BotModule 记一对"路线撞车"。这里用"排除队友
+        /// 已经站着的点"作为最小互斥 —— 不上序号表（那是给目标标记用的，路线标记点没有序号）。</para>
+        ///
+        /// <para><b>同层的口径用 <see cref="CsConst.StepUpHeight"/>(0.457) 而不是
+        /// <see cref="CsConst.StandHeight"/>(1.80)</b>：后者在"队友站在正上一层、层高恰 1.8m"时
+        /// 算出 <c>|Δy| = 1.8</c>、而判据是 <c>&gt; 1.8</c> ⇒ 会**判成同层**并误排该候选点；本图多层
+        /// 上下重叠是常态、两个标记点垂直对齐（水平 &lt; 0.64m）并不罕见 ⇒ 一旦该家族只剩这一个候选，
+        /// 就会被跳过（防抢点反而造出"原地不动"，比两只挤一下更糟）。`StepUpHeight` 的语义正是
+        /// "同一落脚层"（抬腿带）：跨层最小落差 1.8m ≫ 0.457 ⇒ 不会误排，而同层的软地板/坡面误差
+        /// （0.05~0.3m）仍会被正确排开。</para>
+        /// </summary>
+        private bool TeammateOccupies(CsActor self, Vector3 point)
+        {
+            var actors = _match.Actors;
+            if (actors == null) return false;
+
+            var minDist = CsConst.PlayerRadius * 2f;
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var a = actors[i];
+                if (a == null || a.Id == self.Id || a.Team != self.Team || !a.IsAlive) continue;
+
+                var d = a.Position - point;
+                d.y = 0f;
+                if (d.magnitude >= minDist) continue;
+                if (Mathf.Abs(a.Position.y - point.y) > CsConst.StepUpHeight) continue;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>取某个标记里"走得到且离自己最近"的一个点（包点/出生点用）。取不到时打一条带数字的 Warn。</summary>

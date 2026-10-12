@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
 using Cs16.Module.Map;
+using Unity.Profiling;
 using UnityEngine;
 
 namespace Cs16.Module.Bot
@@ -729,7 +730,8 @@ namespace Cs16.Module.Bot
             }
 
             var branch = "avoid";
-            var dir = Avoid(selfPosition, desired, now);
+            Vector3 dir;
+            using (MarkAvoid.Auto()) dir = Avoid(selfPosition, desired, now);
 
             if (NoteMovement(selfPosition, true, now, out var moved))
             {
@@ -898,7 +900,9 @@ namespace Cs16.Module.Bot
             var target = _index < _route.Count ? _route[_index] : goal;
 
             // 全局路径可用 → 追路径上的下一个拐点；不可用 → 追目标本身（并留 Warn，见 WarnPathFailed）。
-            if (EnsurePath(selfPosition, target)) return AdvancePath(selfPosition, target);
+            bool pathOk;
+            using (MarkEnsurePath.Auto()) pathOk = EnsurePath(selfPosition, target);
+            if (pathOk) return AdvancePath(selfPosition, target);
 
             return target;
         }
@@ -988,11 +992,14 @@ namespace Cs16.Module.Bot
 
             //   位图本体与 `ICsMap.WalkableAt` / `CsMap.WalkableAt` 的语义**一字不动**（玩家行为零影响）。
             //   失败（位图不可用 / 自己脚下探不到地面 / 可达规模超上限）⇒ 不加这一层，行为同既有。
-            var heightOk = BuildHeightReach(from, selfPosition) != null;
+            bool heightOk;
+            using (MarkHeightReach.Auto()) heightOk = BuildHeightReach(from, selfPosition) != null;
 
             // `FindSmoothed` = `Find`（8 邻接、对角要求两侧可走）+ 视线拉直（拐角变成长直线，正合走位）。
             // 节点上限用引擎既有的 `DefaultMaxNodes`（不自己加魔法数）。
-            var path = AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);
+            List<Vector2Int> path;
+            using (MarkAStarFind.Auto())
+                path = AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);
             if (path == null || path.Count == 0)
             {
                 //   起/终点会**先**返回 null 并打 `badstart`/`badgoal`），所以这一支的真实含义是
@@ -1077,7 +1084,7 @@ namespace Cs16.Module.Bot
             if (!SnapToWalkable(ref from) || !SnapToWalkable(ref to)) return false;
             if (from == to) return true;
 
-            BuildHeightReach(from, fromPosition);          // null ⇒ _hasHeightReach=false ⇒ 与 WalkableCell 等价
+            using (MarkHeightReach.Auto()) BuildHeightReach(from, fromPosition);   // null ⇒ _hasHeightReach=false ⇒ 与 WalkableCell 等价
 
             // **确定性函数的备忘**：结果只依赖 (walkable 回调, 起点格, 终点格, maxNodes)，而回调由
             // 地图 + 上面这一份可达集唯一确定（键里带上可达集对象引用）⇒ 命中的答案与重算逐值相同。
@@ -1090,7 +1097,8 @@ namespace Cs16.Module.Bot
             var query = new ReachQuery(from, to, _hasHeightReach ? _heightReach : null);
             if (_canReachMemo.TryGetValue(query, out var known)) return known;
 
-            var ok = AStar.Find(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes) != null;
+            bool ok;
+            using (MarkAStarFind.Auto()) ok = AStar.Find(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes) != null;
             if (_canReachMemo.Count >= CanReachMemoCap) _canReachMemo.Clear();
             _canReachMemo[query] = ok;
             return ok;
@@ -1323,6 +1331,22 @@ namespace Cs16.Module.Bot
         private static float FaceNy(in Column col, int k)
             => k == 0 ? col.Ny0 : k == 1 ? col.Ny1 : k == 2 ? col.Ny2 : k == 3 ? col.Ny3 : k == 4 ? col.Ny4 : col.Ny5;
 
+        /// <summary>
+        /// 分段耗时打点（Unity 标准 `ProfilerMarker`；profiler 不录时开销≈0，不参与任何逻辑）。
+        /// 配合 `ProfilerRecorder` 按名字取样即可拿到每个 slot 的耗时，量法见
+        /// <c>.ai-tmp/test/report-perf.md</c> §20。
+        /// </summary>
+        private static readonly ProfilerMarker MarkEnsurePath = new ProfilerMarker("BotNavigator.EnsurePath");
+
+        /// <summary>"抬腿可达集"扩张（<see cref="BuildHeightReach"/>）的耗时。</summary>
+        private static readonly ProfilerMarker MarkHeightReach = new ProfilerMarker("BotNavigator.HeightReach");
+
+        /// <summary>对引擎 A\* 的同步调用（<see cref="AStar.Find"/> / <see cref="AStar.FindSmoothed"/>）。</summary>
+        private static readonly ProfilerMarker MarkAStarFind = new ProfilerMarker("BotNavigator.AStarFind");
+
+        /// <summary>局部避障（<see cref="Avoid"/>）。</summary>
+        private static readonly ProfilerMarker MarkAvoid = new ProfilerMarker("BotNavigator.Avoid");
+
         /// <summary>格坐标 → 列备忘 / 扩张数组的下标（带 1 格外框，好让图外一格的邻格也能查；超出返回 -1）。</summary>
         private int GeoIdx(Vector2Int cell)
         {
@@ -1542,10 +1566,28 @@ namespace Cs16.Module.Bot
 
             // 基准高度 = 机器人**脚下的地面**（产品同源：ICsMap.SampleGround → Module/Map/CsMap.cs:534）。
             // 探不到（人在空中 / 图外）⇒ 本帧不加这一层（不许瞎猜一个基准高度）。
+            //
+            // 但"贴着台阶/箱沿站立"时射线起点会掉进几何内部：PhysX 默认 queriesHitBackfaces=false，
+            // "从实体内部朝外"的射线不给交点 ⇒ SampleGround 一路穿到底 ⇒ -inf（形态与 CsMap.BodyVolumeBlocked
+            // 注释里描述的一致）。物理侧对同一形态的既有解法是"抬一个台阶再探"（sv_stepsize，
+            // CsConst.StepUpHeight；消费点 = CsMatch.StepActorPhysics）—— 导航侧这里补同一口径：
+            // 抬一个 StepUpHeight 重探一次，探到就把那一面当基准（下一步的 SnapStartFace 本来就会把
+            // 基准吸附到本格最近的合法落脚面，抬高值不会传播）；还探不到才按"真悬空"降级。
             var baseY = _map.SampleGround(selfPosition);
             if (float.IsNegativeInfinity(baseY))
             {
-                HeightLayerOff("自己脚下探不到地面（SampleGround = -inf）", from, selfPosition);
+                // **只采纳"不比脚下低"的复探结果**：脚点陷在厚箱/悬空平台内部时，抬高 0.457m 后射线
+                // 起点**仍在实体内**，而 PhysX 默认不吃背面（queriesHitBackfaces=false）⇒ 射线一路穿出
+                // 实体底部、命中**下方**的面 ⇒ 复探会给出"脚下以下 6.8m"的假基准（超出 SnapStartFace 的
+                // ±2.5m 吸附带，吸不回来 ⇒ 邻格 dy>StepUpHeight ⇒ 可达集塌成 1 格，正是本方法要防的形态）。
+                // 抬高的**本意**是"从实体里探出脚面那一面"，那一面必然在脚下（≥ selfPosition.y）；
+                // 探到更低的面说明射线穿透到了下一层，不可信 ⇒ 维持 -inf 走下面的降级。
+                var lifted = _map.SampleGround(selfPosition + Vector3.up * CsConst.StepUpHeight);
+                if (!float.IsNegativeInfinity(lifted) && lifted >= selfPosition.y) baseY = lifted;
+            }
+            if (float.IsNegativeInfinity(baseY))
+            {
+                HeightLayerOff("自己脚下探不到地面（SampleGround = -inf，抬高一个台阶重探仍失败）", from, selfPosition);
                 return null;
             }
 
@@ -2162,7 +2204,11 @@ namespace Cs16.Module.Bot
 
             var near = position + dir * CsBotConst.ProbeClearance;
             var far = position + dir * CsBotConst.ProbeDistance;
-            if (_map.WalkableAt(near.x, near.z) && _map.WalkableAt(far.x, far.z)) return true;
+            //   近端/远端都只看**位图**时，把"矮了不到一层、却高过一个台阶"的台沿当成畅通：位图是单层 2D，
+            //   台沿两侧都标可走，而落脚面差 > StepUpHeight ⇒ 物理顶死在台沿上（实测：位移 0、速度被清 0，
+            //   机器人每一帧都朝它走）。这里加一层与 EnsurePath 同一份的高度判据。
+            if (_map.WalkableAt(near.x, near.z) && _map.WalkableAt(far.x, far.z)
+                && HeightReachOk(position, near) && HeightReachOk(position, far)) return true;
 
             //   阈值 = 近端探距的一半（与 CsMatchConst.WallBlockVelocityRatio 同源的"走成了没有"口径）：
             //   近端都迈不过去 ⇒ 真的顶住了墙（1m 厚墙的用例照旧被拦住，物理会在墙前停下）。
@@ -2186,6 +2232,26 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
+        /// 高度一致性层是否把 <paramref name="p"/> 判为"从 <paramref name="from"/> 这一格可站"。
+        ///
+        /// <para>位图是**单层 2D**：一个台沿的两侧它都标可走，而两侧的落脚面高差可以 &gt;
+        /// <see cref="CsConst.StepUpHeight"/>（实测本图 B 通那条走廊是 0.813 m）⇒ 只看位图会把
+        /// "朝台沿里顶"当成畅通，机器人每一帧都朝它走却一步都走不动（速度还被撞墙判定清零）。</para>
+        ///
+        /// <para>本判据与 <see cref="EnsurePath"/> 的 A* 回调（<see cref="WalkableCellHeightAware"/>）
+        /// 是**同一份可达集**。可达集是按机器人**当前格**建的，所以只在集合确实从脚下这一格建过时才用它；
+        /// 集合过期 / 无高度层（<see cref="_hasHeightReach"/> == false）⇒ 返回 true（退回既有位图行为）。</para>
+        /// </summary>
+        private bool HeightReachOk(Vector3 from, Vector3 p)
+        {
+            if (!_hasHeightReach || _gReach == null) return true;
+            var mapData = Game.Map;
+            if (mapData == null || !mapData.Loaded || mapData.CellSize <= 0f) return true;
+            if (_heightReachFrom != CellOf(mapData, from)) return true;
+            return WalkableCellHeightAware(CellOf(mapData, p));
+        }
+
+        /// <summary>
         /// 沿 <paramref name="dir"/> 从 <paramref name="position"/> 起连续可走的距离（米），
         /// 上限 <see cref="CsBotConst.EscapeRunwayMax"/>。没加载地图时按"全通"处理。
         /// </summary>
@@ -2203,6 +2269,7 @@ namespace Cs16.Module.Bot
             {
                 var p = position + dir * d;
                 if (!_map.WalkableAt(p.x, p.z)) break;
+                if (!HeightReachOk(position, p)) break;
                 run = d;
             }
 
@@ -2211,8 +2278,34 @@ namespace Cs16.Module.Bot
             //   而 ICsMap.WalkableAt 说这一带不可走（日志 101 条"跳过不可走的路点 (17.50, 0.68, 14.50)"）。
             //   位图是**单层 2D**（de_dust2.bytes 46 个连通分量 / 919 格非主分量），多层几何上下重叠处
             //   它给不出正确答案。只认位图 ⇒ 机器人被自己判成"路上被挡" ⇒ 原地不动（病灶）。
-            var phys = PhysRunway(position, dir);
-            if (run <= 0f && phys > 0f) WarnBitmapDisagrees();
+            //
+            //   但物理复核**必须以"该方向上探得到地面"为前提**：图外/虚空里没有几何，ResolveMove 的
+            //   几何放行（BodyHeightClear 对真空一律通畅）会让物理跑道在"朝图外飞"的方向上反而最长
+            //   （实测 Minh 被逃逸机制带到 (-483,-177)，离图 480 m，之后 A* 起点吸附失败 ⇒ 永远直线走 ⇒ 卡死）。
+            //   探不到地面 = 真空 = 不许算跑道；位图误挡的真实地面情形照旧放行。
+            var phys = 0f;
+            if (run <= 0f)
+            {
+                var probe = position + dir * (CsBotConst.EscapeRunwayStep * 2f);
+                // 探查深度与 HasGroundUnder / ResolveMove 同源（ICsMap 默认 8m），但**不能只看命中与否**：
+                // 本图**图内**层间落差就有 6.8m（CsMap.cs 里登记的那条），8m 的探查既探得到"同层地面"、
+                // 也探得到"下层地面"，而 PhysRunway 内部对落点高度**没有任何约束**（它只看 ResolveMove
+                // 沿该方向的位移，步数固定、几何放行也不校验高度）⇒ 只看 bool 时反例会变成：
+                // **卡在 6m 高台外沿 + 位图把这一带全判挡** ⇒ 四个方向位图 run 全 0、唯一 phys>0 的方向
+                // 就是"朝台外" ⇒ 逃逸选中它、机器人主动走下 6m 悬崖。
+                // 所以这里要求命中点**不低于脚下**（允许 <see cref="CsBotConst.EscapeRunwayMaxStepDown"/>
+                // = 一箱高 1.2m 的余量），把"往下跳一整层 / 图外真空"排除在跑道之外。
+                // 注意**别收紧到 StepUpHeight**：那等于"1.4m 内下降 > 0.457m（坡度 > 18.1°）一律否"，
+                // 会把本图大量 20~30° 斜坡与"从矮台走下来"一并误杀 ⇒ 退回原地不动。
+                // 口径差异是**有意**的：这里的探查距离只有 1.4m（短基线，坡度更敏感），而
+                // `CsMap.HasGroundUnder` 是"脚下 8m 内有没有面"（不校验高度），两者判的不是同一件事。
+                if (_map.TrySampleGround(probe, out var groundPt, out _)
+                    && groundPt.y >= position.y - CsBotConst.EscapeRunwayMaxStepDown)
+                {
+                    phys = PhysRunway(position, dir);
+                    if (phys > 0f) WarnBitmapDisagrees();
+                }
+            }
             return Mathf.Max(run, phys);
         }
 

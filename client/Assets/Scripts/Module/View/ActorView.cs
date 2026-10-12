@@ -1,5 +1,7 @@
+using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Combat;
 using Cs16.Module.Match;
 using Cs16.Module.Player;
 using UnityEngine;
@@ -65,6 +67,13 @@ namespace Cs16.Module.View
         private IAnimPlayer _anim;
         private bool _animFailedLogged;
 
+        /// <summary>下次"恒更新复查"的时间（见 <see cref="EnsureAlwaysAnimateTick"/>）：异步加载的身体网格
+        /// 与运行时挂上的武器都可能晚于 <see cref="Bind"/> 出现，所以不能只扫一次。</summary>
+        private float _nextAlwaysAnimateScanAt;
+
+        /// <summary>上面那次复查的间隔（秒）——1s 足够兜住"异步/换武器"，又不进每帧热路径。</summary>
+        private const float AlwaysAnimateRescanSeconds = 1f;
+
         /// <summary>一次性动作（开枪 / 换弹）占用的状态名；播完由 OnComplete 清空。</summary>
         private string _overrideState;
 
@@ -105,8 +114,20 @@ namespace Cs16.Module.View
         /// <summary>当前挂着的第三人称武器模型实例与武器 id（换枪 / 死亡 / 池复用时归还，见 <see cref="EnsureHeldWeapon"/>）。</summary>
         private GameObject _heldWeapon;
         private string _heldKey;
-        /// <summary>武器挂点节点（挂在 <see cref="_body"/> 下，跟着蹲下压扁与逐帧贴地走）。</summary>
+        /// <summary>武器挂点节点（优先挂在右手骨骼下；取不到骨骼时退回 <see cref="_body"/>）。
+        /// 跟着蹲下压扁与逐帧贴地走。</summary>
         private Transform _weaponSocket;
+
+        /// <summary>武器挂点是否挂在**右手骨骼**上（false = 退回到 <c>Body</c> 下的固定点）。
+        /// 决定武器实例用哪一套局部变换（骨骼口径的逐武器表 / 固定点的旧口径）。</summary>
+        private bool _socketOnHand;
+
+        /// <summary>枪口节点（第三人称开火的火光落点）：<see cref="_weaponSocket"/> 的子节点，
+        /// 位置逐武器来自 <see cref="CsViewTuning.HeldWeaponAlignOf"/> 的枪口列。</summary>
+        private Transform _muzzleSocket;
+
+        /// <summary>已经报过"没有世界模型"的武器 id（只报一次，避免每帧刷屏）。</summary>
+        private readonly HashSet<string> _heldMissingLogged = new HashSet<string>();
 
         /// <summary>上一帧的权威血量。掉血 = 中了没死的一发（阵亡走 <see cref="PlayDeath"/>），
         /// 用来触发原版受击抖动 <see cref="PlayFlinch"/>。</summary>
@@ -197,6 +218,15 @@ namespace Cs16.Module.View
             _preHealth = 0;
             _reloadAnimsPlayed = 0;
             ReleaseHeldWeapon();
+
+            // 武器挂点**必须一起清掉**：它是 `EnsureHeldWeapon` 里按"右手骨骼"现找、找不到才退回
+            // Body 下固定节点的一次性结果，而骨骼树可能随换模型/换槽位变。留着旧挂点会让"改了挂点逻辑"
+            // 对**池复用**的视图完全无效（旧 socket 一直挂在 Body 上，手臂一动枪还是横在原地）。
+            if (_weaponSocket != null)
+            {
+                Destroy(_weaponSocket.gameObject);
+                _weaponSocket = null;
+            }
             _anim = null;
             _fitScale = 1f;
             _modelLift = 0f;
@@ -423,6 +453,9 @@ namespace Cs16.Module.View
                 var cand = CsViewTuning.PlayerShootStates(actor.ActiveWeapon, actor.IsCrouching);
                 var st = ResolveState(cand);
                 if (st != null) { _anim.Play(st, 0f); _overrideState = st; }
+                // 别人的开火要有第三人称枪口表现。本地玩家走第一人称那一套
+                // （CombatModule.HandleLocalShot）—— 这里必须排除，否则同一次开火会出现两处火光。
+                if (!_isLocal) CombatModule.Instance?.FxRemoteShot(this, actor.ActiveWeapon);
             }
             _preNextFireTime = actor.NextFireTime;
 
@@ -447,15 +480,19 @@ namespace Cs16.Module.View
         //  第三人称手持武器（差异 #75 同族：别的角色手里要看得见那把枪）
         // ==================================================================
         /// <summary>
-        /// 让**别的角色**手里看得见那把枪：模型走与掉落物同一套降级链
-        /// （<c>Art/world_&lt;武器id&gt;</c>，没有世界模型的武器（原版并非每把都有 w_*.mdl）
-        /// 退 <c>Art/{阵营}/viewmodel_&lt;武器id&gt;</c>，与 <c>ViewModule.EnsureDropView</c> 同口径），
-        /// 挂点 = <see cref="CsViewTuning.HeldWeaponLocalPosition"/>（<see cref="_body"/> 局部）。
+        /// 让**别的角色**手里看得见那把枪：模型 = <c>Art/world_&lt;武器id&gt;</c>
+        /// （原版世界模型 <c>models/w_*.mdl</c>；原版本来就只有一部分武器带它 —— 没有的武器
+        /// 原版第三人称也不显示，所以这里**不做第一人称视模型的兜底**）。
+        ///
+        /// <para>挂点优先 = 右手骨骼 <c>Bip01 R Hand</c>；武器实例的局部变换按武器取
+        /// <see cref="CsViewTuning.HeldWeaponAlignOf"/>（那张表由原版 <c>models/p_*.mdl</c> 与
+        /// <c>models/w_*.mdl</c> 的同名几何解出，出处见该表注释）。找不到右手骨骼时退回
+        /// <c>Body</c> 下的固定点，用固定点口径（零偏移 + <c>WorldModelScale</c>）。</para>
         ///
         /// <para>挂上去的实例照 <c>EnsureDropView</c> / <c>ViewModelRig</c> 的口径**剥掉全部 Collider**
         /// —— 世界物件绝不能参与射线（否则子弹会打中"一把悬空的枪"）。</para>
         ///
-        /// <para>池加载是异步友好的：两级都取不到就**保持未挂**、下一帧自动重试
+        /// <para>池加载是异步友好的：取不到就**保持未挂**、下一帧自动重试
         /// （与 <c>EnsureDropView</c> 的"首次发起加载、下一帧补上"同款，不阻塞）。</para>
         /// </summary>
         private void EnsureHeldWeapon(CsActor actor)
@@ -468,9 +505,27 @@ namespace Cs16.Module.View
 
             if (_weaponSocket == null)
             {
+                // **优先挂到右手骨骼**：枪必须跟着手臂动画走。原先固定挂在 `Body` 下的一个空节点上
+                // （位置 = CsViewTuning.HeldWeaponLocalPosition 常量），手臂一摆动枪就停在原地不动 ——
+                // 用户看到的就是"枪横在那儿"。CS 系骨骼命名是 `Bip01 R Hand`（dump 实测 rootBone=Bip01），
+                // 找不到右手骨骼时**退回原来的固定节点**（宁可不跟手，也不许枪消失）。
+                var hand = FindHandBone(_body != null ? _body : transform);
+                _socketOnHand = hand != null;
                 _weaponSocket = new GameObject("HeldWeapon").transform;
-                _weaponSocket.SetParent(_body != null ? _body : transform, false);
-                _weaponSocket.localPosition = CsViewTuning.HeldWeaponLocalPosition;
+                _weaponSocket.SetParent(_socketOnHand ? hand : (_body != null ? _body : transform), false);
+                _weaponSocket.localPosition = _socketOnHand ? Vector3.zero : CsViewTuning.HeldWeaponLocalPosition;
+                _weaponSocket.localRotation = Quaternion.identity;
+                // 枪口节点与挂点同生共死；它的局部口径与挂点一致，位置逐武器在下面刷。
+                _muzzleSocket = new GameObject("Muzzle").transform;
+                _muzzleSocket.SetParent(_weaponSocket, false);
+                _muzzleSocket.localPosition = CsViewTuning.HeldWeaponMuzzleFallbackLocal;
+                _muzzleSocket.localRotation = Quaternion.identity;
+                if (hand == null)
+                {
+                    _log.Warn("held.nohand",
+                        $"角色视图「{name}」找不到右手骨骼（预期名字含 Hand/R，如 Bip01 R Hand）" +
+                        "⇒ 武器退回挂在 Body 下的固定节点，不会跟着手臂动画走");
+                }
             }
 
             var pool = Game.Pool;
@@ -480,21 +535,40 @@ namespace Cs16.Module.View
                 return;
             }
 
-            var folder = Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
             var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + weaponId;
             var go = pool.Spawn(path, _weaponSocket, "cs16.heldweapon");
             if (go == null)
             {
-                // 掉落物同一套降级：没有世界模型 → 退第一人称模型，至少"有把枪"。
-                path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + weaponId;
-                go = pool.Spawn(path, _weaponSocket, "cs16.heldweapon");
+                // 原版世界模型只有一部分武器有（手雷就没有）。没有 ⇒ 原版第三人称也不显示，
+                // 这里同样不显示；⛔ 不退第一人称视模型（那等于把"一双第一人称的手"塞进手里）。
+                // 池加载是异步的 ⇒ 保持"下一帧重试"，只按武器 id 报一次这条信息；
+                // 若该武器原版确有 w_*.mdl，则是预制体缺失 —— 池自己会报 Prefab not found。
+                if (_heldMissingLogged.Add(weaponId))
+                {
+                    _log.Info("held.nomodel",
+                        $"角色视图「{name}」的武器「{weaponId}」没有世界模型 {path}（原版也没有 ⇒ 不显示）");
+                }
+                return;
             }
-            if (go == null) return;      // 两级都没有（或资源还在异步加载）→ 下一帧自动重试
 
             go.name = "HeldWeapon_" + weaponId;
-            go.transform.localScale = Vector3.one * CsViewTuning.WorldModelScale;
-            go.transform.localPosition = Vector3.zero;
-            go.transform.localRotation = Quaternion.identity;
+            if (_socketOnHand)
+            {
+                // 手骨口径：逐武器对齐表（出处见 CsViewTuning.HeldWeaponAlign 的注释）。
+                var align = CsViewTuning.HeldWeaponAlignOf(weaponId);
+                go.transform.localPosition = align.LocalPosition;
+                go.transform.localRotation = Quaternion.Euler(align.LocalEuler);
+                go.transform.localScale = Vector3.one * CsViewTuning.HeldWeaponScale;
+                _muzzleSocket.localPosition = align.MuzzleLocalPosition;
+            }
+            else
+            {
+                // 固定点口径：逐武器表是"手骨局部"的量，这里没有手骨可跟，只能用旧口径。
+                go.transform.localPosition = Vector3.zero;
+                go.transform.localRotation = Quaternion.identity;
+                go.transform.localScale = Vector3.one * CsViewTuning.WorldModelScale;
+                _muzzleSocket.localPosition = CsViewTuning.HeldWeaponMuzzleFallbackLocal;
+            }
 
             var cols = go.GetComponentsInChildren<Collider>(true);
             for (var i = 0; i < cols.Length; i++)
@@ -504,6 +578,67 @@ namespace Cs16.Module.View
 
             _heldWeapon = go;
             _heldKey = weaponId;
+            // 运行期挂上来的几何不在 Bind 的快照里 ⇒ 挂上这一帧就把"恒更新"补掉，
+            // 不等降频复查（这段时间里那把枪的蒙皮网格照旧会按绑定盒被裁）。
+            EnsureAlwaysAnimate();
+        }
+
+        /// <summary>
+        /// 找**右手骨骼**（武器挂点用）。CS 系模型的骨骼命名是 <c>Bip01 R Hand</c> 一族
+        /// （dump 实测本工程预制体 <c>rootBone=Bip01</c>），这里按"名字含 hand、且不是左手"匹配，
+        /// 容忍 <c>Bip01 R Hand</c> / <c>Bip01_R_Hand</c> / <c>rhand</c> 等写法。
+        /// </summary>
+        /// <returns>找不到返回 <c>null</c>（调用方退回固定挂点）。</returns>
+        private static Transform FindHandBone(Transform root)
+        {
+            if (root == null) return null;
+            var all = root.GetComponentsInChildren<Transform>(true);
+            for (var i = 0; i < all.Length; i++)
+            {
+                var n = all[i].name;
+                if (string.IsNullOrEmpty(n)) continue;
+                if (n.IndexOf("hand", System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                // 排除左手（"l hand" / "lhand" / "left"）
+                if (n.IndexOf("l hand", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                if (n.IndexOf("lhand", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                if (n.IndexOf("left", System.StringComparison.OrdinalIgnoreCase) >= 0) continue;
+                return all[i];
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// 取枪口的世界位姿（第三人称开火表现用）。
+        /// </summary>
+        /// <returns>挂点/枪口节点都还没建起来（这具视图还没挂过武器）时返回 <c>false</c>，
+        /// 两个出参为默认值。</returns>
+        public bool TryGetMuzzle(out Vector3 position, out Quaternion rotation)
+        {
+            if (_muzzleSocket == null)
+            {
+                position = Vector3.zero;
+                rotation = Quaternion.identity;
+                return false;
+            }
+            position = _muzzleSocket.position;
+            rotation = _muzzleSocket.rotation;
+            return true;
+        }
+
+        /// <summary>当前挂着的手持武器 id；没挂任何武器时为 <c>null</c>（供取证/排障读取）。</summary>
+        public string HeldWeaponId => _heldKey;
+
+        /// <summary>
+        /// **测试入口，供离线取证驱动使用**：让这具视图走一次"别人开火"的第三人称枪口表现
+        /// —— 与真实链路上（<c>CsActor.NextFireTime</c> 前推那一帧）调的是**同一个方法**。
+        ///
+        /// <para><b>不改变真实玩家行为</b>：没有任何 Update / 事件会调它，只在被显式调用时生效
+        /// （与 <c>CombatModule.SetFireHeldForTest</c> 同口径）。</para>
+        /// </summary>
+        public void FireRemoteMuzzleForTest(string weaponId)
+        {
+            var id = string.IsNullOrEmpty(weaponId) ? _heldKey : weaponId;
+            CombatModule.Instance?.FxRemoteShot(this, id);
         }
 
         /// <summary>归还当前挂着的武器模型（换枪 / 死亡 / 池复用前调）。</summary>
@@ -592,14 +727,20 @@ namespace Cs16.Module.View
         /// </summary>
         private void EnsureAlwaysAnimate()
         {
+            // **实时扫描整棵子树**，不用 `Bind` 时刻的快照 `_renderers`：身体网格可能是**异步加载**进来的
+            // （实例化时它还不存在），手里的枪是 `EnsureHeldWeapon` 在**运行时**才挂上去的 —— 快照里
+            // 一个都没有它们，于是那两块几何照旧拿绑定盒当可见性判据 ⇒ 表现就是"身体姿态卡在绑定姿势
+            // （T-pose，双臂张开）/ 手里的枪横着且位置错 / 网格被裁成一片一片（用户原话：像个沥水框全是洞）"。
             var fixedSmr = 0;
-            for (var i = 0; i < _renderers.Length; i++)
+            var smrs = GetComponentsInChildren<SkinnedMeshRenderer>(true);   // 含 Body 与运行时挂上的武器
+            for (var i = 0; i < smrs.Length; i++)
             {
-                var smr = _renderers[i] as SkinnedMeshRenderer;
+                var smr = smrs[i];
                 if (smr == null || smr.updateWhenOffscreen) continue;
                 smr.updateWhenOffscreen = true;
                 fixedSmr++;
             }
+
             var anims = GetComponentsInChildren<Animator>(true);
             var fixedAnim = 0;
             for (var i = 0; i < anims.Length; i++)
@@ -614,6 +755,23 @@ namespace Cs16.Module.View
                     $"角色视图「{name}」：已修正 {fixedSmr} 个 SkinnedMeshRenderer.updateWhenOffscreen " +
                     $"与 {fixedAnim} 个 Animator.cullingMode（绑定包围盒不得当可见性判据）");
             }
+        }
+
+        /// <summary>
+        /// **降频复查**（1 秒一次）——"恒更新"这件事不能只在 <see cref="Bind"/> 时做一次。
+        ///
+        /// <para>两条漏网路径（都会让表现退回"绑定姿态 + 网格被裁"）：① 身体网格是**异步加载**的，
+        /// Bind 那一刻还没实例化；② 手里的枪由 <see cref="EnsureHeldWeapon"/> 在**运行时**挂上。
+        /// 本方法是**幂等且便宜**的：只有真的需要改（`updateWhenOffscreen == false` /
+        /// `cullingMode != AlwaysAnimate`）才会写值，正常帧什么都不做（`GetComponentsInChildren`
+        /// 每 1 秒一次，不在每帧热路径上）。</para>
+        /// </summary>
+        private void EnsureAlwaysAnimateTick()
+        {
+            var now = Time.time;
+            if (now < _nextAlwaysAnimateScanAt) return;
+            _nextAlwaysAnimateScanAt = now + AlwaysAnimateRescanSeconds;
+            EnsureAlwaysAnimate();
         }
 
         /// <summary>挂上头顶名牌（**必须在 <see cref="Bind"/> 之后**：名牌的渲染不计入身高实测）。</summary>
@@ -751,16 +909,21 @@ namespace Cs16.Module.View
                 _alive = actor.IsAlive;
                 if (_alive)
                 {
-                    // 复活：整具身体重新开始（死亡序列的标志位复位，否则下一局倒地不播）
+                    // 复活：碰撞体与冻结速度复位（死亡当帧就关过碰撞体，见 EnterCorpse）。
                     ReleaseCorpsePose();
                     SetShown(true);
-                    _deathPlayed = false;
-                    _corpseHeld = false;
-                    _deathState = null;
-                    _hideAfterDeath = false;
-                    _overrideState = null;
-                    _lastState = null;
-                    _haveAnimSnapshot = false;
+                    // 只在"上一世真的留下了停住的东西"时才重启整具身体：死亡与复活这两个边沿若成对出现
+                    // （同一具身体在相邻帧被判死又判活），无条件清 _lastState 会让下一帧再次 CrossFade，
+                    // 状态机永远走不完一次过渡 ⇒ 画面定格在过渡中的混合姿态。
+                    if (_deathPlayed || _deathState != null || _hideAfterDeath || _overrideState != null)
+                    {
+                        _deathPlayed = false;
+                        _deathState = null;
+                        _hideAfterDeath = false;
+                        _overrideState = null;
+                        _lastState = null;
+                        _haveAnimSnapshot = false;
+                    }
                 }
                 // 死亡**不立刻隐藏**：先播原版倒地序列，播完（OnComplete）**冻住留场**。
                 // 没有动画时（预制体里是静态网格）走兜底：立即隐藏。
@@ -783,6 +946,16 @@ namespace Cs16.Module.View
                 return;
             }
 
+            // ---- 活着就不许停在"尸体冻结速度"上 ----
+            // speed = 0 时状态机不推进：任何一次 CrossFade 都会永远停在中途（画面上就是一具定格在
+            // 混合姿态的身体）。尸体冻结（见 EnsureCorpseShown）必须只作用在尸体上。
+            if (_animator != null && _animator.speed <= 0f)
+            {
+                _animator.speed = 1f;
+                _log.Info("anim.unfreeze",
+                    $"角色视图「{name}」活着但 Animator.speed = 0（尸体冻结未清除）⇒ 已复位为 1");
+            }
+
             // ---- 位置 / 朝向（只读 actor，绝不写回）----
             transform.SetPositionAndRotation(actor.Position, Quaternion.Euler(0f, actor.Yaw, 0f));
 
@@ -798,6 +971,10 @@ namespace Cs16.Module.View
 
             // ---- 骨骼动画：按权威状态切原版序列 ----
             UpdateAnim(actor);
+
+            // ---- "恒更新"复查（降频 1s）：异步加载的身体网格 / 运行时挂上的武器都必须被覆盖到，
+            //      否则它们拿绑定姿态包围盒当可见性判据 ⇒ 姿态卡在绑定姿势 + 网格被裁（见 EnsureAlwaysAnimateTick）----
+            EnsureAlwaysAnimateTick();
 
             // ---- 手里的枪：换枪/拾枪时把模型换掉（别人手里要看得见那把枪，差异 #75 同族）----
             EnsureHeldWeapon(actor);
@@ -917,11 +1094,17 @@ namespace Cs16.Module.View
                 "回合重开复活时才清掉");
         }
 
-        /// <summary>复活：解冻姿态、把碰撞体还回来（<c>SetShown(true)</c> 之前调用即可）。</summary>
+        /// <summary>
+        /// 复活：解冻姿态、把碰撞体还回来（<c>SetShown(true)</c> 之前调用即可）。**幂等**。
+        ///
+        /// <para>不拿 <c>_corpseFrozen</c> 当闸门：碰撞体是**死亡当帧**就被关掉的（见 <see cref="EnterCorpse"/>），
+        /// 而 <c>_corpseFrozen</c> 要等倒地序列播完（<c>OnComplete</c>）才置位 —— 序列没播完就复活的那些，
+        /// 用闸门就会把碰撞体永久关着（死人挡不住活人、活人也打不中他）。</para>
+        /// </summary>
         private void ReleaseCorpsePose()
         {
-            if (!_corpseFrozen) return;
             _corpseFrozen = false;
+            _corpseHeld = false;
             if (_animator != null) _animator.speed = 1f;
             for (var i = 0; i < _colliders.Length; i++)
             {

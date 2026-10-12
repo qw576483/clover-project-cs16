@@ -410,25 +410,22 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 逐武器枪口火焰**存活时长**（秒）。**类别推断**（同 <see cref="MuzzleFlashSize"/>：原版时长由引擎按
-        /// 贴片帧数推进，逐武器值在 <c>hw.dll</c>、不在盘）：手枪 0.040 / 冲锋枪 0.045 / 步枪 0.050 /
-        /// 狙击 0.055 / 霰弹 0.050 / 机枪 0.045 s。
+        /// 枪口火焰**存活时长**（秒）= <b>0.01 s</b>，全武器统一（原版这条不随武器变）。
         ///
-        /// <para>取值带的两条硬边界：**下界 ≥ 一帧**（<c>1/60 s</c>，否则可能整发看不见）、
-        /// **上界 &lt; 该武器一次射击的最小间隔**（否则相邻两发的火焰在画面上重叠成一团）。</para>
+        /// <para><b>出处 = 原版引擎里的立即数</b>（<c>原版资源/cs16src/hw.dll</c>，ImageBase <c>0x01D00000</c>）：
+        /// muzzle flash 例程 VA <c>0x1D30BF0</c> 在 <c>0x1D30C8D</c>–<c>0x1D30CBA</c> 处算
+        /// <c>die = cl.time + [0x01E498A0]</c>，而 <c>[0x01E498A0]</c>（文件偏移 <c>0x1498A0</c>）是
+        /// <b>f64 <c>0.01</c></b>（字节 <c>7b14ae47e17a843f</c>）⇒ 该记录只活 0.01 s。
+        /// 独立印证：原版实机录像 <c>原版资源/参照物/video/cs_italy_60s_70s.mp4</c>（30 fps）里
+        /// 火焰在 f171 / f181 上是**单帧**事件（30 fps 的分辨极限 0.033 s）⇒ 量级一致。</para>
+        ///
+        /// <para><b>点光用的是同一个时长</b>：调用点把本值同时喂给贴片与点光
+        /// （<c>CombatEffects.AcquireSprite(Shape.Sprite, …, duration)</c>）⇒ 缩到 0.01 s 后
+        /// "整片被照亮"的窗口也一起缩到 1 帧。</para>
         /// </summary>
         public static float MuzzleFlashDuration(string weaponId)
         {
-            switch (MuzzleClass(weaponId))
-            {
-                case CsWeaponClass.Pistol: return 0.040f;
-                case CsWeaponClass.SMG: return 0.045f;
-                case CsWeaponClass.Rifle: return 0.050f;
-                case CsWeaponClass.Sniper: return 0.055f;
-                case CsWeaponClass.Shotgun: return 0.050f;
-                case CsWeaponClass.MachineGun: return 0.045f;
-                default: return 0.045f;
-            }
+            return 0.01f;
         }
 
         /// <summary>武器类别（拿不到武器定义时返回 <see cref="CsWeaponClass.Equipment"/> = 走默认档）。</summary>
@@ -437,8 +434,6 @@ namespace Cs16.Module.Combat
             var def = CsWeapons.Get(weaponId);
             return def != null ? def.Class : CsWeaponClass.Equipment;
         }
-
-        public const float MuzzleLightDuration = 0.055f;
 
         /// <summary>
         /// 弹痕贴片**整块画布**的世界尺寸（米）= 16 GoldSrc 单位 = **0.4064 m**。

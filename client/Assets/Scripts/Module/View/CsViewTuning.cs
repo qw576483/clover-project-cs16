@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Cs16.Core;
 using UnityEngine;
 
@@ -217,6 +218,161 @@ namespace Cs16.Module.View
 
         /// <summary>当前手持武器的视图预制体不存在时，退到哪里（避免"手上空着"）。</summary>
         public const string ViewModelFallbackWeapon = CsWeapons.Knife;
+
+        // ==================================================================
+        //  第三人称持枪：逐武器对齐（手骨局部）
+        // ==================================================================
+        /// <summary>
+        /// 第三人称持枪时的**手骨局部变换**：位置（米）、欧拉角（度，Unity 口径 <c>Z→X→Y</c>），
+        /// 以及枪口点（手骨局部，米，第三人称开火的火光落点）。
+        ///
+        /// <para><b>三个数各自的出处（都不是猜的）</b>：原版第三人称不是"把世界模型挂到手上"，
+        /// 而是引擎把 <c>models/p_&lt;武器&gt;.mdl</c> 蒙皮到玩家模型的右手骨
+        /// （<c>原版资源/cs16src/cstrike/p_&lt;武器&gt;.mdl</c>，本工程的玩家骨架与它逐骨一致到 1e-4 unit）。
+        /// 那两份模型装的是**同一份武器几何**：<c>p_</c> 的顶点在"手骨坐标系"里、<c>w_</c> 的在"自己的原点"里
+        /// ⇒ 手骨局部变换 = <c>(p_ 手骨绑定世界)<sup>-1</sup> · (p_ 武器骨绑定世界) · (w_ 武器骨绑定世界)<sup>-1</sup>，
+        /// 逐顶点校验残差 ≤ 4.4e-16 m。</para>
+        ///
+        /// <para><b>枪口列</b>：原版 <c>p_</c> 模型里那根 <c>flash / Mflash</c> 骨的世界位置
+        /// （少数枪不带该骨 —— 只能取武器几何离武器骨最远的那个顶点，见
+        /// <c>策划/差异登记.tsv</c> 的手部对齐行）。</para>
+        ///
+        /// <para><b>导出空间口径</b>：与工程内 <c>.cs16anim</c> 一致
+        /// （<c>P(x,y,z)=(y,z,x)</c>、角色按"模型高 1.8 m"归一，出处
+        /// <c>原版资源/cs16src/cs16_anim.py</c> 的空间与骨骼两段）。</para>
+        /// </summary>
+        public struct HeldWeaponAlign
+        {
+            /// <summary>枪身原点在手骨局部的位置（米）。</summary>
+            public Vector3 LocalPosition;
+            /// <summary>枪身在手骨局部的朝向（度，<c>Quaternion.Euler</c> 口径）。</summary>
+            public Vector3 LocalEuler;
+            /// <summary>枪口点（手骨局部，米）——第三人称开火的火光落在这里。</summary>
+            public Vector3 MuzzleLocalPosition;
+
+            public HeldWeaponAlign(Vector3 pos, Vector3 euler, Vector3 muzzle)
+            {
+                LocalPosition = pos;
+                LocalEuler = euler;
+                MuzzleLocalPosition = muzzle;
+            }
+        }
+
+        /// <summary>表里没有的武器（理论到不了：只有带 <c>w_</c> 世界模型的武器才走这张表）。</summary>
+        public static readonly HeldWeaponAlign DefaultHeldWeaponAlign =
+            new HeldWeaponAlign(Vector3.zero, Vector3.zero, Vector3.zero);
+
+        /// <summary>
+        /// 角色预制体骨架比例 / 世界模型比例（<c>0.025918 / 0.0254</c>）。
+        ///
+        /// <para>角色骨骼按"模型高 = 1.8 m"归一（terror.mdl 绑定高 69.450 unit ⇒ 1 unit = 0.0259183 m），
+        /// 世界武器按原版固定单位（1 unit = <see cref="CsConst.UnitToMeter"/> = 0.0254 m）
+        /// ⇒ 武器作为手骨的子节点时必须补上这个比，否则枪比拿它的人小 2%。</para>
+        /// </summary>
+        public const float HeldWeaponScale = 1.02040f;
+
+        /// <summary>
+        /// 找不到右手骨骼时（挂点退回 <c>Body</c> 固定节点）的枪口落点（<c>Body</c> 局部，米）。
+        /// 出处：**本项目新增** —— 这条是挂点降级路径的兜底；正常路径的枪口见上表的枪口列。
+        /// </summary>
+        public static readonly Vector3 HeldWeaponMuzzleFallbackLocal = new Vector3(0.10f, 1.20f, 0.60f);
+
+        /// <summary>
+        /// 逐武器的第三人称持枪对齐表。
+        ///
+        /// <para>数据出处与推导见 <see cref="HeldWeaponAlign"/> 的注释；每一行都来自
+        /// <c>原版资源/cs16src/cstrike/p_&lt;武器&gt;.mdl</c> + <c>cstrike__models__w_&lt;武器&gt;.mdl</c>
+        /// 两份原版模型的实测值（不是"看起来合理"的目测值）。</para>
+        /// </summary>
+        private static readonly Dictionary<string, HeldWeaponAlign> HeldWeaponAligns =
+            new Dictionary<string, HeldWeaponAlign>(32)
+        {
+            { CsWeapons.Ak47, new HeldWeaponAlign(
+                new Vector3( 0.01645f,   0.01089f,   0.27892f), new Vector3(  24.439f,    -3.255f,    91.057f),
+                new Vector3(-0.04913f,  -0.05312f,   0.77788f)) },
+            { CsWeapons.M4A1, new HeldWeaponAlign(
+                new Vector3( 0.00963f,   0.01375f,   0.38153f), new Vector3( -21.041f,    -4.633f,    91.415f),
+                new Vector3(-0.05787f,  -0.09512f,   0.92193f)) },
+            { CsWeapons.Sg552, new HeldWeaponAlign(
+                new Vector3( 0.01794f,   0.05256f,   0.19111f), new Vector3(  49.561f,    -0.905f,    92.003f),
+                new Vector3(-0.03222f,   0.01007f,   0.62860f)) },
+            { CsWeapons.Aug, new HeldWeaponAlign(
+                new Vector3( 0.01673f,   0.03300f,   0.11799f), new Vector3(  39.936f,    -2.886f,    91.255f),
+                new Vector3(-0.03464f,  -0.00487f,   0.61859f)) },
+            { CsWeapons.Galil, new HeldWeaponAlign(
+                new Vector3(-0.01938f,   0.01756f,   0.32789f), new Vector3( -83.253f,  -148.891f,  -125.500f),
+                new Vector3(-0.10454f,  -0.10080f,   1.01104f)) },
+            { CsWeapons.Famas, new HeldWeaponAlign(
+                new Vector3( 0.02018f,   0.06249f,   0.14319f), new Vector3( -52.047f,    -4.925f,    91.564f),
+                new Vector3(-0.04551f,   0.01691f,   0.75637f)) },
+            { CsWeapons.Awp, new HeldWeaponAlign(
+                new Vector3( 0.01282f,  -0.02785f,   0.31266f), new Vector3(  27.955f,    -4.181f,    91.090f),
+                new Vector3(-0.05537f,  -0.07955f,   0.86144f)) },
+            { CsWeapons.Scout, new HeldWeaponAlign(
+                new Vector3( 0.00606f,   0.01193f,   0.28731f), new Vector3( -12.330f,    -4.651f,    89.799f),
+                new Vector3(-0.06167f,  -0.06820f,   0.85288f)) },
+            { CsWeapons.G3sg1, new HeldWeaponAlign(
+                new Vector3( 0.01634f,   0.00766f,   0.26013f), new Vector3(  27.999f,    -4.601f,    86.372f),
+                new Vector3(-0.04381f,  -0.04012f,   0.83493f)) },
+            { CsWeapons.Sg550, new HeldWeaponAlign(
+                new Vector3( 0.00913f,   0.01440f,   0.31177f), new Vector3(  35.937f,    -2.994f,    91.188f),
+                new Vector3(-0.04998f,  -0.06460f,   0.88044f)) },
+            { CsWeapons.M249, new HeldWeaponAlign(
+                new Vector3( 0.05970f,   0.08320f,   0.32005f), new Vector3(  -3.135f,     3.754f,   100.078f),
+                new Vector3( 0.04675f,   0.24514f,   0.78557f)) },
+            { CsWeapons.Mp5, new HeldWeaponAlign(
+                new Vector3(-0.05054f,   0.05054f,   0.32351f), new Vector3(   0.000f,   -99.000f,  -180.000f),
+                new Vector3(-0.03823f,  -0.00726f,   0.55821f)) },
+            { CsWeapons.Tmp, new HeldWeaponAlign(
+                new Vector3( 0.01440f,   0.04386f,   0.16361f), new Vector3(  52.349f,     2.544f,    91.561f),
+                new Vector3( 0.00591f,   0.02740f,   0.43292f)) },
+            { CsWeapons.Mac10, new HeldWeaponAlign(
+                new Vector3(-0.01666f,  -0.12746f,  -0.12352f), new Vector3(   9.452f,     0.978f,   -86.547f),
+                new Vector3(-0.00030f,   0.04723f,   0.29410f)) },
+            { CsWeapons.Ump45, new HeldWeaponAlign(
+                new Vector3( 0.00790f,   0.00868f,   0.10767f), new Vector3( -10.648f,     1.630f,    90.969f),
+                new Vector3( 0.00510f,   0.02179f,   0.40967f)) },
+            { CsWeapons.P90, new HeldWeaponAlign(
+                new Vector3( 0.01462f,   0.06006f,   0.12127f), new Vector3(  41.352f,     2.148f,    91.270f),
+                new Vector3( 0.00564f,   0.01688f,   0.44162f)) },
+            { CsWeapons.M3, new HeldWeaponAlign(
+                new Vector3(-0.00260f,   0.00666f,   0.23400f), new Vector3(  46.941f,    -5.304f,    88.480f),
+                new Vector3(-0.05683f,  -0.05275f,   0.73517f)) },
+            { CsWeapons.Xm1014, new HeldWeaponAlign(
+                new Vector3(-0.02731f,   0.09951f,   0.33404f), new Vector3(  75.869f,     9.472f,   -84.372f),
+                new Vector3( 0.03817f,   0.19497f,   0.76418f)) },
+            { CsWeapons.Glock18, new HeldWeaponAlign(
+                new Vector3( 0.00862f,   0.02351f,   0.12873f), new Vector3(  26.371f,    -0.214f,    88.834f),
+                new Vector3( 0.00092f,   0.04505f,   0.25871f)) },
+            { CsWeapons.Usp, new HeldWeaponAlign(
+                new Vector3( 0.01221f,   0.05649f,   0.20081f), new Vector3( -16.132f,     0.963f,    89.432f),
+                new Vector3( 0.00216f,   0.02936f,   0.42383f)) },
+            { CsWeapons.P228, new HeldWeaponAlign(
+                new Vector3( 0.00742f,   0.05120f,   0.12596f), new Vector3( -20.167f,     0.503f,    89.423f),
+                new Vector3( 0.00045f,   0.05473f,   0.26495f)) },
+            { CsWeapons.Deagle, new HeldWeaponAlign(
+                new Vector3( 0.00783f,   0.02317f,   0.14219f), new Vector3(  26.364f,     1.282f,    91.065f),
+                new Vector3( 0.00038f,   0.04315f,   0.30375f)) },
+            { CsWeapons.FiveSeven, new HeldWeaponAlign(
+                new Vector3( 0.00344f,   0.04771f,   0.12237f), new Vector3( -32.429f,    -0.218f,    91.310f),
+                new Vector3(-0.00479f,   0.05852f,   0.25929f)) },
+            { CsWeapons.Elite, new HeldWeaponAlign(
+                new Vector3(-0.15777f,   0.02388f,  -1.71264f), new Vector3( -23.843f,    -7.537f,    99.345f),
+                new Vector3( 0.02787f,   0.06716f,   0.29094f)) },
+            { CsWeapons.Knife, new HeldWeaponAlign(
+                new Vector3(-0.23997f,   0.43944f,   0.01622f), new Vector3(  58.354f,   149.854f,   155.512f),
+                new Vector3( 0.06596f,  -0.14660f,   0.00370f)) },
+            { CsWeapons.C4, new HeldWeaponAlign(
+                new Vector3(-0.01282f,   0.00116f,  -0.09356f), new Vector3(  89.700f,    89.997f,    89.997f),
+                new Vector3(-0.18868f,   0.04924f,   0.04095f)) },
+        };
+
+        /// <summary>取某把武器的第三人称持枪对齐；不在表里返回 <see cref="DefaultHeldWeaponAlign"/>。</summary>
+        public static HeldWeaponAlign HeldWeaponAlignOf(string weaponId)
+        {
+            if (!string.IsNullOrEmpty(weaponId) && HeldWeaponAligns.TryGetValue(weaponId, out var a)) return a;
+            return DefaultHeldWeaponAlign;
+        }
 
         // ==================================================================
         //  骨骼动画（原版序列驱动；**帧率/帧数/关键帧全部来自 mdl 实测**，见
