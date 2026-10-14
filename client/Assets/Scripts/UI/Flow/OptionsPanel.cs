@@ -217,7 +217,8 @@ namespace Cs16.UI
             AudioCtrls, VideoCtrls, MouseCtrls, KeyboardCtrls, MultiplayerCtrls, VoiceCtrls, AdvancedCtrls,
         };
 
-        /// <summary>键盘页的按键表（本工程项目侧真实按键；原版该处是一个 `ListPanel`）。</summary>
+        /// <summary>键盘页的按键表（本工程项目侧真实按键 —— 逐行对应 `Module/Player/PlayerMotor` 与
+        /// `Module/Combat/CombatModule` 里装的 `GameKey`；原版该处是一个 `ListPanel`）。</summary>
         private const string KeybindText =
             "Action                Key\n" +
             "Move                  W A S D\n" +
@@ -228,11 +229,13 @@ namespace Cs16.UI
             "Zoom (AWP / Scout)    Mouse Right\n" +
             "Reload                R\n" +
             "Drop weapon           G\n" +
+            "Prev weapon           Q\n" +
             "Switch weapon         1 ~ 5\n" +
             "Use / plant / defuse  E (hold)\n" +
             "Buy menu              B\n" +
             "Scoreboard            Tab (hold)\n" +
             "Bot / quick menu      H\n" +
+            "Change team           M\n" +
             "Radio                 Z / X / C\n" +
             "Console               / or Num0\n" +
             "Pause menu            Esc";
@@ -259,6 +262,7 @@ namespace Cs16.UI
         private readonly Dictionary<string, Action<bool>> _realChecks = new Dictionary<string, Action<bool>>();
 
         private CsPlayerSettings _working;
+        private CsPlayerSettings _savedAtOpen;
 
         /// <summary>盖在暂停菜单（Popup）之上。</summary>
         public override UILayer Layer => UILayer.Top;
@@ -368,17 +372,19 @@ namespace Cs16.UI
             _realEntries.Clear();
             _realChecks.Clear();
 
-            // 音量三项（原版 audio 页三支 `CCvarSlider`）
+            // 音量三项（原版 audio 页三支 `CCvarSlider`）—— 拖动即时生效，不等 OK
             _realSliders["audio/SFX Slider"] = v =>
             {
                 if (_working == null) return;
                 _working.SfxVolume = v;
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
             _realSliders["audio/MP3 Volume"] = v =>
             {
                 if (_working == null) return;
                 _working.BgmVolume = v;
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
             // 原版 `Suit Slider` = HEV 护甲音量；CS 里没有 HEV 护甲语音 ⇒ 本项目用它承载既有的
@@ -387,14 +393,16 @@ namespace Cs16.UI
             {
                 if (_working == null) return;
                 _working.MasterVolume = v;
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
 
-            // 鼠标灵敏度（原版 mouse 页的 `Slider` + `SensitivityLabel`）
+            // 鼠标灵敏度（原版 mouse 页的 `Slider` + `SensitivityLabel`）—— 拖动即时生效，不等 OK
             _realSliders["mouse/Slider"] = v =>
             {
                 if (_working == null) return;
                 _working.MouseSensitivity = v;
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
             _realEntries["mouse/SensitivityLabel"] = text =>
@@ -408,6 +416,7 @@ namespace Cs16.UI
                 }
                 _working.MouseSensitivity = Mathf.Clamp(parsed, CsPlayerSettingsStore.MinSensitivity,
                     CsPlayerSettingsStore.MaxSensitivity);
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
 
@@ -416,6 +425,7 @@ namespace Cs16.UI
             {
                 if (_working == null) return;
                 _working.InvertMouseY = on;
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
             // 本项目新增（advanced 页）：FOV 与"显示 FPS"
@@ -423,6 +433,7 @@ namespace Cs16.UI
             {
                 if (_working == null) return;
                 _working.Fov = Mathf.RoundToInt(v);
+                CsPlayerSettingsStore.ApplyLive(_working);
                 RefreshValueLabels();
             };
             _realChecks["advanced/ShowFps"] = on =>
@@ -668,6 +679,7 @@ namespace Cs16.UI
 
             // 工作副本先就位：绑定的回调会读它（Apply / OK 才写盘，Cancel 直接丢弃）
             _working = CsPlayerSettingsStore.Load();
+            _savedAtOpen = CsPlayerSettingsStore.Load();
 
             WireAll();
             BindDialogButtons();
@@ -737,9 +749,8 @@ namespace Cs16.UI
 
         private void OnCancel()
         {
-            // CS 1.6 的 Cancel = 丢弃本次改动。工作副本从没写盘，这里只需把引擎侧音量恢复成盘上的值。
-            var saved = CsPlayerSettingsStore.Load();
-            CsPlayerSettingsStore.ApplyToEngine(saved);
+            // CS 1.6 的 Cancel = 丢弃本次改动。滑块拖动只改内存与引擎，这里把两者恢复成打开面板时的值。
+            CsPlayerSettingsStore.ApplyLive(_savedAtOpen);
             _working = null;
             Game.Logger.Info(Tag, "Options Cancel：丢弃本次改动并关闭");
             Game.UI.Close<OptionsPanel>();

@@ -23,17 +23,30 @@ namespace Cs16.Core
     public static class CsConst
     {
         // ---- 经济 ----
+        /// <summary>起始金钱 = <c>mp_startmoney 800</c> · 出处 = <c>mp.dll</c> 静态 cvar 表。</summary>
         public const int StartMoney = 800;
+        /// <summary>金钱上限 = <c>mp_maxmoney 16000</c> · 出处 = <c>mp.dll</c> 静态 cvar 表。</summary>
         public const int MaxMoney = 16000;
-        public const int RewardRoundWinElimination = 3250;   // 全歼取胜
-        public const int RewardRoundWinBombExplode = 3500;   // 炸弹爆炸取胜（T）
-        public const int RewardRoundWinBombDefuse = 3500;    // 拆包取胜（CT）
-        public const int RewardRoundWinTimeExpired = 3250;   // 时间到（CT）
-        public const int RewardLossBase = 1400;              // 连败奖励基数
-        public const int RewardLossStep = 500;               // 每连败一局递增
-        public const int RewardLossMax = 3400;               // 连败奖励上限
-        public const int RewardBombPlant = 800;              // 下包者个人奖励
-        public const int RewardBombDefuse = 300;             // 拆包者个人奖励
+
+        // 回合奖金取原版那张 22 格 int 表（.data VA 0x10163AB0，启动时 rep movsd 复制到 0x101A1590，
+        // 见 .ai-tmp/test/mpdll-reverse/VALUES.md §2）。四个胜负原因的归属：
+        //   引爆 = idx2 (3500, 读点 0x10050D99, 配对标题串 "#Target_Bombed")
+        //   拆包 = idx3 / idx6 (3500, 读点 0x10050699 / 0x10050AA1；该族分支未配标题串)
+        //   时间耗尽 = idx12 (3250, 读点 0x10053D19, 配对串 "#Target_Saved")
+        //   全歼   = "#CTs_Win"(情景 id 8, VA 0x10051079-0x1005108D) / "#Terrorists_Win"(情景 id 9,
+        //            VA 0x10051179-0x1005118D) 两条分支：金额 = 规则对象字节 [+0x86] 为 0 时取
+        //            idx0 / idx1（3000），非 0 时取 idx8 / idx10（3250）。[+0x86] 的写入点在整个
+        //            .text 里 0 命中（只有 38 处读）⇒ 该字节的语义未取到；本工程不产生该字节为 0 的
+        //            情形，按非 0 的常态档 3250 取值。
+        public const int RewardRoundWinElimination = 3250;   // 全歼取胜（= idx8 / idx10）
+        public const int RewardRoundWinBombExplode = 3500;   // 炸弹爆炸取胜（T）= idx2
+        public const int RewardRoundWinBombDefuse = 3500;    // 拆包取胜（CT）= idx3 / idx6
+        public const int RewardRoundWinTimeExpired = 3250;   // 时间到（CT）= idx12
+        public const int RewardLossBase = 1400;              // 连败奖励基数 = idx15
+        public const int RewardLossStep = 500;               // 每连败一局递增 = idx18
+        public const int RewardLossMax = 3400;               // 连败奖励上限（= idx17 阈值 3000 再加一次 500）
+        /// <summary>下包者个人奖励 = 奖金表 <b>idx9 = 800</b>（读点 VA 0x10050EA4）。</summary>
+        public const int RewardBombPlant = 800;
 
         // ---- 回合 ----
         /// <summary>
@@ -59,7 +72,18 @@ namespace Cs16.Core
 
         public const float RoundEndTime = 5f;       // 回合结算展示时长（原版未解出该时长 · 本项目自行设计，登记在对照表"允许的差异"）
         public const int RoundsPerHalf = 15;        // 半场回合数
-        public const int MaxRounds = 30;            // 全场回合数（15+15）
+
+        /// <summary>
+        /// 全场回合数上限 = 原版 <c>mp_maxrounds</c> 的默认值 <b>0</b>（= <b>不限</b>）。
+        /// 出处 = <c>原版资源/cs16src/cstrike/dlls/mp.dll</c> 的静态 <c>cvar_t</c> 表
+        /// （<c>0x10162D50</c> / 文件偏移 <c>0x161950</c>，逐字节见
+        /// <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §1）。
+        ///
+        /// <para><b>0 = 不设上限</b> ⇒ 胜负只由 <c>RoundsPerHalf + 1</c>（先到 16 胜）决定。
+        /// 消费点必须写成"&gt; 0 才比较"（见 <c>CsRound.IsMatchOver</c>）——
+        /// 直接比较 0 会让第 1 回合就判整场结束。</para>
+        /// </summary>
+        public const int MaxRounds = 0;
 
         // ---- 炸弹 ----
         /// <summary>
@@ -82,7 +106,8 @@ namespace Cs16.Core
         /// <c>push 5</c> + VA <c>0x10043CAC</c> <c>fadd [0x10142054]</c>（常量 <c>5.0f</c>），
         /// 字符串锚点 <c>Begin_Bomb_Defuse_With_Kit</c>（<c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §3.1）。</summary>
         public const float DefuseTimeWithKit = 5f;
-        /// <summary>蜂鸣间隔的衰减系数：每响一次，后续间隔 ×0.9（原版节奏不是"按剩余秒数分档"）。
+        /// <summary>**换采样档**间隔的衰减系数：每换一档，后续换档间隔 ×0.9（原版节奏不是"按剩余秒数分档"，
+        /// 也不是"每响一声就加速"——声音另有固定节拍，见 <see cref="BombBeepSoundInterval"/>）。
         /// 出处：原版 <c>mp.dll:0x100449D8</c> 的 <c>fmul [0x10141BC8]</c>，
         /// 常量字节 <c>66 66 66 3F</c> = <b>0.9f</b>。</summary>
         public const float BombBeepIntervalDecay = 0.9f;
@@ -93,12 +118,35 @@ namespace Cs16.Core
         /// 跳表 <c>0x10044DD0</c>、递增点 <c>0x10044AD1</c>（<c>inc [edi+0x1B8]</c>）。</summary>
         public const int BombBeepTierCount = 5;
 
+        /// <summary>蜂鸣**声音**的固定节拍（秒）= 原版 <c>m_flNextBeep = gpGlobals->time + 1.4f</c>。
+        /// 出处：原版 <c>mp.dll:0x10044AED</c> <c>d8 05 20 1d 14 10</c>（<c>fadd [0x10141D20]</c>），
+        /// 常量字节 <c>33 33 b3 3f</c> = <b>1.4f</b>；排期点 <c>0x10044AD7</c> 读 <c>[edi+0x198]</c>、
+        /// <c>0x10044AFD</c> 写回，随后 <c>0x10044B16/B1C</c> 用 <c>[edi+0x1a0]</c> 采样名 + <c>[edi+0x1a4]</c> 音量调
+        /// <c>0x1007CB70</c>（EMIT_SOUND）。</summary>
+        public const float BombBeepSoundInterval = 1.4f;
+
+        /// <summary>首响等待（秒）= 原版安放瞬间 <c>m_flNextBeep = gpGlobals->time + 0.5f</c>。
+        /// 出处：原版 <c>mp.dll:0x100445D6</c> <c>d8 05 d4 1a 14 10</c>（<c>fadd [0x10141AD4]</c>），
+        /// 常量字节 <c>00 00 00 3f</c> = <b>0.5f</b> → <c>0x100445DE</c> <c>fstp [esi+0x198]</c>。</summary>
+        public const float BombBeepFirstSoundDelay = 0.5f;
+
         /// <summary>首响用的间隔（秒）= C4 倒计时 ÷ 4。出处 = 原版安放炸弹处
         /// <c>pGrenade->m_flNextFreqInterval = float(CSGameRules()->m_iC4Timer / 4);</c>
         /// （<c>regamedll/dlls/ggrenade.cpp</c> 的 <c>CGrenade::C4Think</c> 建立段），
-        /// 与 <c>m_flNextFreq = gpGlobals->time</c> 一起决定首响时刻；之后每响一次
-        /// 间隔 ×<see cref="BombBeepIntervalDecay"/>（= 原版的 ×0.9）。</summary>
-        public const float BombBeepIntervalInitial = BombTimer / 4f;
+        /// 是**换档排期的首个间隔**（原版在安放瞬间置 <c>m_flNextFreq = gpGlobals->time</c> ⇒ 第 1 档立即生效，
+        /// 下一次换档在 +8s，之后每换一档间隔 ×<see cref="BombBeepIntervalDecay"/>（= 原版的 ×0.9））。
+        /// ⛔ 它**不是**首响等待：首响见 <see cref="BombBeepFirstSoundDelay"/>。
+        /// <para><b>是整数除法</b>（mp.dll 逐字节：<c>0x10044587</c> <c>mov eax,[eax+0x94]</c> →
+        /// <c>cdq</c> → <c>83 e2 03</c> → <c>03 c2</c> → <c>c1 f8 02</c>（<c>sar 2</c> = ÷4）→
+        /// <c>fild</c> → <c>0x100445A1</c> <c>d9 9e 94 01 00 00</c>（<c>fstp [esi+0x194]</c>））
+        /// ⇒ 35 s 的 C4 取 <b>8</b>。ReGameDLL <c>ggrenade.cpp:1308</c> 的 <c>float(m_iC4Timer / 4)</c> 与此一致。</para>
+        /// <para><b>这个间隔驱动的是"换采样档"的排期</b>（<c>m_flNextFreq</c>）：每档 `interval *= 0.9`
+        /// （mp.dll <c>0x100449D8</c> <c>fmul [0x10141BC8]</c> = 0.9f）。<b>蜂鸣声音本身是另一条固定排期</b>：
+        /// mp.dll <c>0x10044AD7-0x10044B1C</c> 读/写 <c>[edi+0x198]</c>（<c>m_flNextBeep</c>），
+        /// 加常量 <c>0x10141D20</c> = <b>1.4f</b>，并以 <c>[edi+0x1a0]</c>（<c>m_sBeepName</c>）+ <c>[edi+0x1a4]</c>
+        /// （<c>m_fAttenu</c>）调 <c>0x1007CB70</c>；首响初值 = <c>time + 0.5f</c>
+        /// （<c>0x100445D6</c> <c>fadd [0x10141AD4]</c> = 0.5f → <c>0x100445DE</c> <c>fstp [esi+0x198]</c>）。</para></summary>
+        public const float BombBeepIntervalInitial = (int)BombTimer / 4;
 
         // ---- 单位换算 ----
         /// <summary>GoldSrc 世界单位 → 米：1 unit = 1 inch = <b>0.0254 m</b>
@@ -110,6 +158,9 @@ namespace Cs16.Core
         public const float HitHead = 4.0f;
         public const float HitChest = 1.0f;
         public const float HitStomach = 1.25f;
+        /// <summary>腿部位倍率。<b>左右腿共用</b>：原版 <c>player.cpp</c> 的
+        /// <c>case HITGROUP_LEFTLEG:</c> / <c>case HITGROUP_RIGHTLEG:</c> 落在同一个 <c>flDamage *= 0.75;</c>
+        /// 分支里（左右腿是两个命中组、一个倍率，见 <c>CsHitbox</c>）。</summary>
         public const float HitLeg = 0.75f;
         // 护甲两系数同源（regamedll/dlls/player.h:66-67）：
         //   const float ARMOR_RATIO = 0.5f;   // Armor Takes 50% of the damage
@@ -169,11 +220,11 @@ namespace Cs16.Core
         /// 蹲位身高。原版包围盒：站立 <c>VEC_HULL_MIN -36 / VEC_HULL_MAX 36</c> = <b>72</b> unit，
         /// 蹲姿 <c>VEC_DUCK_HULL_MIN -18 / VEC_DUCK_HULL_MAX 32</c> = <b>50</b> unit
         /// （<c>原版资源/hlsdk/pm_shared/pm_shared.c:83-91</c>）。
-        /// ⇒ 蹲位身高 = <c>StandHeight 1.80 × 50/72</c> = <b>1.25 m</b>。
+        /// ⇒ 蹲位身高 = <c>50 × 0.0254</c> = <b>1.27 m</b>。
         /// <para>⛔ 不要拿 <c>VEC_HULL_MAX 36</c> 当蹲高（那是站立盒的上限，不是蹲姿总高）——
-        /// 那样会算出 0.9 m 并把蹲姿压得比原版矮 28%。</para>
+        /// 那样会算出 0.9144 m 并把蹲姿压得比原版矮 28%。</para>
         /// </summary>
-        public const float CrouchHeight = 1.25f;
+        public const float CrouchHeight = 1.27f;
 
         public const float PlayerRadius = 0.36f;
 
@@ -197,9 +248,28 @@ namespace Cs16.Core
         /// 这里保留固定 4.4 属于既有实现（引擎件只吃配置），登记在差异册里待接原版的线性口径。</para>
         /// </summary>
         public const float SpeedRifle = 4.4f;
-        // Shift 慢走 · 出处：**本项目新增**（原版慢走倍率的实现载体 —— GoldSrc 客户端与 `pm_shared` —— 现不在盘
-        // ⇒ 给不出 file:line；对照表 N-17 是"**下蹲**速度倍率"、与本条无关，不许互相充数）。
-        public const float SpeedWalkMultiplier = 0.42f;
+        // Shift 慢走倍率 · 出处 = 原版客户端 cvar `cl_movespeedkey` 的出厂默认值 **0.52**：
+        // `原版资源/cs16src/cstrike/cl_dlls/client.dll` 名串 file `0xE9E08` 紧随值串 `0.52`（@`0xE9E18`）；
+        // 同一串区就是**客户端输入速度家族**（`cl_sidespeed` @0xE9E20 / `cl_backspeed` @0xE9E30 /
+        // `cl_forwardspeed` = 400 @0xE9E40 / `cl_upspeed` = 320 / `cl_pitchspeed` = 225 /
+        // `cl_yawspeed` = 210 / `cl_anglespeedkey` = 0.67 @0xE9E88）⇒ 属主是客户端输入侧。
+        // 客户端**读取点**（本机反汇编实证，client.dll ImageBase 0x01900000）：
+        //   `01958576 push 0x19e9e18`（默认串 "0.52"）/ `0195857B push 0x19e9e08`（名串 "cl_movespeedkey"）
+        //   / `01958585 call [0x1a24c98]`（pfnRegisterVariable）/ `01958597 mov [0x1a2fff4], eax`（存 cvar_t*）
+        //   `01957E17 mov ecx,[0x1a2fff4]` → `01957E1D fld [ecx+0xC]` → `01957E20 fcomp [0x19cdfec]`（=0.52f）
+        //   → 取 `min(value, 0.52f)` → `01957E3A/42/48 fmul [esi+0x10]/[+0x14]/[+0x18]` + `fstp` 写回
+        //   （三个连续 float = 前进/横移/上移命令分量；`01957E15 je` 跳过整段 = "没按 walk 键就不缩放"）。
+        // 作用点 = `CsInventory.MovementSpeed`（按住 Shift ⇒ `min(ClForwardSpeed × 本值, 武器最大速度)`）。
+        public const float SpeedWalkMultiplier = 0.52f;
+
+        /// <summary>
+        /// 客户端前进速度命令上限 <c>cl_forwardspeed</c> = <b>400</b> unit/s ⇒ ×0.0254 = <b>10.16 m/s</b>。
+        /// 出处 = 原版客户端 cvar `cl_forwardspeed`：<c>原版资源/cs16src/cstrike/cl_dlls/client.dll</c>
+        /// 名串 file `0xE9E40`（VA `0x019E9E40`）紧随值串 `400`（file `0xE9E50`）。
+        /// <para>参与慢走口径：原版按住 walk 键时客户端把 <c>cl_*speed</c> 命令乘 <c>min(cl_movespeedkey, 0.52)</c>
+        /// （见 <see cref="SpeedWalkMultiplier"/> 的读取点），服务端再取小 —— 见 <c>CsInventory.MovementSpeed</c>。</para>
+        /// </summary>
+        public const float ClForwardSpeed = 400f * UnitToMeter;
         public const float SpeedCrouchMultiplier = 0.34f;
         /// <summary>
         /// 跳跃初速度：<c>sqrt(2 * 800 * 45.0)</c> = <b>268.328 units/s</b> ⇒ ×0.0254 = <b>6.82 m/s</b>。
@@ -345,6 +415,11 @@ namespace Cs16.Core
         public static float ScopeFovFor(CsWeaponDef def, int level)
         {
             if (level <= 0) return 0f;
+            if (def != null && def.ZoomFov > 0f)
+            {
+                if (level == 1) return def.ZoomFov;
+                return def.ZoomFovSecond > 0f ? def.ZoomFovSecond : def.ZoomFov;
+            }
             if (level == 1) return ZoomFov;
             return def != null && def.Id == CsWeapons.Awp ? ZoomFovSecondAwp : ZoomFovSecondOther;
         }
@@ -473,11 +548,21 @@ namespace Cs16.Core
         public const float SpecRoamDeadbandSpeed = 1f * UnitToMeter;
 
         // ---- 武器切换/动作时长 ----
+        /// <summary>切到主武器后的不可开火时长（秒）。出处：**本项目新增** —— 原版武器类的
+        /// <c>Deploy()</c> 内部没有时间常量（见 <c>策划/手感参数对照.md</c> §5.10），时长来自共享
+        /// <c>SelectItem</c> 路径，未取到原版对应量。</summary>
         public const float SwitchTimePrimary = 0.6f;
+
+        /// <inheritdoc cref="SwitchTimePrimary"/>
         public const float SwitchTimePistol = 0.3f;
+
+        /// <inheritdoc cref="SwitchTimePrimary"/>
         public const float SwitchTimeKnife = 0.2f;
-        public const float KnifeSwingTime = 0.4f;
-        public const float KnifeDamage = 55f;
+
+        /// <summary>刀的攻击距离（米）· 消费点 = <c>CsInventory.FireKnife</c> 的射线长度。
+        /// 出处：**未取到** —— <c>CKnife</c> 没有 <c>FireBullets3</c> 调用点
+        /// （见 <c>.ai-tmp/test/mpdll-reverse/PEN-FILL.md</c> §1），命中走共享 <c>TraceAttack</c> 路径，
+        /// 攻击距离的消费点未定位到。</summary>
         public const float KnifeRange = 1.6f;
 
         // ---- 手雷 ----
@@ -573,6 +658,28 @@ namespace Cs16.Core
         // 于是本常量只剩"受击方向指示器时长"这一个语义 ⇒ 随之改名（含全部引用点）。
         public const float DamageIndicatorTime = 0.8f;
 
+        // ---- 俯视概览（观战档位 5 / 6）----
+        /// <summary>
+        /// 俯视概览的缩放初值 = 原版 <c>m_OverviewData.zoom</c>，解自
+        /// <c>原版资源/cs16src/cstrike/overviews/de_dust2.txt:5</c> 的 <c>ZOOM 1.50</c>
+        /// （解析点 <c>hud_spectator.cpp:958-961</c>；进 map 档位时 <c>m_mapZoom</c> 复位到它，<c>:849/:855/:1051</c>）。
+        /// </summary>
+        public const float OverviewZoomDefault = 1.50f;
+
+        /// <summary>俯视概览缩放的钳位。出处：<c>hud_spectator.cpp:399-403</c>（<c>&gt;3.0</c> 钳 3.0、<c>&lt;0.5</c> 钳 0.5）。</summary>
+        public const float OverviewZoomMin = 0.5f;
+
+        /// <summary>见 <see cref="OverviewZoomMin"/>。</summary>
+        public const float OverviewZoomMax = 3.0f;
+
+        /// <summary>每帧按住时缩放 / 平移的步长。出处：<c>hud_spectator.cpp:756-767</c>
+        /// （<c>IN_FORWARD/IN_BACK</c> ⇒ <c>m_zoomDelta = ±0.01</c>；<c>IN_MOVELEFT/IN_MOVERIGHT</c> ⇒
+        /// <c>m_moveDelta = ∓12</c>，12 是 <c>m_mapOrigin</c> 的 GoldSrc 单位增量）。</summary>
+        public const float OverviewZoomStep = 0.01f;
+
+        /// <summary>见 <see cref="OverviewZoomStep"/>（GoldSrc 单位）。</summary>
+        public const float OverviewPanStep = 12f;
+
         // ---- 地图 / 场景 ----
         public const string MapDust2 = "de_dust2";
         // 资源路径（Resources 相对）真源 = Core/ResPaths.cs：MapDust2（位图 + 命名标记点段，同一份 .bytes）。
@@ -611,6 +718,10 @@ namespace Cs16.Core
     /// <item><c>原版资源/cs16src/cstrike/cstrike__resource__cstrike_english.txt:941-946</c> 给出六个名字
     /// （<c>Spec_Mode1</c> "Locked Chase Cam" / <c>2</c> "Free Chase Cam" / <c>3</c> "Free Look" /
     /// <c>4</c> "First Person" / <c>5</c> "Free Overview" / <c>6</c> "Chase Overview"）；</item>
+    /// <item><c>原版资源/cs16src/cstrike/titles.txt:1882-1915</c> 按序排列
+    /// <c>OBS_NONE / OBS_CHASE_LOCKED / OBS_CHASE_FREE / OBS_ROAMING / OBS_IN_EYE / OBS_MAP_FREE / OBS_MAP_CHASE</c>，
+    /// 与 <c>cstrike_english.txt:879-885</c> 的 <c>Cstrike_TitlesTXT_OBS_*</c> 名字一一对应
+    /// ⇒ 符号↔数值唯一确定（<c>OBS_NONE = 0</c> … <c>OBS_MAP_CHASE = 6</c>）；</item>
     /// <item><c>hud_spectator.cpp:715-733</c>（JUMP 键的循环）与 <c>:799-803</c>（<c>spec_mode</c> 的范围校验
     /// <c>&lt; OBS_CHASE_LOCKED || &gt; OBS_MAP_CHASE</c>）给出符号之间的先后与上下界。</item>
     /// </list>
@@ -641,10 +752,11 @@ namespace Cs16.Core
     /// <c>Module/View/ViewModule</c>（换目标、开局复位），读取者有 <c>UI/InGame/CsSpectatorWidget</c>
     /// （显示档位名）—— 三者共有的层只有 <c>Cs16.Core</c>（UI 不许引用 <c>Cs16.Module.*</c>）。</para>
     ///
-    /// <para><b>不吃机位</b>：真正的机位（锁定追尾 / 自由追尾 / 目标第一人称 / 自由飞行）由
-    /// <c>Module/CameraRig/FirstPersonCamera</c> 独占写，本类只承载档位状态与"哪几档有机位"的判据
-    /// （<see cref="IsImplemented"/>，集合见 <see cref="ImplementedModes"/>），其余档位不可切
-    /// （见 <see cref="TrySetMode"/>）。自由飞行的位置解算是**纯函数**，放在
+    /// <para><b>不吃机位</b>：3D 机位（锁定追尾 / 自由追尾 / 目标第一人称 / 自由飞行）由
+    /// <c>Module/CameraRig/FirstPersonCamera</c> 独占写，档位 5 / 6（俯视概览）的画面由
+    /// <c>UI/InGame/CsOverviewWidget</c> 表达，本类只承载档位状态与"六档已实现"的判据
+    /// （<see cref="IsImplemented"/>，集合见 <see cref="ImplementedModes"/>）。
+    /// 自由飞行的位置解算是**纯函数**，放在
     /// <see cref="CsSpectatorRoam"/> 里（它也不碰相机，只算位置与速度）。</para>
     /// </summary>
     public static class CsSpectator
@@ -673,28 +785,73 @@ namespace Cs16.Core
         /// </summary>
         public static CsSpectatorMode DefaultMode => CsSpectatorMode.ChaseFree;
 
-        /// <summary>一局开始时复位（同原版 HUD 复位：档位回默认、自动导演回 0）。</summary>
+        /// <summary>一局开始时复位（同原版 HUD 复位：档位回默认、自动导演回 0、概览视图回初值）。</summary>
         public static void Reset()
         {
             Mode = DefaultMode;
             AutoDirector = false;
+            ResetMapView();
         }
 
+        // ==================================================================
+        //  俯视概览（档位 5 / 6）的视图状态 —— 原版 CHudSpectator 的 m_mapZoom / m_mapOrigin
+        // ==================================================================
+
         /// <summary>
-        /// **本工程有真机位**的档位集合（判据见 <see cref="IsImplemented"/>）；<c>spec_mode</c> 只认这四档。
-        /// 顺序 = 原版 JUMP 键循环序（<c>hud_spectator.cpp:715-733</c>）扣掉未实现档后的样子
-        /// —— 原版那条循环自档位 1 起 <c>1 → 2 → 4 → 3 → 5 → 6 → 2</c>，本工程实现了其中的 1 / 2 / 4 / 3。
+        /// 俯视概览的缩放（原版 <c>m_mapZoom</c>）：初值 / 复位值 <see cref="CsConst.OverviewZoomDefault"/>，
+        /// 钳 <see cref="CsConst.OverviewZoomMin"/>~<see cref="CsConst.OverviewZoomMax"/>（<c>hud_spectator.cpp:399-403</c>）。
+        /// 当前缩放 = 底图铺满屏那一档的倍数：可见世界窗口半宽 = 底图半宽 × (默认 / 本值)。
+        /// </summary>
+        public static float MapZoom = CsConst.OverviewZoomDefault;
+
+        /// <summary>
+        /// 俯视概览窗口中心相对**底图中心**的偏移（GoldSrc 单位，沿世界 Z = 屏幕水平轴）。
+        /// 原版口径：<c>m_mapOrigin += right × m_moveDelta</c>（<c>hud_spectator.cpp:407-416</c>），初值
+        /// <c>m_OverviewData.origin</c>（= 底图中心）⇒ 本偏移初值 0。档位 6（跟随俯瞰）不用它（中心跟目标）。
+        /// </summary>
+        public static float MapPan;
+
+        /// <summary>俯视概览视图回初值（原版进 map 档位时的 <c>m_mapZoom/m_mapOrigin</c> 复位，<c>hud_spectator.cpp:847-856</c>）。</summary>
+        public static void ResetMapView()
+        {
+            MapZoom = CsConst.OverviewZoomDefault;
+            MapPan = 0f;
+        }
+
+        /// <summary>缩放一步并钳位（<paramref name="delta"/> = ±<see cref="CsConst.OverviewZoomStep"/>）。</summary>
+        public static void StepMapZoom(float delta)
+        {
+            var z = MapZoom + delta;
+            if (z > CsConst.OverviewZoomMax) z = CsConst.OverviewZoomMax;
+            if (z < CsConst.OverviewZoomMin) z = CsConst.OverviewZoomMin;
+            MapZoom = z;
+        }
+
+        /// <summary>平移一步（<paramref name="delta"/> = ±<see cref="CsConst.OverviewPanStep"/> GoldSrc 单位，沿世界 Z）。</summary>
+        public static void StepMapPan(float delta)
+        {
+            MapPan += delta;
+        }
+
+        /// <summary>是否为俯视概览档位（5 = Free Overview / 6 = Chase Overview）。</summary>
+        public static bool IsMapMode(CsSpectatorMode mode) =>
+            mode == CsSpectatorMode.FreeOverview || mode == CsSpectatorMode.ChaseOverview;
+
+        /// <summary>
+        /// 六档全部可切（判据见 <see cref="IsImplemented"/>）；本数组列全 6 档。
+        /// 顺序 = 原版 JUMP 键循环序（<c>hud_spectator.cpp:715-733</c>）：<c>1 → 2 → 4 → 3 → 5 → 6 → 2</c>。
         ///
-        /// <para>⛔ 本数组**不是** <see cref="NextMode"/> 的循环：循环只有 <c>2 → 4 → 3 → 2</c>
-        /// 三档，档位 1 不在循环里（原版循环自己也跳过它，见 <see cref="NextMode"/>）——
-        /// 档位 1 只能由 <c>spec_mode 1</c> 进入。</para>
+        /// <para>⛔ 本数组**不是** <see cref="NextMode"/> 的循环：循环跳过档位 1（原版循环自己也跳过它，
+        /// 见 <see cref="NextMode"/>）—— 档位 1 只能由 <c>spec_mode 1</c> 进入。</para>
         /// </summary>
         public static readonly CsSpectatorMode[] ImplementedModes =
         {
-            CsSpectatorMode.ChaseLocked,   // 1
-            CsSpectatorMode.ChaseFree,     // 2
-            CsSpectatorMode.FirstPerson,   // 4
-            CsSpectatorMode.FreeLook,      // 3
+            CsSpectatorMode.ChaseLocked,     // 1
+            CsSpectatorMode.ChaseFree,       // 2
+            CsSpectatorMode.FirstPerson,     // 4
+            CsSpectatorMode.FreeLook,        // 3
+            CsSpectatorMode.FreeOverview,    // 5
+            CsSpectatorMode.ChaseOverview,   // 6
         };
 
         /// <summary>
@@ -720,46 +877,42 @@ namespace Cs16.Core
         /// <see cref="CsConst"/> 的 <c>SpecRoam*</c> 常量）。</item>
         /// </list>
         ///
-        /// <para><b>其余两档（5 / 6）在本工程没有机位实现</b>：
-        /// <list type="number">
-        /// <item>5 / 6 = 原版 <c>OBS_MAP_FREE</c> / <c>OBS_MAP_CHASE</c>：主画面**不是 3D 机位** ——
-        /// <c>view.cpp:1545-1551</c> 把 <c>pparams-&gt;onlyClientDraw</c> 置真，而该字段的契约是
-        /// "引擎除 clientDraw 外什么都不画"（<c>common/ref_params.h:70</c>），画面上看到的是客户端自己画的
-        /// <b>2D 概览图</b>（<c>hud_spectator.cpp:395-416</c> 的 <c>m_mapZoom</c> / <c>m_mapOrigin</c>，
-        /// 取值来自 <c>overviews/de_dust2.txt</c> 的 <c>ZOOM 1.50</c> / <c>ORIGIN -223 1097 -192</c>）；
-        /// <c>V_GetMap*Position</c> 算出的 origin/angles 只用来把玩家投影到那张图上
-        /// （<c>hud_spectator.cpp:1305-1328</c> 的 <c>WorldToScreen</c>）。本工程没有 2D 概览子系统
-        /// ⇒ 这两档保持不可切（登记 <c>策划/差异登记.tsv</c>）。</item>
-        /// </list>
-        /// 这两档**不可切**：<see cref="TrySetMode"/> 拒绝、<see cref="NextMode"/> 不经过，因此画面上
-        /// 显示的档位名永远等于真正生效的那个机位。</para>
+        /// <para><b>档位 5 / 6 = 俯视概览，不是 3D 机位</b>：原版 <c>view.cpp:1545-1551</c> 把
+        /// <c>pparams-&gt;onlyClientDraw</c> 置真，该字段的契约是"引擎除 clientDraw 外什么都不画"
+        /// （<c>common/ref_params.h:70</c>），画面上看到的是客户端自己画的<b>俯视概览图</b>
+        /// （底图 = <c>overviews/de_dust2.bmp</c>，窗口/数组 <c>hud_spectator.cpp:1069-1193</c>，
+        /// 缩放/平移 <c>:395-416</c> 的 <c>m_mapZoom</c> / <c>m_mapOrigin</c>）。本工程这一层由 UI 侧的
+        /// <c>UI/InGame/CsOverviewWidget</c> 表达（相机侧不动机位；主画面被那块全屏概览整块盖住）
+        /// ⇒ 六档全部可切，画面上显示的档位名永远等于真正生效的那个。</para>
         /// </summary>
         public static bool IsImplemented(CsSpectatorMode mode)
         {
             return mode == CsSpectatorMode.ChaseLocked
                 || mode == CsSpectatorMode.ChaseFree
                 || mode == CsSpectatorMode.FirstPerson
-                || mode == CsSpectatorMode.FreeLook;
+                || mode == CsSpectatorMode.FreeLook
+                || mode == CsSpectatorMode.FreeOverview
+                || mode == CsSpectatorMode.ChaseOverview;
         }
 
         /// <summary>
-        /// 档位循环：按原版 JUMP 键的循环序走 <c>2 → 4 → 3 → 2</c>（判据 <see cref="IsImplemented"/>）。
+        /// 档位循环：按原版 JUMP 键的循环序走 <c>2 → 4 → 3 → 5 → 6 → 2</c>。
         ///
         /// <para>原版 JUMP 键的循环序是 <c>1 → 2 → 4 → 3 → 5 → 6 → 2 …</c>
         /// （<c>hud_spectator.cpp:715-733</c>，逐档一一对应；末档回到 2 的注释在 <c>:733</c>）。
         /// ⛔ 本方法**不经过档位 1**：原版循环自己也跳过它 —— <c>:733</c> 那一支的注释逐字是
         /// <c>don't use OBS_CHASE_LOCKED anymore</c>，档位 1 只能由 <c>spec_mode 1</c> 进入。
-        /// 本工程实现了该循环里的 2 / 4 / 3 ⇒ 本方法就是那条循环**扣掉未实现档与档位 1**后的样子：
-        /// 4 之后是 3；3 之后是 5 / 6（未实现）⇒ 按原版末档口径回到 2。
-        /// ⛔ 不切到没有机位的档位（切过去只会让档位名变了、镜头没动）。既没机位、也不在循环里的档位被问到就归一为默认档。</para>
+        /// 不在循环里的档位被问到就归一为默认档。</para>
         /// </summary>
         public static CsSpectatorMode NextMode(CsSpectatorMode current)
         {
             switch (current)
             {
-                case CsSpectatorMode.ChaseFree: return CsSpectatorMode.FirstPerson;   // 2 → 4
-                case CsSpectatorMode.FirstPerson: return CsSpectatorMode.FreeLook;    // 4 → 3
-                case CsSpectatorMode.FreeLook: return CsSpectatorMode.ChaseFree;      // 3 →（5/6 未实现）→ 2
+                case CsSpectatorMode.ChaseFree: return CsSpectatorMode.FirstPerson;       // 2 → 4
+                case CsSpectatorMode.FirstPerson: return CsSpectatorMode.FreeLook;        // 4 → 3
+                case CsSpectatorMode.FreeLook: return CsSpectatorMode.FreeOverview;       // 3 → 5
+                case CsSpectatorMode.FreeOverview: return CsSpectatorMode.ChaseOverview;  // 5 → 6
+                case CsSpectatorMode.ChaseOverview: return CsSpectatorMode.ChaseFree;     // 6 → 2
                 default: return DefaultMode;
             }
         }
@@ -826,17 +979,11 @@ namespace Cs16.Core
         /// <summary><c>spec_mode</c> 的用法串 = 原版原文（客户端 <c>client.dll</c> file <c>0xe9530</c>）。</summary>
         public const string SpecModeUsageText = "usage:  spec_mode <Main Mode> [<Inset Mode>]";
 
-        /// <summary>未实现档位的拒绝文案（沿用原版英文提示的句式；该档位的机位在本工程不存在，见 <see cref="IsImplemented"/>）。</summary>
-        public static string NotImplementedText(CsSpectatorMode mode)
-        {
-            return $"Not implemented in this build: {ModeName(mode)}.";
-        }
-
         /// <summary>
         /// <c>spec_mode &lt;n&gt;</c> 的档位解析与**范围**校验。原版口径：<c>SetModes(atoi(argv1), …)</c>
         /// 后判 <c>iNewMainMode &lt; OBS_CHASE_LOCKED || iNewMainMode &gt; OBS_MAP_CHASE</c> 就报
         /// <c>"Invalid spectator mode."</c>（<c>hud_spectator.cpp:799-803</c>）⇒ 原版的合法区间就是
-        /// <b>1..6</b>；本方法只判这个区间（"本工程有没有该机位"由 <see cref="TrySetMode"/> 再判一层）。
+        /// <b>1..6</b>；六档在本工程全部有实现（见 <see cref="IsImplemented"/>），本方法只判这个区间。
         ///
         /// <para>解析用 <c>int.TryParse</c>（整数严格匹配）；原版 <c>atoi</c> 会把 <c>"3abc"</c> 截成 3，
         /// 本工程不模仿那截断行为（越界与非法输入都落到同一条 <c>false</c>）。</para>
@@ -870,21 +1017,19 @@ namespace Cs16.Core
         }
 
         /// <summary>
-        /// <c>spec_mode &lt;n&gt;</c> 的唯一写入入口：解析 + **已实现机位闸门** + 写状态。
+        /// <c>spec_mode &lt;n&gt;</c> 的唯一写入入口：解析 + 写状态。
         ///
-        /// <para>只有已实现机位（<see cref="IsImplemented"/>）才会改 <see cref="Mode"/>；被拒时
-        /// **状态一个字节都不改**，返回 false 并把文案交给调用方（控制台显示 + 留痕）。
-        /// 这是"画面上显示的档位名必须等于真正生效的机位"的实现面：不存在"名字切了、机位没动"的中间态。</para>
+        /// <para>合法区间 1..6 由 <see cref="TryParseMode"/> 判定，六档全部有实现
+        /// （<see cref="IsImplemented"/>）⇒ 画面上显示的档位名永远等于真正生效的那个。
+        /// 被拒时**状态一个字节都不改**，返回 false 并把文案交给调用方（控制台显示 + 留痕）。</para>
         /// </summary>
         public static bool TrySetMode(string text, out string reason)
         {
             if (!TryParseMode(text, out var mode, out reason)) return false;
 
-            if (!IsImplemented(mode))
-            {
-                reason = NotImplementedText(mode);
-                return false;
-            }
+            // 进 / 换俯视概览档位：视图回初值（原版 SetModes 的 OBS_MAP_FREE / OBS_MAP_CHASE 两支
+            // 都复位 m_mapZoom / m_mapOrigin，hud_spectator.cpp:847-856）。
+            if (IsMapMode(mode)) ResetMapView();
 
             Mode = mode;
             reason = null;
@@ -911,7 +1056,7 @@ namespace Cs16.Core
         /// 档位 1 只能由 <c>spec_mode 1</c> 进入，从档位 1 按本键回到默认档而不是停在 1。</para>
         /// </summary>
         /// <param name="spectating">本地玩家当前是否处于观战/阵亡态。</param>
-        /// <param name="reason">没切档的原因（非观战态 / 目标档位没有机位），成功时为 null；调用方据此留痕。</param>
+        /// <param name="reason">没切档的原因（非观战态），成功时为 null；调用方据此留痕。</param>
         /// <returns>是否真的切了档位。</returns>
         public static bool TryCycleModeOnJump(bool spectating, out string reason)
         {
@@ -922,16 +1067,8 @@ namespace Cs16.Core
                 return false;
             }
 
-            var want = NextMode(Mode);
-            if (!IsImplemented(want))
-            {
-                // NextMode 只返回有机位的档位；这一步是防口径漂移的闸门（⛔ 不静默：调用方会 Warn）。
-                reason = NotImplementedText(want);
-                return false;
-            }
-
             // 单一写入入口：被拒时 Mode 保持不变，reason 由它给出（"名字切了、机位没动"的中间态不存在）。
-            return TrySetMode(((int)want).ToString(), out reason);
+            return TrySetMode(((int)NextMode(Mode)).ToString(), out reason);
         }
 
         /// <summary>

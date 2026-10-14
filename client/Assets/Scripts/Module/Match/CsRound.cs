@@ -310,7 +310,8 @@ namespace Cs16.Module.Match
         {
             var target = WinTarget;
             if (_scoreT >= target || _scoreCT >= target) return true;
-            if (_roundNumber >= CsConst.MaxRounds) return true;
+            // MaxRounds = 0 = 原版 mp_maxrounds「不限」⇒ 不设回合数上限，只由上面的胜场阈值收场。
+            if (CsConst.MaxRounds > 0 && _roundNumber >= CsConst.MaxRounds) return true;
             return false;
         }
 

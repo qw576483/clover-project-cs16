@@ -19,7 +19,7 @@ namespace Cs16.Module.View
     ///
     /// <para><b>两个硬约束</b>：</para>
     /// <list type="number">
-    /// <item>每个角色视图必须有**恰好 4 个** <see cref="CsHitboxProxy"/>（头/胸/腹/腿），
+    /// <item>每个角色视图必须有**恰好 5 个** <see cref="CsHitboxProxy"/>（头/胸/腹/左腿/右腿），
     /// 层用 <c>PhysicsLayers.Bot</c>/<c>Player</c> —— 少了视图侧的射线就打不中；</item>
     /// <item>本地玩家自己的第三人称模型要**隐藏渲染但保留碰撞体**（否则自己被自己的模型挡屏）。</item>
     /// </list>
@@ -43,6 +43,8 @@ namespace Cs16.Module.View
         private const string PoolGroupNameplates = "cs16.nameplate";
         /// <summary>世界掉落武器视图的池分组。</summary>
         private const string PoolGroupDrops = "cs16.dropview";
+        /// <summary>世界里的 C4 视图（包点上的包 / 掉在地上的包）的池分组。</summary>
+        private const string PoolGroupBomb = "cs16.bombview";
 
         private readonly CsModuleLog _log = new CsModuleLog(Tag);
 
@@ -60,6 +62,9 @@ namespace Cs16.Module.View
 
         /// <summary>回收掉落视图时的临时列表（避免遍历时改字典）。</summary>
         private readonly List<CsDroppedWeapon> _dropScratch = new List<CsDroppedWeapon>(16);
+
+        /// <summary>世界里的 C4 视图（已安放 / 掉在地上共用一个实例；包不在世界上时为 null）。</summary>
+        private GameObject _bombView;
         private readonly HashSet<string> _pending = new HashSet<string>();
         private readonly HashSet<string> _missing = new HashSet<string>();
 
@@ -215,6 +220,7 @@ namespace Cs16.Module.View
             PollSpectateInput();
             SyncViews();
             SyncDroppedWeapons();
+            SyncBombView();
         }
 
         private string DescribeLocal()
@@ -337,6 +343,87 @@ namespace Cs16.Module.View
         }
 
         // ==================================================================
+        //  世界里的 C4（已安放的包 / 掉在地上的包）
+        // ==================================================================
+        /// <summary>
+        /// 让场景里的 C4 世界模型与"权威的包在哪"对齐：**已安放**（<c>BombPlanted</c>，包点上的包）
+        /// 或**掉在地上**（<c>BombDropped</c>）时，把 <c>Art/world_c4</c>（原版 <c>models/w_c4.mdl</c>）
+        /// 摆到 <c>BombPosition</c>；爆炸 / 拆包 / 被拾起后回收。
+        ///
+        /// <para>模型与掉落武器同口径：世界模型 + <see cref="CsViewTuning.WorldModelScale"/>、
+        /// 剥掉全部 Collider（世界物件不参与射线）。</para>
+        /// </summary>
+        private void SyncBombView()
+        {
+            if (!_match.BombPlanted && !_match.BombDropped)
+            {
+                DestroyBombView();
+                return;
+            }
+
+            if (_bombView == null)
+            {
+                CreateBombView();
+                if (_bombView == null) return;      // 预制体还在异步加载 / 缺失 —— 下一帧再试
+            }
+
+            _bombView.transform.position = _match.BombPosition;
+        }
+
+        private void CreateBombView()
+        {
+            var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + CsWeapons.C4;
+            if (!_prefabs.TryGetValue(path, out var prefab) || prefab == null)
+            {
+                LoadPrefab(path, null);
+                if (!_missing.Contains(path)) return;    // 首次走到这里时可能还在加载
+                _log.Error("bombview.missing",
+                    $"C4 的世界模型缺失：Resources/{path}.prefab —— 包点上 / 地上的包看不见。" +
+                    "请执行菜单 Clover/CS16/整理视图与音效资源 生成它");
+                return;
+            }
+
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），C4 世界视图无法生成");
+                return;
+            }
+            var go = pool.Spawn(path, _root, PoolGroupBomb);
+            if (go == null)
+            {
+                _log.Warn("bombview.spawnfail", $"C4 世界视图生成失败（对象池返回 null）：{path}");
+                return;
+            }
+
+            go.name = "BombWorld";
+            go.transform.localScale = Vector3.one * CsViewTuning.WorldModelScale;
+            go.transform.rotation = Quaternion.identity;
+            go.transform.position = _match.BombPosition;
+
+            var cols = go.GetComponentsInChildren<Collider>(true);
+            for (var i = 0; i < cols.Length; i++)
+            {
+                if (cols[i] != null) Object.Destroy(cols[i]);
+            }
+
+            _bombView = go;
+            _log.Info("bombview.create",
+                $"{(_match.BombPlanted ? "已安放" : "掉落")}的 C4 世界视图已生成" +
+                $"（位置 ({_match.BombPosition.x:F2}, {_match.BombPosition.y:F2}, {_match.BombPosition.z:F2})，模型={path}）");
+        }
+
+        private void DestroyBombView()
+        {
+            if (_bombView == null) return;
+            var pool = Game.Pool;
+            if (pool != null) pool.Despawn(_bombView);
+            else Object.Destroy(_bombView);
+            _bombView = null;
+            _log.Info("bombview.destroy", "C4 已不在世界（爆炸 / 拆包 / 被拾起）⇒ 回收世界视图");
+        }
+
+        // ==================================================================
         //  视图集合同步：存在则更新、消失则回收
         // ==================================================================
         private void SyncViews()
@@ -372,6 +459,10 @@ namespace Cs16.Module.View
                 {
                     EvaluateNameplate(actor, eye, haveEye, out plateVisible, out showName);
                 }
+
+                // 观战档位 4（目标第一人称）：相机就架在被观察者的眼位上 ⇒ 按"自己的眼睛"藏掉他的
+                // 第三人称本体（原版该档只有视模型 + 准星 + HUD，见 ActorView.SetSpectateEye）。
+                view.SetSpectateEye(isSpectateTarget && CsSpectator.Mode == CsSpectatorMode.FirstPerson);
 
                 view.Apply(actor, plateVisible, showName, Time.time);
             }
@@ -812,6 +903,7 @@ namespace Cs16.Module.View
             _views.Clear();
             _skinOf.Clear();
             _missingClassSkin.Clear();
+            DestroyBombView();
             if (_root == null) return;
             if (_viewModel != null)
             {

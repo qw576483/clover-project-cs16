@@ -44,6 +44,7 @@ namespace Cs16.Module.Bot
         private readonly BotSense _sense;
         private readonly BotNavigator _nav = new BotNavigator();
         private readonly BotBuyLogic _buy = new BotBuyLogic();
+        private readonly BotRadio _radio;
         private readonly long _id;
         private readonly Dictionary<string, int> _rateCounters = new Dictionary<string, int>(8);
 
@@ -99,6 +100,14 @@ namespace Cs16.Module.Bot
         private bool _heardFresh;
         private Vector3 _heardPos;
         private float _heardTime;
+
+        // ---- 无线电（可见敌/友计数来自同一趟视线判定，见 UpdatePerception）----
+        /// <summary>本 tick 判定为"看得见"的敌人数（原版 <c>GetNearbyEnemyCount</c>）。</summary>
+        private int _visibleEnemies;
+        /// <summary>本 tick 判定为"看得见"的存活队友数（原版 <c>GetNearbyFriendCount</c>）。</summary>
+        private int _visibleFriends;
+        /// <summary>本 tick 待发出的无线电行（<c>null</c> = 本 tick 不发言）。</summary>
+        private string _pendingRadio;
 
         // ---- 交战细节 ----
         private float _wobbleRefreshAt;
@@ -235,6 +244,7 @@ namespace Cs16.Module.Bot
 
             _fsm = new CsBotFsm($"{_name}.顶层");
             _objectiveFsm = new CsBotFsm($"{_name}.目标层");
+            _radio = new BotRadio(_match.Find(actorId));
             InitFsm();
         }
 
@@ -396,7 +406,38 @@ namespace Cs16.Module.Bot
             }
 
             if (intent.AimPoint.sqrMagnitude < 0.0001f) intent.AimPoint = LookAhead(self);
+
+            TickRadio(self, now);
+
             return intent;
+        }
+
+        /// <summary>跑一次无线电决策（<see cref="BotRadio"/>），结果由 <see cref="ConsumeRadio"/> 取走。
+        /// 放在 <see cref="Think"/> 的收尾 —— 决策所需的状态（可见敌/友、是否交战、目标点、持包）此刻都已落定。</summary>
+        private void TickRadio(CsActor self, float now)
+        {
+            var engaging = _state == CsBotState.Engage;
+            var atGoal = _goalValid &&
+                (self.Position - _goalPos).sqrMagnitude <=
+                CsBotConst.DefaultObjectiveRadius * CsBotConst.DefaultObjectiveRadius;
+            var headingToPlant = self.Team == CsTeam.T && self.HasBomb && !_match.BombPlanted && _goalIsSite;
+
+            _radio.SetPerception(_visibleEnemies, _visibleFriends);
+            _pendingRadio = _radio.Tick(_match, self, now, engaging, atGoal, headingToPlant);
+        }
+
+        /// <summary>取本 tick 待发出的无线电行（已被消费则返回 null）。<c>BotModule</c> 消费。</summary>
+        public string ConsumeRadio()
+        {
+            var line = _pendingRadio;
+            _pendingRadio = null;
+            return line;
+        }
+
+        /// <summary>本 bot 打死了人（由 <c>BotModule.OnKill</c> 调用；对应原版 chatter 的 "Enemy down."）。</summary>
+        public void NotifyKill()
+        {
+            _radio.NotifyKill();
         }
 
         private void RefreshProfile(CsActor self)
@@ -499,7 +540,7 @@ namespace Cs16.Module.Bot
             var ordinal = CsBotPlans.TeamLocalOrdinal(_match.Actors, self.Team, self.Id);
             _ordinal = ordinal;
             // 平移量必须取**本回合缓存的那一份**（RoundCarrierOrdinal），不能每只 bot 各问一次
-            //   "现在谁持包"：实测持包者中途被打死会让后来的 bot 拿到 -1、先来的拿到 k ⇒ 槽位重合
+            //   "现在谁持包"：持包者中途被打死会让不同 bot 各拿到 -1 / k ⇒ 槽位重合
             var carrierOrdinal = CsBotPlans.RoundCarrierOrdinal(
                 _match.Actors, _match, self.Team, _match.RoundNumber);          // CT ⇒ -1（该函数内已判）
             var plan = CsBotPlans.For(self.Team, CsBotPlans.SlotOf(ordinal, carrierOrdinal), _match.RoundNumber);
@@ -512,7 +553,7 @@ namespace Cs16.Module.Bot
 
             //   目标点**不能只判"地图上有这个标记"**：该点可能落在"位图说可走、但从出生点
             //   按抬腿 ≤ `CsConst.StepUpHeight` 扩张到不了"的格上 ⇒ 引擎 `AStar.Find` 直接 `badgoal` 返回 null
-            //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束（实测全程位移 0.00m）。
+            //   ⇒ 退化成"朝 86m 外的点直线走" ⇒ 顶着墙原地卡到回合结束。
             //   口径与运行时同一份：BotNavigator.CanReach = SnapToWalkable + WalkableCellHeightAware + AStar。
             if (!string.IsNullOrEmpty(siteMarker) && TryPickGoalPoint(self, siteMarker, plan.GoalOrdinal, out var site))
             {
@@ -560,8 +601,7 @@ namespace Cs16.Module.Bot
         /// 在标记 <paramref name="marker"/> 的点里按槽位序号挑一个**走得到**的目标点。
         ///
         /// <para><b>为什么要"按序号"而不是"取最近"</b>：一个包点标记里有 6~9 个点，两个槽位（T 槽位 0 与 1）
-        /// 都去同一个包点 —— 若各自"取离自己最近的点"，两只 bot 从相邻出生点出发会**取到同一个点**
-        /// （用户实测日志里 3 只 T bot 的目标点同为 <c>(-25.50, 0.00, 33.50)</c>、3 只同 <c>(34.50, 2.44, 29.50)</c>）。
+        /// 都去同一个包点 —— 若各自"取离自己最近的点"，两只 bot 从相邻出生点出发会**取到同一个点**。
         /// 改成"取确定性序列里第 <paramref name="ordinal"/> 个"后，**目标点由槽位决定、与出生位置无关**，
         /// 于是"同队两个槽位必得不同目标点"是构造性的。</para>
         ///
@@ -748,7 +788,7 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 消费导航报上来的"卡住"事件。连续卡住达到 <see cref="CsBotConst.StuckReplanStreak"/> 次就
         /// **重新选目标** —— 只"跳过当前路点 + 换向"在路线走完后这两步都是空操作，
-        /// 于是机器人停在原地被反复判卡住（实测日志：剩余路点 0，每 0.5s 一条）。
+        /// 于是机器人停在原地被反复判卡住。
         /// </summary>
         private void HandleStuck(CsActor self, float now)
         {
@@ -760,7 +800,7 @@ namespace Cs16.Module.Bot
             if (_match.BombPlanted && self.Team == CsTeam.CT) return;
 
             //   没有这道闸时：0.5s 一次判定 / 2 次即升级 ⇒ 最快 1.0s 就换一次目标，而每个新目标都在
-            //   86m 外（实测 C4 push 行 d=86.68 恒定）⇒ 一次都没走完就换掉 ⇒ 目标反复横跳、净位移≈0。
+            //   86m 外 ⇒ 一次都没走完就换掉 ⇒ 目标反复横跳、净位移≈0。
             if (now < _nextStuckReplanAt)
             {
                 RateWarn("stuckreplan.cooldown",
@@ -882,9 +922,9 @@ namespace Cs16.Module.Bot
 
                 // **先只读筛、选定后才切路线**：`TryPickGoalPoint` / `TryPickReachable` 都只用
                 // `_nav.CanReach`（"问一句"这一点能不能走得到），与 nav 当前装的是**哪条**路线无关 ⇒
-                // 完全可以在切路线之前就把目标点定下来。原先"先切再筛"的写法里，切完若筛不出目标点就
-                // `continue`，此时 nav 已经停在这条**没被选中**的家族上；末尾虽然能靠 `RestoreRouteMarker`
-                // 兜回来，但那次恢复是"按当前位置最近邻重排 + 游标归零"，属于白付的代价。
+                // 可以在切路线之前就把目标点定下来；筛不出就 `continue`，nav 不会被留在
+                // **没被选中**的家族上（否则要靠 `RestoreRouteMarker` 兜回来，那次恢复是
+                // "按当前位置最近邻重排 + 游标归零"，属白付的代价）。
                 //
                 //   不直接用 `_nav.RouteEnd` / 裸包点标记点：这两者都可能是"可走但走不到"的格。
                 //   （这里**不传** `avoidTeammates`：本档挑的是"没有活队友在走的空家族"，
@@ -1003,9 +1043,8 @@ namespace Cs16.Module.Bot
             //      ② 连自己槽位的"换目标点"也换不出来（目标标记上的序号被占满，且本路线没有任何
             //      走得到的标记点 —— TryPickReachable 全失败）。
             //
-            //      原先直接 `return false` ⇒ 上层拿不到新目标 ⇒ 只能继续朝那个**走不到**的点直线走 ⇒
-            //      被几何卡住就是永久 0.00m（实测日志：6 条「卡住：0.5s 内位移 0.00m（剩余路点 0）」，
-            //      另有 29 条停在上面的「无空路线…只换目标点」一档）。
+            //      直接 `return false` ⇒ 上层拿不到新目标 ⇒ 只能继续朝那个**走不到**的点直线走 ⇒
+            //      被几何卡住就是永久 0.00m。
             //
             //      这一档允许**点开一条被活队友占着的家族**，且只取"离自己最近的、走得到的路点"
             //      （序号互斥仍在，不抢队友的目标点）—— 宁可跟队友同路，也不许原地卡死。
@@ -1027,10 +1066,10 @@ namespace Cs16.Module.Bot
                 if (string.IsNullOrEmpty(marker) || marker == _planRoute) continue;   // 刚走完的那条最后再试
 
                 // **先只读筛**（不碰 nav）：`TryPickReachable` 只"问一句"这个家族有没有走得到的路点
-                // （内含一次 A*），不改 nav 的路线。原先是边扫边 `SetRouteKeepProgress` —— 任何一次
+                // （内含一次 A*），不改 nav 的路线。边扫边 `SetRouteKeepProgress` 不行：任何一次
                 // continue 都会把 nav 的路线留在**没被选中**的那个家族上，而 `_planRoute`/`_goalPos`
-                // 还是旧的 ⇒ 下一帧 Advance 会沿一条自己没选的路线走格子（残留副作用，必须避免）。
-                // 本函数的三档（第一档换家族 / 退一档换目标点 / 本档抢家族）**现在统一是这个形状**，
+                // 还是旧的 ⇒ 下一帧 Advance 会沿一条自己没选的路线走格子。
+                // 本函数的三档（第一档换家族 / 退一档换目标点 / 本档抢家族）**统一是这个形状**，
                 // 所以 `RestoreRouteMarker` 的恢复分支实际只剩"进来时本来没路线"那条路径会走到。
                 var points = _map.Points(marker);
                 if (points == null || points.Length == 0) continue;
@@ -1152,8 +1191,8 @@ namespace Cs16.Module.Bot
             }
 
             // 与 `TryRouteObjective` 同形：**先只读筛、选定后才切路线**。
-            // 原先是先 `SetRouteKeepProgress(Patrol)` 再筛，两次 `TryPickReachable` 都失败就 `return false`
-            // ⇒ nav 停在 `Route_Patrol` 而 brain 的 `_planRoute` 还是旧家族（同一类残留）；更糟的是它会
+            // 先 `SetRouteKeepProgress(Patrol)` 再筛不行：两次 `TryPickReachable` 都失败就 `return false`
+            // ⇒ nav 停在 `Route_Patrol` 而 brain 的 `_planRoute` 还是旧家族，且会
             // **跨函数传播**：`ReplanObjective` 紧接着调 `TryRouteObjective`，后者开头抓到的 `prevMarker`
             // 就是这个残留，一旦它最终没选中，末尾会把残留**恢复/固化**成"合法状态"
             // （于是"没选中 ⇒ 不改 nav"这条不变量在这一整条链上都不成立）。
@@ -1330,8 +1369,7 @@ namespace Cs16.Module.Bot
         ///
         /// <para><b>为什么必须有这一层</b>：只判"可走"（<see cref="ICsMap.WalkableAt"/> /
         /// <see cref="ICsMap.CanStand"/>）不够 —— "可走"与"走得到"是两件事，只判前者就等于"挑了一个
-        /// 求不出路径的点去追"，而 <c>EnsurePath</c> 失败后只会退化成直线走 ⇒ 顶着墙卡死
-        /// （实测：全程 net 位移 0.00m、换目标 70 次全由 stuck-escalate 触发）。</para>
+        /// 求不出路径的点去追"，而 <c>EnsurePath</c> 失败后只会退化成直线走 ⇒ 顶着墙卡死。</para>
         ///
         /// <para><b>判据同源</b>：可达性只走 <see cref="BotNavigator.CanReach"/>（= 同一份
         /// <c>SnapToWalkable</c> + <c>WalkableCellHeightAware</c> + 引擎 <c>AStar.Find</c>），
@@ -1487,12 +1525,10 @@ namespace Cs16.Module.Bot
             if (!_nav.HasRoute || _nav.RouteExhausted) return;          // 路线走完 → 交给"换目标"那条路
             if (string.IsNullOrEmpty(_planRoute)) return;
 
-            var remainingBefore = _nav.RemainingWaypoints;              // 先取值：SetRoute 会把 _index 归零
-            //   本方法的注释已经写明要避免"把已经走顺的路线反复重排成'回头找最近路点'"，
-            //   但旧代码调的是 `SetRoute` —— 它会按"离**当前位置**最近优先"重排整条路线并把 `_index` 归零，
-            //   于是"最近的路点"（很可能是刚走过、在身后的那个）排到最前 ⇒ 机器人掉头。
-            //   实测（bu-r-console.json）：单次 Play 里 Cliffe 一条 Route_CT_Mid 被重排 32 次，
-            //   8 个 bot 的"剩余路点"在 3→2→3 之间反复（bu-r-bot-phys.tsv 第 29 列）。
+            var remainingBefore = _nav.RemainingWaypoints;              // 先取值：重求路径之后剩余路点会按新路径重算
+            //   不能调 `SetRoute`：它会按"离**当前位置**最近优先"重排整条路线并把 `_index` 归零，
+            //   于是"最近的路点"（很可能是刚走过、在身后的那个）排到最前 ⇒ 机器人掉头，
+            //   与"原地重求路径、顺序与游标不动"这条契约相反。
             _nav.RefreshPathOnly(self.Position);
             RateWarn("repath." + _planRoute,
                 $"{_name} 在 {_profile.RepathInterval:F2}s 内朝目标没有进展（距目标 {dist:F1}m，路线 '{_planRoute}'，" +
@@ -1558,10 +1594,8 @@ namespace Cs16.Module.Bot
             // ④ 炸弹任务（下包 / 拆包 / 捡包）。**两条分支都要走这一步**：T 手里没包时"去捡掉落的 C4"
             //    属于炸弹任务而不是推进，只在 Objective 分支里调用会让捡包整条失效。
             //
-            //   `Move` / `State` / `Use` **全部落在副本上、返回即丢**。
-            //   一动不动（Gooseman/Rikk 均 0.000m 整回合），却在副本上照常打印
-            //   `[C4] 携带 C4 冲向包点` 与 `[BOTFLIP]`，并被导航判成"卡住 0.00m"→ 每 0.5s 换目标 11 次
-            //   ⇒ **T 永远到不了包点 ⇒ 永远不下包（A5 恒 0）**。
+            //   `ref intent` 是契约：本方法写的 `Move` / `State` / `Use` 必须落到调用方那具 intent 上
+            //   （只写副本 ⇒ 调用方拿到的是"不动"）。
             if (TryBombObjective(self, ref intent, now)) return intent;
 
             // ⑤ 推进 / 守点
@@ -1639,6 +1673,8 @@ namespace Cs16.Module.Bot
         {
             _visibleNow = false;
             _closestVisibleDist = float.MaxValue;
+            _visibleEnemies = 0;
+            _visibleFriends = 0;
 
             var eye = self.EyePosition;
             var forward = Forward(self.Yaw, 0f);
@@ -1675,6 +1711,8 @@ namespace Cs16.Module.Bot
                     continue;
                 }
 
+                _visibleEnemies++;
+
                 if (dist < bestDist)
                 {
                     bestDist = dist;
@@ -1684,16 +1722,37 @@ namespace Cs16.Module.Bot
                 }
             }
 
+            // ---- 可见**队友**计数（无线电"被压制 / 说了有人听"要用；口径与上面完全同源）----
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var mate = actors[i];
+                if (mate == null || !mate.IsAlive || mate.Id == self.Id) continue;
+                if (mate.Team != self.Team) continue;
+                if ((mate.Team != CsTeam.T && mate.Team != CsTeam.CT)) continue;
+
+                var mateEye = mate.EyePosition;
+                var md = mateEye - eye;
+                var mdist = md.magnitude;
+                if (mdist > _profile.VisionRange) continue;
+
+                md.y = 0f;
+                if (md.sqrMagnitude > 0.0004f && Vector3.Angle(forward, md) > halfFov) continue;
+
+                var mateSight = BotSight.Check(_match, eye, mateEye, _profile.VisionRange, out _, out _);
+                if (mateSight != BotSightResult.Clear) continue;
+
+                _visibleFriends++;
+            }
+
             if (best != null)
             {
                 // "重新首次看见"的判据 = **已经忘了这个目标**（距上次看见超过记忆时长）。
                 //
                 // 不要用"换了目标就重置"，也不要掺进"本 tick 是否可见"：
                 //    ① 多人交火时 `best`（最佳可见目标）会在几个敌人之间来回切；
-                //    ② 机器人在视野边缘走动时可见性会**逐帧闪烁**（实测诊断行：`可见=True（距上次看见 0.00s）
-                //       反应=未过（0.00/0.32s）`）。
+                //    ② 机器人在视野边缘走动时可见性会**逐帧闪烁**。
                 //    这两种情况都会让 `_firstSeenTime` 每 tick 归零 ⇒ `reacted` 永远 false ⇒
-                //    **扳机永远扣不下去**（实测：8 个机器人 120 秒只打出 10 发、命中 0）。
+                //    **扳机永远扣不下去**。
                 //    只有"真的忘掉了目标"才算重新发现，那时重算反应时间才是对的。
                 var remembered = now - _lastSeenTime <= CsBotConst.TargetMemorySeconds;
                 if (!remembered)
@@ -1764,14 +1823,11 @@ namespace Cs16.Module.Bot
             intent.Walk = false;
 
             //
-            //   第 130 行「**T 持包到 B 点 → 下包**」—— 下包是 T 持包者这一回合的**唯一**回合目标；
-            //   规格三档表（第 119-121 行）里没有任何一档写了"持包者与敌人保持偏好距离对峙"。
-            //   （Normal = 16×1.5 = 24m）判"够近" ⇒ 不进压上分支 ⇒ 站在离敌人 23.6m 处
-            //   **连续静止 21.3s / 21.4s**，整回合只把"到最近包点标记"从 87.1m 挪到 29.6m
-            //   （同段日志 `状态 Plant → Engage 目标=actor 9 距离=39.7m`、`换弹失败：MP5 Navy 备弹为 0`、
-            //   `交战中开火被抑制第 124/143/154/155 次`）。
+            //   持包者（T 且未下包）的走位目标是**本轮包点**，不回落到"与敌人保持偏好距离"：
+            //   规格「T 持包到 B 点 → 下包」（`策划/策划案/CS1.6单机参考规格.md:131`）里，
+            //   下包是持包者这一回合唯一的回合目标；三档表（同文件 :119-121）没有任何一档写"对峙"。
             // 只改"压上方向"：瞄准 / 开火 / 难度参数一字不动（`ApplyAimAndFire` 已在上方跑完）；
-            //    也不新增第二个半径 —— 停步半径复用既有 `CsBotConst.PlantStopRadius`（与
+            //    不新增第二个半径 —— 停步半径复用既有 `CsBotConst.PlantStopRadius`（与
             //    `TryPlantOrPickup` 同值），"进包点判定区就下包"由 `CommitTacticalDecision.MustPlantFirst` 负责。
             var plantAim = Vector3.zero;
             var pressing = false;
@@ -1783,7 +1839,8 @@ namespace Cs16.Module.Bot
             if (pressing)
             {
                 // 持包：边走边打，朝本轮包点压上（不因"距敌人够近"而置零）
-                intent.Move = _nav.ComputeMove(self.Position, plantAim, CsBotConst.PlantStopRadius, now);
+                intent.Move = _nav.ComputeMove(self.Position, plantAim, CsBotConst.PlantStopRadius, now,
+                                               hullHeight: self.Height);
             }
             else if (dist > PreferredRange() * CsBotConst.AdvanceRangeFactor)
             {
@@ -1795,10 +1852,9 @@ namespace Cs16.Module.Bot
                 if (dist > PreferredRange() && _nav.RemainingWaypoints <= 0)
                 {
                     //
-                    // `CsMatch.UpdateBots` 只写了 `if (intent.Crouch) a.IsCrouching = true;` —— **没有反向赋值**，
-                    // 所以蹲下之后 AI 无法让它站起来（除非下一回合复活时被 RespawnActor 清掉）。
-                    // 让"推进中的 bot"蹲下 = 全队以 0.34 倍速度爬行（B7"会走"会明显退化）。
-                    // → 只在"站定射击"时启用蹲；同时我想表达"不想蹲"时也会显式提交 Crouch=false，
+                    // 蹲下把移动速度乘 `CsConst.SpeedCrouchMultiplier`（0.34；出处 `CsInventory.cs:130`）
+                    // ⇒ 只在"站定射击"这一支启用蹲：本方法的姿态默认提交 `Crouch = false`（见上方"姿态与走位"），
+                    // 推进 / 走位中的 bot 不会蹲着走。
                     intent.Crouch = true;
                 }
 
@@ -1848,8 +1904,8 @@ namespace Cs16.Module.Bot
         /// 朝向已经收敛到瞄点（<see cref="AimSettled"/>）、没在换弹、没被闪光致盲。
         /// 连发节奏不在这里 —— 那是模拟内部按 <c>FireBurst*/FirePause*</c> 执行的。</para>
         ///
-        /// <para><b>宽限为什么要存在</b>：实测（Play 日志）机器人 22 次交战 0 发 —— 每 tick 都恰好
-        /// "这一眼看不见"（射线被队友/墙角一瞬打断），于是扳机永远不扣。宽限只放行
+        /// <para><b>宽限为什么要存在</b>：逐 tick 判"这一眼看不见"（射线被队友/墙角一瞬打断）
+        /// 会让扳机永远不扣。宽限只放行
         /// "把这次已经看见的反应走完"（反应时间 + 一个 tick），瞄点用**最后所见位置**（不预测、不外推，
         /// 子弹照样被物理射线挡在墙上），超过就照旧"看不见 = 不开枪"。</para>
         ///
@@ -2393,7 +2449,8 @@ namespace Cs16.Module.Bot
             SetState(CsBotState.Defuse, now);
             intent.State = CsBotState.Defuse;
             // viaRoute=false：包已经下了，目标是"冲到 C4"而不是继续走自己那条旧防守路线
-            intent.Move = _nav.ComputeMove(self.Position, bomb, CsBotConst.DefuseStopRadius, now, viaRoute: false);
+            intent.Move = _nav.ComputeMove(self.Position, bomb, CsBotConst.DefuseStopRadius, now,
+                                           viaRoute: false, hullHeight: self.Height);
 
             var watch = _visibleNow && _lastSeenPos.sqrMagnitude > 0.0001f
                 ? _lastSeenPos
@@ -2465,7 +2522,8 @@ namespace Cs16.Module.Bot
 
                 SetState(CsBotState.Plant, now);
                 intent.State = CsBotState.Plant;
-                intent.Move = _nav.ComputeMove(self.Position, aim, CsBotConst.PlantStopRadius, now);
+                intent.Move = _nav.ComputeMove(self.Position, aim, CsBotConst.PlantStopRadius, now,
+                                               hullHeight: self.Height);
                 intent.AimPoint = LookPoint(self, WithEyeHeight(_nav.CurrentTarget(self.Position, aim)));
 
                 // 求出的方向是零向量 = 本帧不动。两种情况：
@@ -2524,7 +2582,8 @@ namespace Cs16.Module.Bot
             }
 
             intent.State = CsBotState.Patrol;
-            intent.Move = _nav.ComputeMove(self.Position, dropped, CsBotConst.PickupStopRadius, now, viaRoute: false);
+            intent.Move = _nav.ComputeMove(self.Position, dropped, CsBotConst.PickupStopRadius, now,
+                                           viaRoute: false, hullHeight: self.Height);
             intent.AimPoint = WithEyeHeight(dropped);
 
             if (now >= _lastUseLogAt)
@@ -2643,7 +2702,8 @@ namespace Cs16.Module.Bot
 
             SetState(CsBotState.Patrol, now);
             intent.State = CsBotState.Patrol;
-            intent.Move = _nav.ComputeMove(self.Position, _goalPos, radius, now);
+            intent.Move = _nav.ComputeMove(self.Position, _goalPos, radius, now,
+                                           hullHeight: self.Height);
             intent.AimPoint = LookPoint(self, WithEyeHeight(_nav.CurrentTarget(self.Position, _goalPos)));
             return intent;
         }
@@ -2658,7 +2718,8 @@ namespace Cs16.Module.Bot
             if (_heardFresh && now - _heardTime <= CsBotConst.NoiseMemorySeconds &&
                 BotNavigator.Arrived(_heardPos, goal, CsBotConst.CampRepositionRadius * 2f))
             {
-                var dir = _nav.ComputeMove(self.Position, _heardPos, CsBotConst.WaypointArriveRadius, now, viaRoute: false);
+                var dir = _nav.ComputeMove(self.Position, _heardPos, CsBotConst.WaypointArriveRadius, now,
+                                           viaRoute: false, hullHeight: self.Height);
                 if (dir.sqrMagnitude > 0.0001f)
                 {
                     intent.Move = dir;
@@ -2680,7 +2741,8 @@ namespace Cs16.Module.Bot
                 ds.y = 0f;
                 if (ds.magnitude > CampSpotArriveRadius)
                 {
-                    intent.Move = _nav.ComputeMove(self.Position, spot, CampSpotArriveRadius, now, viaRoute: false);
+                    intent.Move = _nav.ComputeMove(self.Position, spot, CampSpotArriveRadius, now,
+                                                   viaRoute: false, hullHeight: self.Height);
                     intent.AimPoint = WithEyeHeight(spot);
                     return intent;
                 }
@@ -2704,7 +2766,8 @@ namespace Cs16.Module.Bot
                 delta.y = 0f;
                 if (delta.magnitude > 0.6f)
                 {
-                    intent.Move = _nav.ComputeMove(self.Position, _campSpot, 0.6f, now, viaRoute: false);
+                    intent.Move = _nav.ComputeMove(self.Position, _campSpot, 0.6f, now,
+                                                   viaRoute: false, hullHeight: self.Height);
                     intent.AimPoint = WithEyeHeight(_campSpot);
                     return intent;
                 }

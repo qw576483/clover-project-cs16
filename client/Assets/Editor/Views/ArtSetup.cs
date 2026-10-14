@@ -38,7 +38,7 @@ namespace Cs16.EditorTools
     ///   └─ Body（承载整体缩放/贴地）
     ///        ├─ Skeleton
     ///        │    └─ Bip01 → …（原版骨骼层级；命中区胶囊挂在对应骨骼下，跟着动画走）
-    ///        │         └─ Hitbox_{Head|Chest|Stomach|Leg}（CapsuleCollider + CsHitboxProxy）
+    ///        │         └─ Hitbox_{Head|Chest|Stomach|LeftLeg|RightLeg}（CapsuleCollider + CsHitboxProxy）
     ///        └─ Skin0..n（SkinnedMeshRenderer，按贴图分块）
     /// </code>
     ///
@@ -206,6 +206,11 @@ namespace Cs16.EditorTools
                 AssetDatabase.SaveAssets();
                 AssetDatabase.Refresh();
 
+                // 生成后自检：本次生成出来的每块网格都必须仍是"双面展开"态（顶点/索引 = 2×源），
+                // 否则 `Art/Mesh` 会出现单面网格（背面缺面）。见 VerifyDoubleSided 的类注释。
+                DoubleSidedReport(false, out var dsOk);
+                ok &= dsOk;
+
                 for (var i = 0; i < msg.Count; i++) Debug.Log($"{LogTag} {msg[i]}");
                 Debug.Log($"{LogTag} 完成：预制体 {_prefabCount} 个；材质 {materials.Count} 个；" +
                           $"动画数据 {assets.Count} 份（骨骼蒙皮网格 + AnimationClip + AnimatorController）。" +
@@ -238,6 +243,172 @@ namespace Cs16.EditorTools
             AssetDatabase.SaveAssets();
             AssetDatabase.Refresh();
             Debug.Log($"{LogTag} 只重建网格：{n} 块\n{report}");
+        }
+
+        /// <summary>
+        /// **只重建 9 个角色预制体的命中区节点**（就地覆盖预制体），不重写骨骼 / 网格 / 材质 / 动画。
+        /// 改了 <c>.cs16anim</c> 的胶囊段后跑它，比 <see cref="Generate"/> 小得多
+        /// （后者会连带重写 <c>Art</c> 下的网格与全部预制体）。
+        /// 命令行入口：<c>unity run … -- -executeMethod Cs16.EditorTools.ArtSetup.RebuildHitboxesOnly</c>。
+        /// </summary>
+        [MenuItem("Clover/CS16/只重建角色命中盒（就地覆盖）", false, 34)]
+        public static void RebuildHitboxesOnly()
+        {
+            var ok = true;
+            var made = 0;
+            for (var i = 0; i < PlayerTargets.Length; i++)
+            {
+                var key = PlayerTargets[i][0];
+                var prefab = $"Assets/Resources/Art/{PlayerTargets[i][1]}.prefab";
+                var a = Cs16AnimReader.Read($"{ModelDataDir}/{key}.cs16anim", out var err);
+                if (a == null)
+                {
+                    Debug.LogError($"{LogTag} 读不了动画数据：{err}");
+                    ok = false;
+                    continue;
+                }
+
+                var n = AnimSetup.RebuildHitboxNodes(a, prefab, out var report);
+                if (n < 0)
+                {
+                    Debug.LogError($"{LogTag} {report}");
+                    ok = false;
+                    continue;
+                }
+                made += n;
+                Debug.Log($"{LogTag} ✓ {report}");
+            }
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            Debug.Log($"{LogTag} 命中区重建：共 {made} 个节点；" + (ok ? "全部通过。" : "**有失败项，见上面的 Error**。"));
+        }
+
+        /// <summary>
+        /// **只读**：逐块检查 <c>Art/Mesh/*.asset</c> 是不是"双面展开"态 —— 顶点数 = <c>2×</c> 源顶点、
+        /// 索引数 = <c>2×3×</c> 源三角形（<see cref="AnimSetup.ExpandDoubleSided"/> 的口径）。
+        ///
+        /// <para><b>为什么必须有这个闸门</b>：<c>ExpandDoubleSided</c> 是"几何双面"（顶点与三角形各翻倍），
+        /// 是绕开 MDL tristrip 绕序不可靠 + Unity 内置 Standard 没有 <c>_Cull</c> 属性这两条的唯一办法。
+        /// 一旦某次生成/重建把它丢了，网格会**静默**变成单面（画面上是从背面看不见）—— 差异登记 #202
+        /// 记的就是"重跑生成链会把 <c>w_*</c> 砍掉一半"这件事（本入口把那条地雷变成红灯）。
+        /// 它只读：不写任何资产、不碰算法、不重跑生成器。</para>
+        ///
+        /// <para>命令行入口：<c>unity command run_script … --entry Cs16.EditorTools.ArtSetup.VerifyDoubleSidedReport</c>
+        /// （返回逐块判决文本，便于直接落判据）。</para>
+        /// </summary>
+        [MenuItem("Clover/CS16/校验网格双面展开（只读）", false, 35)]
+        public static void VerifyDoubleSided()
+        {
+            var report = DoubleSidedReport(true, out var allOk);
+            Debug.Log($"{LogTag} 双面展开自检（只读）\n{report}");
+            Debug.Log($"{LogTag} 双面展开自检结果：{(allOk ? "全部通过。" : "**有异常，见上面的 Error**。")}");
+        }
+
+        /// <summary>只读自检的命令行/脚本入口：返回逐块判决文本（首行 <c>PASS</c>/<c>FAIL</c>）。</summary>
+        public static string VerifyDoubleSidedReport()
+        {
+            var report = DoubleSidedReport(false, out var allOk);
+            return (allOk ? "PASS\n" : "FAIL\n") + report;
+        }
+
+        /// <summary>
+        /// 逐块比对 <c>ModelData/*.cs16anim</c> 的源顶点/三角形数与 <c>Art/Mesh/{key}_Skin{s}.asset</c>
+        /// 的实际值（期望 <c>顶点 = 2×源顶点</c>、<c>索引 = 2×3×源三角形</c>）。
+        /// 异常一律 <c>Error</c> 点名（块名 + 实测/期望）；<paramref name="verbose"/> 为真时连 OK 的块也逐条打日志。
+        /// </summary>
+        private static string DoubleSidedReport(bool verbose, out bool allOk)
+        {
+            var lines = new List<string>();
+            var blocks = 0;
+            var bad = 0;
+            var missing = 0;
+            var skipped = 0;
+            var files = Directory.Exists(ModelDataDir)
+                ? Directory.GetFiles(ModelDataDir, "*.cs16anim") : new string[0];
+            for (var f = 0; f < files.Length; f++)
+            {
+                var file = files[f].Replace('\\', '/');
+                var a = Cs16AnimReader.Read(file, out var err);
+                if (a == null)
+                {
+                    Debug.LogError($"{LogTag} 双面展开自检读不了动画数据：{err}");
+                    bad++;
+                    lines.Add($"! {file} 读不了：{err}");
+                    continue;
+                }
+
+                // 只查**真正接进工程的那批**（角色的 9 个 key 由 PlayerTargets 定义；vm_*/w_* 全部接）：
+                // 留在 ModelData 里但没接的遗留件（如 player_T_orig）本来就没有对应网格资产，
+                // 报它"缺网格"会把闸门刷成假红 —— 显式跳过并列出，不藏。
+                if (!WiredKey(a.Key))
+                {
+                    skipped++;
+                    lines.Add($"SKIP {a.Key}（未接入 PlayerTargets 的遗留模型数据，无对应网格资产）");
+                    continue;
+                }
+
+                for (var s = 0; s < a.Subs.Count; s++)
+                {
+                    var sub = a.Subs[s];
+                    // 与生成器的跳块条件逐字一致（VertCount/TriCount 为 0 的块本来就不建资产）
+                    if (sub.VertCount == 0 || sub.TriCount == 0) continue;
+
+                    var path = $"{MeshDir}/{a.Key}_{AnimSetup.SkinName}{s}.asset";
+                    var mesh = AssetDatabase.LoadAssetAtPath<Mesh>(path);
+                    if (mesh == null)
+                    {
+                        missing++;
+                        Debug.LogError($"{LogTag} ** 双面展开自检：缺网格 ** {path}（源自 {file}）");
+                        lines.Add($"! 缺网格 {path}");
+                        continue;
+                    }
+
+                    blocks++;
+                    var wantV = sub.VertCount * 2;
+                    var wantI = sub.TriCount * 3 * 2;
+                    var gotV = mesh.vertexCount;
+                    var gotI = mesh.subMeshCount > 0 ? mesh.GetIndexCount(0) : 0;
+                    if (gotV == wantV && gotI == wantI)
+                    {
+                        lines.Add($"OK   {path}  顶点 {gotV} = 2×{sub.VertCount}，索引 {gotI} = 2×{sub.TriCount * 3}");
+                        if (verbose)
+                        {
+                            Debug.Log($"{LogTag} ✓ {a.Key}_Skin{s} 顶点 {gotV} = 2×{sub.VertCount}、" +
+                                      $"索引 {gotI} = 2×{sub.TriCount * 3}");
+                        }
+                    }
+                    else
+                    {
+                        bad++;
+                        Debug.LogError($"{LogTag} ** 双面展开缺失/异常 ** {path}：实测 顶点 {gotV}" +
+                                       $"（期望 {wantV} = 2×{sub.VertCount}）、索引 {gotI}" +
+                                       $"（期望 {wantI} = 2×{sub.TriCount * 3}）" +
+                                       " ⇒ 该块是单面或被砍半，请查 AnimSetup.ExpandDoubleSided / FillSkinMesh");
+                        lines.Add($"FAIL {path}  顶点 {gotV}/{wantV}、索引 {gotI}/{wantI}");
+                    }
+                }
+            }
+
+            allOk = bad == 0 && missing == 0;
+            lines.Add($"合计：块 {blocks}、异常 {bad}、缺网格 {missing}、跳过 {skipped}（未接的遗留模型数据）" +
+                      $" ⇒ {(allOk ? "全部通过" : "**有异常**")}");
+            return string.Join("\n", lines.ToArray());
+        }
+
+        /// <summary>
+        /// 该 <c>ModelData/*.cs16anim</c> 的 key 是否**接进了工程**：
+        /// 角色（<c>player*</c>）以 <see cref="PlayerTargets"/> 为准（那里没列的 = 遗留件，生成器不消费）；
+        /// 其余前缀（<c>vm_*</c> / <c>w_*</c>）由生成器按文件前缀全量消费 ⇒ 一律视为已接。
+        /// </summary>
+        private static bool WiredKey(string key)
+        {
+            if (!key.StartsWith("player")) return true;
+            for (var i = 0; i < PlayerTargets.Length; i++)
+            {
+                if (PlayerTargets[i][0] == key) return true;
+            }
+            return false;
         }
 
         [MenuItem("Clover/CS16/校验视图与音效资源（只读）", false, 31)]

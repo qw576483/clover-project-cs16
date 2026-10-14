@@ -35,6 +35,8 @@ pe = pefile.PE(DLL, fast_load=True)
 d = pe.__data__
 md = Cs(CS_ARCH_X86, CS_MODE_32)
 md.skipdata = True
+# FEEL_DUMP=1 → 额外逐条打印 PrimaryAttack 本体与开火函数体（"逐分支全量反汇编"用，§5.13 口径）。
+DUMP = os.environ.get("FEEL_DUMP") == "1"
 
 
 def foff(va):
@@ -115,6 +117,12 @@ for wid, cls in CLASSES:
             calls.setdefault(int(x.op_str, 16), []).append(k)
     print("=== %-10s PrimaryAttack(slot87) 0x%08X  calls=%s"
           % (wid, fn, ",".join("0x%08X x%d" % (t, len(k)) for t, k in calls.items())))
+    if DUMP:
+        # (b) 逐分支全量反汇编：把 PrimaryAttack 本体逐条打出来，交给调用方读分支树。
+        #     每个 call 站点标 <CALL>，条件跳转标 <JCC>（目标地址一并给出，便于自己连 CFG）。
+        for x in ins:
+            tag = "<CALL>" if x.mnemonic == "call" else ("<JCC>" if x.mnemonic[0] == "j" and x.mnemonic != "jmp" else "")
+            print("        %08X  %-28s %s" % (x.address, (x.mnemonic + " " + x.op_str + ("" if cv(x.op_str) is None else "  ;=%g" % cv(x.op_str)))[:46], tag))
     helper = None
     for tgt, ks in calls.items():
         if len(ks) >= 2 and in_text(tgt):
@@ -124,15 +132,35 @@ for wid, cls in CLASSES:
         continue
     hva, ks = helper
     print("    fire-helper = 0x%08X（被 call %d 次 = 分支档数）" % (hva, len(ks)))
+    if DUMP:
+        ho = foff(hva)
+        if ho is not None:
+            for x in md.disasm(d[ho:ho + 0x100], hva):
+                tag = "<CALL>" if x.mnemonic == "call" else ("<JCC>" if x.mnemonic[0] == "j" and x.mnemonic != "jmp" else "")
+                print("      H %08X  %-28s %s" % (x.address, (x.mnemonic + " " + x.op_str + ("" if cv(x.op_str) is None else "  ;=%g" % cv(x.op_str)))[:46], tag))
     for k in ks:
         consts, mode, tests = [], "?", []
         j = k - 1
-        while j >= 0 and j > k - 14:
+        # ⛔ 逐分支读取（§5.13 口径）——**窗口法已被证伪**：
+        #    AWP 蹲档的 site(0x100D54EF) 真值是 `fldz`(=0.0)，而 20 条回看窗口会把上一个分支的
+        #    `fld [0x10141a38]`(=0.1) 带进来 ⇒ 报出 0.1。两个分支块之间只隔一个 `jne` 目标，
+        #    所以正确做法是**往回走到第一个控制流指令（jcc/jmp/ret/call）就停**，只取本分支块内的常量。
+        #    （本函数每个分支块以 `... fstp [esp]; call 0x…; pop esi; ret` 收尾，块内一般只有 1 个常量。）
+        while j >= 0 and j > k - 20 and ins[j].mnemonic not in ("jmp", "ret", "call") \
+                and not (ins[j].mnemonic[0] == "j" and ins[j].mnemonic != "jmp"):
             m, tt = ins[j].mnemonic, ins[j].op_str
             if m in ("fmul", "fadd", "fsub", "fsubr", "fdiv"):
                 c = cv(tt)
                 if c is not None:
                     consts.insert(0, "%s=%g" % (m, c))
+            # 新增：`fld dword ptr [0x…]` = 直接把常量装进 x87 栈（没有 fmul 的档位就是这么写的）
+            if m == "fld":
+                c = cv(tt)
+                if c is not None:
+                    consts.insert(0, "fld=%g" % c)
+            # `fldz` = 压入 0.0（AWP 蹲档就是它 ⇒ 蹲下散布 0）
+            if m == "fldz":
+                consts.insert(0, "fldz=0")
             if m == "fld" and "+0xf8" in tt:
                 mode = "acc"
             if m == "fsub" and "+0xf8" in tt:
@@ -140,5 +168,16 @@ for wid, cls in CLASSES:
             if m in ("test", "cmp") and "," in tt:
                 tests.insert(0, tt)
             j -= 1
-        print("    call@0x%08X [%s] %s   <- tests(近→远): %s"
-              % (ins[k].address, mode, " ".join(consts) if consts else "-", "; ".join(tests[:3])))
+        # 守卫（guard）：从**分支块起点**再往前找最近的一条 `test/cmp` + 紧邻的条件跳转，
+        #    直接回答"这条分支在什么条件下才走"（档位归属就靠这一列，不再靠窗口里的杂项）。
+        g, gj, jj = [], None, j
+        while jj >= 0 and jj > j - 8:
+            m, tt = ins[jj].mnemonic, ins[jj].op_str
+            if m in ("test", "cmp") and not g:
+                g.insert(0, tt)
+            if m[0] == "j" and m != "jmp" and gj is None:
+                gj = "%s %s" % (m, tt)
+            jj -= 1
+        guard = ("%s  ;  %s" % ("; ".join(g), gj)) if (g or gj) else "-"
+        print("    call@0x%08X [%s] %-22s guard: %s"
+              % (ins[k].address, mode, " ".join(consts) if consts else "-", guard))

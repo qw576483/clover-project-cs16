@@ -14,7 +14,9 @@ namespace Cs16.EditorTools
         public float Qx, Qy, Qz, Qw = 1f;
     }
 
-    /// <summary>一个命中区（胶囊）—— 4 段，挂在某根骨骼下。尺寸已在导出空间（米）。</summary>
+    /// <summary>一个命中区（胶囊）—— 挂在某根骨骼下。尺寸已在导出空间（米）。
+    /// <see cref="CenterZ"/> 是胶囊中心相对身体轴的侧向偏移（导出空间的第三轴 = 左右向）；
+    /// v1 记录没有这个字段，读到 0（老文件里 4 个区都居中在轴上）。</summary>
     internal sealed class Cs16AnimCapsule
     {
         public string Zone = "";
@@ -22,6 +24,7 @@ namespace Cs16.EditorTools
         public float CenterY;
         public float CapH;
         public float CapR;
+        public float CenterZ;
     }
 
     /// <summary>一个贴图分块的蒙皮网格（顶点已是**绑定姿态世界坐标**，单骨骼权重 1.0）。</summary>
@@ -53,6 +56,14 @@ namespace Cs16.EditorTools
         public string Name = "";
         public float Fps = 30f;
         public bool Loop;
+
+        /// <summary>本序列的 blend 路数：常规序列 1；瞄准 / 射击这类按瞄准方向分路的序列 9。</summary>
+        public int NumBlends = 1;
+
+        /// <summary>逐路轨道，下标 = blend（多路序列的一路 = 原口径的一整套姿势）。</summary>
+        public Cs16AnimTrack[][] BlendTracks = new Cs16AnimTrack[0][];
+
+        /// <summary>第一路（blend 0）的逐骨骼轨道。</summary>
         public Cs16AnimTrack[] Tracks = new Cs16AnimTrack[0];
     }
 
@@ -102,15 +113,18 @@ namespace Cs16.EditorTools
     ///
     /// <para><b>格式（小端）</b>：</para>
     /// <code>
-    /// 'C16A' u32 version=1  u32 keyLen key[]
+    /// 'C16A' u32 version(1 / 2 / 3)  u32 keyLen key[]
     /// f32 scale  f32[3] offset(ox,oy,oz)
     /// u32 numbones  每个: u32 nameLen name[]  i32 parent  f32[3] pos  f32[4] quat
-    /// u32 numcaps   每个: u32 zoneLen zone[]  i32 bone     f32 centerY capH capR
+    /// u32 numcaps   每个: u32 zoneLen zone[]  i32 bone     f32 centerY capH capR [f32 centerZ]
+    ///                （version 2 起才有末尾的 centerZ；version 1 的 4 个区都居中在身体轴上）
     /// u32 numsubs   每个: u32 texLen tex[]  u32 flags  u32 vc  u32 tc
     ///                    f32[3*vc] verts  f32[2*vc] uvs  f32[3*vc] norms
     ///                    u8[vc] boneIdx   u32[3*tc] tris
-    /// u32 numclips  每个: u32 nameLen name[]  f32 fps  u32 loop  u32 numbones
-    ///                    每骨骼: u32 keyCount  然后 keyCount × f32[8] = (t,pos.xyz,quat.xyzw)
+    /// u32 numclips  每个: u32 nameLen name[]  f32 fps  u32 loop  [u32 numblends]  u32 numbones
+    ///                    numblends 路 × 每骨骼: u32 keyCount  然后 keyCount × f32[8] = (t,pos.xyz,quat.xyzw)
+    ///                    （version 3 起才有 numblends；1 / 2 视为 1 路。瞄准 / 射击序列为 9 路，
+    ///                      blend 序 = b = pitchIdx*3 + yawIdx，pitchIdx 0/1/2 = 上/中/下）
     /// 'ENDA'
     /// </code>
     /// </summary>
@@ -132,7 +146,13 @@ namespace Cs16.EditorTools
                     var magic = new string(br.ReadChars(4));
                     if (magic != Magic) { error = path + " 头标记不对（" + magic + "），期望 " + Magic; return null; }
                     var version = br.ReadUInt32();
-                    if (version != 1) { error = path + " 版本 " + version + " 不认识（本生成器只支持 1）"; return null; }
+                    if (version != 1 && version != 2 && version != 3)
+                    {
+                        error = path + " 版本 " + version + " 不认识（本生成器只支持 1 / 2 / 3）";
+                        return null;
+                    }
+                    var v2 = version >= 2;      // 胶囊段末尾的 centerZ
+                    var v3 = version >= 3;      // clip 段带 blend 路数
 
                     var a = new Cs16AnimAsset { Key = ReadString(br) };
                     a.Scale = br.ReadSingle();
@@ -159,6 +179,7 @@ namespace Cs16.EditorTools
                             CenterY = br.ReadSingle(),
                             CapH = br.ReadSingle(),
                             CapR = br.ReadSingle(),
+                            CenterZ = v2 ? br.ReadSingle() : 0f,
                         });
                     }
 
@@ -186,27 +207,40 @@ namespace Cs16.EditorTools
                             Fps = br.ReadSingle(),
                             Loop = br.ReadUInt32() != 0,
                         };
-                        var boneCount = (int)br.ReadUInt32();
-                        clip.Tracks = new Cs16AnimTrack[boneCount];
-                        for (var b = 0; b < boneCount; b++)
+                        var blendCount = v3 ? (int)br.ReadUInt32() : 1;
+                        if (blendCount <= 0 || blendCount > 64)
                         {
-                            var tr = new Cs16AnimTrack { Count = (int)br.ReadUInt32() };
-                            tr.Times = new float[tr.Count];
-                            tr.Pos = new float[tr.Count * 3];
-                            tr.Quat = new float[tr.Count * 4];
-                            for (var k = 0; k < tr.Count; k++)
-                            {
-                                tr.Times[k] = br.ReadSingle();
-                                tr.Pos[k * 3] = br.ReadSingle();
-                                tr.Pos[k * 3 + 1] = br.ReadSingle();
-                                tr.Pos[k * 3 + 2] = br.ReadSingle();
-                                tr.Quat[k * 4] = br.ReadSingle();
-                                tr.Quat[k * 4 + 1] = br.ReadSingle();
-                                tr.Quat[k * 4 + 2] = br.ReadSingle();
-                                tr.Quat[k * 4 + 3] = br.ReadSingle();
-                            }
-                            clip.Tracks[b] = tr;
+                            error = path + " clip " + clip.Name + " 的 blend 路数异常：" + blendCount;
+                            return null;
                         }
+                        var boneCount = (int)br.ReadUInt32();
+                        clip.NumBlends = blendCount;
+                        clip.BlendTracks = new Cs16AnimTrack[blendCount][];
+                        for (var bl = 0; bl < blendCount; bl++)
+                        {
+                            var tracks = new Cs16AnimTrack[boneCount];
+                            for (var b = 0; b < boneCount; b++)
+                            {
+                                var tr = new Cs16AnimTrack { Count = (int)br.ReadUInt32() };
+                                tr.Times = new float[tr.Count];
+                                tr.Pos = new float[tr.Count * 3];
+                                tr.Quat = new float[tr.Count * 4];
+                                for (var k = 0; k < tr.Count; k++)
+                                {
+                                    tr.Times[k] = br.ReadSingle();
+                                    tr.Pos[k * 3] = br.ReadSingle();
+                                    tr.Pos[k * 3 + 1] = br.ReadSingle();
+                                    tr.Pos[k * 3 + 2] = br.ReadSingle();
+                                    tr.Quat[k * 4] = br.ReadSingle();
+                                    tr.Quat[k * 4 + 1] = br.ReadSingle();
+                                    tr.Quat[k * 4 + 2] = br.ReadSingle();
+                                    tr.Quat[k * 4 + 3] = br.ReadSingle();
+                                }
+                                tracks[b] = tr;
+                            }
+                            clip.BlendTracks[bl] = tracks;
+                        }
+                        clip.Tracks = clip.BlendTracks[0];
                         a.Clips.Add(clip);
                     }
 

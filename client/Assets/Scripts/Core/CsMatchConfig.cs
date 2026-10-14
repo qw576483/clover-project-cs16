@@ -17,7 +17,15 @@ namespace Cs16.Core
         public int RoundsPerHalf = CsConst.RoundsPerHalf;
         public float RoundTime = CsConst.RoundTime;
         public float FreezeTime = CsConst.FreezeTime;
-        public int StartMoney = CsConst.StartMoney;
+        /// <summary>
+        /// **每回合开局**发放的起始金钱。
+        ///
+        /// <para>本工程口径 = 满额：原版 <c>mp_startmoney</c> 默认 800，且只在**开局与换边**发放一次，局内靠胜负 /
+        /// 连败 / 击杀奖累积；这里改成**每回合开局都发放**，默认值取 <see cref="CsConst.MaxMoney"/>
+        /// （= <c>mp_maxmoney</c> 上限 16000）⇒ 每回合开局金钱直接给满。经济链其余部分
+        /// （上限夹取 / 购买扣钱 / 各项奖励）一律不动。登记 = 策划/差异登记.tsv #193。</para>
+        /// </summary>
+        public int StartMoney = CsConst.MaxMoney;
         public bool FriendlyFire = false;
 
         /// <summary>玩家名字（显示在记分板/HUD）。</summary>

@@ -10,9 +10,13 @@ namespace Cs16.UI
     /// 正下方一串文字项）：
     ///
     /// <list type="bullet">
-    /// <item>项与文案：原版 `cstrike/resource/gamemenu.res` 的**局外四项**
-    /// （`"10" #GameUI_GameMenu_NewGame` / `"11" …FindServers` / `"12" …Options` / `"13" …Quit`）
-    /// + `valve/resource/gameui_english.txt:110/115/118/119` 的英文原文；</item>
+    /// <item>项与文案：原版 `cstrike/resource/GameMenu.res` 的**局外四项**
+    /// （`"9" #GameUI_GameMenu_NewGame → OpenCreateMultiplayerGameDialog` /
+    /// `"10" …FindServers → OpenServerBrowser` / `"11" …Options → OpenOptionsDialog` /
+    /// `"12" …Quit`；同文件另有 `"1" ResumeGame`、`"2" Disconnect`、`"4" OpenPlayerListDialog`
+    /// （后两项带 `notsingle`）与 `"8"` 空项，都带 `OnlyInGame`，不属局外菜单）——
+    /// 项序即键序；文案 = `#GameUI_GameMenu_*` 的 `valve/resource/gameui_english.txt` 原文
+    /// （该 txt 不在盘，token→英文的对照见 `策划/载体可达性登记.tsv`）；</item>
     /// <item>几何：原版 `platform/resource/trackerscheme.res` 的 `InGameDesktop` 块（:164-173）
     /// —— 项高 / 步进 / 左上 inset / 项宽，逐项出处见各常量注释，一律 ×<see cref="CsUiStyle.ResScale"/>；</item>
     /// <item>文字色：同块 `:166-168` 的常态 / 悬停 / 按下三色；</item>

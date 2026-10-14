@@ -45,20 +45,30 @@ namespace Cs16.Module.Combat
         /// 出处：**本项目新增**（后坐力**表现**层的归一化系数）。</summary>
         public const float RecoilViewScale = 1f;
 
-        /// <summary>后坐力"起跳"跟随时间常数（秒）：越小越跟手。
-        /// 出处：**本项目新增**（原版后坐力是每发角度累加，没有"跟随时间常数"这个量，见类注释「出处口径」）。</summary>
-        public const float RecoilRiseTau = 0.035f;
+        /// <summary>后坐力"起跳"跟随时间常数（秒）；<b>0 = 不平滑</b>。
+        /// 原版把 <c>pmove-&gt;punchangle</c> **直接**加到视角度上
+        /// （<c>原版资源/hlsdk/pm_shared/pm_shared.c:2377-2378</c>），没有"跟随时间常数"这个量
+        /// ⇒ 置 0（引擎的 <c>CloverFirstPersonCamera</c> 在 tau ≤ 0 时立即吸附到权威值）。</summary>
+        public const float RecoilRiseTau = 0f;
 
-        /// <summary>后坐力"回正"时间常数（秒）：比上跳慢，形成"抬得快、落得慢"的观感。
-        /// 出处：**本项目新增**（同 <c>RecoilRiseTau</c>）。</summary>
-        public const float RecoilFallTau = 0.13f;
+        /// <summary>后坐力"回正"跟随时间常数（秒）；<b>0 = 不平滑</b>（同 <see cref="RecoilRiseTau"/>：
+        /// 回落的形状由模拟侧的 <c>CsRecoil.Decay</c> 逐帧给出，表现层不再叠一次）。</summary>
+        public const float RecoilFallTau = 0f;
 
         // ==================================================================
         //  散布（子弹角度）
         // ==================================================================
-        /// <summary>开镜（Zoom）时的散布倍率。
-        /// 出处：**本项目新增**（原版散布模型见类注释「出处口径」）。</summary>
-        public const float ZoomSpreadScale = 0.25f;
+        /// <summary>
+        /// 开镜（Zoom）时的散布倍率 —— 原版是 <b>1（开镜不改散布）</b>。
+        ///
+        /// <para>出处：原版每把枪的 <c>PrimaryAttack</c> 里传给开火函数的那条 <c>flSpread</c> 表达式
+        /// 只按「空中 / 移动 &gt; 140 / 静止」三档分支，<b>没有任何 fov 分支</b>
+        /// （AUG / SG552 = <c>0.035 + 0.4·acc</c> / <c>0.035 + 0.07·acc</c> / <c>0.02·acc</c>，
+        /// 狙击四把同形，见 <c>regamedll/dlls/wpn_shared/wpn_aug.cpp</c> / <c>wpn_sg552.cpp</c> 的
+        /// <c>PrimaryAttack</c> 逐字）；开镜在原版改的只有 fov、<c>flCycleTime</c>（AUG / SG552）
+        /// 与 <c>GetMaxSpeed</c>（SG552 200 / AWP·SG550·G3SG1 150 / Scout 220 unit/s）。</para>
+        /// </summary>
+        public const float ZoomSpreadScale = 1f;
 
         /// <summary>蹲下时的散布倍率。
         /// 出处：**本项目新增**（同 <c>ZoomSpreadScale</c>）。</summary>
@@ -68,11 +78,12 @@ namespace Cs16.Module.Combat
         /// 出处：**本项目新增**（同 <c>ZoomSpreadScale</c>）。</summary>
         public const float AirSpreadScale = 0.5f;
 
-        /// <summary>每发连射累积的散布惩罚（度/发），模拟"越扫越散"。
+        /// <summary>每发连射累积的散布惩罚（度/发），只给**没有原版 acc 模型**的武器用
+        /// （有 acc 模型的武器累积走 <c>CsWeapons.AccuracyAfterShot</c>，见 <c>Firearm.ComputeSpread</c>）。
         /// 出处：**本项目新增**（同 <c>ZoomSpreadScale</c>）。</summary>
         public const float RecoilSpreadPerShot = 0.15f;
 
-        /// <summary>连射散布惩罚的上限（度），防止长时间扫射把散布堆到荒谬值。
+        /// <summary>连射散布惩罚的上限（度），防止长时间扫射把散布堆到荒谬值（仅回落档）。
         /// 出处：**本项目新增**（同 <c>ZoomSpreadScale</c>）。</summary>
         public const float RecoilSpreadMax = 2.4f;
 
@@ -116,14 +127,9 @@ namespace Cs16.Module.Combat
         /// 出处：**本项目新增**（quickscope 惩罚时长；原版同一机制在 <c>client.dll</c> / <c>mp.dll</c>，未解出）。</summary>
         public const float ScopeSettleTime = 0.18f;
 
-        /// <summary>视高平滑时间常数（秒）：站/蹲切换与台阶上下不"跳眼睛"。
-        /// 出处：**本项目新增**（原版客户端的插值是 <c>HLSDK/cl_dll/view.cpp</c> 的 <c>ViewInterp</c> 位置回放，
-        /// 不是指数平滑 tau ⇒ 换算不出，口径同 <c>策划/对照表.md</c> E-03）。</summary>
-        public const float EyeHeightSmoothTau = 0.045f;
-
-        /// <summary>超过该位移（米）认为发生了瞬移（出生/观战切换），视高直接吸附不平滑。</summary>
-        public const float TeleportSnapDistance = 2.5f;
-
+        // 视高 / 站蹲过渡 / 上台阶 / 位置回放的原版口径与常量在 Module/CameraRig/CsViewInterp
+        // （回放窗口 = cl_vsmoothing 0.05 s、位移上限 64 unit、上台阶追赶 150 unit/s、滞后 18 unit、
+        //  蹲姿过渡 TIME_TO_DUCK 0.4 s）—— 本文件不再放"视高平滑时间常数"这类量。
         /// <summary>受击晃动最大角度（度，满伤害时）。
         /// 出处：**本项目新增**（受击晃动是客户端视角表现；原版载体 <c>client.dll</c> 不在盘）。</summary>
         public const float DamageShakeMaxDeg = 2.4f;

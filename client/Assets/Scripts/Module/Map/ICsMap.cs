@@ -26,14 +26,20 @@ namespace Cs16.Module.Map
         /// <summary>该点是否可站立（引擎空间事实；未加载时返回 true —— 与引擎语义一致）。</summary>
         bool WalkableAt(float x, float z);
 
-        /// <summary>以给定半径判断是否站得下（中心 + 8 向采样）。</summary>
-        bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius);
+        /// <summary>以给定半径判断是否站得下（中心 + 8 向采样）。
+        /// <paramref name="height"/> = 碰撞盒高度（站立 <see cref="CsConst.StandHeight"/> / 蹲姿
+        /// <see cref="CsConst.CrouchHeight"/>），身高带自脚面起算 —— 盒越矮越能站进矮空间。
+        /// 默认 = 站立高 ⇒ 既有调用点语义不变。</summary>
+        bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius, float height = CsConst.StandHeight);
 
         /// <summary>
         /// 本地碰撞解算：从 <paramref name="from"/> 走向 <paramref name="to"/>（一帧位移，已含跳/落 Y），
         /// 返回可用终点。内部做分轴滑墙 + 扫掠细分 + 台阶。
+        /// <para>台阶按原版 <c>PM_WalkMove</c>：贴着原脚高走一遍，被钳住时抬起 <c>StepUpHeight</c> 再走一遍，
+        /// 取水平更远的那个 —— 采纳的那一遍返回**落点地面高度**作为 Y。</para>
         /// </summary>
-        Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius);
+        Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                            float height = CsConst.StandHeight);
 
         /// <summary>地面高度（向下探测）；找不到地面返回 float.NegativeInfinity。</summary>
         float SampleGround(Vector3 pos, float maxDrop = 8f);

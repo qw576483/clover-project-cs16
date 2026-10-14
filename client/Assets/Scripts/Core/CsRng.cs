@@ -69,7 +69,8 @@ namespace Cs16.Core
         /// <summary>标记点随机取用（`CsMap.TryGetPoint`）。玩法：AI 目标点。</summary>
         MapMarkerPick = 10,
 
-        /// <summary>表现层变体（弹痕五选一 / 血迹六选一，`CombatEffects`）。表现：与玩法无关。</summary>
+        /// <summary>表现层变体（弹痕五选一 / 血迹六选一，`CombatEffects`；死亡姿态三选一，`ActorView`）。
+        /// 表现：与玩法无关。</summary>
         FxVariant = 11,
 
         /// <summary>音效变体（脚步/死亡多采样，`SfxService`）。表现：与玩法无关。</summary>

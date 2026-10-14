@@ -214,6 +214,29 @@ namespace Cs16.EditorTools
                 Debug.LogError($"{Tag} 两份 .bytes 长度不同（{serverBytes.Length} vs {clientBytes.Length}）—— 同源被破坏");
                 ok = false;
             }
+            else
+            {
+                // 只比长度抓不到**长度相同、内容不同**这一类破裂（实测：重烘时客户端那份做完单连通后处理、
+                // 服务端那份还是原始位图 ⇒ 可走 4534 vs 5308，长度都是 25442 ⇒ 旧判据全绿）。
+                int diffCount = 0, firstDiff = -1;
+                for (int i = 0; i < serverBytes.Length; i++)
+                {
+                    if (serverBytes[i] == clientBytes[i]) continue;
+                    diffCount++;
+                    if (firstDiff < 0) firstDiff = i;
+                }
+                if (firstDiff >= 0)
+                {
+                    Debug.LogError($"{Tag} 两份 .bytes 长度相同（{serverBytes.Length}）但**内容不同**：" +
+                                   $"{diffCount} 字节不同，首个差异 @{firstDiff}（{SegmentNameOf(clientBytes, firstDiff)}）" +
+                                   " —— 同源被破坏（长度相同也可能不同源）");
+                    ok = false;
+                }
+                else
+                {
+                    Debug.Log($"{Tag} 同源两份逐字节一致（{serverBytes.Length} 字节）✓");
+                }
+            }
 
             // ---------- ③ 位图逐格比对 ----------
             int diff = 0;
@@ -435,6 +458,29 @@ namespace Cs16.EditorTools
                 }
             }
             return -1;
+        }
+
+        /// <summary>
+        /// 把一个字节偏移归到 CloverMap v1 的哪一段（头部 / 位图 / 碰撞体 / 出生点 / 标记点）。
+        /// 段界算式与 <c>Dust2WalkSeal.TryLayout</c> 逐字相同 —— 报错时指明"差在哪一段"才好定位。
+        /// </summary>
+        private static string SegmentNameOf(byte[] b, int offset)
+        {
+            if (b == null || b.Length < 64) return "?";
+            int width = (int)BitConverter.ToUInt32(b, 32);
+            int depth = (int)BitConverter.ToUInt32(b, 36);
+            int colliders = (int)BitConverter.ToUInt32(b, 40);
+            int spawns = (int)BitConverter.ToUInt32(b, 44);
+            int nameLen = (int)BitConverter.ToUInt32(b, 48);
+            int bitOffset = 64 + nameLen;
+            int bitEnd = bitOffset + (width * depth + 7) / 8;
+            int colEnd = bitEnd + colliders * 24;
+            int spawnEnd = colEnd + spawns * 12;
+            if (offset < bitOffset) return "头部";
+            if (offset < bitEnd) return "位图段";
+            if (offset < colEnd) return "碰撞体段";
+            if (offset < spawnEnd) return "出生点段";
+            return "标记点段";
         }
     }
 }

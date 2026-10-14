@@ -53,6 +53,19 @@ namespace Cs16.Module.View
         /// 无阵营之分：原版世界模型两边共用一份。</summary>
         public const string WorldModelPrefix = "world_";
 
+        /// <summary>
+        /// **玩家模型里"背上的 C4 包"那一块的材质名关键字**。
+        ///
+        /// <para><b>出处</b>：原版玩家模型 <c>models/player/*/*.mdl</c> 的
+        /// <c>bodyparts[1]</c> 名为 <c>backpack</c>，两个子模型 = 空壳与包本身；内嵌贴图名是
+        /// <c>Backpack1</c>（T 侧）/ <c>Backpack2</c>（CT 侧）。生成器按内嵌贴图名给材质命名，
+        /// 因此这一块在预制体里是**独立的一个节点**（<c>SkinN</c> + 一个 <c>*Backpack*</c> 材质）
+        /// ⇒ 用材质名认它，就能整块开关（等价于原版对该 bodygroup 的开关）。</para>
+        ///
+        /// <para><b>语义</b>：只有持 C4 的角色显示它（下包 / 掉包 / 交包后立即隐藏）。</para>
+        /// </summary>
+        public const string BackpackMaterialToken = "Backpack";
+
         /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名（名牌放它外面，才不会被蹲下压扁）。
         /// 出处：**本项目新增**（预制体内部节点名 = 本工程命名）。</summary>
         public const string BodyNodeName = "Body";
@@ -84,7 +97,7 @@ namespace Cs16.Module.View
         /// 蹲下时整体高度缩放。**骨骼动画路线下固定 1（不压扁）**：
         /// 原版用 <c>crouch_idle</c> / <c>crouchrun</c> 两条序列表达蹲姿 ——
         /// 实测 <c>crouch_idle</c> 身高 47.95u，与绑定姿态 70.39u 同比例换算得 1.226m，
-        /// 而同源常量 <c>CsConst.CrouchHeight</c> = 1.25m（差 2%）。再叠一个"整体压扁"就是蹲两次，
+        /// 而同源常量 <c>CsConst.CrouchHeight</c> = 1.27m（差 3.5%）。再叠一个"整体压扁"就是蹲两次，
         /// "没有蹲动画"时期的替代品。
         /// </summary>
         public const float CrouchScale = 1f;
@@ -104,16 +117,6 @@ namespace Cs16.Module.View
 
         /// <summary>一次位置跳变超过它（米）就直接吸附，不做插值（出生 / 复活 / 传送）。</summary>
         public const float TeleportSnapDistance = 2.5f;
-
-        /// <summary>
-        /// 位置平滑时间常数（秒）。0 = 不平滑（直接用 <c>CsActor.Position</c>，模拟已是权威）。
-        ///
-        /// <para><b>这个 0 写不出原版出处</b>（原版客户端确实做插值 ——
-        /// <c>HLSDK/cl_dll/view.cpp:719-785</c> 的 <c>ViewInterp</c> 环形缓冲，
-        /// 但它的口径是"<c>Length(delta) &lt; 64</c> 才插值"的**位置回放**，不是指数平滑的 tau，
-        /// <c>策划/验收表.md</c> 的「允许的差异」里（含为什么 / 出处 / 何时消除），不再留裸数字。</para>
-        /// </summary>
-        public const float PositionSmoothTau = 0f;
 
         // ==================================================================
         //  头顶名牌 / 血条
@@ -209,7 +212,7 @@ namespace Cs16.Module.View
         /// <para><b>出处与降级</b>：原版第三人称武器 = 引擎把 <c>models/p_*.mdl</c> 自动对齐到
         /// <c>player.mdl</c> 的手部骨骼上（<c>原版资源/cs16src/hlsdk</c> 的
         /// <c>CBasePlayerItem::SetModel</c> + studiomdl 骨骼对齐）；本工程的角色预制体是
-        /// **命中盒式**（<see cref="ActorView"/> 层级约定：Body + 4 个 Hitbox，无手部骨骼）
+        /// **命中盒式**（<see cref="ActorView"/> 层级约定：Body + 5 个 Hitbox，无手部骨骼）
         /// ⇒ 没有骨骼可挂，退到按用户实机截图量测：持枪姿态双手位于胸前 ≈ <c>0.72 × 身高</c>
         /// = <c>1.8 × 0.72 ≈ 1.30 m</c>、武器居中偏右 <c>0.10 m</c>、身前 <c>0.18 m</c>。
         /// 已登记 <c>策划/差异登记.tsv</c>（与 #75 同族的挂点降级）。</para>
@@ -384,13 +387,14 @@ namespace Cs16.Module.View
         public const float AnimCrossFade = 0.06f;
 
         /// <summary>
-        /// 判定"在移动"的最小水平速度（米/秒）。低于它 = 静止（放静止序列）。
+        /// 判定"在移动"的最小水平速度（米/秒）。不高于它 = 静止（放静止序列）。
         ///
-        /// <para><b>这个 0.15 写不出原版出处</b>：原版按速度选动画档位的那套阈值在服务端
-        /// <c>cstrike/dlls/mp.dll</c> 里（<c>HLSDK/cl_dll/</c> **没有** CS 的角色动画选择），
-        /// 的「允许的差异」里（含为什么 / 出处 / 何时消除），不再留裸数字。</para>
+        /// <para><b>出处 = 0</b>：原版 <c>regamedll/dlls/player.cpp:5443-5453</c> 的选序列入口 ——
+        /// <c>if (pev-&gt;velocity.x || pev-&gt;velocity.y) SetAnimation(PLAYER_WALK); else SetAnimation(PLAYER_IDLE);</c>；
+        /// 判据是**水平两个分量是否为 0**（GoldSrc 是 Z-up，x/y 即水平面），**没有 epsilon**。
+        /// 这里是同一口径的标量写法（水平速度 &gt; 0 即算在移动）。</para>
         /// </summary>
-        public const float AnimMoveSpeedEpsilon = 0.15f;
+        public const float AnimMoveSpeedEpsilon = 0f;
 
         /// <summary>
         /// 判定"跑步档"的最小水平速度（米/秒）——速度不高于它 = 走路档。
@@ -481,6 +485,51 @@ namespace Cs16.Module.View
         /// <summary>视模型：切枪抬起（原版 <c>draw</c> / <c>deploy</c>）。</summary>
         public static readonly string[] VmStateDraw = { "draw" };
 
+        // ==================================================================
+        //  视模型：**消音器两态**（原版 `v_usp.mdl` 把两套序列都烘在同一份模型里）
+        //
+        //  出处 = `原版资源/cs16src/cstrike/cstrike__models__v_usp.mdl` 实测（16 条序列，与
+        //  `regamedll/dlls/weapons.h` 的 `enum usp_e` **逐项同序**，本工程读取器 `cs16_mdl.py`）：
+        //    0..6  = idle / shoot1 / shoot2 / shoot3 / shootlast / reload / draw      = **装消音**档
+        //    7     = add_silencer          （116 帧 @37 fps）
+        //    8..14 = idle / shoot1..3 / shootlast / reload / draw 后缀 `_unsil`       = **未装**档
+        //    15    = detach_silencer       （116 帧 @37 fps）
+        //  `_unsil` 后缀是**枚举自己的名字**（`USP_UNSIL_IDLE` …）⇒ 哪一个档带消音器由名字直接读出。
+        //  ⚠️ 序号 0..6 那一套的名字在本工程里是 `idle` / `fire1..3` / `firelast`（`shoot*` → `fire*`
+        //  由本工程既有的视模型导出链改名）。
+        //
+        //  **候选表两段式**：第一段是"该态自己那一条"，第二段回落到装消音那一套 —— 这样即使
+        //  新 clip 还没导出（`.anim` / controller 尚未重建），挑不到 `_unsil` 名时仍回落到既有序列，
+        //  行为与今天完全一致（零回归）；clip 一到就自动生效。
+        // ==================================================================
+
+        /// <summary>视模型：静止（未装消音档）。出处 = 序列 8 `idle_unsil`（<c>USP_UNSIL_IDLE</c>）。</summary>
+        public static readonly string[] VmStateIdleUnsil = { "idle_unsil", "idle" };
+
+        /// <summary>视模型：第 1 发（未装消音档）。出处 = 序列 9 `shoot1_unsil`（<c>USP_UNSIL_SHOOT1</c>）。</summary>
+        public static readonly string[] VmStateFire1Unsil = { "fire1_unsil", "fire1" };
+
+        /// <summary>视模型：第 2 发（未装消音档）。出处 = 序列 10 `shoot2_unsil`。</summary>
+        public static readonly string[] VmStateFire2Unsil = { "fire2_unsil", "fire2", "fire1_unsil", "fire1" };
+
+        /// <summary>视模型：第 3 发（未装消音档）。出处 = 序列 11 `shoot3_unsil`。</summary>
+        public static readonly string[] VmStateFire3Unsil = { "fire3_unsil", "fire3", "fire2_unsil", "fire2", "fire1_unsil", "fire1" };
+
+        /// <summary>视模型：弹匣打空那一发（未装消音档）。出处 = 序列 12 `shootlast_unsil`。</summary>
+        public static readonly string[] VmStateFireLastUnsil = { "firelast_unsil", "firelast", "fire3_unsil", "fire3", "fire2_unsil", "fire2", "fire1_unsil", "fire1" };
+
+        /// <summary>视模型：换弹（未装消音档）。出处 = 序列 13 `reload_unsil`（<c>USP_UNSIL_RELOAD</c>）。</summary>
+        public static readonly string[] VmStateReloadUnsil = { "reload_unsil", "reload" };
+
+        /// <summary>视模型：切枪抬起（未装消音档）。出处 = 序列 14 `draw_unsil`（<c>USP_UNSIL_DRAW</c>）。</summary>
+        public static readonly string[] VmStateDrawUnsil = { "draw_unsil", "draw" };
+
+        /// <summary>视模型：**装上**消音器。出处 = 序列 7 `add_silencer`（<c>USP_ATTACH_SILENCER</c>，116 帧 @37 fps）。</summary>
+        public static readonly string[] VmStateAddSilencer = { "add_silencer" };
+
+        /// <summary>视模型：**拆下**消音器。出处 = 序列 15 `detach_silencer`（<c>USP_DETACH_SILENCER</c>，116 帧 @37 fps）。</summary>
+        public static readonly string[] VmStateDetachSilencer = { "detach_silencer" };
+
         /// <summary>
         /// **武器 → 角色模型动画类**。原版把角色模型的射击/换弹序列按"武器动画类"命名
         /// （<c>ref_shoot_&lt;类&gt;</c>），类名集合由 mdl 自己决定 —— 实测 <c>models/player/*/*.mdl</c>
@@ -551,6 +600,37 @@ namespace Cs16.Module.View
                 ? new[] { "crouch_reload_" + cls, "ref_reload_" + cls }
                 : new[] { "ref_reload_" + cls };
         }
+
+        /// <summary>
+        /// 角色**站定**时要播的瞄准姿势 state 候选。原版 <c>CBasePlayer::SetAnimation</c> 的 <c>ACT_WALK</c>
+        /// 分支里 <c>speed &lt;= 135 u/s</c>（静止 / 慢速档）走 <c>GetAnimDesired("aim", ANIM_CROUCH)</c>，
+        /// 拼出的序列名 = <c>ref_aim_&lt;武器动画类&gt;</c>
+        /// （出处 <c>原版资源/cs16src/regamedll/dlls/player.cpp:2645-2652</c> 与 <c>:2875-2929</c>）。
+        ///
+        /// <para><b>类名映射</b>：<see cref="PlayerAnimClass"/> 给双手手枪返 <c>dualpistols_1</c>
+        /// （那是**射击组**自己的标签 —— mdl 里有 <c>ref_shoot_dualpistols_1</c>），而瞄准组在 mdl 里
+        /// 只有 <c>ref_aim_dualpistols</c> ⇒ 这里折成 <c>dualpistols</c>；其余类名两组同名。</para>
+        ///
+        /// <para><b>回落</b>：取不到武器类（空手 / 未知武器）与状态不存在（该皮肤缺这条序列）都落到
+        /// 候选表尾部的 <c>idle1</c> / <c>idle</c>（<see cref="ActorView.ResolveState"/> 按顺序取第一个存在的）
+        /// ⇒ 两条路的行为都与"没有瞄准姿势"时逐字相同。</para>
+        /// </summary>
+        public static string[] PlayerAimStates(string weaponId)
+        {
+            var cls = PlayerAnimClass(weaponId);
+            if (string.IsNullOrEmpty(cls)) return PStateIdle;
+            if (cls == "dualpistols_1") cls = "dualpistols";
+            string[] cached;
+            if (AimStatesByClass.TryGetValue(cls, out cached)) return cached;
+            cached = new[] { "ref_aim_" + cls, "idle1", "idle" };
+            AimStatesByClass[cls] = cached;
+            return cached;
+        }
+
+        /// <summary>武器动画类 → <see cref="PlayerAimStates"/> 的候选数组（**共用**：该方法在位移状态选择里
+        /// 每帧被调用一次，不能每帧新建数组）。</summary>
+        private static readonly Dictionary<string, string[]> AimStatesByClass =
+            new Dictionary<string, string[]>(System.StringComparer.Ordinal);
 
         // ==================================================================
         //  日志

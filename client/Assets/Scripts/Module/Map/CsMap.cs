@@ -264,7 +264,21 @@ namespace Cs16.Module.Map
         /// ② 矮障碍所在格判成"挡" ⇒ 跳起来也过不去（用户报"匪家楼梯扶手跳不过去"）。
         /// </para>
         /// </summary>
-        public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius)
+        public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius, float height = CsConst.StandHeight)
+            => CanStandCore(pos, radius, height);
+
+        /// <summary>
+        /// **为将来那条产品修复预置的管道（本轮零行为变更）**：与 <see cref="CanStand"/> 走**同一条实现**
+        /// （<see cref="CanStandCore"/>，不是复制体），只把身高换成调用方给的值 ——
+        /// 用来问「**若把碰撞盒换成 <paramref name="height"/>，这一格还站得住吗**」
+        /// （例：蹲姿盒 <see cref="CsConst.CrouchHeight"/> = 1.27 m）。
+        /// <para>本入口**不参与任何生产调用点**；生产路径走 <see cref="CanStand"/>，身高取该 actor 的 hull 高度
+        /// （站立 <see cref="CsConst.StandHeight"/> / 蹲姿 <see cref="CsConst.CrouchHeight"/>）。</para>
+        /// </summary>
+        public bool CanStandForTest(Vector3 pos, float radius, float height)
+            => CanStandCore(pos, radius, height);
+
+        private bool CanStandCore(Vector3 pos, float radius, float height)
         {
             if (!IsLoaded)
             {
@@ -272,8 +286,26 @@ namespace Cs16.Module.Map
                 return true;
             }
 
-            if (BitmapClear(pos, radius) && GroundWithinStep(pos)) return true;
-            return BodyHeightClear(pos, radius);
+            if (BitmapClear(pos, radius))
+            {
+                bool hasGround;
+                var withinStep = GroundWithinStep(pos, out hasGround);
+                // 位图快路**不再无条件放行"探不到地面"的点**：脚下探不到任何世界面（悬空 / 脚下的地板
+                // 在物理里根本不存在）**且**车身已被真几何占住（`BodyVolumeBlocked`）时，这一格不算可站。
+                //
+                // 为什么（#179c/#179d 实测，P1 `(-38.642,-1.04,33.335)`）：位图是**单层 2D**，而原版 BSP
+                // 在该处"地表以下整块是实心（solid）"—— 我们只搬了面、没有实心体积 ⇒ 角色能滑到地板
+                // **下方**（`SampleGround = -Infinity`、`GroundWithinStep` 因"探不到地面即放行"返回 true）
+                // ⇒ 位图快路把它判成"可站"⇒ 大脑一路以为能走；而车身又擦着那层竖面 3 mm ⇒ 深度闸门挡住
+                // 前进 ⇒ 与软地板一起构成死锁（换向/换目标全在跑就是出不来）。
+                //
+                // 只加"探不到地面 **且** 体积被占"这一个与条件 ⇒ 语义边界不动：
+                //   · 跳跃/下落中间帧（探不到地面、体积不重叠）照旧放行 —— 那正是这条宽松默认的用途；
+                //   · 贴着墙/道具站（**探得到**地面）照旧放行 —— 位图判挡时仍由 `BodyHeightClear` 说话；
+                //   · 纯真空（探不到地面、体积也空）照旧放行 —— 位图外的判定仍归 `HasGroundUnder` 那条救援路径。
+                if (withinStep && !(!hasGround && BodyVolumeBlocked(pos, height))) return true;
+            }
+            return BodyHeightClear(pos, radius, height);
         }
 
         /// <summary>中心 + 8 向（半径 <paramref name="radius"/>）位图全可走（原判据，单独抽出来复用）。</summary>
@@ -300,7 +332,19 @@ namespace Cs16.Module.Map
         /// </summary>
         private bool GroundWithinStep(Vector3 pos)
         {
-            if (!TrySampleGround(pos, out var point, out _)) return true;
+            bool _;
+            return GroundWithinStep(pos, out _);
+        }
+
+        /// <summary>
+        /// 同上，并把"这一列到底有没有探到地面"回给调用方（<paramref name="hasGround"/> = false
+        /// 就是**探不到任何世界面**：悬空、脚下的地板在物理里不存在、或起点在实体内被材质裁掉）。
+        /// 抽这个重载是为了让 <see cref="CanStandCore"/> 复用**同一根射线**的结果，不额外加探地开销。
+        /// </summary>
+        private bool GroundWithinStep(Vector3 pos, out bool hasGround)
+        {
+            hasGround = TrySampleGround(pos, out var point, out _);
+            if (!hasGround) return true;
             return point.y - pos.y <= CsConst.StepUpHeight;
         }
 
@@ -322,30 +366,31 @@ namespace Cs16.Module.Map
         /// ② 只管"向下射线的首交点"，对"射线起点在实体内部"这种形态**天生看不见**（见
         /// <see cref="BodyVolumeBlocked"/> 的注释）。
         /// </summary>
-        private bool BodyHeightClear(Vector3 pos, float radius)
+        private bool BodyHeightClear(Vector3 pos, float radius, float height)
         {
             // 体积复核只能在**中心**判一次：9 点探针是零宽射线（与 BitmapClear 同形），
             //    若在 9 个点上各加一颗半径 PlayerRadius 的球，等效半径会放大到 2×PlayerRadius
             //    ⇒ 把"贴着墙能站"误杀成不能站。
-            if (BodyVolumeBlocked(pos)) return false;
-            return LegacyBodyHeightClear(pos, radius);
+            // 身高 <paramref name="height"/> 可选、默认 = 站立高（= 改动前的常量）⇒ 既有调用点行为逐字不变。
+            if (BodyVolumeBlocked(pos, height)) return false;
+            return LegacyBodyHeightClear(pos, radius, height);
         }
 
         /// <summary>
         /// </summary>
-        private bool LegacyBodyHeightClear(Vector3 pos, float radius)
+        private bool LegacyBodyHeightClear(Vector3 pos, float radius, float height)
         {
-            if (!BodyHeightClearAt(pos.x, pos.y, pos.z)) return false;
+            if (!BodyHeightClearAt(pos.x, pos.y, pos.z, height)) return false;
 
             float d = radius * DiagonalScale;
-            return BodyHeightClearAt(pos.x + radius, pos.y, pos.z) &&
-                   BodyHeightClearAt(pos.x - radius, pos.y, pos.z) &&
-                   BodyHeightClearAt(pos.x, pos.y, pos.z + radius) &&
-                   BodyHeightClearAt(pos.x, pos.y, pos.z - radius) &&
-                   BodyHeightClearAt(pos.x + d, pos.y, pos.z + d) &&
-                   BodyHeightClearAt(pos.x + d, pos.y, pos.z - d) &&
-                   BodyHeightClearAt(pos.x - d, pos.y, pos.z + d) &&
-                   BodyHeightClearAt(pos.x - d, pos.y, pos.z - d);
+            return BodyHeightClearAt(pos.x + radius, pos.y, pos.z, height) &&
+                   BodyHeightClearAt(pos.x - radius, pos.y, pos.z, height) &&
+                   BodyHeightClearAt(pos.x, pos.y, pos.z + radius, height) &&
+                   BodyHeightClearAt(pos.x, pos.y, pos.z - radius, height) &&
+                   BodyHeightClearAt(pos.x + d, pos.y, pos.z + d, height) &&
+                   BodyHeightClearAt(pos.x + d, pos.y, pos.z - d, height) &&
+                   BodyHeightClearAt(pos.x - d, pos.y, pos.z + d, height) &&
+                   BodyHeightClearAt(pos.x - d, pos.y, pos.z - d, height);
         }
 
         /// <summary>
@@ -361,10 +406,10 @@ namespace Cs16.Module.Map
         ///
         /// <para>打不到任何世界面（该列一个世界几何都没有）⇒ 保守判**挡**：这一格没有可站立的世界几何。</para>
         /// </summary>
-        private bool BodyHeightClearAt(float x, float feetY, float z)
+        private bool BodyHeightClearAt(float x, float feetY, float z, float height)
         {
-            var origin = new Vector3(x, feetY + CsConst.StandHeight + BodyProbeLift, z);
-            float len = CsConst.StandHeight + BodyProbeLift + BodyProbeDrop;
+            var origin = new Vector3(x, feetY + height + BodyProbeLift, z);
+            float len = height + BodyProbeLift + BodyProbeDrop;
             if (!Physics.Raycast(origin, Vector3.down, out var hit, len, GroundMask(), QueryTriggerInteraction.Ignore))
                 return false;
             return hit.point.y <= feetY + CsConst.GroundCheckDistance;
@@ -394,11 +439,11 @@ namespace Cs16.Module.Map
         /// 尤其重要：<c>Level/Blockers/Blocker_*</c> 那些盒子是 **trigger**（只服务烘焙），
         /// 必须继续被忽略，否则整张图会被 811 个隐形盒判成不可站。</para>
         /// </summary>
-        private bool BodyVolumeBlocked(Vector3 pos)
+        private bool BodyVolumeBlocked(Vector3 pos, float height)
         {
             const float r = CsConst.PlayerRadius;
             float lo = pos.y + CsConst.GroundCheckDistance + r;
-            float hi = pos.y + CsConst.StandHeight - r;
+            float hi = pos.y + height - r;
             if (hi <= lo)
             {
                 // 身高带比两个半径还短：没有可判的体积（退化配置）。
@@ -414,13 +459,13 @@ namespace Cs16.Module.Map
 
         /// <summary>
         /// 指定半径的竖直身体胶囊是否与实体重叠：端点各按该半径**内缩**，与
-        /// <see cref="CsConst.GroundCheckDistance"/> / <see cref="CsConst.StandHeight"/> 的脚面与身高口径对齐
-        /// （半径 = <see cref="CsConst.PlayerRadius"/> 时与 <see cref="BodyVolumeBlocked"/> 同一个体积）。
+        /// <see cref="CsConst.GroundCheckDistance"/> / 传入身高 <paramref name="height"/> 的脚面与身高口径对齐
+        /// （半径 = <see cref="CsConst.PlayerRadius"/>、height = 站立高时与 <see cref="BodyVolumeBlocked"/> 同一个体积）。
         /// </summary>
-        private bool BodyVolumeOverlaps(Vector3 pos, float radius)
+        private bool BodyVolumeOverlaps(Vector3 pos, float radius, float height)
         {
             float lo = pos.y + CsConst.GroundCheckDistance + radius;
-            float hi = pos.y + CsConst.StandHeight - radius;
+            float hi = pos.y + height - radius;
             if (hi <= lo) return false;
             return Physics.CheckCapsule(new Vector3(pos.x, lo, pos.z), new Vector3(pos.x, hi, pos.z),
                                         radius, GroundMask(), QueryTriggerInteraction.Ignore);
@@ -445,15 +490,15 @@ namespace Cs16.Module.Map
         /// <c>Physics.ComputePenetration</c> 要临时碰撞体（本模块没有角色对象，只有几何），引擎侧也没有穿透深度 API；
         /// 按半径缩小是唯一能单调表达"压得多深"的形态。</para>
         /// </summary>
-        private float PenetrationDepth(Vector3 pos)
+        private float PenetrationDepth(Vector3 pos, float height)
         {
-            if (!BodyVolumeOverlaps(pos, CsConst.PlayerRadius)) return 0f;
-            if (BodyVolumeOverlaps(pos, 0.01f)) return CsConst.PlayerRadius;
+            if (!BodyVolumeOverlaps(pos, CsConst.PlayerRadius, height)) return 0f;
+            if (BodyVolumeOverlaps(pos, 0.01f, height)) return CsConst.PlayerRadius;
             float lo = 0f, hi = CsConst.PlayerRadius;
             for (var i = 0; i < PenetrationBisectSteps; i++)
             {
                 var mid = (lo + hi) * 0.5f;
-                if (BodyVolumeOverlaps(pos, mid)) lo = mid; else hi = mid;
+                if (BodyVolumeOverlaps(pos, mid, height)) lo = mid; else hi = mid;
             }
             return CsConst.PlayerRadius - lo;
         }
@@ -462,15 +507,18 @@ namespace Cs16.Module.Map
         /// 取 <paramref name="pos"/> 的压入深度。<paramref name="known"/>（本段起点的深度）为 0
         /// 且该点体积不重叠时直接返回 0 —— 绝大多数帧（不贴任何几何）因此零额外开销。
         /// </summary>
-        private float PenetrationDepthFor(Vector3 pos, float known)
-            => known <= 0f && !BodyVolumeOverlaps(pos, CsConst.PlayerRadius) ? 0f : PenetrationDepth(pos);
+        private float PenetrationDepthFor(Vector3 pos, float known, float height)
+            => known <= 0f && !BodyVolumeOverlaps(pos, CsConst.PlayerRadius, height) ? 0f : PenetrationDepth(pos, height);
 
         /// <summary>
         /// 本地碰撞解算：**扫掠细分（≤0.25m）+ 分轴滑墙（先 X 后 Z）+ 台阶（≤ StepUpHeight）**。
-        /// Y 分量原样跟随目标（重力/落地由调用方用 <see cref="SampleGround"/> 收尾）。
+        /// Y 分量：原版 <c>PM_WalkMove</c> 口径 —— 贴着原脚高走的那一遍原样跟随目标（重力/落地由调用方
+        /// 用 <see cref="SampleGround"/> 收尾）；走"抬起 STEPSIZE 再走一遍"并且采纳的那一遍，
+        /// 返回的是**落点地面高度**（脚与水平位移同一帧到位）。
         /// </summary>
-        public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius)
-            => ResolveMoveCore(from, to, radius, null);
+        public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                                   float height = CsConst.StandHeight)
+            => ResolveMoveCore(from, to, radius, height, null);
 
         /// <summary>
         /// **测试入口**：与 <see cref="ResolveMove"/> 走**同一条实现**（不是复制体），
@@ -478,11 +526,11 @@ namespace Cs16.Module.Map
         /// </summary>
         public Vector3 ResolveMoveTraceForTest(Vector3 from, Vector3 to,
             Action<int, Vector3, Vector3, Vector3> trace, float radius = CsConst.PlayerRadius)
-            => ResolveMoveCore(from, to, radius, trace);
+            => ResolveMoveCore(from, to, radius, CsConst.StandHeight, trace);
 
         /// <param name="allowStepUpWalk">是否允许"抬起一个台阶再走一遍"的第二遍（见方法末尾）。
         /// 第二遍自己再调本方法时必须传 <c>false</c> —— 否则被钳住时会无限递归。</param>
-        private Vector3 ResolveMoveCore(Vector3 from, Vector3 to, float radius,
+        private Vector3 ResolveMoveCore(Vector3 from, Vector3 to, float radius, float height,
                                         Action<int, Vector3, Vector3, Vector3> trace,
                                         bool allowStepUpWalk = true)
         {
@@ -515,7 +563,7 @@ namespace Cs16.Module.Map
 
             var cur = from;
             // 本段起点的压入深度：下面按"深度不得增大"收紧（起点干净 ⇒ 结果也必须干净）。
-            float curDepth = PenetrationDepth(from);
+            float curDepth = PenetrationDepth(from, height);
             for (int i = 1; i <= steps; i++)
             {
                 float remX = to.x - cur.x;
@@ -525,13 +573,13 @@ namespace Cs16.Module.Map
                 float t = Mathf.Min(1f, MaxSweepStep / remain);
                 var want = new Vector3(cur.x + remX * t, to.y, cur.z + remZ * t);
                 var prev = cur;
-                cur = StepOnce(cur, want, radius);
+                cur = StepOnce(cur, want, radius, height);
                 var advanced = cur.x != prev.x || cur.z != prev.z;
                 if (advanced)
                 {
                     // 收紧闸门：结果不许比本段起点**更深地**压进实体。
                     // 贴墙平行推进的深度基本不变 ⇒ 照旧放行（贴墙滑行不受影响）。
-                    var depth = PenetrationDepthFor(new Vector3(cur.x, cur.y, cur.z), curDepth);
+                    var depth = PenetrationDepthFor(new Vector3(cur.x, cur.y, cur.z), curDepth, height);
                     if (depth > curDepth + PenetrationTolerance)
                     {
                         // 越界 ⇒ 撤销这一段，再按**同一道闸门**试更短的位移（0.5 / 0.25 / 0.125 倍）：
@@ -544,14 +592,58 @@ namespace Cs16.Module.Map
                         {
                             var shortWant = new Vector3(prev.x + (want.x - prev.x) * f, to.y,
                                                         prev.z + (want.z - prev.z) * f);
-                            var cand = StepOnce(prev, shortWant, radius);
+                            var cand = StepOnce(prev, shortWant, radius, height);
                             if (cand.x == prev.x && cand.z == prev.z) break;
-                            var candDepth = PenetrationDepthFor(new Vector3(cand.x, cand.y, cand.z), curDepth);
+                            var candDepth = PenetrationDepthFor(new Vector3(cand.x, cand.y, cand.z), curDepth, height);
                             if (candDepth > curDepth + PenetrationTolerance) continue;
                             cur = cand;
                             curDepth = candDepth;
                             advanced = true;
                             break;
+                        }
+
+                        // 上面三个候选都是**同一方向**的缩短版 —— 斜着顶墙/顶角时，它们每一个都
+                        // 仍然往实体里进（深度闸门照旧否决），而**单轴滑墙**那条候选一次都没被试过：
+                        // <see cref="StepOnce"/> 的 fast path 被 <see cref="CanStand"/> 的位图快路
+                        // 放行后就返回了整步，分轴逻辑根本没跑到。
+                        // 而位图快路看不见"只存在于真几何里的实体"：<see cref="CanStandCore"/> 的第一支
+                        // `BitmapClear && GroundWithinStep` 不查几何，且 <see cref="GroundWithinStep"/>
+                        // 在**探不到地面**时按设计返回 true ⇒ 位图说通、真几何里车身已压进网格的落点
+                        // 也会被当成"可站"。实测（#179b 冻结窗，(-38.6,33.3)）：起点压深 0.003、
+                        // 整步落点 0.360（饱和）；同一步的 **X 单轴位移 100% 通过同一道深度闸门**、
+                        // 16 向里 9 向可走，却整帧零位移。
+                        // ⇒ 原版 `PM_WalkMove` 的口径是"沿平面滑"（`PM_FlyMove`，见方法头注释），
+                        //   不是"整步归零"：这里补回**分轴滑墙**候选，形态与 `StepOnce` 在 fast path
+                        //   不生效时会给出的完全一致（同一 <see cref="AxisPassable"/> 判据），
+                        //   并且**必须过同一道深度闸门**才采纳 ⇒ 不会因为换轴而放宽穿模判据。
+                        // 位置在缩短重试**之后**：正常能走通（哪怕只是缩短版）的帧行为逐字不变，
+                        // 只有"原本整帧归零"的帧才会多出这一条候选。
+                        if (!advanced)
+                        {
+                            // 两个增量**各自**过同一道深度闸门才采纳。不能"两轴都过了
+                            // `AxisPassable` 再一起交给闸门"：`AxisPassable` 里的 `CanStand` 正是
+                            // 被位图快路放行的那个（上面的 0.003 → 0.360 就是它放过来的点）⇒
+                            // 一起提交会把整步重新拼回来、被闸门整体否决，分轴候选等于白试。
+                            // 实测（同窗 s1）：X 增量单独可过（0.034 m、压深仍 0.003）、
+                            // Z 增量不可过（压深 0.360）⇒ 采纳 X 增量 = "那个分量能走就走"。
+                            var slide = prev;
+                            var candX = new Vector3(want.x, prev.y, slide.z);
+                            if ((slide.x != candX.x || slide.z != candX.z)
+                                && AxisPassable(slide, candX, radius, height)
+                                && PenetrationDepthFor(candX, curDepth, height) <= curDepth + PenetrationTolerance)
+                                slide = candX;
+                            var candZ = new Vector3(slide.x, prev.y, want.z);
+                            if ((slide.x != candZ.x || slide.z != candZ.z)
+                                && AxisPassable(slide, candZ, radius, height)
+                                && PenetrationDepthFor(candZ, curDepth, height) <= curDepth + PenetrationTolerance)
+                                slide = candZ;
+                            if (slide.x != prev.x || slide.z != prev.z)
+                            {
+                                cur = slide;
+                                curDepth = PenetrationDepthFor(new Vector3(slide.x, slide.y, slide.z),
+                                                               curDepth, height);
+                                advanced = true;
+                            }
                         }
                     }
                     else
@@ -568,7 +660,7 @@ namespace Cs16.Module.Map
                 // 拦不住这条几何放行通路，所以这里用"正下方有没有地面"把真空与真实地面分开。
                 // 跳跃/下落的帧不受影响：8 m 探查范围内脚下必有地面（跳跃高度约 1.2 m）。
                 if (!advanced && cur.x == prev.x && cur.z == prev.z &&
-                    HasGroundUnder(probe) && BodyHeightClear(probe, radius) && GroundWithinStep(probe))
+                    HasGroundUnder(probe) && BodyHeightClear(probe, radius, height) && GroundWithinStep(probe))
                 {
                     cur = probe;
                     curDepth = 0f;                   // 放行判据本身要求身高带干净（体积不重叠）
@@ -579,46 +671,54 @@ namespace Cs16.Module.Map
             }
             var straight = new Vector3(cur.x, to.y, cur.z);
 
-            // ── 台阶「抬着走」（原版 `PM_WalkMove` 的 usedown 口径：贴地走一遍 + 抬起 STEPSIZE 再走一遍、
-            //    取走得更远的那个；本工程自己引它见 Module/Match/CsMatch.cs 的台阶上抬探测注释）。
-            //    上面那遍只做了"抬腿的**判**"（<see cref="TryStepUp"/> 放行这一次水平推进），没做"抬腿的**走**"：
-            //    水平推进到台阶侧面后，胶囊在**旧脚高**下钻进台阶实体 ⇒ 下面的深度闸门撤销该段 ⇒ 净位移 0。
-            //    实机形态：B 通那道 0.406 m 台阶（≤ StepUpHeight，原版与本工程几何逐点一致）上 T 方 bot 永久卡死。
-            //    只有"第一遍真的在某轴上被钳住"时才做第二遍 ⇒ 正常帧零额外扫掠（帧时间不变）。
+            // ── 台阶「抬着走」（原版 `PM_WalkMove`：贴地走一遍 + 抬起 STEPSIZE 再走一遍、取水平更远的那个）
+            //    触发条件与原版同形：**这一遍某轴被钳住**才做第二遍（原版是 `trace.fraction != 1` 才往下走，
+            //    `pm_shared.c:1000-1004` 未撞满帧就直接采纳、提前 return）。
+            //    离地时不做第二遍：原版的 `PM_StepMove` 是 `if (pmove->onground != -1) PM_WalkMove(); else PM_AirMove();`
+            //    （`pm_shared.c:2620-2627`）—— 否则跳跃上升段贴到矮台沿时会被"抬腿"凭空拔高。
             if (allowStepUpWalk)
             {
                 var wantFlat = new Vector2(to.x - from.x, to.z - from.z);
                 var gotFlat = new Vector2(straight.x - from.x, straight.z - from.z);
-                if (wantFlat.sqrMagnitude > 1e-8f && gotFlat.sqrMagnitude < wantFlat.sqrMagnitude - 1e-6f)
+                if (wantFlat.sqrMagnitude > 1e-8f
+                    && gotFlat.sqrMagnitude < wantFlat.sqrMagnitude - 1e-6f
+                    && IsOnGround(from))
                 {
                     var liftY = from.y + CsConst.StepUpHeight;
-                    var lifted = ResolveMoveCore(new Vector3(from.x, liftY, from.z),
-                                                 new Vector3(to.x, liftY, to.z), radius, trace, false);
-                    var liftedFlat = new Vector2(lifted.x - from.x, lifted.z - from.z);
-                    if (liftedFlat.sqrMagnitude > gotFlat.sqrMagnitude + 1e-6f)
+                    var liftedFrom = new Vector3(from.x, liftY, from.z);
+                    // 抬不上去（头顶有实体）就不做第二遍：原版只有 `!trace.startsolid && !trace.allsolid`
+                    // 才把抬起后的落点采纳为起脚点（`pm_shared.c:1026-1029`）。
+                    if (BodyHeightClear(liftedFrom, radius, height))
                     {
-                        // 采纳条件（缺一不可）：① 抬高处推进更多（上面已判）；
-                        //   ② 落点地面必须 ∈ [脚面, 脚面 + <see cref="CsConst.StepUpHeight"/>]；
-                        //   ③ 落点可站（法线 y ≥ <see cref="CsConst.MaxStandableSlopeNormalZ"/>）；
-                        //   ④ 落点体积不被其它实体占（<see cref="BodyVolumeBlocked"/>）。
-                        //
-                        //   ⚠️ 地面探测的**射线起点必须在台阶顶之上**：<see cref="TrySampleGround"/> 是从
-                        //   `pos.y + GroundCheckDistance` 朝下打（见本文件 :673-676）。拿**原始脚高**去探，
-                        //   起点会落在台阶实体内部 ⇒ PhysX（queriesHitBackfaces=false）不给交点 ⇒ -inf ⇒ 漏检
-                        //   （同一形态见 BotNavigator.BuildHeightReach 的 -inf 退化分支）。
-                        var probe = new Vector3(lifted.x, liftY, lifted.z);
-                        if (TrySampleGround(probe, out var gp, out var gn,
-                                            CsConst.StepUpHeight + CsConst.GroundCheckDistance)
-                            && gp.y >= from.y - 1e-4f
-                            && gp.y - from.y <= CsConst.StepUpHeight
-                            && gn.y >= CsConst.MaxStandableSlopeNormalZ
-                            && !BodyVolumeBlocked(new Vector3(lifted.x, gp.y, lifted.z)))
+                        var lifted = ResolveMoveCore(liftedFrom, new Vector3(to.x, liftY, to.z),
+                                                     radius, height, null, false);
+                        var gainFlat = new Vector2(lifted.x - from.x, lifted.z - from.z);
+                        if (gainFlat.sqrMagnitude > gotFlat.sqrMagnitude + 1e-6f)
                         {
-                            // 只采纳**水平**位移：y 仍照本方法的契约用 `to.y`，抬高后的贴地由调用方
-                            // CsMatch.StepActorPhysics 的"常规贴地落空 ⇒ 抬一个台阶再探"分支收尾。
-                            WarnOnce("move.stepupwalk",
-                                "上台阶：抬起一个 StepUpHeight 再走一遍并采纳水平位移（原版 PM_WalkMove usedown 口径）");
-                            return new Vector3(lifted.x, to.y, lifted.z);
+                            // 原版的"再下探 STEPSIZE"在这里 = 对抬腿落点做贴地探测，采纳条件：
+                            //   ① 落点地面 ∈ [脚面, 脚面 + StepUpHeight]（不许神抬腿上 0.9 m 台沿）；
+                            //   ② 落点地面可站（法线 y ≥ MaxStandableSlopeNormalZ；原版是下探后
+                            //      `if (trace.plane.normal[2] < 0.7) goto usedown;`，`pm_shared.c:1038`）；
+                            //   ③ 落点体积不被其它实体占。
+                            var probe = new Vector3(lifted.x, liftY, lifted.z);
+                            if (TrySampleGroundUnderBody(probe, radius,
+                                                          CsConst.StepUpHeight + CsConst.GroundCheckDistance,
+                                                          out var gp, out var gn)
+                                && gp.y >= from.y - 1e-4f
+                                && gp.y - from.y <= CsConst.StepUpHeight
+                                && gn.y >= CsConst.MaxStandableSlopeNormalZ
+                                && !BodyVolumeBlocked(new Vector3(lifted.x, gp.y, lifted.z), height))
+                            {
+                                // 原版把抬腿那一遍的**完整落点**（含竖直）采纳：下探后
+                                // `VectorCopy(pmove->origin, pmove->up)`（`pm_shared.c:1044`），
+                                // `:1046-1056` 按水平距离二选一（`downdist > updist` ⇒ 回贴地那遍）。
+                                // ⇒ 本方法也返回**落点地面高度 gp.y**：脚与水平位移在同一帧到位，
+                                //    不会先水平钻进台阶实体、再等下一帧贴地探测把脚拔上来（那一帧的形态
+                                //    就是"水平卡住、看起来要跳一下"）。
+                                WarnOnce("move.stepupwalk",
+                                    "上台阶：抬起一个 StepUpHeight 再走一遍，采纳落点（含脚高）");
+                                return new Vector3(lifted.x, gp.y, lifted.z);
+                            }
                         }
                     }
                 }
@@ -627,15 +727,73 @@ namespace Cs16.Module.Map
             return straight;
         }
 
+        /// <summary>
+        /// 抬腿落点的贴地探测 = **身体覆盖范围内取最高的那一面**。
+        ///
+        /// <para>为什么不是身体中心那一根零宽射线：原版的"再下探 STEPSIZE"走的是
+        /// <c>pmove-&gt;PM_PlayerTrace</c>，而它是**包围盒**射线（<c>VEC_HULL_MIN/MAX ±36</c> ⇒ 站姿
+        /// 72×72 unit 的盒，<c>pm_shared.c:1036</c>）⇒ 只要身体**覆盖到**那一面，就算落在那一面上。
+        /// 用零宽射线只探身体中心，则要求"身体中心已经越过台阶边沿"才认得那是台阶顶；
+        /// 而抬腿那一遍的水平推进是**整帧位移**（原版如此，本工程亦如此），撞到台阶侧面时
+        /// 身体中心停在**一整个身体半径**（<see cref="CsConst.PlayerRadius"/> = 0.36 m）之外 ——
+        /// 台阶踏面只要比一帧位移深，就永远差那 0.3 m 迈不上去（用户报的「小台阶要跳一下 / 卡住」）。
+        /// 探 8 个半径采样点取最高面 = 包围盒射线的等价口径。</para>
+        ///
+        /// <para>射线起点抬 <see cref="CsConst.GroundCheckDistance"/>、只打 <see cref="GroundMask"/>，
+        /// 与 <see cref="TrySampleGround"/> 逐字一致；⛔ 上界仍由调用方的
+        /// "落点地面 ≤ 脚面 + <see cref="CsConst.StepUpHeight"/> + 法线可站 + 体积不被占"三条把着，
+        /// 取最高面不会变成"顺着墙爬上去"。</para>
+        /// </summary>
+        private bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop,
+                                               out Vector3 point, out Vector3 normal)
+        {
+            var found = false;
+            point = default;
+            normal = Vector3.up;
+            float d = radius * DiagonalScale;
+
+            for (int i = 0; i < 9; i++)
+            {
+                Vector2 o;
+                if (i == 0) o = Vector2.zero;
+                else if (i < 5) o = BodySampleOffset[i - 1] * radius;
+                else o = BodySampleOffset[i - 1] * d;
+
+                var p = new Vector3(pos.x + o.x, pos.y, pos.z + o.y);
+                if (!TrySampleGround(p, out var gp, out var gn, maxDrop)) continue;
+                if (found && gp.y <= point.y) continue;
+                found = true;
+                point = gp;
+                normal = gn;
+            }
+            return found;
+        }
+
+        /// <summary>抬腿落点探测的 8 向采样偏移（4 正交 + 4 对角），与 <see cref="BitmapClear"/> 同形。</summary>
+        private static readonly Vector2[] BodySampleOffset =
+        {
+            new Vector2(1f, 0f), new Vector2(-1f, 0f), new Vector2(0f, 1f), new Vector2(0f, -1f),
+            new Vector2(1f, 1f), new Vector2(1f, -1f), new Vector2(-1f, 1f), new Vector2(-1f, -1f)
+        };
+
+        /// <summary>
+        /// 脚是否踩着地面（容差 = <see cref="CsConst.GroundCheckDistance"/>）。
+        /// 原版的同一判据是 <c>PM_StepMove</c> 的 <c>pmove-&gt;onground != -1</c>
+        /// （<c>原版资源/hlsdk/pm_shared/pm_shared.c:2620-2627</c>：onground 才 <c>PM_WalkMove</c>、
+        /// 否则 <c>PM_AirMove</c>），该标志由上一帧末尾的 <c>PM_CatagorizePosition</c> 写下。
+        /// </summary>
+        private bool IsOnGround(Vector3 pos)
+            => TrySampleGround(pos, out var point, out _) && pos.y - point.y <= CsConst.GroundCheckDistance;
+
         /// <summary>走一小步（≤0.25m）：分轴滑墙（先 X 后 Z）+ 台阶。</summary>
-        private Vector3 StepOnce(Vector3 cur, Vector3 want, float radius)
+        private Vector3 StepOnce(Vector3 cur, Vector3 want, float radius, float height)
         {
             // 整体可站 → 直接过去（绝大多数帧走这条）
-            if (CanStand(new Vector3(want.x, cur.y, want.z), radius)) return new Vector3(want.x, cur.y, want.z);
+            if (CanStand(new Vector3(want.x, cur.y, want.z), radius, height)) return new Vector3(want.x, cur.y, want.z);
 
             var p = cur;
-            if (AxisPassable(cur, new Vector3(want.x, cur.y, p.z), radius)) p.x = want.x;   // 先 X
-            if (AxisPassable(p, new Vector3(p.x, cur.y, want.z), radius)) p.z = want.z;     // 再 Z
+            if (AxisPassable(cur, new Vector3(want.x, cur.y, p.z), radius, height)) p.x = want.x;   // 先 X
+            if (AxisPassable(p, new Vector3(p.x, cur.y, want.z), radius, height)) p.z = want.z;     // 再 Z
 
             return p;   // 某轴被钳住 ⇒ 贴墙滑行（调用方据此清掉该轴速度）
         }
@@ -644,8 +802,8 @@ namespace Cs16.Module.Map
         /// 单轴能否推进：先按"站得下（半径采样）"判；站不下时再给**台阶/贴边**一次机会
         /// （见 <see cref="TryStepUp"/>）。两条都不行 = 撞墙，保留该轴 = 贴墙滑行。
         /// </summary>
-        private bool AxisPassable(Vector3 from, Vector3 target, float radius)
-            => CanStand(target, radius) || TryStepUp(from, target, radius);
+        private bool AxisPassable(Vector3 from, Vector3 target, float radius, float height)
+            => CanStand(target, radius, height) || TryStepUp(from, target, radius, height);
 
         /// <summary>
         /// 台阶 / 贴边挤压判定（<see cref="CsConst.StepUpHeight"/> 在这里真正起作用）：
@@ -666,7 +824,7 @@ namespace Cs16.Module.Map
         /// 判成站不下，表现成"上楼梯被墙角挂住"。CS 里玩家可以贴着边挤过去 —— 这个分支就是那个手感，
         /// 且被"高差 ≤ StepUpHeight"卡住，不会变成穿墙。</para>
         /// </summary>
-        private bool TryStepUp(Vector3 from, Vector3 target, float radius)
+        private bool TryStepUp(Vector3 from, Vector3 target, float radius, float height)
         {
             // 陡坡不算地面（原版 PM_WalkMove：下探后 `if (trace.plane.normal[2] < 0.7) goto usedown;`
             // ⇒ 放弃"迈上去"这条路径）。缺了它就会沿陡面走上去（= 用户报的"坡道穿模"）。
@@ -689,7 +847,7 @@ namespace Cs16.Module.Map
             {
                 if (!hasGround) return false;
                 if (point.y - from.y < 0f) return false;
-                if (BodyVolumeBlocked(new Vector3(target.x, point.y, target.z))) return false;
+                if (BodyVolumeBlocked(new Vector3(target.x, point.y, target.z), height)) return false;
             }
 
             var dir = new Vector3(target.x - from.x, 0f, target.z - from.z);
@@ -808,8 +966,8 @@ namespace Cs16.Module.Map
                 " bitmap(end)=" + WalkableAt(end.x, end.z) +
                 " canStand(from)=" + CanStand(from, radius) +
                 " canStand(end)=" + CanStand(end, radius) +
-                " rayClear(end)=" + BodyHeightClearAt(end.x, end.y, end.z) +
-                " volBlocked(end)=" + BodyVolumeBlocked(end));
+                " rayClear(end)=" + BodyHeightClearAt(end.x, end.y, end.z, CsConst.StandHeight) +
+                " volBlocked(end)=" + BodyVolumeBlocked(end, CsConst.StandHeight));
             return end;
         }
 
@@ -865,7 +1023,8 @@ namespace Cs16.Module.Map
             }
             Game.Logger?.Info(Tag, "walkline.chained | start=" + V(from) + " end=" + V(cur) +
                                    " travelled=" + F(travelled) + " micro=" + F(micro) +
-                                   " steps=" + microSteps + " volBlocked(end)=" + BodyVolumeBlocked(cur));
+                                   " steps=" + microSteps + " volBlocked(end)=" +
+                                   BodyVolumeBlocked(cur, CsConst.StandHeight));
             return n;
         }
 
@@ -876,8 +1035,8 @@ namespace Cs16.Module.Map
         {
             bool bitmap = BitmapClear(pos, radius);
             bool withinStep = GroundWithinStep(pos);
-            bool rayClear = BodyHeightClearAt(pos.x, pos.y, pos.z);
-            bool volBlocked = BodyVolumeBlocked(pos);
+            bool rayClear = BodyHeightClearAt(pos.x, pos.y, pos.z, CsConst.StandHeight);
+            bool volBlocked = BodyVolumeBlocked(pos, CsConst.StandHeight);
             bool geomNow = BodyHeightClearForTest(pos, radius, out var geomLegacy);
             bool standNow = bitmap && withinStep || geomNow;
             bool standBefore = bitmap && withinStep || geomLegacy;
@@ -903,10 +1062,17 @@ namespace Cs16.Module.Map
         /// <summary>
         /// **测试入口**：单独读 <see cref="BodyHeightClearAt"/>（**旧**判据：向下射线的首交点）。
         /// </summary>
-        public bool RayClearForTest(float x, float feetY, float z) => BodyHeightClearAt(x, feetY, z);
+        public bool RayClearForTest(float x, float feetY, float z)
+            => BodyHeightClearAt(x, feetY, z, CsConst.StandHeight);
 
         public bool VolumeBlockedForTest(float x, float feetY, float z)
-            => BodyVolumeBlocked(new Vector3(x, feetY, z));
+            => BodyVolumeBlocked(new Vector3(x, feetY, z), CsConst.StandHeight);
+
+        /// <summary>
+        /// **测试入口**：单独读 <see cref="PenetrationDepth"/>（身体压进实体的深度；0 = 一点没压进）。
+        /// 量法见 <see cref="PenetrationDepth"/> 的注释。
+        /// </summary>
+        public float PenetrationDepthForTest(Vector3 pos) => PenetrationDepth(pos, CsConst.StandHeight);
 
         /// <summary>
         /// **测试入口**：落点地面是否在当前脚高的一步台阶内（<see cref="GroundWithinStep"/>）。
@@ -918,8 +1084,8 @@ namespace Cs16.Module.Map
         /// </summary>
         public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
         {
-            legacy = LegacyBodyHeightClear(pos, radius);
-            return BodyHeightClear(pos, radius);
+            legacy = LegacyBodyHeightClear(pos, radius, CsConst.StandHeight);
+            return BodyHeightClear(pos, radius, CsConst.StandHeight);
         }
 
         /// <summary>格式化为 Vector3（InvariantCulture —— 与全工程同口径，避免小数点变逗号）。</summary>

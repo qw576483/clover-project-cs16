@@ -221,6 +221,10 @@ namespace Cs16.Module.Player
                     : "比赛结束/未开局，第一人称操作进入待机");
             }
 
+            // 设置项（灵敏度 / 反转 Y / 自动换弹 / FOV）每帧跟一次内存值：
+            // 原版 Options 的滑块是 cvar，拖动过程中就已经生效，不必等面板关闭。
+            ApplyRuntimeSettings(force: false);
+
             ResolveInputGates(out var blockLook, out var blockMove);
             PollSpectateInput();
 
@@ -276,6 +280,20 @@ namespace Cs16.Module.Player
             {
                 if (!_warnedNoInput) { _warnedNoInput = true; _log.Warn("spectate.noinput", "Game.Input 为 null，观战切档位（空格）无法采集"); }
                 return;
+            }
+
+            // 俯视概览（档位 5）的缩放 / 平移：原版只在 OBS_MAP_FREE 消费
+            // IN_FORWARD / IN_BACK（m_zoomDelta = ±0.01）与 IN_MOVELEFT / IN_MOVERIGHT（m_moveDelta = ∓12），
+            // 在 Draw 里 m_mapZoom += delta（钳 0.5~3.0）/ m_mapOrigin += right × delta
+            //（hud_spectator.cpp:754-767 置 delta、:395-416 应用）；本工程键位 = W / S（缩放）、A / D（平移）。
+            // 是**持续按键**（不是边沿）⇒ 独立于下面 [空格] 的早退分支。
+            if (CsSpectator.Mode == CsSpectatorMode.FreeOverview && match.IsSpectating &&
+                !match.IsPaused && !HasBlockingOverlay())
+            {
+                if (input.GetKey(GameKey.W)) CsSpectator.StepMapZoom(CsConst.OverviewZoomStep);
+                if (input.GetKey(GameKey.S)) CsSpectator.StepMapZoom(-CsConst.OverviewZoomStep);
+                if (input.GetKey(GameKey.D)) CsSpectator.StepMapPan(-CsConst.OverviewPanStep);
+                if (input.GetKey(GameKey.A)) CsSpectator.StepMapPan(CsConst.OverviewPanStep);
             }
 
             if (!input.GetKeyDown(GameKey.Space)) return;
@@ -431,6 +449,9 @@ namespace Cs16.Module.Player
                           || invertY != _appliedInvertY
                           || autoReload != _appliedAutoReload
                           || fov != _appliedFov;
+
+            // 每帧都会被调一次，值没变就什么都不做（不进马达 / 战斗 / 相机）
+            if (!changed) return;
 
             _appliedSensitivity = sensitivity;
             _appliedInvertY = invertY;

@@ -22,9 +22,22 @@ namespace Cs16.Module.Match
         public float Yaw;               // 水平朝向（度，0=+Z）
         public float Pitch;             // 垂直朝向（度，-89~89）
         public bool OnGround;
-        public bool IsCrouching;
+        public bool IsCrouching;        // 按住蹲（输入态：视高曲线与速度倍率跟它）
         public bool IsWalking;          // Shift 慢走（无脚步声）
-        public float Height => IsCrouching ? CsConst.CrouchHeight : CsConst.StandHeight;
+
+        /// <summary>蹲姿**碰撞盒**是否已切到蹲姿盒（原版 <c>FL_DUCKING</c> / <c>usehull = 1</c>）：
+        /// 按住蹲满 <c>TIME_TO_DUCK 0.4 s</c>（空中当帧）才为 true，松手立即为 false —— 见 <see cref="CsDuck"/>。</summary>
+        public bool HullCrouched;
+
+        /// <summary>蹲姿过渡倒计时（毫秒）= 原版 <c>flDuckTime</c>：按下那一帧置 1000、之后每帧按 msec 递减。</summary>
+        public float DuckTimerMs;
+
+        /// <summary>上一帧是否按住蹲 —— 用来识别"刚按下"这条边沿（原版 <c>nButtonPressed &amp; IN_DUCK</c>）。</summary>
+        public bool DuckKeyHeld;
+
+        /// <summary>身高（米）= **碰撞盒**高度，跟 <see cref="HullCrouched"/>（原版 <c>usehull</c>）走，
+        /// 不跟按住蹲的输入态走：按住蹲的头 0.4 s 身体仍是站立盒。</summary>
+        public float Height => HullCrouched ? CsConst.CrouchHeight : CsConst.StandHeight;
         public Vector3 EyePosition => Position + new Vector3(0f, EyeHeight, 0f);
 
         /// <summary>眼位高（米）：站姿取 <c>CsConst.EyeHeight</c>（1.62 = 原版 64 unit），
@@ -84,6 +97,13 @@ namespace Cs16.Module.Match
 
         /// <summary>差异 #68：当前武器是否处于**连发模式**（只对 <c>CsWeaponDef.CanBurst</c> 的武器有意义）。</summary>
         public bool BurstMode;
+
+        /// <summary>
+        /// 当前武器是否**已开镜**（只对 <c>CsWeaponDef.CanZoom</c> 的武器有意义）。
+        /// 开镜由 <c>CsMatch</c> 的档位推进写入，消费点 = 射速（<c>CycleTimeZoom</c>）与移速
+        /// （<c>MaxSpeedZoom</c>）两处。
+        /// </summary>
+        public bool Scoped;
 
         /// <summary>
         /// 差异 #68：连发模式下**本梭还差几发**没打（0 = 没有待发的续发）。
@@ -186,7 +206,21 @@ namespace Cs16.Module.Match
         public bool ThroughWall;
     }
 
-    /// <summary>机器人难度参数（3 档；数值差异是"3 档难度"的核心证据）。</summary>
+    /// <summary>
+    /// 机器人难度参数（3 档；数值差异是"3 档难度"的核心证据）。
+    ///
+    /// <para><b>原版的对应物（出处）</b>：难度档由 cvar `cv_bot_difficulty` 按阈值 0.9 / 1.9 / 2.9 切成
+    /// **四档** `BOT_EASY / BOT_NORMAL / BOT_HARD / BOT_EXPERT`
+    /// （`原版资源/cs16src/regamedll/dlls/bot/cs_bot_manager.h:71-83`），档位只用来**从 profile 库里随机抽一个 profile**
+    /// （同目录 `cs_bot_manager.cpp:818` `TheBotProfiles->GetRandomProfile(GetDifficultyLevel(), team)`）。
+    /// 反应时间 / 技能 / 准度都在 profile 里：`GetProfile()->GetReactionTime()`（`cs_bot.h:1142`）、
+    /// `GetProfile()->GetSkill()`（`cs_bot.h:1468`、`cs_bot_vision.cpp:454 / 511 / 1269`）、
+    /// 瞄准误差由 `m_accuracy` 驱动（`cs_bot.h:887` 的 `UpdateAimOffset()`，原注释 "wiggle aim error based on m_accuracy"）。</para>
+    ///
+    /// <para><b>本工程的三档数值仍是本项目新增</b>：原版 profile 库（`cv_bot_profile_db` 指向的数据件）不在盘
+    /// ⇒ 每个 profile 的 skill / accuracy / reactionTime 具体值取不到，故 <see cref="For"/> 里的数值没有原版出处
+    /// （差异登记 #58）；档数（3 档，原版 4 档）与档名同样按本工程现状，见差异登记 A-01 行。</para>
+    /// </summary>
     public struct CsBotProfile
     {
         public float ReactionTime;      // 发现敌人到开火的延迟（秒）

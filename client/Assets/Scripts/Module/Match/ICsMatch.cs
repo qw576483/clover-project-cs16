@@ -59,6 +59,8 @@ namespace Cs16.Module.Match
         bool IsInBuyZone(Vector3 position, CsTeam team);
 
         bool BombPlanted { get; }
+        /// <summary>C4 是否掉在地上等人捡（表现层据此在 <see cref="BombPosition"/> 画世界模型）。</summary>
+        bool BombDropped { get; }
         Vector3 BombPosition { get; }
         /// <summary>炸弹剩余秒数（未下包为 -1）。</summary>
         float BombTimeLeft { get; }
@@ -110,6 +112,11 @@ namespace Cs16.Module.Match
         void RequestReload();
         /// <summary>切换武器槽（1-5）。</summary>
         void SwitchSlot(int slot);
+        /// <summary>
+        /// 在**持有的武器**之间循环切枪：<paramref name="direction"/> &gt; 0 = 下一把（原版 <c>invnext</c>），
+        /// &lt; 0 = 上一把（原版 <c>invprev</c>）。跳过空槽位，扫到尾回绕。
+        /// </summary>
+        void CycleWeapon(int direction);
         /// <summary>切换到指定武器（拾取/购买后）。</summary>
         void SwitchWeapon(string weaponId);
         /// <summary>买枪（B 菜单，作用于本地玩家）。失败时 <paramref name="reason"/> 给出原因并打日志。</summary>
@@ -137,8 +144,14 @@ namespace Cs16.Module.Match
         // ==================== 射击结算 ====================
         /// <summary>射击模块完成射线检测后回传命中；由模拟计算伤害/击杀。</summary>
         void ReportHit(in CsHitInfo hit);
-        /// <summary>本帧是否有射击动作发生（供表现层播枪声/后坐力，模拟内部已扣弹药）。</summary>
-        bool ConsumeShotFired(out string weaponId);
+        /// <summary>
+        /// 取走一条"本帧发生了射击"的记录（供表现层播枪声/后坐力，模拟内部已扣弹药）。
+        ///
+        /// <para><paramref name="silenced"/> = 这一发**是否装了消音器** —— 原版把它随射击事件一起发给所有客户端
+        /// （<c>regamedll/dlls/wpn_shared/wpn_m4a1.cpp:200-201</c> 的 <c>PLAYBACK_EVENT_FULL</c> 末组实参里的
+        /// bparam1），远端据此选开火采样（<c>CsWeapons.FireSound</c>）。</para>
+        /// </summary>
+        bool ConsumeShotFired(out string weaponId, out bool silenced);
 
         // ==================== 机器人 ====================
         void AddBot(CsTeam team, CsBotDifficulty diff);

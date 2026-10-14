@@ -8,7 +8,17 @@ namespace Cs16.UI
 {
     /// <summary>
     /// 右上角击杀信息（规格 H8，策划案里叫 <c>KillFeedWidget</c>）：滚动显示最多
-    /// <see cref="CsConst.MaxKillFeedEntries"/> 条 <c>A [AK-47] B</c>，爆头带一个红点图标。
+    /// <see cref="CsConst.MaxKillFeedEntries"/> 条 <c>杀者名 ‹武器图标› 被者名</c> —— **无文字动词**，
+    /// 原版击杀条就是「名字 + 图标 + 名字」（`%s killed %s` 一类格式串在 `client.dll` / `mp.dll` 字节区
+    /// 与全部在盘文本件里都不存在）。
+    ///
+    /// <para><b>图标 = 原版像素</b>：<c>sprites/hud.txt</c> 640 档的 <c>d_*</c>
+    /// （<c>d_ak47 640 640hud1 192 80 48 16</c> …），逐件由 <c>tools/probes/spr-extract.py</c> 按该源矩形
+    /// 从原版 <c>640hud1/2/16.spr</c> 解成 <c>Resources/UI/Art/killicon_d_*.png</c>；
+    /// 名→武器见 <see cref="Cs16.Core.CsWeapons.DeathIconId"/>。
+    /// 爆头标 <c>d_headshot</c>、自杀用 <c>d_skull</c>（原版 <c>CHudDeathNotice</c> 持有
+    /// <c>m_HUD_d_headshot</c> / <c>m_HUD_d_skull</c>，<c>hlsdk/cl_dll/hud.h:409-422</c>）。
+    /// 拿不到图标（含 <c>c4</c> —— hud.txt 无 <c>d_c4</c>）时该格回退文字 <c>[武器名]</c>。</para>
     ///
     /// <para>
     /// <see cref="CsKillFeedItem.BornTime"/>）。本件**不自己记时间**（不订阅事件、不看 <c>Time.time</c> 与
@@ -25,6 +35,10 @@ namespace Cs16.UI
         public const float NameWidth = 168f;
         public const float WeaponWidth = 120f;
         public const float HeadshotIcon = 10f;
+
+        /// <summary>爆头标（原版 <c>d_headshot</c>，hud.txt 640 档源矩形 <c>0,240,36,16</c>）的原生像素尺寸。</summary>
+        public const float HeadshotIconW = 36f;
+        public const float HeadshotIconH = 16f;
 
         /// <summary>
         /// 一条击杀信息显示多久开始淡出（秒）。
@@ -45,11 +59,18 @@ namespace Cs16.UI
         [System.NonSerialized] private readonly List<float> _seenAt = new List<float>(CsConst.MaxKillFeedEntries);
         [System.NonSerialized] private bool _warned;
 
+        /// <summary>已取到的图标 sprite（键 = 原版 <c>d_*</c> 名）；取过一次就不再请求。</summary>
+        [System.NonSerialized] private readonly Dictionary<string, Sprite> _icons = new Dictionary<string, Sprite>();
+        /// <summary>正在异步取、还没回来的图标名（防止每帧重复发起）。</summary>
+        [System.NonSerialized] private readonly HashSet<string> _iconPending = new HashSet<string>();
+        [System.NonSerialized] private bool _iconWarned;
+
         private sealed class Row
         {
             public RectTransform Rt;
             public Text Killer;
             public Image Headshot;
+            public Image Icon;
             public Text Weapon;
             public Text Victim;
             public CanvasGroup Group;
@@ -133,9 +154,71 @@ namespace Cs16.UI
                 row.Victim.color = CsHudTheme.TeamColor(item.VictimTeam);
 
                 var def = CsWeapons.Get(item.WeaponId);
-                row.Weapon.text = def != null ? $"[{def.DisplayName}]" : $"[{item.WeaponId ?? "?"}]";
-                row.Headshot.enabled = item.Headshot;
+                var fallback = def != null ? $"[{def.DisplayName}]" : $"[{item.WeaponId ?? "?"}]";
+
+                // 武器图标格：自杀（击杀者为空或 = 被击杀者）用原版 `d_skull`，其余按武器查 `d_*`
+                // （`CsWeapons.DeathIconId`；`c4` 等无图标的返回 null）。图标没到手的那几帧先用文字占位。
+                var suicide = string.IsNullOrEmpty(item.KillerName) || item.KillerName == item.VictimName;
+                var dName = suicide ? "d_skull" : CsWeapons.DeathIconId(item.WeaponId);
+                var icon = string.IsNullOrEmpty(dName) ? null : GetIcon(dName);
+                if (icon != null)
+                {
+                    row.Icon.sprite = icon;
+                    row.Icon.rectTransform.sizeDelta = new Vector2(icon.rect.width, icon.rect.height);
+                    row.Icon.enabled = true;
+                    row.Weapon.text = string.Empty;
+                }
+                else
+                {
+                    row.Icon.enabled = false;
+                    row.Weapon.text = fallback;
+                }
+
+                // 爆头标 = 原版 `d_headshot`
+                var hsSprite = item.Headshot ? GetIcon("d_headshot") : null;
+                row.Headshot.sprite = hsSprite;
+                row.Headshot.enabled = hsSprite != null;
             }
+        }
+
+        /// <summary>
+        /// 取原版击杀条图标 sprite（缓存；没取到就发起异步请求，并且**只报一次** Warn）。
+        /// 路径见 <see cref="ResPaths.KillIcon"/>；未到手时返回 null，调用方先用文字占位（⛔ 不静默）。
+        /// </summary>
+        private Sprite GetIcon(string dName)
+        {
+            if (_icons.TryGetValue(dName, out var cached)) return cached;
+            if (_iconPending.Contains(dName)) return null;
+
+            var res = Game.Res;
+            if (res == null)
+            {
+                if (!_iconWarned)
+                {
+                    _iconWarned = true;
+                    Game.Logger?.Warn("UI", "Game.Res 为 null（CloverRes.Init 未执行？），击杀条图标加载不了");
+                }
+                return null;
+            }
+
+            _iconPending.Add(dName);
+            var key = ResPaths.KillIcon(dName);
+            res.LoadAsset<Sprite>(key, sp =>
+            {
+                _iconPending.Remove(dName);
+                if (sp == null)
+                {
+                    if (!_iconWarned)
+                    {
+                        _iconWarned = true;
+                        Game.Logger?.Warn("UI",
+                            $"击杀条图标加载失败（sprite 为空）：Resources/{key}（hud.txt 640 档 d_* 未解入工程？）");
+                    }
+                    return;
+                }
+                _icons[dName] = sp;
+            });
+            return null;
         }
 
         private void EnsureRows(int count)
@@ -153,17 +236,24 @@ namespace Cs16.UI
                     CsHudTheme.TeamCT);
                 CsHudTheme.PlaceTopLeft(killer.rectTransform, new Vector2(0f, 0f), new Vector2(NameWidth, RowHeight));
 
+                // 爆头标 = 原版 `d_headshot`（CHudDeathNotice 的 m_HUD_d_headshot，hud.h:420）；sprite 到手才开。
                 var hs = CsHudTheme.CreateBlock("Headshot", rt, new Vector2(0f, 1f), new Vector2(0f, 1f),
-                    new Vector2(NameWidth + 4f, -((RowHeight - HeadshotIcon) * 0.5f)),
-                    new Vector2(HeadshotIcon, HeadshotIcon), CsHudTheme.Danger);
+                    new Vector2(NameWidth + 2f, -((RowHeight - HeadshotIconH) * 0.5f)),
+                    new Vector2(HeadshotIconW, HeadshotIconH), Color.white);
                 hs.enabled = false;
+
+                // 武器图标 = 原版 `d_*`（hud.txt 640 档源矩形，原生像素 1:1）；尺寸在 sprite 到手时按它设。
+                var icon = CsHudTheme.CreateBlock("Icon", rt, new Vector2(0f, 1f), new Vector2(0f, 1f),
+                    new Vector2(NameWidth + HeadshotIconW + 6f, -((RowHeight - HeadshotIconH) * 0.5f)),
+                    new Vector2(WeaponWidth, HeadshotIconH), Color.white);
+                icon.enabled = false;
 
                 var weapon = CsHudTheme.CreateText("Weapon", rt, string.Empty, 18, TextAnchor.MiddleCenter,
                     CsHudTheme.TextDim);
-                CsHudTheme.PlaceTopLeft(weapon.rectTransform, new Vector2(NameWidth + HeadshotIcon + 8f, 0f),
+                CsHudTheme.PlaceTopLeft(weapon.rectTransform, new Vector2(NameWidth + HeadshotIconW + 6f, 0f),
                     new Vector2(WeaponWidth, RowHeight));
 
-                var victimX = NameWidth + HeadshotIcon + 8f + WeaponWidth;
+                var victimX = NameWidth + HeadshotIconW + 6f + WeaponWidth;
                 var victim = CsHudTheme.CreateText("Victim", rt, string.Empty, 19, TextAnchor.MiddleLeft,
                     CsHudTheme.TeamT);
                 CsHudTheme.PlaceTopLeft(victim.rectTransform, new Vector2(victimX, 0f),
@@ -174,6 +264,7 @@ namespace Cs16.UI
                     Rt = rt,
                     Killer = killer,
                     Headshot = hs,
+                    Icon = icon,
                     Weapon = weapon,
                     Victim = victim,
                     Group = group,

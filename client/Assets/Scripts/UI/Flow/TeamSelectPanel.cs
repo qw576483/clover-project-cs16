@@ -97,7 +97,7 @@ namespace Cs16.UI
             "1 恐怖分子",     // 原版 Cstrike_Terrorist_Forces :85 → "&1 TERRORIST FORCES"
             "2 反恐精英",     // 原版 Cstrike_CT_Forces :86        → "&2 CT FORCES"
             "3 VIP",          // 原版 Cstrike_VIP_Team :87         → "&3 VIP"（专有名词，保留原文）
-            "5 随机分配",     // 原版 Cstrike_Team_AutoAssign :88  → "&5 AUTO ASSIGN"
+            "5 自动分配",     // 原版 Cstrike_Team_AutoAssign :88  → "&5 AUTO ASSIGN"
             "6 观战",         // 原版 Cstrike_Menu_Spectate :89    → "&6 SPECTATE"
             "0 取消",         // 原版 Cstrike_Cancel :79           → "&0 CANCEL"
         };
@@ -111,7 +111,12 @@ namespace Cs16.UI
         /// <summary>`#Cstrike_Join_Team` = `SELECT TEAM`（`cstrike_english.txt:84`）。显示中文「选择阵营」。</summary>
         private const string TitleText = "选择阵营";
 
-        /// <summary>AUTO ASSIGN（原版 `jointeam 5`）在本工程里按对半随机挑边（见 <see cref="OnAutoAssign"/>）。</summary>
+        /// <summary>
+        /// AUTO ASSIGN（原版 `jointeam 5`）对半随机挑边的**实际范围**：本按钮只在**赛前**（选阵营站点）可达，
+        /// 那一刻还没有任何 roster，且两侧 bot 数逐字相等（<see cref="CsMatchConfig.BotsPerTeam"/> 是单值）
+        /// ⇒ 原版 `CCSGameRules::SelectDefaultTeam()` 的「人数少的一队」分支走不到，只剩平局分支
+        /// （见 <see cref="OnAutoAssign"/>）。
+        /// </summary>
         private const int AutoAssignTeams = 2;
 
         // ─────────── 选兵种页（`Classmenu_{CT,TER}.res`）───────────
@@ -424,8 +429,9 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// 原版 `jointeam 5` = AUTO ASSIGN：由服务器分配到人数少的一方。
-        /// 本工程是单机版（无真人计数），按 <see cref="AutoAssignTeams"/> 对半随机挑边（登记在「允许的差异」）。
+        /// 原版 `jointeam 5` = AUTO ASSIGN：由服务器按两队人数分配（`CCSGameRules::SelectDefaultTeam()`）。
+        /// 本按钮只在**赛前**可达（站点序 `Loading → TeamSelect → Stage`，比赛在 `Stage` 站点才开始）⇒
+        /// 那一刻没有 roster、两侧人数相等 ⇒ 只有**平局分支**可达 ⇒ 按 <see cref="AutoAssignTeams"/> 对半随机挑边。
         /// </summary>
         private void OnAutoAssign()
         {

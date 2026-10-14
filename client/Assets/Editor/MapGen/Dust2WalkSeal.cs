@@ -415,7 +415,11 @@ namespace Cs16.EditorTools
 
             var sb = new StringBuilder();
             sb.Append(header).Append('\n');
-            int at = markerOffset + 4;
+            // markerOffset 已经指向**第一条记录**（数量前缀由 TryLayout 读掉并 +4 过了，见 :577-582），
+            // 这里不能再跳 4 字节 —— 跳了就把第一条记录的名长当成 x 的浮点位型读（15.5 ≈ 1.1e9），
+            // GetString 必抛 ArgumentOutOfRangeException，而它是**未被捕获**的 ⇒ 整个
+            // ApplyToFiles 在客户端那份上就中断，第二份（服务端）永远拿不到单连通后处理。
+            int at = markerOffset;
             for (int i = 0; i < markerCount; i++)
             {
                 int nameLen = BitConverter.ToInt32(bytes, at); at += 4;

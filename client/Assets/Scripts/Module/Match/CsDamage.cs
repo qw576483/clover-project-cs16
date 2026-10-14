@@ -93,7 +93,8 @@ namespace Cs16.Module.Match
                 case CsHitbox.Head: return CsConst.HitHead;
                 case CsHitbox.Chest: return CsConst.HitChest;
                 case CsHitbox.Stomach: return CsConst.HitStomach;
-                case CsHitbox.Leg: return CsConst.HitLeg;
+                case CsHitbox.LeftLeg:
+                case CsHitbox.RightLeg: return CsConst.HitLeg;
                 case CsHitbox.Generic: return CsConst.HitChest;
                 default:
                     Game.Logger.Warn(Tag, $"未知命中部位 {box}，按胸部倍率处理");
@@ -186,10 +187,14 @@ namespace Cs16.Module.Match
         /// <para>走 <see cref="ApplyDamage"/> 这条统一通路（扣血 / 事件 / 致死结算 / 记分全在那一处），
         /// 但 <c>ignoreArmor: true</c>、命中部位取 <see cref="CsHitbox.Generic"/>：<b>护甲不吸收坠落伤害</b>。</para>
         ///
-        /// <para>⚠️ <b>「护甲不吸收坠落伤害」这一条没有 file:line，是按口径实现的</b>：承载它的原版
-        /// <c>dlls/player.cpp</c> 不在盘（<c>原版资源/hlsdk/</c> 下只有 <c>pm_shared/pm_shared.c</c>、
-        /// <c>dlls/weapons.cpp</c> 与 <c>cl_dll/*</c>），<c>mp.dll</c> 里对应分支也尚未定位。
-        /// 有原版出处可引的只有阈值与系数那一段（<c>原版资源/hlsdk/pm_shared/pm_shared.c:124-126</c>）。</para>
+        /// <para>「护甲不吸收坠落伤害」的原版出处 = <c>CBasePlayer::TakeDamage</c>（函数 VA <c>0x100635C0</c>）：
+        /// 护甲块被伤害类型位门控 —— <c>mp.dll</c> VA <c>0x10064054</c> 的 <c>test ebx, 0x4020</c>
+        /// （DMG_FALL | DMG_DROWN）命中即整段跳过（紧接 VA <c>0x1006405A</c> 的 <c>jne</c> 跳走），
+        /// 护甲字段 = <c>pev+0x1BC</c>；文件偏移 = VA − 0x10000C00 ⇒ <c>0x63454</c>。</para>
+        ///
+        /// <para><c>dlls/player.cpp</c> 不在盘（<c>原版资源/hlsdk/</c> 下只有 <c>pm_shared/pm_shared.c</c>、
+        /// <c>dlls/weapons.cpp</c> 与 <c>cl_dll/*</c>），所以上面这条是按 <c>mp.dll</c> 反汇编给的；
+        /// 阈值与系数那一段的出处 = <c>原版资源/hlsdk/pm_shared/pm_shared.c:124-126</c>。</para>
         ///
         /// <para>调用点只有一处 —— <c>CsMatch.StepActorPhysics</c> 的落地边沿（<c>OnGround</c> 由假变真
         /// 的那一帧），所以同一次下坠只结算一次。</para>

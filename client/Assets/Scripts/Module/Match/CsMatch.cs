@@ -135,12 +135,8 @@ namespace Cs16.Module.Match
         public const int MaxGrenadesTotal = 4;
 
         // ---- 后坐力回复 ----
-        /// <summary>停火后多久开始回复后坐力（秒）。</summary>
-        public const float RecoilRecoverDelay = 0.25f;
-        /// <summary>后坐力回复速度（度/秒）。
-        /// 出处：**本项目新增**（原版后坐力是 <c>mp.dll</c> 里逐武器写死的浮点立即数，
-        /// 见 <c>策划/对照表.md</c> §6 BLOCKED-2）。</summary>
-        public const float RecoilRecoverSpeed = 6f;
+        // 回落口径 = 原版 `PM_DropPunchAngle` 的逐帧长度递减（无"延迟 / 速度"旋钮），
+        // 实现在 `CsRecoil.Decay`（出处 `原版资源/hlsdk/pm_shared/pm_shared.c:2334-2342`）。
 
         // ---- 穿透 ----
         /// <summary>
@@ -231,9 +227,11 @@ namespace Cs16.Module.Match
         /// （服务端只发 <c>TE_SMOKE</c>）。</summary>
         public const float SmokeGrowSeconds = 1f;
         /// <summary>投掷物之间的碰撞半径（两颗雷的球心距小于两倍该值即视为相撞）。
-        /// 出处：与视觉体半径同值 <c>Module/Combat/CsCombatTuning.GrenadeVisualRadius</c>（本值 = 那个常量，不另立数值；
-        /// 原版手雷的碰撞尺寸在 <c>mp.dll</c>，**载体不在盘**）。</summary>
-        public const float GrenadeCollisionRadius = 0.09f;
+        /// 出处 = 原版 <c>regamedll/dlls/ggrenade.cpp:887-890</c> 的 <c>CGrenade::Spawn</c>：
+        /// <c>pev-&gt;solid = SOLID_BBOX;</c> + <c>UTIL_SetSize(pev, Vector(0,0,0), Vector(0,0,0));</c>
+        /// ⇒ 原版手雷的碰撞体是**零尺寸点**（半径 0）；点-点接触是零测度事件，
+        /// 所以两颗雷在原版里不会相撞（与视觉半径 <c>CsCombatTuning.GrenadeVisualRadius</c> 无关）。</summary>
+        public const float GrenadeCollisionRadius = 0f;
 
         // ---- 机器人 ----
         /// <summary>机器人瞄准误差的重采样间隔（秒）。
@@ -299,6 +297,35 @@ namespace Cs16.Module.Match
 
         private readonly List<CsActor> _actors = new List<CsActor>(CsMatchConst.MaxTeamSize * 2);
         private readonly Dictionary<long, CsBotIntent> _botIntents = new Dictionary<long, CsBotIntent>();
+
+        // ==================================================================
+        //  差异 #179 诊断（**私有、只读用途、无行为影响**）
+        //  现象：bot 在某些位置"几何不挡却零速度"几十秒。判清"期望方向为零 / 解算把位移吃光 /
+        //  施加侧没吃"三选一，需要**同帧**拿到移动链的输入输出：本类在 UpdateBots 的移动段与
+        //  StepActorPhysics 各写一次，两个递增序号（SolveSeq / StepSeq）用来证明"这两段这一帧
+        //  到底跑没跑"。⛔ 只写这个字典：不参与任何分支、不改任何判定、不读任何返回值。
+        //  读取方 = 本机探针 `.ai-tmp/drivers/botflip-probe.cs`（反射取私有静态字段）。
+        // ==================================================================
+        internal sealed class MoveDiag179
+        {
+            public long SolveSeq;      // UpdateBots 的移动段每跑一次 +1（0 = 从没跑到）
+            public long StepSeq;       // StepActorPhysics 每跑一次 +1
+            public float Dt;
+            public Vector3 EntryPos, EntryVel, MoveDir, SolveOut, To, Resolved;
+            public bool ClampX, ClampZ, Steep, StepUp, SepOn;
+        }
+        private static long _diag179Seq;
+        private static readonly Dictionary<long, MoveDiag179> _diag179 = new Dictionary<long, MoveDiag179>();
+        private static MoveDiag179 Diag179(long id)
+        {
+            MoveDiag179 r;
+            if (!_diag179.TryGetValue(id, out r))
+            {
+                r = new MoveDiag179();
+                _diag179[id] = r;
+            }
+            return r;
+        }
         private readonly Dictionary<long, bool> _botUseHeld = new Dictionary<long, bool>();
         private readonly Dictionary<long, float> _botAimErrorRefreshAt = new Dictionary<long, float>();
         private readonly Dictionary<long, Vector2> _botAimError = new Dictionary<long, Vector2>();
@@ -309,7 +336,14 @@ namespace Cs16.Module.Match
 
         /// <summary>世界中的掉落武器（差异 #75）。只含**未被拾取**的项。</summary>
         private readonly List<CsDroppedWeapon> _dropped = new List<CsDroppedWeapon>(CsMatchConst.MaxDroppedWeapons);
-        private readonly List<string> _pendingShots = new List<string>(CsMatchConst.MaxPendingShots);
+        /// <summary>待表现的一发枪声记录：武器 id + 这一发**是否装了消音器**（远端据此选采样）。</summary>
+        private struct PendingShot
+        {
+            public string WeaponId;
+            public bool Silenced;
+        }
+
+        private readonly List<PendingShot> _pendingShots = new List<PendingShot>(CsMatchConst.MaxPendingShots);
         private readonly RaycastHit[] _hitBuffer = new RaycastHit[CsMatchConst.BotHitBufferSize];
         private readonly List<CsActor> _aliveScratch = new List<CsActor>(CsMatchConst.MaxTeamSize * 2);
 
@@ -359,6 +393,8 @@ namespace Cs16.Module.Match
 
         /// <summary>上一帧的开镜键，只用来判「按下沿」（按住型与电平型驱动都等价于一次）。</summary>
         private bool _preZoom;
+        /// <summary>上一帧的换弹序号（<c>CsActor.ReloadSeq</c>），只用来判「换弹开始的这一帧」。</summary>
+        private int _preReloadSeq;
         /// <summary>
         /// 差异 #68：上一帧的 <c>Attack2</c>，只用来判「按下沿」。
         ///
@@ -511,12 +547,12 @@ namespace Cs16.Module.Match
         /// **测试入口，供离线取证驱动使用**：把**本局运行时**的"半场换边"开关设成
         /// <paramref name="enabled"/>（只改 <see cref="Cfg"/> 这个本局副本）。
         ///
-        /// <para><b>为什么必须有它</b>：生产默认是 <c>RoundsPerHalf=15 / MaxRounds=30 / HalfTimeSwap=true</c>
+        /// <para><b>为什么必须有它</b>：生产默认是 <c>RoundsPerHalf=15 / MaxRounds=0（不限）/ HalfTimeSwap=true</c>
         /// —— 第 16 回合会 <c>SwapHalves()</c>（阵营互换 + **比分互换**，"比分跟着人走"），
-        /// 于是一场打满 30 回合的比赛**必然**收在 15 : 15，<c>EndMatchInternal</c> 只能给出
-        /// "平局"（<c>CsRound.IsMatchOver</c> 的 16 胜阈值在两边都拿不到）⇒ `42_matchend.png`
+        /// 换边后两边各自从 0 重新起算 ⇒ 一场打满全场的比赛**必然**收在 15 : 15，<c>EndMatchInternal</c>
+        /// 只能给出"平局"（<c>CsRound.IsMatchOver</c> 的 16 胜阈值在两边都拿不到）⇒ `42_matchend.png`
         /// 这条取证只能采到 <c>Draw!</c>，采不到"赢方 + 比分"的非平局结算。
-        /// 关掉换边后，把 16 胜阈值安排在第 30 回合达成即可采到非平局。</para>
+        /// 关掉换边后，把 16 胜阈值安排在前面几回合达成即可采到非平局。</para>
         ///
         /// <para><b>不改变真实玩家行为</b>：只写本局实例的 config 副本（不写默认值、不落盘、
         /// 不改 <c>CsMatchConfig</c> 的字段默认值、不影响下一局）；不改 <c>ICsMatch</c> 签名 ——
@@ -536,13 +572,13 @@ namespace Cs16.Module.Match
         /// 只写 <see cref="Cfg"/> 这个本局副本。
         ///
         /// <para><b>为什么必须有它</b>：`42_matchend.png`（验收表 H13）要的是**非平局**结算画面。
-        /// 生产配置是 <c>RoundsPerHalf=15 / CsConst.MaxRounds=30 / HalfTimeSwap=true</c> ⇒ 打满全场
-        /// 必然 15 : 15，`EndMatchInternal` 只能给平局；而"关换边后真打 30 回合"在取证窗口内**打不完**
+        /// 生产配置是 <c>RoundsPerHalf=15 / CsConst.MaxRounds=0（不限）/ HalfTimeSwap=true</c> ⇒ 打满全场
+        /// 必然 15 : 15，`EndMatchInternal` 只能给平局；而"关换边后真打到一方拿 16 胜"在取证窗口内**打不完**
         /// （实测：每回合约 8 s，40 次驱动调用只推进到第 26 回合）。
         /// 关键点：胜负阈值 <c>CsRound.WinTarget = Cfg.RoundsPerHalf + 1</c> **读的就是本局 config**
         /// （见 <c>CsRound.cs</c> 的 <c>WinTarget</c>）。把它设成 1 ⇒ 阈值 = 2 ⇒ 任意一方先赢 2 回合
         /// 即 <c>IsMatchOver</c> 成立 ⇒ <c>EndMatchInternal</c> 按比分高者给出**非平局**结算
-        /// （2 回合定胜负，且 <c>MaxRounds=30</c> 的上限根本用不到，无需改 <c>CsConst</c>）。</para>
+        /// （2 回合定胜负；<c>CsConst.MaxRounds</c> 为 0 = 不限，本入口无需改它）。</para>
         ///
         /// <para><b>为什么同时关换边</b>：<c>BeginRoundInternal</c> 在 <c>roundNumber == Cfg.RoundsPerHalf + 1</c>
         /// 时触发 <c>SwapHalves</c>（阵营 + **比分**互换）。<c>RoundsPerHalf=1</c> ⇒ 第 2 回合就会换边
@@ -687,6 +723,7 @@ namespace Cs16.Module.Match
             _lastGroundY.Clear();
             ClearDroppedWeapons();
             _softFloorMisses.Clear();
+            _diag179.Clear();       // #179 只读诊断（差异 #223）：随局清空 —— 条目不跨局累积（_nextActorId 也在这里归 1）
             _remoteInputs.Clear();
             _remoteDriveTraces.Clear();
             _remoteInputUnknownActorLogged.Clear();
@@ -696,6 +733,7 @@ namespace Cs16.Module.Match
             _spectateIndex = -1;
             _scopeLevel = 0;
             _preZoom = false;
+            _preReloadSeq = 0;
             _localNextJumpTime = 0f;
             _hasLocalInput = false;
             _localInput = default;
@@ -791,8 +829,11 @@ namespace Cs16.Module.Match
             // 4) 炸弹（下包/拆包/倒计时）
             Bomb.Tick(dt, now);
 
-            // 4b) 世界中的掉落武器：自动拾取（差异 #75；不自转，见 CsDroppedWeapon 的类注释）
-            TickDroppedWeapons(now);
+            // 4b) 拾取（世界中的掉落武器 + 掉在地上的 C4）：**与回合相位无关**。
+            //     原版拾取是实体的 **Touch 回调** —— `weapons.cpp:610 CBasePlayerItem::DefaultTouch`，
+            //     由实体接触在 `SV_Physics` 里触发；`FL_FROZEN` 只挡 `PM_Move`（玩家移动），不挡 Touch。
+            //     原版也没有"回合相位"这一层（差异 #205）⇒ 只要人活着就能拾取（冻结期 / 回合结算期同样成立）。
+            TickPickups();
 
             // 5) 胜负判定（全歼 / 超时）
             Round.EvaluateWin(now);
@@ -845,13 +886,30 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
+        /// 每帧拾取：世界中的掉落武器 + 掉在地上的 C4，对**每个存活角色**各试一次。
+        /// <para>不判回合相位（依据见 <see cref="Tick"/> 的 4b 注释：原版是实体 Touch 回调）。</para>
+        /// </summary>
+        private void TickPickups()
+        {
+            var list = _actors;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var a = list[i];
+                if (!a.IsAlive) continue;
+                Bomb.TryPickupDropped(a);
+            }
+
+            TickDroppedWeapons(Now);
+        }
+
+        /// <summary>
         /// 每帧：把"站到 1.2 m 内"的掉落武器收回给角色（原版口径 = 自动拾取，与 C4 同）。
-        /// <para>只在 <see cref="CsRoundPhase.Live"/> 判定 —— 冻结期不让人在地上捡枪。</para>
+        /// <para>不判回合相位（依据见 <see cref="Tick"/> 的 4b 注释）。掉落物不跨回合：
+        /// <see cref="ClearDroppedWeapons"/> 在 <c>BeginRound</c> / <c>Reset</c> 里清空。</para>
         /// </summary>
         private void TickDroppedWeapons(float now)
         {
             if (_dropped.Count == 0) return;
-            if (Round.Phase != CsRoundPhase.Live) return;
 
             for (var i = _dropped.Count - 1; i >= 0; i--)
             {
@@ -1014,6 +1072,7 @@ namespace Cs16.Module.Match
         }
 
         public bool BombPlanted => Bomb.Planted;
+        public bool BombDropped => Bomb.Dropped;
         public Vector3 BombPosition => Bomb.Planted ? Bomb.Position : Bomb.LastKnownPosition;
         public float BombTimeLeft => Bomb.Planted ? Bomb.TimeLeft : -1f;
         public float UseProgress => Bomb.ActiveUseProgress;
@@ -1272,6 +1331,15 @@ namespace Cs16.Module.Match
             Inventory.SwitchWeapon(a, weaponId, Now);
         }
 
+        public void CycleWeapon(int direction)
+        {
+            if (!_running) return;
+            var a = _local;
+            if (a == null) { RateWarn("cycle.nolocal", "CycleWeapon：本地玩家不存在"); return; }
+            if (!a.IsAlive) { RateWarn("cycle.dead", $"CycleWeapon：{a.Name} 已死亡"); return; }
+            Inventory.CycleWeapon(a, direction, Now);
+        }
+
         public bool TryBuy(string weaponId, out string reason)
         {
             if (_local == null)
@@ -1523,7 +1591,7 @@ namespace Cs16.Module.Match
                 var a = _local;
                 if (a == null || !a.IsAlive) return false;
                 var def = a.ActiveDef;
-                return def != null && def.Class == CsWeaponClass.Sniper;
+                return def != null && def.CanZoom;
             }
         }
 
@@ -1593,16 +1661,18 @@ namespace Cs16.Module.Match
             Damage.ApplyHit(shooter, victim, def, hit.Hitbox, hit.Point, dist, hit.ThroughWall);
         }
 
-        public bool ConsumeShotFired(out string weaponId)
+        public bool ConsumeShotFired(out string weaponId, out bool silenced)
         {
             weaponId = null;
+            silenced = false;
             if (_pendingShots.Count == 0) return false;
-            weaponId = _pendingShots[0];
+            weaponId = _pendingShots[0].WeaponId;
+            silenced = _pendingShots[0].Silenced;
             _pendingShots.RemoveAt(0);
             return true;
         }
 
-        internal void RecordShotFired(string weaponId)
+        internal void RecordShotFired(string weaponId, bool silenced)
         {
             if (_pendingShots.Count >= CsMatchConst.MaxPendingShots)
             {
@@ -1610,7 +1680,7 @@ namespace Cs16.Module.Match
                 RateWarn("shot.pending.overflow",
                     $"待消费的射击记录超过 {CsMatchConst.MaxPendingShots} 条，丢弃最旧一条（表现层是否每帧调 ConsumeShotFired？）");
             }
-            _pendingShots.Add(weaponId);
+            _pendingShots.Add(new PendingShot { WeaponId = weaponId, Silenced = silenced });
         }
 
         // ==================================================================
@@ -2073,6 +2143,9 @@ namespace Cs16.Module.Match
             a.IsAlive = true;
             a.Health = CsConst.MaxHealth;
             a.IsCrouching = false;
+            a.HullCrouched = false;
+            a.DuckTimerMs = 0f;
+            a.DuckKeyHeld = false;
             a.IsWalking = false;
             a.Velocity = Vector3.zero;
             a.Position = SnapSpawnToGround(a, FindSpawnPoint(a));
@@ -2121,6 +2194,7 @@ namespace Cs16.Module.Match
             {
                 _scopeLevel = 0;
                 _preZoom = false;
+                _preReloadSeq = 0;
                 _hasLocalInput = false;
                 EmitEvent(Events.LocalRespawned);
                 Game.Logger.Info(Tag, $"本地玩家复活于 {a.Position}（{a.Team}，保留装备={keepLoadout}）");
@@ -2211,6 +2285,7 @@ namespace Cs16.Module.Match
 
             RespawnAllForRound();
             GiveBombToRandomT();
+            GrantRoundStartMoney();
             AutoBuyForBots();
 
             Game.Logger.Info(Tag,
@@ -2219,6 +2294,34 @@ namespace Cs16.Module.Match
 
             PublishMessage(null, $"第 {roundNumber} 回合开始");
             EmitEvent(Events.RoundStarted, roundNumber);
+        }
+
+        /// <summary>
+        /// 回合开局发钱（**本项目口径，非原版**）：把在场 T/CT 的金钱补到 <see cref="CsMatchConfig.StartMoney"/>
+        /// —— 默认 = <see cref="CsConst.MaxMoney"/>，即「每回合开局给满」。
+        ///
+        /// <para>原版语义 = <c>mp_startmoney</c>（默认 800）只在**开局与换边**发放一次，局内靠胜负 / 连败 / 击杀奖累积；
+        /// 本工程改成**每回合开局都发**（登记 = 策划/差异登记.tsv #193）。走
+        /// <see cref="CsEconomy.Add"/> 这一个入口 ⇒ 上限夹取与「[经济] 每人一笔」日志都照旧。</para>
+        ///
+        /// <para><b>必须在 <see cref="AutoBuyForBots"/> 之前调用</b>：机器人回合开局立刻买枪，
+        /// 钱先到位它们才买得起自己档位的装备。</para>
+        /// </summary>
+        private void GrantRoundStartMoney()
+        {
+            var target = _cfg.StartMoney;
+            var granted = 0;
+            for (var i = 0; i < _actors.Count; i++)
+            {
+                var a = _actors[i];
+                if (a.Team != CsTeam.T && a.Team != CsTeam.CT) continue;
+                if (a.Money == target) continue;
+                Economy.Add(a, target - a.Money, $"回合开局发钱（补到 ${target}）");
+                granted++;
+            }
+
+            Game.Logger.Info(Tag,
+                $"回合开局发钱：{granted} 人补到 ${target}（本项目口径：每回合开局补满；登记 = 策划/差异登记.tsv #193）");
         }
 
         internal void OnRoundEnded(in CsRoundEndInfo info)
@@ -2310,13 +2413,38 @@ namespace Cs16.Module.Match
             a.IsWalking = inp.Walk && !inp.Crouch;
 
             var def = a.ActiveDef;
-            // 开镜档位（原版 AWP 90→40→10、Scout/SG550/G3SG1 90→40→15；出处 策划/手感参数对照.md §5.2）。
-            // ⚠️ 原版的**按键语义**（同一右键逐档推进 / 按住进阶 / 点击切换）本片未取证 ⇒
-            // 这里只落"档位 + 可切换"：按下沿逐档推进，满档回到不开镜。
-            var canScope = def != null && def.Class == CsWeaponClass.Sniper;
-            if (!canScope) _scopeLevel = 0;
-            else if (inp.Zoom && !_preZoom) _scopeLevel = (_scopeLevel + 1) % 3;
+            // 开镜档位（原版 AWP/Scout/SG550/G3SG1 90→40→10|15、AUG/SG552 90→55 两态；
+            // 出处 策划/手感参数对照.md §5.2 与 策划/武器右键数值出处.md §9）。
+            // ⚠️ 原版的**按键语义**（同一右键逐档推进 / 按住进阶 / 点击切换）本片未取证
+            // ⇒ 这里只落"档位 + 可切换"：按下沿逐档推进，满档回到不开镜。
+            var scopeMax = CsWeapons.ScopeMaxLevel(def);
+            if (scopeMax <= 0) _scopeLevel = 0;
+            else if (inp.Zoom && !_preZoom)
+            {
+                var next = (_scopeLevel + 1) % (scopeMax + 1);
+                if (next != _scopeLevel)
+                {
+                    _scopeLevel = next;
+                    RateInfo("zoom.toggle", $"{a.Name} 的 {def.DisplayName} " +
+                        (next <= 0 ? "退出开镜" : $"开镜第 {next} 档（fov {CsConst.ScopeFovFor(def, next):F0}）") +
+                        (def.CycleTimeZoom > 0f ? $"，射速 {CsWeapons.CycleTimeFor(def, false, next > 0):F3}s" : "") +
+                        (def.MaxSpeedZoom > 0f ? $"，移速 {def.MaxSpeedZoom:F2}m/s" : ""));
+                }
+            }
             _preZoom = inp.Zoom;
+            a.Scoped = _scopeLevel > 0;
+
+            // 原版 AUG / SG552 的 `Reload()`：换弹开始时若已开镜就调 `SecondaryAttack()` 退出开镜
+            // （`wpn_aug.cpp` / `wpn_sg552.cpp` 的 `Reload()` 逐字；狙击四把的 Reload 里没有这句）。
+            if (a.ReloadSeq != _preReloadSeq)
+            {
+                _preReloadSeq = a.ReloadSeq;
+                if (def != null && def.UnzoomOnReload && _scopeLevel > 0)
+                {
+                    _scopeLevel = 0;
+                    RateInfo("zoom.reload", $"{a.Name} 换弹 {def.DisplayName}：退出开镜（原版 Reload 里的 SecondaryAttack）");
+                }
+            }
 
             // 差异 #68：右键 → 切换消音器（USP·M4A1）/ 连发模式（Glock18·FAMAS）。
             // 为什么放在"冻结期/阶段早退"之前：原版在买枪时间也能按右键拆装消音器（只禁移动），
@@ -2328,6 +2456,13 @@ namespace Cs16.Module.Match
             // 冻结期禁止移动（官方行为）：只允许转视角。
             if (Round.Phase == CsRoundPhase.Freeze)
             {
+                // 差异 #205：原版的冻结抑制只清 `cmd.forwardmove/sidemove/upmove`
+                //（`原版资源/hlsdk/pm_shared/pm_shared.c:2366-2371`，条件 `flags & FL_FROZEN || FL_ONTRAIN || dead`），
+                // **不碰 buttons/IN_DUCK、也不碰 flDuckTime** —— `PM_Duck`(`:1676-1747`) 在 pmove 里照跑 ⇒
+                // 冻结期按住蹲，蹲姿盒照样切。故这里也要推进蹲姿门。
+                // ⚠️ 每帧仍**只调用一次**：Live 相位由 `StepActorPhysics`（`:2486`）推进，而本分支/下面那支
+                // 都在 `StepActorPhysics` 之前 return ⇒ 不会双推进（双推进会让 0.4 s 门变成 0.2 s）。
+                CsDuck.Step(a, a.IsCrouching, a.OnGround, dt, HeadroomForStanding);
                 a.Velocity = Vector3.zero;
                 a.IsWalking = false;
                 return;
@@ -2335,6 +2470,9 @@ namespace Cs16.Module.Match
 
             if (Round.Phase != CsRoundPhase.Live)
             {
+                // 差异 #205（同一出处）：回合结束 / 比赛结束 / 热身这些非 Live 相位同理 ——
+                // 原版没有"回合相位"这一层，pmove 每帧都跑；冻结只清移动分量。
+                CsDuck.Step(a, a.IsCrouching, a.OnGround, dt, HeadroomForStanding);
                 a.Velocity = Vector3.zero;
                 return;
             }
@@ -2409,10 +2547,25 @@ namespace Cs16.Module.Match
             return false;
         }
 
+        /// <summary>
+        /// 松手起身前的**头顶空间**判据（原版 <c>PM_UnDuck</c> 的 <c>PM_PlayerTrace</c>，
+        /// <c>原版资源/hlsdk/pm_shared/pm_shared.c:1644-1656</c>）：把站立身体盒摆回当前脚下位置放不放得下。
+        /// 复用移动解算同一个 <see cref="ICsMap.CanStand"/>，并**显式传站立身高** ——
+        /// 问的是"蹲着的人能不能在这里站起来"，取的是站姿盒净空、**不是**当前 hull 高度。
+        /// 地图未加载时返回 true（不阻挡）。
+        /// </summary>
+        private bool HeadroomForStanding(CsActor a)
+            => _map == null || !_map.IsLoaded
+               || _map.CanStand(a.Position, CsConst.PlayerRadius, CsConst.StandHeight);
+
         /// <summary>位移 + 重力 + 地面吸附；碰撞走 <see cref="ICsMap.ResolveMove"/>（分轴滑墙 + 台阶）。</summary>
         internal void StepActorPhysics(CsActor a, float dt)
         {
             if (a == null || !a.IsAlive) return;
+
+            // 蹲姿过渡门（原版 PM_Duck / PM_UnDuck，pm_shared.c:82/1706-1747）：按住蹲满 0.4 s 碰撞盒才切到
+            // 蹲姿、空中当帧切、松手且**头顶放得下**才切回。视高那段曲线在 Module/CameraRig（同一 TIME_TO_DUCK）。
+            CsDuck.Step(a, a.IsCrouching, a.OnGround, dt, HeadroomForStanding);
 
             // 落地边沿的起点：本帧贴地判定跑完后再看它，只在"由假变真"那一帧结算坠落伤害。
             var wasOnGround = a.OnGround;
@@ -2447,21 +2600,36 @@ namespace Cs16.Module.Match
 
             var from = a.Position;
             var to = from + a.Velocity * dt;
-            var resolved = _map.ResolveMove(from, to, CsConst.PlayerRadius);
+            var c17 = Diag179(a.Id);   // #179 诊断（只读留痕）
+            c17.StepSeq = ++_diag179Seq;
+            c17.To = to;
+            var resolved = _map.ResolveMove(from, to, CsConst.PlayerRadius, a.Height);
+            c17.Resolved = resolved;
 
             // 撞墙 → 把该轴速度清掉（ResolveMove 已经把位置钳住了）。
             var want = to - from;
             var got = resolved - from;
             var ratio = CsMatchConst.WallBlockVelocityRatio;
-            if (Mathf.Abs(want.x) > 0.0001f && Mathf.Abs(got.x) < Mathf.Abs(want.x) * ratio) a.Velocity.x = 0f;
-            if (Mathf.Abs(want.z) > 0.0001f && Mathf.Abs(got.z) < Mathf.Abs(want.z) * ratio) a.Velocity.z = 0f;
+            if (Mathf.Abs(want.x) > 0.0001f && Mathf.Abs(got.x) < Mathf.Abs(want.x) * ratio)
+            {
+                a.Velocity.x = 0f;
+                c17.ClampX = true;     // #179 诊断
+            }
+            if (Mathf.Abs(want.z) > 0.0001f && Mathf.Abs(got.z) < Mathf.Abs(want.z) * ratio)
+            {
+                a.Velocity.z = 0f;
+                c17.ClampZ = true;     // #179 诊断
+            }
 
             // ── 角色间水平推开（修「人物和人物能重合」）──────────────────────────────
             // 世界几何的位移已经算完（上面那次 ResolveMove），这里再补**角色对角色**那一层：
             // 两个角色的水平间距必须 ≥ 2×PlayerRadius（原版玩家包围盒口径，见 CsActorSeparation）。
             // 必须放在"贴地/陡坡闸门"**之前** —— 下面那两段会按 resolved 重新探地面并可能回退水平位移，
             // 推开的结果得先进入 resolved，才不会出现"推开了但地面判定又按旧点算"的错位。
+            var sepBefore17 = resolved;
             resolved = SeparateFromOtherActors(a, resolved);
+            c17.SepOn = (resolved - sepBefore17).sqrMagnitude > 1e-6f;   // #179 诊断
+            c17.Resolved = resolved;                                     // #179 诊断（推开后的最终落点）
 
             // ── 陡坡闸门（原版口径，见 CsConst.MaxStandableSlopeNormalZ）──────────────────────
             // 落点地面比脚下高出一个台阶、而且那片地面是**陡坡**（法线 y < 0.7 ≈ 45.573°）⇒ 这一帧的水平
@@ -2478,6 +2646,7 @@ namespace Cs16.Module.Match
                 resolved = new Vector3(from.x, resolved.y, from.z);
                 a.Velocity.x = 0f;
                 a.Velocity.z = 0f;
+                c17.Steep = true;      // #179 诊断
                 hasGround = _map.TrySampleGround(resolved, out groundPoint, out groundNormal,
                                                  CsMatchConst.GroundProbeDrop);
             }
@@ -2509,6 +2678,7 @@ namespace Cs16.Module.Match
                     groundPoint = upPoint;
                     groundNormal = upNormal;
                     hasGround = true;
+                    c17.StepUp = true;    // #179 诊断
                     RateWarn("move.stepup",
                         $"{a.Name} 常规贴地探测落空、把探测点抬一个台阶（{CsConst.StepUpHeight:F2}m）后探到地面 " +
                         $"y={upPoint.y:F2}（比脚面高 {upPoint.y - resolved.y:F2}m）：按原版 PM_WalkMove 的台阶口径接住" +
@@ -2539,7 +2709,8 @@ namespace Cs16.Module.Match
                         // 并按"竖直落速沿坡面分解"的水平分量往下滑（≈ 原版 AirMove + ClipVelocity 的沿坡滑落）。
                         // 这里**不清** `Velocity.y`：落速要留着当下一帧的下滑速度（越滑越快，与"站不住"一致）。
                         a.OnGround = false;
-                        resolved = SlideOnSteepSlope(resolved, groundNormal, Mathf.Abs(a.Velocity.y), dt);
+                        resolved = SlideOnSteepSlope(resolved, groundNormal, Mathf.Abs(a.Velocity.y), dt,
+                                                     a.Height);
                     }
                 }
                 else
@@ -2730,7 +2901,7 @@ namespace Cs16.Module.Match
             if ((want.x - pos.x) * (want.x - pos.x) + (want.z - pos.z) * (want.z - pos.z) < 0.000001f)
                 return pos;   // 推开的位移小于 1 mm：不必再解算世界碰撞（省一次扫掠）
 
-            var clamped = _map.ResolveMove(pos, want, CsConst.PlayerRadius);
+            var clamped = _map.ResolveMove(pos, want, CsConst.PlayerRadius, a.Height);
             if ((clamped.x - want.x) * (clamped.x - want.x) + (clamped.z - want.z) * (clamped.z - want.z) > 0.0001f)
             {
                 // 非预期分支：推开方向被世界几何挡住（推开被钳回）—— 留痕，便于区分
@@ -2758,7 +2929,8 @@ namespace Cs16.Module.Match
         /// <para>竖直方向不在这里动：调用方已经把 y 贴到坡面上，且**没有**清 <c>Velocity.y</c>
         /// ⇒ 落速会一直累积（越滑越快），到坡底落到缓面时由常驻分支清零 —— 与"陡坡上站不住"一致。</para>
         /// </summary>
-        private Vector3 SlideOnSteepSlope(Vector3 pos, Vector3 normal, float fallSpeed, float dt)
+        private Vector3 SlideOnSteepSlope(Vector3 pos, Vector3 normal, float fallSpeed, float dt,
+                                          float height)
         {
             var hx = normal.x;
             var hz = normal.z;
@@ -2779,7 +2951,7 @@ namespace Cs16.Module.Match
             var to = new Vector3(pos.x + down.x * slideSpeed * dt, pos.y, pos.z + down.z * slideSpeed * dt);
 
             // 下滑也要遵守水平碰撞（坡底有墙/箱子时不许滑进去）。
-            var slid = _map.ResolveMove(pos, to, CsConst.PlayerRadius);
+            var slid = _map.ResolveMove(pos, to, CsConst.PlayerRadius, height);
             return new Vector3(slid.x, pos.y, slid.z);
         }
 
@@ -2900,19 +3072,15 @@ namespace Cs16.Module.Match
                     Inventory.CompleteReload(a);
                 }
 
-                // 后坐力回复：停火一段时间后开始回落。
-                if (a.ConsecutiveShots > 0 && now >= a.NextFireTime + CsMatchConst.RecoilRecoverDelay)
+                // 后坐力回落：原版每帧按长度递减（`PM_DropPunchAngle`），见 `CsRecoil.Decay`。
+                // 用 Tick 的 dt（而不是 Time.deltaTime）—— 自检用假时钟快进时才能一起前进。
+                if (a.RecoilPitch != 0f || a.RecoilYaw != 0f)
                 {
-                    // 用 Tick 的 dt（而不是 Time.deltaTime）—— 自检用假时钟快进时才能一起前进。
-                    var step = CsMatchConst.RecoilRecoverSpeed * dt;
-                    a.RecoilPitch = Mathf.MoveTowards(a.RecoilPitch, 0f, step);
-                    a.RecoilYaw = Mathf.MoveTowards(a.RecoilYaw, 0f, step);
-                    if (Mathf.Approximately(a.RecoilPitch, 0f) && Mathf.Approximately(a.RecoilYaw, 0f))
-                    {
-                        a.RecoilPitch = 0f;
-                        a.RecoilYaw = 0f;
-                        a.ConsecutiveShots = 0;
-                    }
+                    var st = new CsRecoilState { Pitch = a.RecoilPitch, Yaw = a.RecoilYaw, Direction = a.RecoilDir };
+                    CsRecoil.Decay(ref st, dt);
+                    a.RecoilPitch = st.Pitch;
+                    a.RecoilYaw = st.Yaw;
+                    if (a.RecoilPitch == 0f && a.RecoilYaw == 0f) a.ConsecutiveShots = 0;
                 }
             }
         }
@@ -3074,8 +3242,15 @@ namespace Cs16.Module.Match
 
                     var speed = CsInventory.MovementSpeed(a);
                     // 与本地 / 远端共用同一套摩擦与加速（原版 PM_Friction / PM_Accelerate）。
+                    var d17 = Diag179(a.Id);   // #179 诊断（只读留痕）
+                    d17.SolveSeq = ++_diag179Seq;
+                    d17.Dt = dt;
+                    d17.EntryPos = a.Position;
+                    d17.EntryVel = a.Velocity;
+                    d17.MoveDir = move;
                     a.Velocity = CsMovement.Solve(a.Velocity, move, move.magnitude * speed, a.OnGround, dt,
                                                   GroundAheadOf(a));
+                    d17.SolveOut = a.Velocity;
 
                     if (intent.Jump && a.OnGround)
                     {
@@ -3242,10 +3417,11 @@ namespace Cs16.Module.Match
             {
                 // ① 难度的瞄准误差（每一发/每颗弹丸重掷）：Easy 抖得多、Hard 几乎不抖。
                 //    这是"三档准度差异"的唯一来源 —— 射线方向本身取的是理想瞄点，不含任何难度成分。
-                var dir = aimError > 0f ? ApplySpread(idealDir, aimError) : idealDir;
+                //    瞄准误差不是武器散布 ⇒ 传 pellets=1（不做单位圆截断）。
+                var dir = aimError > 0f ? ApplySpread(idealDir, aimError, 1) : idealDir;
 
                 // ② 霰弹：一发内每颗弹丸各自带武器散布（与本地玩家"一发内循环 Pellets"同一口径）。
-                var d = pellets > 1 ? ApplySpread(dir, def.Spread) : dir;
+                var d = pellets > 1 ? ApplySpread(dir, def.Spread, pellets) : dir;
 
                 _botShotRays++;
 
@@ -3356,20 +3532,42 @@ namespace Cs16.Module.Match
         }
 
         /// <summary>
-        /// 把方向绕开一个随机小角。两处用：① 机器人每一发的**难度瞄准误差**（<c>profile.AimErrorDegrees</c>）；
-        /// ② 机器人霰弹的武器散布。口径与本地玩家 / 模拟内部的 <c>ApplySpread</c> 一致（同一套欧拉角扰动）。
+        /// 把方向绕开一个随机小角，**瞄准局部 + 三角分布**。两处用：
+        /// ① 机器人每一发的**难度瞄准误差**（<c>profile.AimErrorDegrees</c>，传 <paramref name="pellets"/> = 1）；
+        /// ② 机器人霰弹的武器散布（传该发弹丸数）。
+        /// 口径与 <c>Firearm.ApplySpread</c> / <c>CsInventory.ApplySpread</c> 逐字一致。
+        ///
+        /// <para>**轴** = **瞄准局部**（原版把偏移加在玩家角度的基上 —— <c>cbase.cpp:1059</c> / <c>:1205</c> /
+        /// <c>:1358</c> 的 <c>vecDir = vecDirShooting + x*vecSpread.x*vecRight + y*vecSpread.y*vecUp</c>，
+        /// 其中 <c>vecRight/v_up = gpGlobals->v_right/v_up</c>）：右 = <c>Cross(Vector3.up, dir)</c>、
+        /// 上 = <c>Cross(dir, right)</c>。</para>
+        ///
+        /// <para>**形状** = 每轴取两个均匀分布之和（三角分布；原版 <c>cbase.cpp:1341-1342</c> 的
+        /// <c>FireBullets3</c> 玩家分支与 <c>:1051-1052</c> / <c>:1197-1198</c> 的霰弹那两条链都是这样）。
+        /// <paramref name="pellets"/> &gt; 1（霰弹）时再对整对做单位圆截断（原版 <c>:1055</c> / <c>:1201</c>；
+        /// <c>FireBullets3</c> 玩家分支**没有**这一条）。</para>
+        ///
+        /// <para><paramref name="spreadDegrees"/> 是**半角（度）**⇒ 用 <c>tan</c> 换成横向比例，极值角仍等于该半角。</para>
         /// </summary>
-        private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
+        private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees, int pellets)
         {
             if (spreadDegrees <= 0f) return dir;
-            // 散布：**玩法**（命中判定的输入 —— 同一发必须永远同结果）。
-            // 走全项目唯一的 WeaponSpread 流：这里（机器人霰弹/难度误差）、
-            // CsInventory.ApplySpread（模拟侧）、Firearm.ApplySpread（真人侧）本来就是
-            // 同一套欧拉角扰动（口径见三处注释），共用一个流才不会各抽各的。
+            // 散布：**玩法**（命中判定的输入 —— 同一发必须永远同结果）。走全项目唯一的 WeaponSpread 流 ——
+            // 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
             var rng = CsRng.Stream(CsRngStream.WeaponSpread);
-            var yaw = rng.Range(-spreadDegrees, spreadDegrees);
-            var pitch = rng.Range(-spreadDegrees, spreadDegrees);
-            return Quaternion.Euler(pitch, yaw, 0f) * dir;
+            float x, y;
+            do
+            {
+                x = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+                y = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+            }
+            while (pellets > 1 && x * x + y * y > 1f);
+            var t = Mathf.Tan(spreadDegrees * Mathf.Deg2Rad);
+            var right = Vector3.Cross(Vector3.up, dir);
+            if (right.sqrMagnitude < 1e-6f) right = Vector3.right;
+            right.Normalize();
+            var up = Vector3.Cross(dir, right);
+            return (dir + right * (x * t) + up * (y * t)).normalized;
         }
 
         // ==================================================================
@@ -3394,6 +3592,7 @@ namespace Cs16.Module.Match
             {
                 _scopeLevel = 0;
                 _preZoom = false;
+                _preReloadSeq = 0;
                 _spectateIndex = -1;
                 EmitEvent(Events.LocalDied);
                 Game.Logger.Info(Tag, $"本地玩家阵亡（{victim.Team}）→ 进入观战");
@@ -3480,17 +3679,28 @@ namespace Cs16.Module.Match
             var lp = _local;
             if (lp != null)
             {
+                // Team / IsAlive 恒取**本地**玩家（"自己这一队"与"本地是否活着"的语义 —— 雷达配色、
+                // 准星闸门都读它们）；**显示数值取被观察者**：原版 `view.cpp:1481` `pparams->health = 1`
+                // 且 simorg 取被观察者 ⇒ HUD 的 health / armor / ammo / money 从被观察实体取。
+                // 本地复活后 `SpectateTarget` 返回 null ⇒ 自动回本地值，不需要额外的复位分支。
+                var shown = lp;
+                if (IsSpectating)
+                {
+                    var t = SpectateTarget;
+                    if (t != null) shown = t;
+                }
+
                 CsHudSnapshot.Team = lp.Team;
                 CsHudSnapshot.IsAlive = lp.IsAlive;
-                CsHudSnapshot.Health = lp.Health;
-                CsHudSnapshot.Armor = lp.Armor;
-                CsHudSnapshot.HasHelmet = lp.HasHelmet;
-                CsHudSnapshot.Money = lp.Money;
+                CsHudSnapshot.Health = shown.Health;
+                CsHudSnapshot.Armor = shown.Armor;
+                CsHudSnapshot.HasHelmet = shown.HasHelmet;
+                CsHudSnapshot.Money = shown.Money;
 
-                var def = lp.ActiveDef;
+                var def = shown.ActiveDef;
                 CsHudSnapshot.WeaponId = def != null ? def.Id : null;
                 CsHudSnapshot.WeaponName = def != null ? def.DisplayName : null;
-                if (def != null && lp.Ammo.TryGetValue(def.Id, out var ammo))
+                if (def != null && shown.Ammo.TryGetValue(def.Id, out var ammo))
                 {
                     CsHudSnapshot.Mag = ammo.inMag;
                     CsHudSnapshot.Reserve = ammo.reserve;
@@ -3505,6 +3715,10 @@ namespace Cs16.Module.Match
             CsHudSnapshot.IsSpectating = IsSpectating;
             var spec = SpectateTarget;
             CsHudSnapshot.SpectateName = spec != null ? spec.Name : null;
+            // 俯视概览档位 6（跟随俯瞰）的窗口中心 = 被观察者的世界坐标（原版 V_GetMapChasePosition
+            // 取 ent->origin，view.cpp:1365）；无目标时置 0（档位 5 用固定中心，不读这两个值）。
+            CsHudSnapshot.SpectateX = spec != null ? spec.Position.x : 0f;
+            CsHudSnapshot.SpectateZ = spec != null ? spec.Position.z : 0f;
             CsHudSnapshot.IsZoomed = IsZoomed;
 
             CsHudSnapshot.Phase = Round.Phase;
@@ -3528,6 +3742,49 @@ namespace Cs16.Module.Match
             // ---- 机器人（H 菜单回显）----
             CsHudSnapshot.BotCount = BotCount;
             CsHudSnapshot.BotDifficulty = BotDifficulty;
+
+            // ---- 记分板花名册（每帧清空重填）----
+            CsHudSnapshot.Roster.Clear();
+            for (var i = 0; i < _actors.Count; i++)
+            {
+                var a = _actors[i];
+                var self = lp != null && a.Id == lp.Id;
+                CsHudSnapshot.Roster.Add(new CsScoreRosterItem
+                {
+                    Name = a.Name,
+                    Team = a.Team,
+                    Kills = a.Kills,
+                    Deaths = a.Deaths,
+                    Alive = a.IsAlive,
+                    Money = a.Money,
+                    Health = a.Health,
+                    IsBot = a.IsBot,
+                    IsSelf = self,
+                    // 单机版本地模拟：本地玩家走本机回环（0），机器人不是网络实体 ⇒ 没有延迟值
+                    Latency = self ? 0 : CsScoreRosterItem.UnknownLatency,
+                });
+            }
+
+            // ---- 俯视概览上的玩家标记（每帧清空重填）----
+            // 原版 CHudOverview::Draw 画**所有活着**的 player 实体（health > 0 && solid != SOLID_NOT，
+            // overview.cpp:69），不按可见性过滤 ⇒ 与雷达那条"只画自己 + 队友 + 视线可见敌人"不同。
+            CsHudSnapshot.Overview.Clear();
+            var specId = spec != null ? spec.Id : -1;
+            for (var i = 0; i < _actors.Count; i++)
+            {
+                var a = _actors[i];
+                if (!a.IsAlive) continue;
+                CsHudSnapshot.Overview.Add(new CsOverviewMark
+                {
+                    X = a.Position.x,
+                    Z = a.Position.z,
+                    Yaw = a.Yaw,
+                    Team = a.Team,
+                    Name = a.Name,
+                    Health = a.Health,
+                    IsSpectateTarget = a.Id == specId,
+                });
+            }
 
             // ---- 击杀信息（每帧清空重填）----
             CsHudSnapshot.KillFeed.Clear();

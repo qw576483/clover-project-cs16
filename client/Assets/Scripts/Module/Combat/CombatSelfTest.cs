@@ -118,6 +118,34 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
+        /// **只跑拾取链的数值判据**并返回报告（与 <see cref="RunDropOnly"/> 同理由：只跑一组、秒级返回）。
+        /// </summary>
+        public static string RunPickOnly()
+        {
+            Failures.Clear();
+            Notes.Clear();
+            CheckDropPickupChain();
+
+            var sb = new StringBuilder();
+            sb.AppendLine("========== 拾取链数值自检（同型号合并 / C4 掉落者先出圈） ==========");
+            for (var i = 0; i < Notes.Count; i++) sb.AppendLine("· " + Notes[i]);
+            if (Failures.Count == 0)
+            {
+                sb.AppendLine(">>> 结论: PASS");
+            }
+            else
+            {
+                sb.AppendLine($">>> 结论: FAIL（{Failures.Count} 项未达标）");
+                for (var i = 0; i < Failures.Count; i++) sb.AppendLine("   ✗ " + Failures[i]);
+            }
+            sb.AppendLine("=============================================================");
+
+            var text = sb.ToString();
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>
         /// **只跑差异 #68 的数值判据**并返回报告 —— 供 <c>unity command eval_file</c> 调用
         /// （与 <see cref="RunDropOnly"/> 同理由：只跑一组、秒级返回，避开 eval_file 的主线程 5 s 上限）。
         /// </summary>
@@ -146,6 +174,148 @@ namespace Cs16.Module.Combat
             var text = sb.ToString();
             Game.Logger.Info(Tag, text);
             return text;
+        }
+
+        // ==================================================================
+        //  实机取证用：给本地玩家发一把可开镜/可切两态的武器，并把状态打成一组报告
+        //  （只供 `run_script` 入口调用；⛔ 不参与任何产品流程，出生武器与买枪链路都不动）
+        // ==================================================================
+        /// <summary>
+        /// 给**本地玩家**发指定武器并切到手上，返回一行状态报告。
+        ///
+        /// <para>取证配方：先跑本入口拿到武器，再让驱动的状态文件把 <c>input</c> 的 <c>zoom</c> 位
+        /// 置 1 一帧（驱动每帧把它写进 <c>CsInputState.Zoom</c>），比赛侧就会打
+        /// <c>zoom.toggle</c> 那条日志（开镜档位 / fov / 射速 / 移速）——那就是逐把的实机证据。</para>
+        ///
+        /// <para>余额不够时由本入口临时补钱（只改本地玩家的 <c>Money</c>，是取证行为，不动买枪规则）。</para>
+        /// </summary>
+        public static string GiveLocalWeapon(string weaponId)
+        {
+            var mod = Cs16.Module.Match.MatchModule.Instance;
+            var match = mod != null ? mod.Match : null;
+            if (match == null)
+            {
+                const string why = "取不到 MatchModule.Instance / Match（编辑器不在对局里？）";
+                Game.Logger.Warn(Tag, why);
+                return why;
+            }
+            if (!match.IsRunning) return "比赛没在跑（IsRunning=false）⇒ 没法取证";
+            var a = match.LocalPlayer;
+            if (a == null) return "本地玩家为空（还没出生？）";
+
+            var def = CsWeapons.Get(weaponId);
+            if (def == null) return $"武器表里没有 '{weaponId}'";
+
+            if (a.Money < def.Price) a.Money = def.Price + 1000;   // 取证用：只补本地玩家的余额
+            if (!match.TryBuyFor(a.Id, def.Id, out var reason))
+                Game.Logger.Warn(Tag, $"{a.Name} 买 {def.DisplayName} 返回「{reason ?? "未知原因"}」（继续试切枪）");
+
+            match.SwitchWeapon(def.Id);
+            var held = a.ActiveDef;
+            var sb = new StringBuilder();
+            sb.AppendLine($"GIVE-OK weapon={def.Id} 显示名={def.DisplayName} 手上={held?.Id ?? "-"} " +
+                $"canZoom={def.CanZoom} canSilence={def.CanSilence} canBurst={def.CanBurst} " +
+                $"zoomFov={def.ZoomFov} cycleZoom={def.CycleTimeZoom} spdZoom={def.MaxSpeedZoom}");
+            sb.AppendLine(ZoomStateLine());
+            var text = sb.ToString();
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>本地玩家当前的开镜状态一行（武器 / 档位 / fov / 射速 / 移速）。</summary>
+        public static string ZoomStateLine()
+        {
+            var mod = Cs16.Module.Match.MatchModule.Instance;
+            var match = mod != null ? mod.Match : null;
+            if (match == null) return "ZOOM-STATE match=NO";
+            var a = match.LocalPlayer;
+            if (a == null) return "ZOOM-STATE local=NO";
+            var def = a.ActiveDef;
+            var scoped = a.Scoped;
+            return "ZOOM-STATE " +
+                $"weapon={def?.Id ?? "-"} " +
+                $"scoped={scoped} " +
+                $"fov={CsConst.ScopeFovFor(def, scoped ? 1 : 0):F0} " +
+                $"cycle={CsWeapons.CycleTimeFor(def, false, scoped):F3} " +
+                $"spd={Cs16.Module.Match.CsInventory.MovementSpeed(a):F2} " +
+                $"money={a.Money}";
+        }
+
+        /// <summary>
+        /// **实机判据入口**（Play 内由 <c>run_script</c> 调）：在**本地玩家脚下 0.5 m** 处放一件
+        /// "无主"掉落武器，并把落点与当前相位打回来。
+        ///
+        /// <para><b>为什么这是"非 Live 相位也能拾取"的判别器</b>：改造前 <c>TickDroppedWeapons</c> 带
+        /// <c>Phase != Live</c> 闸门、本地玩家的 C4 拾取又落在 <c>UpdateLocalPlayer</c> 的非 Live 早退之后
+        /// ⇒ 冻结期 / 回合结算期一件都捡不起来；改造后 <c>TickPickups</c> 在相位门外跑 ⇒ 同一条件下会被捡走。</para>
+        ///
+        /// <para>掉落物摆成 <c>dropperActorId = 0</c>（无主）⇒ 不撞"掉落者先出圈"守卫，本地玩家立刻可捡。
+        /// 判据用法见 <see cref="PickupStateLine"/>。</para>
+        /// </summary>
+        public static string DropAtLocalForTest(string weaponId, float dx = 0.5f)
+        {
+            var mod = Cs16.Module.Match.MatchModule.Instance;
+            // MatchModule.Match 的静态类型是 ICsMatch，而 SpawnDroppedWeapon 是 CsMatch 上的 internal
+            // ⇒ 必须拿到具体类型（同一程序集，internal 可用；⛔ 不为取证改契约）。
+            var match = mod != null ? mod.Match as Cs16.Module.Match.CsMatch : null;
+            if (match == null) return "DROPTEST match=NO（编辑器不在对局里？）";
+            if (!match.IsRunning) return "DROPTEST running=NO";
+            var a = match.LocalPlayer;
+            if (a == null) return "DROPTEST local=NO";
+
+            var id = string.IsNullOrEmpty(weaponId) ? CsWeapons.Ak47 : weaponId;
+            if (CsWeapons.Get(id) == null) return $"DROPTEST 武器表里没有 '{id}'";
+
+            var before = match.DroppedWeapons.Count;
+            var pos = a.Position + new Vector3(dx, 0f, 0f);
+            match.SpawnDroppedWeapon(id, CsTeam.CT, 0, pos, 0f, 30, 90);
+            var text = $"DROPTEST placed weapon={id} dx={dx:F2} phase={match.Phase} droppedBefore={before} " +
+                       $"droppedAfter={match.DroppedWeapons.Count} " +
+                       $"at=({pos.x:F2},{pos.y:F2},{pos.z:F2}) local=({a.Position.x:F2},{a.Position.y:F2},{a.Position.z:F2})";
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>当前相位 + 世界上还剩几件掉落物 + 本地玩家手上/弹药的读数一行（配合 <see cref="DropAtLocalForTest"/>）。</summary>
+        public static string PickupStateLine()
+        {
+            var mod = Cs16.Module.Match.MatchModule.Instance;
+            var match = mod != null ? mod.Match as Cs16.Module.Match.CsMatch : null;
+            if (match == null) return "PICKSTATE match=NO";
+            var a = match.LocalPlayer;
+            if (a == null) return "PICKSTATE local=NO";
+            var ammo = a.GetAmmo(CsWeapons.Ak47);
+            var text = $"PICKSTATE phase={match.Phase} droppedLeft={match.DroppedWeapons.Count} " +
+                       $"primary={a.PrimaryWeapon ?? "-"} akAmmo={ammo.inMag}+{ammo.reserve} hasBomb={a.HasBomb}";
+            Game.Logger.Info(Tag, text);
+            return text;
+        }
+
+        /// <summary>
+        /// 测试入口：让**下一次** <see cref="CombatModule.FillInput"/> 视为"按下了右键"（attack2 的按下沿）。
+        ///
+        /// <para><b>为什么需要它</b>：右键的按下沿读的是真实鼠标
+        /// （<c>input.GetKeyDown(GameKey.MouseRight)</c>），而**开镜音 / 切换音那一支在 <c>FillInput</c> 里**
+        /// （不是模拟侧）⇒ 离线驱动没有鼠标层，这是取这两条音的唯一入口。一次调用 = 一次按下
+        /// （一次性旗标，被 <c>FillInput</c> 消费即清）。</para>
+        ///
+        /// <para>返回值把"这一按**应该**出什么音"一起带上（手上武器 + 该支的判据位 + 切换音短名），
+        /// 便于与随后抓到的 AudioSource 行对账。</para>
+        /// </summary>
+        public static string PressAttack2()
+        {
+            var mod = CombatModule.Instance;
+            if (mod == null) return "ERROR: CombatModule.Instance null（编辑器不在对局里？）";
+            mod.SetAttack2PressedForTest();
+
+            var mm = MatchModule.Instance;
+            var match = mm != null ? mm.Match : null;
+            var a = match != null ? match.LocalPlayer : null;
+            var def = a != null ? a.ActiveDef : null;
+            if (def == null) return "attack2 armed: local / def 为空（这一按不会出音）";
+            return $"attack2 armed: weapon={def.Id} canZoom={def.CanZoom} soundZoom=\"{def.SoundZoom}\" " +
+                   $"canSilence={def.CanSilence} canBurst={def.CanBurst} " +
+                   $"switchSoundTurningOn=\"{CsWeapons.Attack2ToggleSound(def, true)}\"";
         }
 
         // ==================================================================
@@ -424,7 +594,7 @@ namespace Cs16.Module.Combat
                     simTime += FrameDt;
                     tickedFrames++;
 
-                    while (match.ConsumeShotFired(out _)) shotsRecorded++;
+                    while (match.ConsumeShotFired(out _, out _)) shotsRecorded++;
 
                     if (local.RecoilPitch > prevRecoil) shotsWithRecoilGrowth++;
                     prevRecoil = local.RecoilPitch;
@@ -841,6 +1011,156 @@ namespace Cs16.Module.Combat
         }
 
         // ==================================================================
+        //  ⑧ 拾取链：同型号掉落合并 + C4「掉落者先出圈」（数值类判据，**离线跑，不进 Play**）
+        // ==================================================================
+        /// <summary>
+        /// 两条判据：
+        /// <list type="number">
+        /// <item><b>同型号掉落武器</b>：手里已有 AK、走过一把**别人掉的** AK（弹匣 20）⇒ 按原版
+        ///   <c>ExtractClipAmmo</c> 把 20 发并入**备弹**（受备弹上限夹住）、掉落物消失；
+        ///   主槽是**别的枪** / 备弹已满 ⇒ 不捡（两条负控）。</item>
+        /// <item><b>C4 掉落者先出圈</b>：本地 T 丢下包后原地站着 ⇒ **不许**被自己捡回；
+        ///   走出 1.2 m 再回来 ⇒ 捡回。</item>
+        /// </list>
+        /// <para>夹具一律走 <c>CsMatch.SpawnDroppedWeapon</c>（internal、同程序集）与"直接摆
+        /// <c>Position</c>"，不新增产品入口；掉落物的 <c>DropperActorId</c> 摆成不存在的 9999
+        /// ⇒ 只验"不是掉落者时怎么捡"，与武器链的掉落者守卫互不干扰。</para>
+        /// </summary>
+        private static void CheckDropPickupChain()
+        {
+            var prevClock = CsMatch.Clock;
+            CsMatch match = null;
+
+            try
+            {
+                var cfg = new CsMatchConfig
+                {
+                    MapName = "pick-selftest",
+                    BotsPerTeam = 1,
+                    PlayerTeam = CsTeam.T,
+                    PlayerName = "PickSelfTest",
+                    RoundsPerHalf = 1,
+                    RoundTime = 60f,
+                    FreezeTime = 0.2f,
+                    HalfTimeSwap = false,
+                };
+
+                // **刻意不调 CsMatch.Tick、也不依赖 Live 相位**：直接驱动两条链的实现函数。
+                // 理由：Tick 会跑机器人 AI（视线查询走 UnityEngine.Physics），而 Physics 的静态构造
+                // 只在编辑器 / 播放器里可用 ⇒ 纯 mono 宿主（离线机）跑不动，会抛
+                // TypeInitializationException。两条链本身的判定不依赖相位，所以这里直接调。
+                CsMatch.Clock = () => 0f;
+                match = new CsMatch(new SelfTestMap());
+                match.Start(cfg);
+
+                var local = match.LocalPlayer;
+                if (local == null)
+                {
+                    Fail("拾取自检：开局后拿不到 LocalPlayer");
+                    return;
+                }
+
+                var akDef = CsWeapons.Get(CsWeapons.Ak47);
+                if (akDef == null)
+                {
+                    Fail("拾取自检：武器表里没有 AK-47");
+                    return;
+                }
+                var worldPos = new Vector3(6f, 0f, 6f);
+
+                // ---- ① 正控：手里 AK（弹匣 20 + 备弹 10），走过别人掉的 AK（弹匣 20）⇒ 备弹 +20 ----
+                local.SecondaryWeapon = CsWeapons.Usp;
+                local.PrimaryWeapon = CsWeapons.Ak47;
+                local.ActiveWeapon = CsWeapons.Ak47;
+                local.SetAmmo(CsWeapons.Ak47, 20, 10);
+                match.SpawnDroppedWeapon(CsWeapons.Ak47, CsTeam.CT, 9999, worldPos, 0f, 20, 0);
+                var d1 = match.DroppedWeapons[match.DroppedWeapons.Count - 1];
+                local.Position = new Vector3(worldPos.x + 0.5f, worldPos.y, worldPos.z);
+
+                var expectAdd = Mathf.Max(0, Mathf.Min(20, akDef.ReserveAmmo - 10));
+                var took1 = match.Inventory.PickupDropped(local, d1);
+                var afterAk = local.GetAmmo(CsWeapons.Ak47);
+                Assert(took1 && d1.Consumed && afterAk.inMag == 20 && afterAk.reserve == 10 + expectAdd,
+                    $"拾取自检①（正控）：同型号应把掉落那把弹匣 20 并入备弹（弹匣不动 20，备弹 10→{10 + expectAdd}），" +
+                    $"实际 took={took1} consumed={d1.Consumed} {afterAk.inMag}+{afterAk.reserve}");
+                Notes.Add($"① 同型号 AK：弹匣 20 并入备弹 +{expectAdd}（备弹 10→{afterAk.reserve}，上限 {akDef.ReserveAmmo}）");
+
+                // ---- ② 负控：主槽是**别的枪**（M4A1）⇒ 走过同槽位的 AK 不捡 ----
+                local.PrimaryWeapon = CsWeapons.M4A1;
+                local.ActiveWeapon = CsWeapons.M4A1;
+                local.SetAmmo(CsWeapons.M4A1, 30, 90);
+                match.SpawnDroppedWeapon(CsWeapons.Ak47, CsTeam.CT, 9999, worldPos, 0f, 20, 0);
+                var d2 = match.DroppedWeapons[match.DroppedWeapons.Count - 1];
+                var took2 = match.Inventory.PickupDropped(local, d2);
+                Assert(!took2 && !d2.Consumed,
+                    $"拾取自检②（负控）：主槽是别的枪时不该捡起 AK，实际 took={took2} consumed={d2.Consumed}");
+                Notes.Add("② 负控 主槽 M4A1 + 地上 AK ⇒ 不捡（原版不挤掉手里那把）");
+
+                // ---- ③ 负控：同型号但备弹已满 ⇒ 一颗都装不下 ⇒ 掉落物留在原地 ----
+                local.PrimaryWeapon = CsWeapons.Ak47;
+                local.ActiveWeapon = CsWeapons.Ak47;
+                local.SetAmmo(CsWeapons.Ak47, 20, akDef.ReserveAmmo);
+                match.SpawnDroppedWeapon(CsWeapons.Ak47, CsTeam.CT, 9999, worldPos, 0f, 20, 0);
+                var d3 = match.DroppedWeapons[match.DroppedWeapons.Count - 1];
+                var took3 = match.Inventory.PickupDropped(local, d3);
+                Assert(!took3 && !d3.Consumed,
+                    $"拾取自检③（负控）：备弹已满时不该消费掉落物（ExtractClipAmmo 返回 0），实际 took={took3} consumed={d3.Consumed}");
+                Notes.Add($"③ 负控 备弹已满（{akDef.ReserveAmmo}）⇒ 掉落物留在原地");
+
+                // ---- ④ 正控（未改动分支的回归）：主槽为空 ⇒ 拿起 AK 并原样带回掉落时余弹 ----
+                local.PrimaryWeapon = null;
+                local.ActiveWeapon = null;
+                local.Ammo.Remove(CsWeapons.Ak47);
+                match.SpawnDroppedWeapon(CsWeapons.Ak47, CsTeam.CT, 9999, worldPos, 0f, 17, 42);
+                var d4 = match.DroppedWeapons[match.DroppedWeapons.Count - 1];
+                var took4 = match.Inventory.PickupDropped(local, d4);
+                var ammo4 = local.GetAmmo(CsWeapons.Ak47);
+                Assert(took4 && d4.Consumed && local.PrimaryWeapon == CsWeapons.Ak47
+                       && ammo4.inMag == 17 && ammo4.reserve == 42,
+                    $"拾取自检④（回归）：空主槽应拿起 AK 并带回余弹 17+42，实际 took={took4} " +
+                    $"weapon={local.PrimaryWeapon} {ammo4.inMag}+{ammo4.reserve}");
+                Notes.Add("④ 回归 空主槽拾取 AK：余弹 17+42 原样带回");
+
+                // ---- ⑤ C4：本地 T 丢包 ⇒ 原地不许被自己捡回；出圈再回来 ⇒ 捡回 ----
+                var all = match.Actors;
+                for (var i = 0; i < all.Count; i++)
+                    if (!ReferenceEquals(all[i], local)) all[i].HasBomb = false;
+
+                local.HasBomb = true;
+                local.ActiveWeapon = CsWeapons.C4;
+                match.DropActiveWeapon();               // → OnCarrierLost：Dropped=true，落点就在脚下
+                Assert(match.BombDropped && !local.HasBomb,
+                    $"拾取自检⑤：丢包后应掉在地上且离手，实际 BombDropped={match.BombDropped} HasBomb={local.HasBomb}");
+                var bombPos = match.BombPosition;
+
+                local.Position = bombPos;
+                match.Bomb.TryPickupDropped(local);
+                Assert(match.BombDropped && !local.HasBomb,
+                    $"拾取自检⑤（正控）：站在落点上不许被自己捡回，实际 BombDropped={match.BombDropped} HasBomb={local.HasBomb}");
+
+                local.Position = new Vector3(bombPos.x + 5f, bombPos.y, bombPos.z);
+                match.Bomb.TryPickupDropped(local);
+                Assert(match.BombDropped && !local.HasBomb,
+                    $"拾取自检⑤（正控）：刚出圈那一拍只开门、不捡，实际 BombDropped={match.BombDropped} HasBomb={local.HasBomb}");
+
+                local.Position = new Vector3(bombPos.x + 0.5f, bombPos.y, bombPos.z);
+                match.Bomb.TryPickupDropped(local);
+                Assert(!match.BombDropped && local.HasBomb,
+                    $"拾取自检⑤（正控）：出圈再回来应把包捡回，实际 BombDropped={match.BombDropped} HasBomb={local.HasBomb}");
+                Notes.Add("⑤ C4 丢包 → 原地不捡 → 出圈 5m（只开门）→ 回来 0.5m ⇒ 捡回");
+            }
+            catch (Exception ex)
+            {
+                Fail($"拾取自检抛异常：{ex}");
+            }
+            finally
+            {
+                CsMatch.Clock = prevClock;
+                if (match != null) match.Stop();
+            }
+        }
+
+        // ==================================================================
         //  ⑦ 差异 #68：attack2 两态数值 + 连发节奏（数值类判据，**离线跑，不进 Play**）
         // ==================================================================
         /// <summary>
@@ -974,7 +1294,7 @@ namespace Cs16.Module.Combat
                         KeepBotsAway();
                         match.Tick(FrameDt);
                         simTime += FrameDt;
-                        while (match.ConsumeShotFired(out _)) times.Add(tBefore);
+                        while (match.ConsumeShotFired(out _, out _)) times.Add(tBefore);
                     }
                     return times;
                 }
@@ -1113,6 +1433,64 @@ namespace Cs16.Module.Combat
             ExpectClip("Glock18 没有切换音（原版串表里没有）", CsWeapons.Attack2ToggleSound(glock, true), "");
             ExpectClip("AK47 没有切换音", CsWeapons.Attack2ToggleSound(ak, true), "");
 
+            // ---- 开镜（attack2 = 瞄具）：逐把对照原版，出处见 CsWeapons.ApplyZoomValues ----
+            void ExpectZoom(string what, CsWeaponDef d, bool canZoom, float fov, float fovSecond,
+                float cycleZoom, float speedZoom, string sound, bool unzoomOnReload, int maxLevel)
+            {
+                if (d == null) { bad.Add($"{what}: 武器表里缺这把枪"); return; }
+                void Chk<T>(string tag, T actual, T expected) where T : IEquatable<T>
+                {
+                    if (!actual.Equals(expected)) bad.Add($"{what}·{tag}: 实测 「{actual}」 ≠ 期望 「{expected}」");
+                }
+                Chk("CanZoom", d.CanZoom, canZoom);
+                Chk("ZoomFov", d.ZoomFov, fov);
+                Chk("ZoomFovSecond", d.ZoomFovSecond, fovSecond);
+                Chk("CycleTimeZoom", d.CycleTimeZoom, cycleZoom);
+                Chk("MaxSpeedZoom", d.MaxSpeedZoom, speedZoom);
+                Chk("SoundZoom", d.SoundZoom ?? "", sound);
+                Chk("UnzoomOnReload", d.UnzoomOnReload, unzoomOnReload);
+                Chk("ScopeMaxLevel", CsWeapons.ScopeMaxLevel(d), maxLevel);
+                if (maxLevel <= 0) return;
+                Chk("ScopeFovFor(1)", CsConst.ScopeFovFor(d, 1), fov);
+                Chk("ScopeFovFor(满档)", CsConst.ScopeFovFor(d, maxLevel), fovSecond > 0f ? fovSecond : fov);
+            }
+
+            ExpectZoom("AUG", CsWeapons.Get(CsWeapons.Aug), true, 55f, 0f, 0.135f, 0f, "", true, 1);
+            ExpectZoom("SG552", CsWeapons.Get(CsWeapons.Sg552), true, 55f, 0f, 0.135f, 5.08f, "", true, 1);
+            ExpectZoom("AWP", CsWeapons.Get(CsWeapons.Awp), true, 40f, 10f, 0f, 3.81f, "sfx/zoom", false, 2);
+            ExpectZoom("Scout", CsWeapons.Get(CsWeapons.Scout), true, 40f, 15f, 0f, 5.588f, "sfx/zoom", false, 2);
+            ExpectZoom("SG550", CsWeapons.Get(CsWeapons.Sg550), true, 40f, 15f, 0f, 3.81f, "sfx/zoom", false, 2);
+            ExpectZoom("G3SG1", CsWeapons.Get(CsWeapons.G3sg1), true, 40f, 15f, 0f, 3.81f, "sfx/zoom", false, 2);
+
+            // 原版 `HasSecondaryAttack`（`hlsdk/dlls/weapons.cpp:624`）把这些枪的右键整个判为 false
+            // ⇒ 它们不能有 CanSilence / CanBurst / CanZoom 中的任何一项。
+            foreach (var noAttack2 in new[]
+            {
+                CsWeapons.Ak47, CsWeapons.Xm1014, CsWeapons.Mac10, CsWeapons.Elite, CsWeapons.FiveSeven,
+                CsWeapons.Mp5, CsWeapons.M249, CsWeapons.M3, CsWeapons.Tmp, CsWeapons.Deagle,
+                CsWeapons.P228, CsWeapons.P90, CsWeapons.C4, CsWeapons.Galil,
+            })
+            {
+                var d = CsWeapons.Get(noAttack2);
+                if (d == null) { bad.Add($"原版无右键名单：武器表里缺 {noAttack2}"); continue; }
+                if (d.CanSilence || d.CanBurst || d.CanZoom || CsWeapons.ScopeMaxLevel(d) != 0)
+                {
+                    bad.Add($"原版无右键名单：{noAttack2} 被接了右键能力（" +
+                        $"silence={d.CanSilence} burst={d.CanBurst} zoom={d.CanZoom}）");
+                }
+            }
+
+            // 原版的 flCycleTime 只在 AUG / SG552 上按 fov 分两档；其余武器开镜不改射速。
+            Expect("AUG 开镜射速（原版 0.135s）", CsWeapons.CycleTimeFor(CsWeapons.Get(CsWeapons.Aug), false, true), 0.135f);
+            Expect("AUG 不开镜射速（原版 0.0825s）", CsWeapons.CycleTimeFor(CsWeapons.Get(CsWeapons.Aug), false, false), 0.0825f);
+            Expect("SG552 开镜射速（原版 0.135s）", CsWeapons.CycleTimeFor(CsWeapons.Get(CsWeapons.Sg552), false, true), 0.135f);
+            Expect("AWP 开镜不改射速（原版循环时间是常量）",
+                CsWeapons.CycleTimeFor(CsWeapons.Get(CsWeapons.Awp), false, true),
+                CsWeapons.CycleTimeFor(CsWeapons.Get(CsWeapons.Awp), false, false));
+
+            // 原版 `flSpread` 表达式里没有 fov 分支 ⇒ 开镜不收敛散布。
+            Expect("开镜散布倍率（原版 = 1）", CsCombatTuning.ZoomSpreadScale, 1f);
+
             // ---- 静止站散布（出处 §4.2）：原版是"系数 × acc"口径，本工程只能用两态系数之比 ----
             Expect("M4A1 静止站散布比·装消音（0.025 / 0.02）",
                 CsWeapons.StaticSpreadFor(m4, true, false) / m4.Spread, 0.025f / 0.02f);
@@ -1143,8 +1521,8 @@ namespace Cs16.Module.Combat
         /// 差异 #95：后坐力 kickback 的**逐武器实参**判据。出处 = <c>策划/手感参数对照.md</c>
         /// §5.5（步枪 / 冲锋枪 / 机枪）+ §5.8（手枪 / 狙击 / 霰弹）；归属链见该文件 §5.11。
         ///
-        /// <para>判据两面都查：① 表里那 21 把的 7 个实参逐条相等；② <c>HasKickback</c> 的开关
-        /// **恰好**等于这张表 —— 未落值的 3 把（G3SG1 / SG550 缺 <c>lateral_base</c>、Glock18 两次解析全 0）
+        /// <para>判据两面都查：① 表里那 22 把的 7 个实参逐条相等；② <c>HasKickback</c> 的开关
+        /// **恰好**等于这张表 —— 未落值的 2 把（G3SG1 / SG550 缺 <c>lateral_base</c>）
         /// 必须仍是 false（缺槽不猜，⛔ 不许被"顺手补齐"）。</para>
         /// </summary>
         private static void CheckKickbackValues()
@@ -1173,6 +1551,8 @@ namespace Cs16.Module.Combat
                 { CsWeapons.Elite, new[] { 2f, 0f, 0f, 0f, 0f, 0f, 0f } },
                 { CsWeapons.M3, new[] { 2.5f, 0f, 0f, 0f, 0f, 0f, 0f } },
                 { CsWeapons.Xm1014, new[] { 0.75f, 0f, 0f, 0f, 0f, 0f, 0f } },
+                // 全 0 也是出处：0x100DB52E `fldz` + 5×`fst` + 1×`fstp` 把 6 个槽各写 0。
+                { CsWeapons.Glock18, new[] { 0f, 0f, 0f, 0f, 0f, 0f, 0f } },
             };
 
             const float tol = 0.0001f;
@@ -1208,7 +1588,7 @@ namespace Cs16.Module.Combat
             if (Failures.Count == 0)
             {
                 Notes.Add($"差异 #95 kickback 实参：{landed} 把逐条 == 出处表（步枪/冲锋枪/机枪 12 + FAMAS + " +
-                          "手枪/狙击/霰弹 8）；G3SG1 / SG550（缺 lateral_base）与 Glock18（解析全 0）" +
+                          "手枪/狙击/霰弹 8 + Glock18 全 0）；G3SG1 / SG550（缺 lateral_base）" +
                           "仍 HasKickback=false ⇒ 缺槽不猜");
             }
         }
@@ -1539,8 +1919,10 @@ namespace Cs16.Module.Combat
 
             public void Unload() { }
             public bool WalkableAt(float x, float z) => true;
-            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius) => true;
-            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius) => to;
+            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
+                                 float height = CsConst.StandHeight) => true;
+            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                                       float height = CsConst.StandHeight) => to;
             public float SampleGround(Vector3 pos, float maxDrop = 8f) => 0f;
 
             /// <summary>假地图的地面 = y 0 的水平面（法线朝上 ⇒ 永远是可站立的缓面）。</summary>

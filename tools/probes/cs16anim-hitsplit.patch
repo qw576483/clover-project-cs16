@@ -1,0 +1,58 @@
+# cs16anim-hitsplit.patch -- 让 #11「腿 = LeftLeg/RightLeg 两段」这一改动可入库存档。
+#
+# WHY: `原版资源/**` 被 .gitignore:6 整目录忽略 => 导出链 cs16_anim.py 无法直接提交。
+#      tools/probes/cs16anim-blend-v3.patch 只覆盖 #10 的 v3 blend 布局，**不含**本片的 CAPS 改动
+#      （只读核实：patch 内 CAPS/LeftLeg/RightLeg/Bip01 L Thigh 均 0 命中；其 cs16_anim.py 的 hunk
+#       全在 251-458 行，而 CAPS 在第 38 行）。
+#
+# APPLY ORDER: 先 cs16anim-blend-v3.patch（不动 CAPS 区），再本补丁。
+# TARGET: 原版资源/cs16src/cs16_anim.py（该路径被忽略，故用 patch 而非直接提交文件）。
+# CHECK:  本脚本内做正向回放断言（还原态 + 本补丁 == 现盘逐字节）与反向断言。
+#
+--- a/cs16_anim.py
+
++++ b/cs16_anim.py
+
+@@ -25,12 +25,21 @@
+
+               "Bip01 L Calf", "Bip01 L Foot", "Bip01 R Thigh", "Bip01 R Calf",
+               "Bip01 R Foot", "Bomb"]
+ 
+-# 命中胶囊：(区间名, 挂点骨骼名, 中心/身高, 高/身高, 半径/身高)。比例取自工程内 9 份角色
+-# .cs16anim 的实测值（跨角色一致到 0.2%），乘 1.8 m 即导出值。
+-CAPS = [("Leg", "Bip01", 0.22433, 0.44867, 0.10967),
+-        ("Stomach", "Bip01 Pelvis", 0.49856, 0.25922, 0.12961),
+-        ("Chest", "Bip01 Spine3", 0.63817, 0.28917, 0.13961),
+-        ("Head", "Bip01 Head", 0.82261, 0.14956, 0.07478)]
++# 命中胶囊：(区间名, 挂点骨骼名, 侧向中心/身高, 中心高/身高, 高/身高, 半径/身高)。
++# 胸/腹/头的比例取自工程内 9 份角色 .cs16anim 的实测值（跨角色一致到 0.2%），乘 1.8 m 即导出值；
++# 侧向中心 0 = 居中在身体轴上（导出空间里 spine/head 骨骼的该轴坐标实测 ≤ 0.2 mm）。
++#
++# 腿：原版左右腿是**两个独立命中组**（studiohdr 里组号 6 / 7，各自 3 个命中盒，挂
++# L Thigh..L Foot / R Thigh..R Foot），player.cpp 里 HITGROUP_LEFTLEG / HITGROUP_RIGHTLEG 也只共用一个
++# ×0.75 分支 ⇒ 不能合成一条。本工程每条腿用**一个竖直胶囊**近似那 3 个盒，挂在该腿最上面的腿骨
++# （Bip01 L/R Thigh）下；侧向中心与半径取那两组命中盒的**绑定姿态世界 AABB**
++# （9 份角色 cstrike__models__player__*.mdl 直读、逐模型取平均：侧向中心 ±0.149..0.159 m、
++# 半高 0.448..0.470 m、半径 0.134..0.141 m；算法见 .ai-tmp/test/hitboxfix-leg-aabb.py）。
++CAPS = [("LeftLeg", "Bip01 L Thigh", +0.08700, 0.25583, 0.51106, 0.07661),
++        ("RightLeg", "Bip01 R Thigh", -0.08700, 0.25583, 0.51106, 0.07661),
++        ("Stomach", "Bip01 Pelvis", 0.0, 0.49856, 0.25922, 0.12961),
++        ("Chest", "Bip01 Spine3", 0.0, 0.63817, 0.28917, 0.13961),
++        ("Head", "Bip01 Head", 0.0, 0.82261, 0.14956, 0.07478)]
+ 
+ # 默认跳过的序列标签（场景/水中动作，且 'dummy' 是占位序列）。
+ SKIP_LABELS = {"dummy", "longjump", "swim", "treadwater"}
+@@ -411,10 +420,10 @@
+
+             # 命中胶囊只有角色模型才有（视模型没有 hitbox 语义 ⇒ 写 0 条）
+             caps = [] if self.view else CAPS
+             f.write(struct.pack("<I", len(caps)))
+-            for zone, bone_name, c, h, r in caps:
++            for zone, bone_name, cz, c, h, r in caps:
+                 wstr(f, zone)
+                 f.write(struct.pack("<i", BONE_NAMES.index(bone_name)))
+-                f.write(struct.pack("<3f", c * 1.8, h * 1.8, r * 1.8))
++                f.write(struct.pack("<4f", c * 1.8, h * 1.8, r * 1.8, cz * 1.8))
+ 
+             subs = self.build_subs()
+             f.write(struct.pack("<I", len(subs)))

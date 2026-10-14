@@ -41,6 +41,12 @@ namespace Cs16.Module.Match
     /// </summary>
     public static class CsRecoil
     {
+        /// <summary>原版 <c>PM_DropPunchAngle</c> 的常数项（度/秒），见 <see cref="Decay"/>。</summary>
+        private const float DecayBase = 10f;
+
+        /// <summary>原版 <c>PM_DropPunchAngle</c> 的比例项（1/秒），见 <see cref="Decay"/>。</summary>
+        private const float DecaySlope = 0.5f;
+
         /// <summary>
         /// 打一发。<paramref name="shotsFired"/> = 本梭已发数（首发传 1）；
         /// <paramref name="flipRoll"/> = [0,1) 的随机数（只用于方向翻转）；
@@ -91,6 +97,37 @@ namespace Cs16.Module.Match
             if (flipRoll < flipChance) s.Direction = -s.Direction;
 
             return s;
+        }
+
+        /// <summary>
+        /// 后坐力的**逐帧回落**（原版 <c>PM_DropPunchAngle</c>）：把 <c>(Pitch, Yaw)</c> 的长度按
+        /// <c>len -= (10 + len × 0.5) × dt</c> 递减、下限 0，再等比缩回两个分量 ——
+        /// 原版没有"回复延迟 / 回复速度"这类旋钮。
+        ///
+        /// <para>出处 = <c>原版资源/hlsdk/pm_shared/pm_shared.c:2334-2342</c>（<c>PM_DropPunchAngle</c>），
+        /// 每帧在 <c>PM_CheckParamters</c>（<c>:2373</c>）里调用；随后 <c>:2377-2378</c>
+        /// <c>VectorAdd(v_angle, pmove-&gt;punchangle, v_angle)</c> 把 punchangle **直接**加到视角度上
+        /// ⇒ 表现层不再做二次平滑（<c>CloverFirstPersonCamera</c> 的时间常数置 0）。CS 与 HL 共用
+        /// 同一份 pm_shared 移动代码 ⇒ 机制形状出处（该函数在 server/hw 的 pm_shared 里，<c>mp.dll</c> 不含它）。</para>
+        /// </summary>
+        public static void Decay(ref CsRecoilState s, float dt)
+        {
+            if (dt <= 0f) return;
+
+            var len = (float)System.Math.Sqrt(s.Pitch * s.Pitch + s.Yaw * s.Yaw);
+            if (len <= 0f)
+            {
+                s.Pitch = 0f;
+                s.Yaw = 0f;
+                return;
+            }
+
+            var next = len - (DecayBase + len * DecaySlope) * dt;
+            if (next < 0f) next = 0f;
+
+            var scale = next / len;
+            s.Pitch *= scale;
+            s.Yaw *= scale;
         }
     }
 }

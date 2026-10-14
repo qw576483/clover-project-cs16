@@ -110,7 +110,7 @@ namespace Cs16.Module.Combat
         /// </summary>
         public static float ComputeSpread(CsWeaponDef def, float moveFactor, bool onGround, bool crouched,
             int consecutiveShots, bool scopedAccurate, bool silenced = false, bool burst = false,
-            float acc = -1f)
+            float acc = -1f, float speedUnits = -1f)
         {
             if (def == null) return 0f;
 
@@ -118,10 +118,17 @@ namespace Cs16.Module.Combat
             // 移动 / 离地由档位本身表达，不再叠加 MoveSpread）；其余武器沿用差异 #68 的两态系数 + 附加。
             var originalModel = acc >= 0f && CsWeapons.HasSpreadCoefficients(def);
 
+            // 差异 #94：**绝对档族**（AWP / Scout / G3SG1）的原版判据是**绝对速度**（140 / 170 / 0），
+            // 不是"任何移动"⇒ 只有这一族（或带慢移档的武器）改用 speedUnits 判档；
+            // 其余武器保持 `moveFactor > 0f`（行为一字不变 —— 正控）。
+            var bySpeed = (def.SpreadAbsolute || def.SpreadSlowSpeedUnits > 0f) && speedUnits >= 0f;
+            var moving = bySpeed ? CsWeapons.IsMovingTier(def, speedUnits) : moveFactor > 0f;
+            var slow = bySpeed && CsWeapons.IsSlowTier(def, speedUnits);
+
             float spread;
             if (originalModel)
             {
-                spread = CsWeapons.SpreadFor(def, acc, onGround, moveFactor > 0f, crouched, silenced, burst);
+                spread = CsWeapons.SpreadFor(def, acc, onGround, moving, crouched, silenced, burst, slow);
             }
             else
             {
@@ -130,9 +137,15 @@ namespace Cs16.Module.Combat
                 if (!onGround) spread += def.MoveSpread * CsCombatTuning.AirSpreadScale;
             }
 
-            var recoilPenalty = Mathf.Min(consecutiveShots * CsCombatTuning.RecoilSpreadPerShot,
-                CsCombatTuning.RecoilSpreadMax);
-            spread += Mathf.Max(0f, recoilPenalty);
+            // 连射累积：走原版 acc 模型的武器，累积已经由 `acc = base + shots^power / div`
+            // 表达（mp.dll 各开火函数写 `[this+0xF8]` 的那条，见 CsWeapons.ApplyAccuracyValues）
+            // ⇒ 不再叠一层线性惩罚；只有没有 acc 模型的武器才走本工程的自定线性档。
+            if (!originalModel)
+            {
+                var recoilPenalty = Mathf.Min(consecutiveShots * CsCombatTuning.RecoilSpreadPerShot,
+                    CsCombatTuning.RecoilSpreadMax);
+                spread += Mathf.Max(0f, recoilPenalty);
+            }
 
             // 原版公式里蹲档已经在档位系数内（只有手枪族有这一档）⇒ 不再叠一次通用蹲伏收敛。
             if (crouched && !originalModel) spread *= CsCombatTuning.CrouchSpreadScale;
@@ -148,22 +161,51 @@ namespace Cs16.Module.Combat
 
             return ComputeSpread(def, MoveFactor(shooter), shooter.OnGround, shooter.IsCrouching,
                 shooter.ConsecutiveShots, scopedAccurate, shooter.Silenced, shooter.BurstMode,
-                shooter.Accuracy);
+                shooter.Accuracy, SpeedUnits(shooter));
         }
 
-        /// <summary>按散布角给方向加随机偏移（与比赛模拟内部的 <c>ApplySpread</c> 同口径）。</summary>
-        public static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
+        /// <summary>水平速度（unit/s）—— 与 <c>CsInventory.FireSpread</c> 同一折算口径（差异 #94 绝对档判据用）。</summary>
+        public static float SpeedUnits(CsActor actor)
+        {
+            if (actor == null) return 0f;
+            var v = actor.Velocity;
+            return new Vector2(v.x, v.z).magnitude / CsConst.UnitToMeter;
+        }
+
+        /// <summary>
+        /// 按散布角给方向加随机偏移。**轴** = **瞄准局部**（原版把偏移加在玩家角度的基上 ——
+        /// <c>cbase.cpp:1059</c> / <c>:1205</c> / <c>:1358</c> 的
+        /// <c>vecDir = vecDirShooting + x*vecSpread.x*vecRight + y*vecSpread.y*vecUp</c>，
+        /// 其中 <c>vecRight/v_up = gpGlobals->v_right/v_up</c>）：右 = <c>Cross(Vector3.up, dir)</c>、
+        /// 上 = <c>Cross(dir, right)</c>。
+        ///
+        /// <para>**形状** = 每轴取两个均匀分布之和（三角分布；原版 <c>cbase.cpp:1341-1342</c> 的
+        /// <c>FireBullets3</c> 玩家分支与 <c>:1051-1052</c> / <c>:1197-1198</c> 的霰弹那两条链都是这样）。
+        /// <paramref name="pellets"/> &gt; 1（霰弹）时再对整对做单位圆截断（原版 <c>:1055</c> / <c>:1201</c>；
+        /// <c>FireBullets3</c> 玩家分支**没有**这一条）。</para>
+        ///
+        /// <para><paramref name="spreadDegrees"/> 是**半角（度）**（霰弹由 `M3_CONE_VECTOR` 折 `atan` 得来，
+        /// 见 <c>CsWeapons.ApplySpreadValues</c>）⇒ 用 <c>tan</c> 换成横向比例，极值角仍等于该半角。</para>
+        /// </summary>
+        public static Vector3 ApplySpread(Vector3 dir, float spreadDegrees, int pellets)
         {
             if (spreadDegrees <= 0f) return dir;
-            // 散布：**玩法**（真人这一发的命中判定）。走全项目唯一的 WeaponSpread 流
-            // （与 CsMatch.ApplySpread / CsInventory.ApplySpread 同一套欧拉角扰动口径，
-            // 见三处注释）—— 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
+            // 散布：**玩法**（命中判定的输入 —— 同一发必须永远同结果）。走全项目唯一的 WeaponSpread 流 ——
+            // 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
             var rng = CsRng.Stream(CsRngStream.WeaponSpread);
-            var rot = Quaternion.Euler(
-                rng.Range(-spreadDegrees, spreadDegrees),
-                rng.Range(-spreadDegrees, spreadDegrees),
-                0f);
-            return (rot * dir).normalized;
+            float x, y;
+            do
+            {
+                x = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+                y = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+            }
+            while (pellets > 1 && x * x + y * y > 1f);
+            var t = Mathf.Tan(spreadDegrees * Mathf.Deg2Rad);
+            var right = Vector3.Cross(Vector3.up, dir);
+            if (right.sqrMagnitude < 1e-6f) right = Vector3.right;
+            right.Normalize();
+            var up = Vector3.Cross(dir, right);
+            return (dir + right * (x * t) + up * (y * t)).normalized;
         }
 
         // ==================================================================
@@ -184,7 +226,7 @@ namespace Cs16.Module.Combat
 
             for (var p = 0; p < pellets; p++)
             {
-                var dir = ApplySpread(req.Direction, req.Spread);
+                var dir = ApplySpread(req.Direction, req.Spread, pellets);
                 var end = ResolvePellet(req, dir, range);
                 _tracerEnds.Add(end);
             }

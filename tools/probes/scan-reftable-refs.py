@@ -22,6 +22,21 @@ nothing resolved them -- measured 2026-09-22, it carried 10+ carriers under
 dangling citations lived outside the gate.  The acceptance table stays item 5's
 territory; counting it here as well would double-count and mis-report.
 
+Scan surface -- what this scanner does and does NOT look at (documented 2026-10-13, slice menu2)
+------------------------------------------------------------------------------------------------
+The scan surface is EXACTLY TWO FILES, both inside the plan dir:
+    <plan-dir>/reftable .md     (the reference table)
+    <plan-dir>/diffregistry.tsv (the differences registry)
+plus <plan-dir>/registry.tsv, which is READ ONLY AS WAIVERS -- its cells are never scanned for
+citations.  Everything else on disk (report-*.md, other files under the plan dir, tools/**,
+.ai-tmp/**) is NOT scanned: those trees only feed the FILE INDEX used to decide whether a cited
+carrier exists.
+Measured behaviourally (a canary experiment driving this script with --plan-dir pointing at a
+sandbox copy): a dangling `yuan-ban/...` path written inside a code block of a report-*.md =>
+rc=0, ignored; the SAME path appended to either scanned table => rc=1, FAIL.
+=> Therefore a PASS from this scanner is NOT evidence about a report's citations.  For reports use
+   the FORM CONVENTION (plain file names in code blocks are not citations) -- never this PASS.
+
 What is judged
 --------------
 (a) every `yuan-ban-zi-yuan/...` path occurrence  -> must resolve (brace expansion + glob)
@@ -53,7 +68,13 @@ import os
 import re
 import sys
 
-SKIP_DIRS = {'.git', 'Library', 'Temp', 'obj', 'Build', 'Builds', 'Logs',
+# `.ai-tmp` is the project's TEMPORARY area (probes, scratch copies, one-off dumps) and is skipped
+# on purpose (2026-10-13, menu2 + aifix measured 371 original sfx dropped there): a scratch copy
+# must never make an unavailable carrier look reachable -- the very false-reachability the same-name
+# fallback was tightened for.  Temporary files are not carriers; a citation that really needs one
+# belongs in the reachability registry, not in this index.  Measured before adopting: excluding it
+# changes nothing else (793 citations -> 791 reachable-or-registered, 0 dangling, 0 stale).
+SKIP_DIRS = {'.git', '.ai-tmp', 'Library', 'Temp', 'obj', 'Build', 'Builds', 'Logs',
              'UserSettings', '__pycache__', 'node_modules', '.vs'}
 
 EXT = ('cs', 'py', 'md', 'cfg', 'scr', 'txt', 'res', 'dll', 'bsp', 'tga', 'mdl', 'wad',
@@ -175,6 +196,11 @@ class Scanner(object):
         self.refs = []          # (table, kind, carrier, nums_or_None, lineno)
         self.lines_by_file = {}  # table path -> its lines (the VA marker is per citing line)
         self.registry = {}      # carrier -> (status, cells list, lineno)
+        self.last_rejected = []  # same-name candidates refused by the tightened tail rule (diagnostic)
+        # (2026-10-13 menu2, team ruling) the two "never silent" WARN ledgers.  Neither changes the
+        # verdict: a dropped citation may be a harmless repeat, and a "/" separator may be a typo.
+        self.dropped = []        # (table, kind, carrier, nums, lineno): discarded by the dedup key
+        self.sep_bad = []        # (table, lineno, token): line-number list using the "/" separator
 
     # ---- index -----------------------------------------------------------
     def index(self):
@@ -216,11 +242,20 @@ class Scanner(object):
         pat_cl = re.compile(r'(?<![0-9A-Za-z_\u4e00-\u9fff])CL/[^\s`|\uff0c\u3002\uff1b\u3001\uff09)\u3011\]"\'' + STOP + r']+')
         pat_file = re.compile(r'[0-9A-Za-z_\u4e00-\u9fff][0-9A-Za-z_\u4e00-\u9fff./\\-]*'
                               r'\.(?:%s):[0-9][0-9A-Za-z,\-]*' % '|'.join(EXT))
+        # Non-standard line-number separator.  The gate's bound-check regex is [0-9A-Za-z,\-]* and
+        # split_linespec() splits on ',' only, so anything after a '/' is never checked.  The rule is
+        # deliberately "anything at all after the '/'", not "a digit after the '/'": the measured live
+        # form is `dlls/wpn_shared/wpn_c4.cpp:143/:156` (aifix, 2026-10-13) where the '/' is followed
+        # by a ':' -- a digit-hunting regex misses exactly that shape and silently loses number 156.
+        # "," between numbers and "-" for ranges; "/" is a warning, never a verdict change.
+        pat_sep = re.compile(r'[0-9A-Za-z_./\\-]+\.[A-Za-z0-9]{1,6}:[0-9][0-9,\-]*/[^\s`|"\']*')
         seen = set()
         for tf in self.tables:
             lines = io.open(tf, encoding='utf-8').read().split('\n')
             self.lines_by_file[tf] = lines
             for i, ln in enumerate(lines, 1):
+                for ms in pat_sep.finditer(ln):
+                    self.sep_bad.append((tf, i, ms.group(0)))
                 found = []
                 for m in pat_ys.finditer(ln):
                     found.append(('ys', m.group(0)))
@@ -247,8 +282,20 @@ class Scanner(object):
                             carrier, nums = tok, None
                         else:
                             carrier, nums = sp
-                    key = (tf, kind, carrier, i)
+                    # KEY CHANGE 2026-10-13 (menu2, team-lead decision after a measured dry-run):
+                    # the key used to be (table, kind, carrier, lineno) with NO nums, so the 2nd and
+                    # later citation of the same carrier on one line was discarded entirely -- 87
+                    # citations (37 of them carrying line numbers/offsets the kept entry did not have)
+                    # were never validated.  With nums in the key every distinct citation is checked:
+                    # coverage 100%, +39 citations validated in the dry run and ZERO new DANGLING.
+                    key = (tf, kind, carrier, tuple(nums or ()), i)
                     if key in seen:
+                        # The dedup key has NO nums, so "the same carrier twice on one line" means the
+                        # 2nd+ citation is never validated at all -- neither reachable nor dangling.
+                        # Measured 2026-10-13 (menu2, instrumented on the real key): 87 citations were
+                        # dropped across the two tables, 40 of them carrying line numbers the kept
+                        # entry does not have.  Not a FAIL (a repeat can be harmless) but never silent.
+                        self.dropped.append((tf, kind, carrier, nums, i))
                         continue
                     seen.add(key)
                     self.refs.append((tf, kind, carrier, nums, i))
@@ -260,16 +307,47 @@ class Scanner(object):
             return rel
         return None
 
+    @staticmethod
+    def _tail2(rel):
+        """The normalised "parent dir + file name" pair of a path (or (None, name) when the path has
+        no directory part).  This is what the tightened same-name fallback compares."""
+        parts = [p for p in rel.replace('\\', '/').split('/') if p not in ('', '.')]
+        parts = [p.lower() for p in parts]
+        if len(parts) >= 2:
+            return (parts[-2], parts[-1])
+        return (None, parts[-1] if parts else '')
+
     def _find(self, rel):
+        # 1) the literal path, then the well-known client/Assets prefixes.
         for prefix in ('', 'client/Assets/', 'client/Assets/Scripts/', 'client/Assets/Editor/',
                        'client/Assets/Resources/'):
             hit = self._try(prefix + rel)
             if hit:
                 return hit
+        # 2) same-name fallback -- TIGHTENED 2026-10-13 (menu2, team ruling): a unique basename was
+        # NOT enough.  It let an unrelated file satisfy a citation, which is a FALSE-REACHABLE entry
+        # point: measured the same day, the reachability registry's row 12 (".../player/terror/terror.mdl
+        # is unavailable") was reported as "reachable again" only because a scratch copy named
+        # terror.mdl sat under .ai-tmp.  So the fallback now also requires the path TAIL to match:
+        # the candidate's "<parent>/<name>" must equal the cited path's last two segments.  A candidate
+        # failing that is REFUSED and remembered in last_rejected, so a real dangling can still report
+        # the near-miss instead of hiding it.
+        # A citation with no directory part (a bare file name) has no tail to compare: there the old
+        # unique-name rule stays, because nothing else can be checked.
+        self.last_rejected = []
         base = os.path.basename(rel).lower()
-        hits = self.by_name.get(base, [])
-        if len(hits) == 1:
-            return hits[0]
+        same = self.by_name.get(base, [])
+        want = self._tail2(rel)
+        if want[0] is None:
+            return same[0] if len(same) == 1 else None
+        keep = []
+        for cand in same:
+            if self._tail2(cand) == want:
+                keep.append(cand)
+            else:
+                self.last_rejected.append(cand)
+        if len(keep) == 1:
+            return keep[0]
         return None
 
     def resolve(self, kind, carrier, nums):
@@ -291,7 +369,15 @@ class Scanner(object):
         if hit is None:
             base = os.path.basename(rel).lower()
             same = self.by_name.get(base, [])
-            extra = (' | same-name candidates: ' + ', '.join(same[:4])) if same else ''
+            rej = self.last_rejected
+            extra = ''
+            if len(same) > 1 and not rej:
+                extra = ' | same-name candidates (ambiguous, >1 file): ' + ', '.join(same[:4])
+            elif rej:
+                extra = (' | same-name candidate(s) REFUSED (path tail mismatch; fallback tightened '
+                         '2026-10-13): ' + ', '.join(rej[:4]))
+            elif same:
+                extra = ' | same-name candidates: ' + ', '.join(same[:4])
             return (False, 'not on disk: ' + rel + extra, None)
         if nums:
             p = os.path.join(self.root, hit.replace('/', os.sep))
@@ -388,6 +474,41 @@ class Scanner(object):
         for rowkey, rl in stale:
             print('  STALE-REGISTRY row %d: %s is reachable again -- delete the row'
                   % (rl, ascii_safe(rowkey)))
+        # --- the two "never silent" WARN blocks (2026-10-13 menu2, team ruling) -------------------
+        # Printed BEFORE the verdict on purpose: verify.ps1 treats the LAST non-empty line as the
+        # judgement text and greps indented DANGLING rows for failures, so the warning lines must
+        # neither be last nor start with that keyword.  Neither block changes PASS/FAIL.
+        if self.dropped:
+            drows = {}
+            for tf, kind, carrier, nums, dln in self.dropped:
+                drows.setdefault((self.tagname(tf), dln), []).append((carrier, nums))
+            print('  WARN dropped-citation(s): %d citation(s) on %d line(s) collapse as EXACT repeats'
+                  % (len(self.dropped), len(drows)))
+            print('    why: since 2026-10-13 the dedup key INCLUDES the numbers, so only byte-identical '
+                  'repeats of the same carrier on one line collapse -- every distinct line number or file '
+                  'offset IS validated.  These repeats carry no unvalidated bound, so this is a style '
+                  'notice (cite one carrier once per line), not a coverage gap.')
+            print('    fix: cite one carrier once per line and comma-join the numbers (path:431,446-450)')
+            for n, ((tk, dln), v) in enumerate(sorted(drows.items(), key=lambda x: (x[0][0], x[0][1]))):
+                if n >= 12:
+                    print('    ... and %d more line(s)' % (len(drows) - n))
+                    break
+                print('    [%s] line %d: %s' % (tk, dln, '; '.join(
+                    ascii_safe(c) + ('' if not nn else ':' + ','.join(nn)) for c, nn in v[:3])))
+        if self.sep_bad:
+            srows = {}
+            for tf, sln, tok in self.sep_bad:
+                srows.setdefault((self.tagname(tf), sln), []).append(tok)
+            print('  WARN non-standard line-number separator "/": %d line(s)' % len(srows))
+            print('    why: the bound-check regex [0-9A-Za-z,\\-]* has no "/" and split_linespec() splits '
+                  'on "," only -- only the FIRST number is validated and everything after the "/" is '
+                  'never checked, whatever follows it (a number, a ":" or the end of the list)')
+            print('    fix: use "," between numbers and "-" for ranges (never "/")')
+            for n, ((tk, sln), v) in enumerate(sorted(srows.items(), key=lambda x: (x[0][0], x[0][1]))):
+                if n >= 12:
+                    print('    ... and %d more line(s)' % (len(srows) - n))
+                    break
+                print('    [%s] line %d: %s' % (tk, sln, ', '.join(v[:3])))
         if emit:
             self.emit(bad)
         if bad or stale:

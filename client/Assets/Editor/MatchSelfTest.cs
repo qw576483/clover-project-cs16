@@ -79,7 +79,20 @@ namespace Cs16.EditorTools
                 match.OnRoundEnd += _ => roundEnds++;
                 match.OnBombStateChanged += () => { };
                 // 事件总线上的炸弹事件（CsMatch 会 Emit）
-                Action<int> onRoundStarted = _ => roundStarts++;
+                // 回合开局发钱的核对样本：RoundStarted 由 BeginRoundInternal 末尾发出 ⇒ 这一拍金钱已发放完；
+                // 机器人此时**已**自动购买，所以只取真人玩家（本自检里他不买枪）作为"发钱有没有生效"的读数。
+                var roundStartMoneys = new List<int>();
+                Action<int> onRoundStarted = _ =>
+                {
+                    roundStarts++;
+                    for (var ri = 0; ri < match.Actors.Count; ri++)
+                    {
+                        var who = match.Actors[ri];
+                        if (who.IsBot) continue;
+                        roundStartMoneys.Add(who.Money);
+                        break;
+                    }
+                };
 
                 var bus = CloverEngine.Game.Event;
                 if (bus != null)
@@ -162,6 +175,21 @@ namespace Cs16.EditorTools
                 if (errors.Count > 0) failed.Add($"模拟期间出现 {errors.Count} 条 Error/Exception 日志");
                 if (sanity.Count > 0) failed.Add("数值越界 " + sanity.Count + " 处");
 
+                // 开局发钱断言（本项目口径「开局钱给满」）：每个回合开局那一拍，真人玩家的钱必须
+                // **正等于** cfg.StartMoney（默认 = CsConst.MaxMoney = 16000）。
+                if (roundStartMoneys.Count == 0)
+                {
+                    failed.Add("一次 RoundStarted 都没捕到 ⇒ 开局发钱无从核对");
+                }
+                else
+                {
+                    for (var mi = 0; mi < roundStartMoneys.Count; mi++)
+                    {
+                        if (roundStartMoneys[mi] != cfg.StartMoney)
+                            failed.Add($"第 {mi + 1} 次回合开局发钱未生效：本地玩家 ${roundStartMoneys[mi]} ≠ cfg.StartMoney ${cfg.StartMoney}");
+                    }
+                }
+
                 Report(match, kills, roundEnds, roundStarts, bombPlanted, bombDefused, bombExploded,
                     firstRound, lastRound, startScore, endScore, tickExceptions, errors, sanity, failed,
                     physicsPath);
@@ -204,10 +232,12 @@ namespace Cs16.EditorTools
             public void LoadAsync(string mapResourcePath, Action onLoaded, Action<string> onFailed = null) => onLoaded?.Invoke();
             public void Unload() { }
             public bool WalkableAt(float x, float z) => true;
-            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius) => true;
+            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
+                                 float height = CsConst.StandHeight) => true;
 
             /// <summary>假地图不做碰撞：原样返回目标点（模拟照样能移动/结算）。</summary>
-            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius) => to;
+            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                                       float height = CsConst.StandHeight) => to;
 
             public float SampleGround(Vector3 pos, float maxDrop = 8f) => 0f;
 

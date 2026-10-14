@@ -1,0 +1,203 @@
+diff --git a/cs16_mdl.py b/cs16_mdl.py
+index 383d7e2..8fc5419 100644
+--- a/cs16_mdl.py
++++ b/cs16_mdl.py
+@@ -230,17 +230,24 @@ class Mdl(object):
+             f += total
+             o += 2 + 2 * num
+ 
+-    def sample(self, seq, bone_index, frame):
+-        """取某序列某帧的一根骨骼的 (pos[3], euler[3])（GoldSrc 单位/弧度）。
++    def sample(self, seq, bone_index, frame, blend=0):
++        """取某序列某帧某 blend 里一根骨骼的 (pos[3], euler[3])（GoldSrc 单位/弧度）。
++
++        blend：多路序列（numblends > 1，瞄准/射击）取第几路。通道头数组按 `[blend][bone]` 排，
++        即 (blend, bone) 的 12 字节通道头在 `animindex + (blend*numbones + bone)*12`；单路序列只有
++        blend 0。越界说明数据与序列描述不自洽 ⇒ 直接报错，不允许静默读到相邻通道的字节。
+ 
+         通道数据覆盖第 0..numframes-1 帧；超出末尾的帧号按最后一帧取值（序列末尾帧由调用方按
+         循环回绕 / 保持处理），避免走出通道数据读到相邻通道的字节。
+         """
++        if not 0 <= blend < max(seq.numblends, 1):
++            raise ValueError("序列 %s 只有 %d 路 blend，取不到第 %d 路"
++                             % (seq.label, seq.numblends, blend))
+         frame = min(frame, max(seq.numframes - 1, 0))
+         if self._bones is None:
+             self._bones = self.bones()
+         bone = self._bones[bone_index]
+-        base = seq.animindex + bone_index * 12
++        base = seq.animindex + (blend * len(self._bones) + bone_index) * 12
+         pos, ang = [], []
+         for j in range(3):
+             v = self._channel(base, struct.unpack_from("<h", self.b, base + j * 2)[0], frame)
+diff --git a/cs16_anim.py b/cs16_anim.py
+index a37820f..4fad7aa 100644
+--- a/cs16_anim.py
++++ b/cs16_anim.py
+@@ -251,10 +251,7 @@ class Exporter(object):
+         for s in self.m.sequences():
+             if s.label in SKIP_LABELS:
+                 continue
+-            if self.only is not None:
+-                if s.label not in self.only:
+-                    continue
+-            elif "_aim" in s.label:
++            if self.only is not None and s.label not in self.only:
+                 continue
+             out.append(s)
+         return out
+@@ -317,63 +314,79 @@ class Exporter(object):
+                     lo = yy
+         return -(lo if lo is not None else 0.0)
+ 
++    def blend_tracks(self, s, blend, nframe, fps, loop):
++        """一条序列某一 blend 的逐骨骼轨道（一个 blend = 原有口径的一整套姿势）。
++
++        通道头按 `[blend][bone]` 排 ⇒ 本 blend 里第 src 根骨的头在 `animindex + (blend*numbones + src)*12`。
++        """
++        m = self.m
++        tracks = []
++        for src in self.keep:
++            base = s.animindex + (blend * len(self.bones) + src) * 12
++            # 逐帧数据 = 六个通道里至少一个通道"这一段覆盖不满整条序列"：
++            # 块头 = (值个数, 本段覆盖帧数)。整段一个值（值个数 1 **且**覆盖满 nframe 帧）
++            # ⇒ 常量，只写首末两帧；只要有一段覆盖不满 ⇒ 后面还有别的段 ⇒ 这一根骨是动的。
++            # ⚠️ 只看"值个数 > 1"会漏掉"值个数 1 但只覆盖前半段"的那种（v_usp 的 bone42 在
++            # reload 里是 (1, 91) / draw 里 (1, 26)）—— 漏掉会让弹匣/滑套在换弹里不动。
++            has = False
++            for j in range(6):
++                o = struct.unpack_from("<h", m.b, base + j * 2)[0]
++                if o == 0:
++                    continue
++                head = m.b[base + o]
++                span = m.b[base + o + 1]
++                if head > 1 or span != nframe:
++                    has = True
++                    break
++            frames = range(nframe + 1) if has else (0, nframe)
++            tr = []
++            for k in frames:
++                pos, ang = m.sample(s, src, k, blend)
++                p = list(pos)
++                if self.bones[src].parent < 0:
++                    p = [p[j] - self.lo[j] for j in range(3)]
++                R = perm_mat(cs16_mdl.quat_mat(cs16_mdl.angle_quat(*ang)))
++                tr.append((k / fps, [c * self.scale for c in perm3(p)], mat_quat(R)))
++            if len(tr) > 1:
++                # 通道数据只覆盖到第 nframes-1 帧：循环序列末帧回绕成首帧，非循环序列末帧保持上一帧
++                src_k = 0 if loop else len(tr) - 2
++                tr[-1] = (tr[-1][0], list(tr[src_k][1]), tr[src_k][2])
++            tracks.append(tr)
++        return tracks
++
+     def build_clips(self):
+         if self._clips is not None:
+             return self._clips
+-        m = self.m
+         clips = []
+         seen = {}
+         for s in self.clip_names():
+             fps = s.fps if s.fps > 0 else 30.0
+             nframe = max(s.numframes, 0)
+             loop = bool(s.flags & 1)
+-            tracks = []
+-            for src in self.keep:
+-                base = s.animindex + src * 12
+-                # 逐帧数据 = 六个通道里至少一个通道"这一段覆盖不满整条序列"：
+-                # 块头 = (值个数, 本段覆盖帧数)。整段一个值（值个数 1 **且**覆盖满 nframe 帧）
+-                # ⇒ 常量，只写首末两帧；只要有一段覆盖不满 ⇒ 后面还有别的段 ⇒ 这一根骨是动的。
+-                # ⚠️ 只看"值个数 > 1"会漏掉"值个数 1 但只覆盖前半段"的那种（v_usp 的 bone42 在
+-                # reload 里是 (1, 91) / draw 里 (1, 26)）—— 漏掉会让弹匣/滑套在换弹里不动。
+-                has = False
+-                for j in range(6):
+-                    o = struct.unpack_from("<h", m.b, base + j * 2)[0]
+-                    if o == 0:
+-                        continue
+-                    head = m.b[base + o]
+-                    span = m.b[base + o + 1]
+-                    if head > 1 or span != nframe:
+-                        has = True
+-                        break
+-                frames = range(nframe + 1) if has else (0, nframe)
+-                tr = []
+-                for k in frames:
+-                    pos, ang = m.sample(s, src, k)
+-                    p = list(pos)
+-                    if self.bones[src].parent < 0:
+-                        p = [p[j] - self.lo[j] for j in range(3)]
+-                    R = perm_mat(cs16_mdl.quat_mat(cs16_mdl.angle_quat(*ang)))
+-                    tr.append((k / fps, [c * self.scale for c in perm3(p)], mat_quat(R)))
+-                if len(tr) > 1:
+-                    # 通道数据只覆盖到第 nframes-1 帧：循环序列末帧回绕成首帧，非循环序列末帧保持上一帧
+-                    src_k = 0 if loop else len(tr) - 2
+-                    tr[-1] = (tr[-1][0], list(tr[src_k][1]), tr[src_k][2])
+-                tracks.append(tr)
+-            # 静态世界模型（w_*.mdl）骨骼表为空 ⇒ 这条序列没有骨骼通道，产不出 clip（也不该产：
+-            # 读取方对世界模型只取 subs/verts，参考既有 w_*.cs16anim 就是零 clip）
+-            if not tracks:
++            nblend = max(s.numblends, 1)
++            blends = []
++            for b in range(nblend):
++                tracks = self.blend_tracks(s, b, nframe, fps, loop)
++                # 静态世界模型（w_*.mdl）骨骼表为空 ⇒ 这条序列没有骨骼通道，产不出 clip（也不该产：
++                # 读取方对世界模型只取 subs/verts，参考既有 w_*.cs16anim 就是零 clip）
++                if not tracks:
++                    blends = []
++                    break
++                # 视模型不做"根骨贴地"：工程内 20 份 vm_*.cs16anim 的根骨轨迹逐值等于 raw×scale
++                # （逐 clip 采样值原样写出），贴地会把每段动作的竖直位置整体抬一截。
++                # 多路序列按路各自贴地：每路是一套独立姿势，基准高度不同。
++                dy = 0.0 if self.view else self.clip_ground_shift(tracks)
++                tracks[0] = [(t, [p[0], p[1] + dy, p[2]], q) for (t, p, q) in tracks[0]]
++                blends.append(tracks)
++            if not blends:
+                 continue
+-            # 视模型不做"根骨贴地"：工程内 20 份 vm_*.cs16anim 的根骨轨迹逐值等于 raw×scale
+-            # （逐 clip 采样值原样写出），贴地会把每段动作的竖直位置整体抬一截。
+-            dy = 0.0 if self.view else self.clip_ground_shift(tracks)
+-            tracks[0] = [(t, [p[0], p[1] + dy, p[2]], q) for (t, p, q) in tracks[0]]
+             # 源 mdl 里 6 个标签各出现两次（两条独立序列记录、解码后逐帧完全相同）：
+             # 只输出第一份，避免 .cs16anim 里出现两条同名 clip（读取方是按 state 名找 clip 的）。
+             if s.label in seen:
+                 continue
+             seen[s.label] = True
+             # state 名 = 运行期候选表要的名字（见 VIEW_LABEL_MAP 的出处；map 只含视模型那 8 个 label）
+-            clips.append((VIEW_LABEL_MAP.get(s.label, s.label), fps, loop, tracks))
++            clips.append((VIEW_LABEL_MAP.get(s.label, s.label), fps, loop, blends))
+         self._clips = clips
+         return clips
+ 
+@@ -382,8 +395,9 @@ class Exporter(object):
+         self.prepare()
+         with open(path, "wb") as f:
+             f.write(b"C16A")
+-            # version 2：胶囊记录末尾多一个 centerZ（侧向中心）。读取方对 1 / 2 都认。
+-            f.write(struct.pack("<I", 2))
++            # version 3：clip 段在骨骼数前多一个"blend 路数"，其下按 [blend][骨骼] 逐路写轨道。
++            # version 2：胶囊记录末尾多一个 centerZ（侧向中心）。读取方对 1 / 2 / 3 都认。
++            f.write(struct.pack("<I", 3))
+             wstr(f, self.key)
+             f.write(struct.pack("<f", self.scale))
+             # 视模型：offset 列写 0（根骨平移已经烘进通道值里，与工程内既有 vm_*.cs16anim 一致）
+@@ -429,14 +443,15 @@ class Exporter(object):
+ 
+             clips = self.build_clips()
+             f.write(struct.pack("<I", len(clips)))
+-            for name, fps, loop, tracks in clips:
++            for name, fps, loop, blends in clips:
+                 wstr(f, name)
+                 f.write(struct.pack("<fI", fps, 1 if loop else 0))
+-                f.write(struct.pack("<I", len(self.keep)))
+-                for tr in tracks:
+-                    f.write(struct.pack("<I", len(tr)))
+-                    for (t, p, q) in tr:
+-                        f.write(struct.pack("<8f", t, p[0], p[1], p[2], q[0], q[1], q[2], q[3]))
++                f.write(struct.pack("<II", len(blends), len(self.keep)))
++                for tracks in blends:
++                    for tr in tracks:
++                        f.write(struct.pack("<I", len(tr)))
++                        for (t, p, q) in tr:
++                            f.write(struct.pack("<8f", t, p[0], p[1], p[2], q[0], q[1], q[2], q[3]))
+             f.write(b"ENDA")
+ 
+ 

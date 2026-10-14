@@ -33,6 +33,12 @@ namespace Cs16.UI
         /// </summary>
         private const string KeysHint = "[左键] 下一个目标　[右键] 上一个目标　[空格] 切换观战档位";
 
+        /// <summary>
+        /// 俯视概览（档位 5 / 6）的按键提示：原版在 map 档位里把前进/后退当缩放、左移/右移当平移
+        /// （<c>hud_spectator.cpp:754-767</c> 的 <c>IN_FORWARD/IN_BACK/IN_MOVELEFT/IN_MOVERIGHT</c>）。
+        /// </summary>
+        private const string MapKeysHint = "[左键] 下一个目标　[右键] 上一个目标　[W/S] 缩放　[A/D] 平移　[空格] 切换观战档位";
+
         public RectTransform Root;
         public Text Banner;
         public Text Hint;
@@ -67,8 +73,10 @@ namespace Cs16.UI
         /// </summary>
         private static string ModeLine()
         {
-            var name = Cs16.Core.CsSpectator.ModeName(Cs16.Core.CsSpectator.Mode);
-            return string.IsNullOrEmpty(name) ? KeysHint : name + "　" + KeysHint;
+            var mode = Cs16.Core.CsSpectator.Mode;
+            var name = Cs16.Core.CsSpectator.ModeName(mode);
+            var hint = Cs16.Core.CsSpectator.IsMapMode(mode) ? MapKeysHint : KeysHint;
+            return string.IsNullOrEmpty(name) ? hint : name + "　" + hint;
         }
 
         public void Refresh(bool visible, string targetName)

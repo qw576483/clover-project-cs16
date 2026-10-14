@@ -92,8 +92,10 @@ namespace Cs16.UI
         ///
         /// <para>口径：<b>规格要求；原版 `GameMenu.res` 无此项</b> ——
         /// `策划/策划案/CS1.6单机参考规格.md` 的 M8 / §1:51 要求 ESC 菜单能换阵营，
-        /// 而盘上 `原版资源/cs16src/cstrike/cstrike__resource__GameMenu.res` 的项只有
-        /// `1 ResumeGame / 9 NewGame / 10 FindServers / 11 Options / 12 Quit`。</para>
+        /// 而盘上 `原版资源/cs16src/cstrike/cstrike__resource__GameMenu.res` 的项是
+        /// `1 ResumeGame` / `2 Disconnect`(notsingle) / `4 OpenPlayerListDialog`(notsingle) /
+        /// `8`(空项) / `9 NewGame` / `10 FindServers` / `11 Options` / `12 Quit`
+        /// ⇒ `2`/`4` 带 `notsingle`（单机不显示，本面板不建），换阵营不在其中。</para>
         /// </summary>
         private void CreateTeamRow(RectTransform box)
         {

@@ -41,6 +41,9 @@ namespace Cs16.Module.Bot
         private readonly Dictionary<string, int> _stuckLogCounts = new Dictionary<string, int>(4);
 
         private ICsMap _map;
+        /// <summary>本帧该 bot 的碰撞盒高度（= actor 的 Height：蹲姿 CsConst.CrouchHeight / 站立 CsConst.StandHeight）。
+        /// 由 <see cref="ComputeMove"/> 入口写入，供 <see cref="PhysRunway"/> 用**该 bot 自己的盒**试算真实位移。</summary>
+        private float _hullHeight = CsConst.StandHeight;
         private string _marker;
         private string _ownerName = "bot";
         private int _index;
@@ -54,6 +57,20 @@ namespace Cs16.Module.Bot
         /// 攒够 <see cref="CsBotConst.AvoidBadDirSeconds"/> 才允许把锚点换掉 —— 见 <see cref="Avoid"/> 第 ① 段。
         /// </summary>
         private float _probeBadSince;
+
+        /// <summary>
+        /// **测试入口（只读）**：最近一次 <see cref="Avoid"/> 是从哪个出口返回的
+        /// （<c>map-null</c> / <c>hold-cached-ok</c> / <c>hold-sticky</c> / <c>dir-ok</c> / <c>pick</c> / <c>runway</c>）。
+        ///
+        /// <para>本字段**只被 <see cref="Avoid"/> 写、只被 <see cref="LastAvoidBranch"/> 读**，
+        /// 不参与任何玩法判定（六条出口各自赋一次值，赋值本身没有副作用）——
+        /// 用途是把"方向每帧翻转"定位到具体出口：沿用锚点 / 期望方向本身可走 / 重掷候选 / 跑道兜底。</para>
+        /// </summary>
+        private string _lastAvoidBranch = "none";
+
+        /// <summary>**测试入口**：见 <see cref="_lastAvoidBranch"/>。</summary>
+        public string LastAvoidBranch => _lastAvoidBranch;
+
         private float _nextSkipLogAt;
         /// <summary>"卡住"日志的时间闸（见 <see cref="ReportStuck"/>）：下一次最早可以记一条的时刻。</summary>
         private float _nextStuckLogAt;
@@ -74,6 +91,33 @@ namespace Cs16.Module.Bot
         private int _diagFlips;            // 本 bot 累计翻转次数（换路线时归零）
         private Vector3 _blockedDir;       // 最近一次"想走却走不动"的方向
         private float _blockedUntil;
+
+        /// <summary>"直线被挡 ⇒ 改用 A* 拐点"这一闸门**当前**的判定（true = 用拐点）。见 <see cref="UseCornerInsteadOfStraight"/>。</summary>
+        private bool _cornerGateState;
+        /// <summary>
+        /// 与 <see cref="_cornerGateState"/> **相反**的那个读数是从哪一刻开始持续成立的
+        /// （0 = 当前没有待决读数；-1 = 本 bot 还没有过读数 ⇒ 第一帧直接采信原始判定）。
+        /// </summary>
+        private float _cornerGateSince = -1f;
+
+        /// <summary>
+        /// **测试入口（只读）**：本帧最终采用的移动目标点，以及它是**从哪条路来**的
+        /// （<c>goal-straight</c> / <c>astar-corner</c> / <c>advance-corner</c> / <c>route-wp</c> / <c>route-goal</c> / <c>none</c>）。
+        ///
+        /// <para>本字段**只被 <see cref="ComputeMove"/> / <see cref="ResolveNextTarget"/> 写、只被
+        /// <see cref="LastTargetSrc"/> / <see cref="LastTarget"/> 读**，不参与任何玩法判定：每个赋值点都是
+        /// "在既有分支上把已有的值存进私有字段"，不改任何条件 / 阈值 / 调用顺序。</para>
+        /// </summary>
+        private string _lastTargetSrc = "none";
+
+        /// <summary>**测试入口**：见 <see cref="_lastTargetSrc"/>。</summary>
+        private Vector3 _lastTarget;
+
+        /// <summary>**测试入口**：本帧目标的来源（见 <see cref="_lastTargetSrc"/>）。</summary>
+        public string LastTargetSrc => _lastTargetSrc;
+
+        /// <summary>**测试入口**：本帧目标的世界坐标（见 <see cref="_lastTargetSrc"/>）。</summary>
+        public Vector3 LastTarget => _lastTarget;
 
         // ---- 全局路径（引擎 A*；消除差异 #77「业务零使用 A*」）----
         /// <summary>当前路径（引擎 <see cref="AStar"/> 的**格坐标**序列；null = 没有可用路径，退化为"朝目标直线走"）。</summary>
@@ -685,10 +729,14 @@ namespace Cs16.Module.Bot
         /// **false = 无视路线直奔 goal** —— 用于"目标变了"的场合：炸弹已下（CT 全冲 C4）、去捡掉落的 C4、
         /// 守点挪窝、听到动静去看一眼。否则会先把自己那条旧路线走完才去，白绕一大圈。
         /// </param>
+        /// <param name="hullHeight">该 bot 的碰撞盒高度（调用方传 actor 的 Height）—— 只影响
+        /// <see cref="PhysRunway"/> 用哪个盒试算物理位移，默认 = 站立高。</param>
         public Vector3 ComputeMove(Vector3 selfPosition, Vector3 goal, float arriveRadius, float now,
-            bool viaRoute = true)
+            bool viaRoute = true, float hullHeight = CsConst.StandHeight)
         {
+            _hullHeight = hullHeight;
             var target = viaRoute ? ResolveNextTarget(selfPosition, goal) : goal;
+            if (!viaRoute) _lastTargetSrc = "goal-straight";
             var toGoal = goal - selfPosition;
             toGoal.y = 0f;
 
@@ -713,6 +761,39 @@ namespace Cs16.Module.Bot
             }
 
             var desired = delta.normalized;
+
+            // ①' 直线被挡 ⇒ 借同一条 A* 路径机找一个"绕过去"的拐点当目的地。
+            //    为什么需要：<paramref name="viaRoute"/> = false 的那几条路（守位 / 挪窝 / 听声 / 拆包 / 捡枪）
+            //    过去是"朝 goal 直线 + 局部偏角" —— 目标在墙后时直线永远被挡，`Avoid` 只能反复偏角，
+            //    实测形态 = 以 4~5.5m/s 来回走（2s 走 9~11m、净位移 0.01~0.06m）。
+            //    为什么写在导航层而不是 AI 层：`viaRoute:false` 的语义（"别先走完旧路线"）一字不动，
+            //    只把**这一帧的目的地**换成路径上的下一个拐点。
+            //    ⛔ 不碰路线游标（`_index`/`_route`/`_unreachableCell`）—— 只用既有的
+            //    `EnsurePath`（自带时间闸 + 同目标格沿用）与 `AdvancePath` 两个入口，与
+            //    `ResolveNextTarget` 尾部用的是同一对调用。
+            //    闸门必须带最小保持：`WalkableAhead` 是"这一帧这一条射线"的即时判定，目标方向压在
+            //    格边界上时会被 ±0.1m 的微动来回触发 ⇒ 目的地于是在"朝 goal 直线"与"A* 拐点"之间
+            //    每帧二选一（两者都过 `WalkableAhead`、方向相差 ≈150°）⇒ 2s 净位移 ≈0。见
+            //    `UseCornerInsteadOfStraight`。
+            if (!viaRoute && UseCornerInsteadOfStraight(selfPosition, desired, now))
+            {
+                bool cornerOk;
+                using (MarkEnsurePath.Auto()) cornerOk = EnsurePath(selfPosition, goal);
+                if (cornerOk)
+                {
+                    var corner = AdvancePath(selfPosition, goal);
+                    var cd = corner - selfPosition;
+                    cd.y = 0f;
+                    if (cd.sqrMagnitude > 0.0004f)
+                    {
+                        target = corner;
+                        delta = cd;
+                        desired = cd.normalized;
+                        _lastTargetSrc = "astar-corner";
+                    }
+                }
+            }
+            _lastTarget = target;
 
             // ① 逃逸中：沿上次卡住时选定的"有跑道"方向继续走（保持一段时间 → 真的走出去）。
             //    不做卡住判定（这一段的位移正是为了脱离卡住），逃逸结束后会立刻重新判定。
@@ -760,6 +841,50 @@ namespace Cs16.Module.Bot
             if (dir.sqrMagnitude > 0.5f) _lastDir = dir;
             DiagFlip(selfPosition, desired, dir, goal, target, branch, now);
             return dir;
+        }
+
+        /// <summary>
+        /// **本帧该不该用 A\* 拐点替掉"朝 goal 直线"**——<see cref="ComputeMove"/> 在
+        /// <c>viaRoute:false</c> 时的那道闸门，判据与 <see cref="WalkableAhead"/> 逐字同一份，
+        /// **只是加了最小保持**。
+        ///
+        /// <para><b>为什么必须有最小保持</b>：<see cref="WalkableAhead"/> 问的是"这一帧这一条射线"，目标方向
+        /// 压在格边界上时会被机器人 ±0.1m 的微动来回触发。闸门没有保持时，目的地就每帧在"朝 goal 直线"与
+        /// "A* 拐点"之间二选一 —— 两者都过 <see cref="WalkableAhead"/>（所以 <see cref="Avoid"/> 两条都走
+        /// <c>dir-ok</c> 出口）、方向却相差 ≈150° ⇒ 2s 净位移 ≈0 的原地往返（实测 ≈5 次/秒、`_diagFlips` 同步 +1）。</para>
+        ///
+        /// <para><b>口径</b>：读数与当前判定相同 ⇒ 撤销待决读数；相反 ⇒ 记下起始时刻，**连续**保持到
+        /// <see cref="CsBotConst.ProbeHoldSeconds"/> 才真正翻转（与 <see cref="Avoid"/> 的偏角惯性同一个常量，
+        /// 不新增阈值）。初始 <c>-1f</c> ⇒ 第一帧直接采信原始判定，与加保持之前的行为逐帧一致。</para>
+        /// </summary>
+        private bool UseCornerInsteadOfStraight(Vector3 selfPosition, Vector3 desired, float now)
+        {
+            var blocked = !WalkableAhead(selfPosition, desired);
+
+            if (_cornerGateSince < 0f)
+            {
+                _cornerGateState = blocked;      // 还没有过读数 ⇒ 采信本帧
+                _cornerGateSince = 0f;           // 哨兵只消费一次；否则下面的保持分支永远不可达
+                return _cornerGateState;
+            }
+
+            if (blocked == _cornerGateState)
+            {
+                _cornerGateSince = 0f;           // 回到当前判定 ⇒ 待决的换向作废
+                return _cornerGateState;
+            }
+
+            if (_cornerGateSince <= 0f)
+            {
+                _cornerGateSince = now;          // 相反读数从这一刻开始（够久才认）
+                return _cornerGateState;
+            }
+
+            if (now - _cornerGateSince < CsBotConst.ProbeHoldSeconds) return _cornerGateState;
+
+            _cornerGateState = blocked;
+            _cornerGateSince = 0f;
+            return _cornerGateState;
         }
 
         /// <summary>当前正在追的路点（供"朝行进方向看"用）；没有路线 / 不走路线时返回 goal。</summary>
@@ -902,8 +1027,13 @@ namespace Cs16.Module.Bot
             // 全局路径可用 → 追路径上的下一个拐点；不可用 → 追目标本身（并留 Warn，见 WarnPathFailed）。
             bool pathOk;
             using (MarkEnsurePath.Auto()) pathOk = EnsurePath(selfPosition, target);
-            if (pathOk) return AdvancePath(selfPosition, target);
+            if (pathOk)
+            {
+                _lastTargetSrc = "advance-corner";
+                return AdvancePath(selfPosition, target);
+            }
 
+            _lastTargetSrc = _index < _route.Count ? "route-wp" : "route-goal";
             return target;
         }
 
@@ -1972,7 +2102,11 @@ namespace Cs16.Module.Bot
         // ==================================================================
         private Vector3 Avoid(Vector3 position, Vector3 dir, float now)
         {
-            if (_map == null || !_map.IsLoaded) return dir;   // 没有地图就没有"空间事实"，直线走（外层已打过 Error）
+            if (_map == null || !_map.IsLoaded)
+            {
+                _lastAvoidBranch = "map-null";
+                return dir;   // 没有地图就没有"空间事实"，直线走（外层已打过 Error）
+            }
 
             // ① 上一次选定的偏角还有效 → 先沿用（带惯性，防止贴着障碍物左右抖）。
             //
@@ -1992,6 +2126,7 @@ namespace Cs16.Module.Bot
                 if (WalkableAhead(position, cached) && !IsBlockedDir(cached, now))
                 {
                     _probeBadSince = 0f;
+                    _lastAvoidBranch = "hold-cached-ok";
                     return cached;
                 }
 
@@ -2008,7 +2143,11 @@ namespace Cs16.Module.Bot
                     {
                         _probeUntil = now + CsBotConst.ProbeHoldSeconds;   // 锚点身份顺延（弱证据还不够格推翻它）
                         var sticky = PickAvoidAngle(position, dir, _probeAngle, now);
-                        if (sticky != 0f) return Rotate(dir, sticky);
+                        if (sticky != 0f)
+                        {
+                            _lastAvoidBranch = "hold-sticky";
+                            return Rotate(dir, sticky);
+                        }
                     }
                     else
                     {
@@ -2024,6 +2163,7 @@ namespace Cs16.Module.Bot
             {
                 _probeAngle = 0f;
                 _probeBadSince = 0f;
+                _lastAvoidBranch = "dir-ok";
                 return dir;
             }
 
@@ -2034,6 +2174,7 @@ namespace Cs16.Module.Bot
                 _probeAngle = angle;
                 _probeUntil = now + CsBotConst.ProbeHoldSeconds;
                 _probeBadSince = 0f;
+                _lastAvoidBranch = "pick";
                 return Rotate(dir, angle);
             }
 
@@ -2045,6 +2186,7 @@ namespace Cs16.Module.Bot
             _probeBadSince = 0f;
             var fallback = PickBestRunwayDir(position, dir, out var run, now);
             if (run <= 0f) WarnNoRunway(position);
+            _lastAvoidBranch = "runway";
             return fallback;
         }
 
@@ -2327,7 +2469,8 @@ namespace Cs16.Module.Bot
             for (var d = CsBotConst.EscapeRunwayStep; d <= CsBotConst.EscapeRunwayMax + 0.001f;
                  d += CsBotConst.EscapeRunwayStep)
             {
-                var resolved = _map.ResolveMove(position, position + dir * d);
+                var resolved = _map.ResolveMove(position, position + dir * d,
+                                                CsConst.PlayerRadius, _hullHeight);
                 var along = (resolved.x - position.x) * dir.x + (resolved.z - position.z) * dir.z;
                 if (along < d * CsBotConst.PhysRunwayRatio) break;
                 run = along;

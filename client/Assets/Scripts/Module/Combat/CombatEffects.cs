@@ -867,14 +867,21 @@ namespace Cs16.Module.Combat
             decal.Sprite.sprite = spr;
             decal.Sprite.enabled = spr != null;
             decal.Billboard = false;
+            // 与墙上的弹痕同一条 alpha 裁切（原版贴花统一开 GL_ALPHA_TEST + gl_alphamin = 0.25）。
+            ApplyDecalMaterial(decal.Sprite);
 
             var px = spr != null ? (int)spr.rect.width : 48;
-        // 尺寸按**这张贴花自己的像素宽**反算（48 px -> 1.219 m、64 px -> 1.626 m；口径见 CsCombatTuning）。
-            decal.Tr.localScale = Vector3.one * SpriteScaleForMeters(spr, CsCombatTuning.BloodDecalSize(px));
+            // 尺寸 = 标称画布宽（px × 0.0254 m）。血迹贴花与原版同为**整块四边形**贴图
+            // （`{blood1..6` 的导入设置 spriteMeshType=0 / FullRect）⇒ 渲染宽 = `Sprite.bounds` 宽 = 标称，
+            // 不需要任何补偿；透明像素由 alpha test 丢弃、不参与几何裁剪。
+            var meters = CsCombatTuning.BloodDecalSize(px);
+            var scale = SpriteScaleForMeters(spr, meters);
+            decal.Tr.localScale = Vector3.one * scale;
 
             _log.Info("blood.decal",
                 $"命中 {point}（爆头={headshot}）→ 血贴在 {hit.point}（面 {hit.collider?.name}，" +
-                $"贴图 {(spr != null ? spr.name : "null")} {px}px → {CsCombatTuning.BloodDecalSize(px):F3}m）");
+                $"贴图 {(spr != null ? spr.name : "null")} {px}px → 画布宽 {meters:F3}m、" +
+                $"缩放 {scale:F3}（整块 quad，无补偿））");
             return true;
         }
 

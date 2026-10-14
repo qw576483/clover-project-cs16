@@ -55,6 +55,9 @@ namespace Cs16.Module.Match
         private readonly RaycastHit[] _hits = new RaycastHit[16];
         private readonly List<string> _ammoKeys = new List<string>(8);
 
+        /// <summary>滚轮切枪用的「持有武器表」（<see cref="CycleWeapon"/> 复用，避免每次按键都新建列表）。</summary>
+        private readonly List<string> _carried = new List<string>(8);
+
         internal CsInventory(CsMatch m)
         {
             _m = m;
@@ -76,15 +79,32 @@ namespace Cs16.Module.Match
         ///
         /// <para>出处 = 原版 <c>mp.dll</c> 各武器类 <c>GetMaxSpeed</c>（vftable 槽 78）的返回值，
         /// 逐类的取值函数 VA / vtable 起点见 <c>策划/手感参数对照.md</c> §5.4。</para>
+        ///
+        /// <param name="scoped">
+        /// 已开镜。原版 SG552 的 <c>GetMaxSpeed</c> 在 <c>m_iFOV != DEFAULT_FOV</c> 时返回
+        /// <c>SG552_MAX_SPEED_ZOOM = 200</c>；AWP / G3SG1 / SG550 返回 150、Scout 返回 220；
+        /// **AUG 的 <c>GetMaxSpeed</c> 是内联常量、没有 zoom 档** ⇒ 开镜不降速
+        /// （<c>regamedll/dlls/weapons.h</c> :781）。逐把取值见 <c>CsWeaponDef.MaxSpeedZoom</c>。
+        /// </param>
+        /// <param name="a">
+        /// 角色。是否开镜读 <see cref="CsActor.Scoped"/>（由比赛模拟的档位推进写入）。
+        /// </param>
         /// </summary>
         public static float MovementSpeed(CsActor a)
         {
             var def = a.ActiveDef;
+            var scoped = a.Scoped;
 
             float speed;
             if (def == null)
             {
                 speed = CsConst.SpeedDefault;
+            }
+            else if (scoped && def.MaxSpeedZoom > 0f)
+            {
+                // 原版 GetMaxSpeed 的 zoom 档（SG552 200 / AWP·SG550·G3SG1 150 / Scout 220 unit/s）。
+                // AUG 的 MaxSpeedZoom = 0 ⇒ 落进下面的常态分支，开镜不降速。
+                speed = def.MaxSpeedZoom;
             }
             else if (def.MaxSpeed > 0f)
             {
@@ -111,7 +131,14 @@ namespace Cs16.Module.Match
             }
 
             if (a.IsCrouching) speed *= CsConst.SpeedCrouchMultiplier;
-            else if (a.IsWalking) speed *= CsConst.SpeedWalkMultiplier;
+            else if (a.IsWalking)
+            {
+                // 原版两条链：客户端把 cl_*speed 命令乘 min(cl_movespeedkey, 0.52)
+                //（client.dll `0x01957E17`：fld [cvar+0xC] → 与 0.52f 比较 → fmul 三个命令分量），
+                // 服务端再 `wishspeed = min(|cmd|, maxspeed)`（原版资源/hlsdk/pm_shared/pm_shared.c:953-974）
+                // ⇒ 慢走速度 = min(cl_forwardspeed 400u/s × 0.52, 武器最大速度) = 208 u/s，**各武器同速**。
+                speed = Mathf.Min(speed, CsConst.ClForwardSpeed * CsConst.SpeedWalkMultiplier);
+            }
 
             return speed;
         }
@@ -363,8 +390,13 @@ namespace Cs16.Module.Match
         ///
         /// <para><b>槽位规则</b>：主武器（步枪 / 冲锋 / 狙击 / 机枪 / 霰弹）进
         /// <see cref="CsActor.PrimaryWeapon"/>，其余（手枪 / 刀 / 手雷 / 装备）进
-        /// <see cref="CsActor.SecondaryWeapon"/>；**对应槽位已被占用 ⇒ 不拾取**
+        /// <see cref="CsActor.SecondaryWeapon"/>；**同槽位已有别的枪 ⇒ 不拾取**
         /// （原版不会把手里那把枪挤掉，是"捡不起来"）。</para>
+        ///
+        /// <para><b>同型号例外</b>：同槽位拿的是**同一把枪**时，原版走
+        /// <c>CBasePlayerWeapon::AddDuplicate → ExtractClipAmmo</c>：把掉落那把**弹匣内**的子弹并入
+        /// 拾取者的备弹（受备弹上限夹住）、掉落物随即销毁；一颗都装不下时掉落物留在原地。
+        /// 出处 <c>原版资源/cs16src/regamedll/dlls/weapons.cpp:1311-1321</c> 与 <c>:1718-1742</c>。</para>
         /// </summary>
         /// <returns>真的收下了返回 true。</returns>
         public bool PickupDropped(CsActor a, CsDroppedWeapon d)
@@ -381,12 +413,22 @@ namespace Cs16.Module.Match
                           || def.Class == CsWeaponClass.Grenade || def.Class == CsWeaponClass.Equipment;
             if (sidearm)
             {
-                if (!string.IsNullOrEmpty(a.SecondaryWeapon)) return false;
+                if (!string.IsNullOrEmpty(a.SecondaryWeapon))
+                {
+                    if (a.SecondaryWeapon != d.WeaponId || !MergeDroppedClip(a, d)) return false;
+                    d.Consumed = true;
+                    return true;
+                }
                 a.SecondaryWeapon = d.WeaponId;
             }
             else
             {
-                if (!string.IsNullOrEmpty(a.PrimaryWeapon)) return false;
+                if (!string.IsNullOrEmpty(a.PrimaryWeapon))
+                {
+                    if (a.PrimaryWeapon != d.WeaponId || !MergeDroppedClip(a, d)) return false;
+                    d.Consumed = true;
+                    return true;
+                }
                 a.PrimaryWeapon = d.WeaponId;
             }
 
@@ -395,6 +437,29 @@ namespace Cs16.Module.Match
             if (string.IsNullOrEmpty(a.ActiveWeapon)) SelectBestWeapon(a);
 
             Game.Logger.Info("drop.pickup", $"{a.Name} 拾起了 {def.DisplayName}（余弹 {d.MagAmmo}+{d.ReserveAmmo}）");
+            return true;
+        }
+
+        /// <summary>
+        /// 走过一把**与自己手里同型号**的掉落武器时的合并（原版 <c>ExtractClipAmmo</c>）：
+        /// 只把掉落那把**弹匣内**的子弹并入备弹（受 <see cref="CsWeaponDef.ReserveAmmo"/> 夹住），
+        /// 一颗都装不下 ⇒ 返回 false、掉落物留在原地。
+        /// 出处 <c>原版资源/cs16src/regamedll/dlls/weapons.cpp:1311-1321</c>（AddDuplicate）
+        /// 与 <c>:1718-1742</c>（ExtractClipAmmo）。
+        /// </summary>
+        private bool MergeDroppedClip(CsActor a, CsDroppedWeapon d)
+        {
+            var def = CsWeapons.Get(d.WeaponId);
+            if (def == null || def.ReserveAmmo <= 0) return false;
+
+            var ammo = a.GetAmmo(d.WeaponId);
+            var add = Mathf.Min(d.MagAmmo, def.ReserveAmmo - ammo.reserve);
+            if (add <= 0) return false;
+
+            a.SetAmmo(d.WeaponId, ammo.inMag, ammo.reserve + add);
+            Game.Logger.Info("drop.pickup",
+                $"{a.Name} 走过同型号 {def.DisplayName}：按原版 ExtractClipAmmo 并入备弹 +{add}" +
+                $"（备弹 {ammo.reserve}→{ammo.reserve + add}）");
             return true;
         }
 
@@ -469,6 +534,37 @@ namespace Cs16.Module.Match
             }
 
             SwitchWeapon(a, id, now);
+        }
+
+        /// <summary>
+        /// 循环切枪：<paramref name="dir"/> &gt; 0 = 下一把（原版 <c>invnext</c>）、&lt; 0 = 上一把（原版 <c>invprev</c>）。
+        /// 先按「槽位 1→5、槽内按武器表顺序」组出**持有武器表**（空槽位不入表 ⇒ 跳过），再取下一把切过去。
+        /// 取枪规则与出处见 <see cref="CsWeapons.CycleNext"/>。
+        /// </summary>
+        public void CycleWeapon(CsActor a, int dir, float now)
+        {
+            if (dir == 0) return;
+
+            _carried.Clear();
+            if (!string.IsNullOrEmpty(a.PrimaryWeapon)) _carried.Add(a.PrimaryWeapon);
+            if (!string.IsNullOrEmpty(a.SecondaryWeapon)) _carried.Add(a.SecondaryWeapon);
+            if (!string.IsNullOrEmpty(a.KnifeWeapon)) _carried.Add(a.KnifeWeapon);
+            for (var i = 0; i < CsWeapons.All.Count; i++)
+            {
+                var def = CsWeapons.All[i];
+                if (def.Class != CsWeaponClass.Grenade) continue;
+                if (GrenadeCount(a, def.Id) > 0) _carried.Add(def.Id);
+            }
+            if (a.HasBomb) _carried.Add(CsWeapons.C4);
+
+            var next = CsWeapons.CycleNext(_carried, a.ActiveWeapon, dir);
+            if (string.IsNullOrEmpty(next))
+            {
+                _m.RateInfo("cycle.empty." + dir, $"{a.Name} 循环切枪：没有可切的武器");
+                return;
+            }
+
+            SwitchWeapon(a, next, now);
         }
 
         public void SwitchWeapon(CsActor a, string weaponId, float now)
@@ -697,7 +793,7 @@ namespace Cs16.Module.Match
             // 差异 #68：连发档 = 一次扣扳机打满一轮。首发在这里打掉，其余发给 TickBurst 按原版间隔补发；
             // 循环时间两档各自取（Glock18 连发 0.5 / 半自动 0.15；FAMAS 连发 0.55 / 普通 0.0825）。
             var burstShots = CsWeapons.BurstShotsFor(def, a.BurstMode);
-            a.NextFireTime = now + CsWeapons.CycleTimeFor(def, burstShots > 0);
+            a.NextFireTime = now + CsWeapons.CycleTimeFor(def, burstShots > 0, a.Scoped);
             if (burstShots > 1)
             {
                 a.BurstShotsLeft = burstShots - 1;
@@ -718,7 +814,7 @@ namespace Cs16.Module.Match
             AccumulateRecoil(a, def);
 
             weaponId = def.Id;
-            _m.RecordShotFired(def.Id);
+            _m.RecordShotFired(def.Id, a.Silenced);
 
             if (def.Class == CsWeaponClass.Knife) FireKnife(a, def);
             else if (!localPlayer) FireGun(a, def);
@@ -740,7 +836,7 @@ namespace Cs16.Module.Match
 
             for (var p = 0; p < pellets; p++)
             {
-                var dir = ApplySpread(baseDir, spread);
+                var dir = ApplySpread(baseDir, spread, pellets);
                 var victim = RaycastActor(a, origin, dir, range, out var hitbox, out var point, out var dist);
                 if (victim == null) continue;
                 _m.Damage.ApplyHit(a, victim, def, hitbox, point, dist, false);
@@ -760,8 +856,12 @@ namespace Cs16.Module.Match
             if (CsWeapons.HasSpreadCoefficients(def))
             {
                 var speedUnits = new Vector2(a.Velocity.x, a.Velocity.z).magnitude / CsConst.UnitToMeter;
+                // 差异 #94：移动 / 慢移阈值改成**每武器**（AWP 140 + 慢移 10 / Scout 170 /
+                // G3SG1·SG550 0 / USP·Glock18 0 / 其余 140 = 旧常量 `SpreadMoveSpeedUnits` 的现值）
+                // ⇒ 既有 weapons 的判据一字不变。
                 return CsWeapons.SpreadFor(def, a.Accuracy, a.OnGround,
-                    speedUnits > CsWeapons.SpreadMoveSpeedUnits, a.IsCrouching, a.Silenced, a.BurstMode);
+                    CsWeapons.IsMovingTier(def, speedUnits), a.IsCrouching, a.Silenced, a.BurstMode,
+                    CsWeapons.IsSlowTier(def, speedUnits));
             }
 
             // 非预期分支：原版这三档系数**已取到**、acc 模型**没取到** ⇒ 该武器这一发拿不到原版散布。
@@ -849,7 +949,7 @@ namespace Cs16.Module.Match
             a.NextBurstShotTime = a.BurstShotsLeft > 0 ? now + CsWeapons.BurstIntervalFor(def, shotIndex) : 0f;
 
             weaponId = def.Id;
-            _m.RecordShotFired(def.Id);
+            _m.RecordShotFired(def.Id, a.Silenced);
             _m.RateInfo("fire.burst.shot." + def.Id,
                 $"{a.Name} 的 {def.DisplayName} 连发第 {shotIndex}/{def.BurstShots} 发（余 {a.BurstShotsLeft} 发，" +
                 $"下一发 {(a.BurstShotsLeft > 0 ? CsWeapons.BurstIntervalFor(def, shotIndex).ToString("F2") + "s 后" : "无")}）");
@@ -935,17 +1035,32 @@ namespace Cs16.Module.Match
                 Mathf.Cos(pitchRad) * Mathf.Cos(yawRad));
         }
 
-        private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees)
+        /// <summary>
+        /// 把方向绕开一个随机小角，**瞄准局部 + 三角分布**。口径与 <c>Firearm.ApplySpread</c> /
+        /// <c>CsMatch.ApplySpread</c> 逐字一致：**轴**取瞄准局部（原版 <c>cbase.cpp:1059</c> / <c>:1205</c> /
+        /// <c>:1358</c> 的 <c>vecDir = vecDirShooting + x*vecSpread.x*vecRight + y*vecSpread.y*vecUp</c>，
+        /// <c>vecRight/v_up = gpGlobals->v_right/v_up</c>），**形状**每轴两个均匀分布之和（三角分布），
+        /// <paramref name="pellets"/> &gt; 1（霰弹）时再对整对做单位圆截断（原版 <c>:1055</c> / <c>:1201</c>）。
+        /// </summary>
+        private static Vector3 ApplySpread(Vector3 dir, float spreadDegrees, int pellets)
         {
             if (spreadDegrees <= 0f) return dir;
-            // 散布：**玩法**。与 CsMatch.ApplySpread / Firearm.ApplySpread 共用全项目唯一的
-            // WeaponSpread 流（三处是同一套欧拉角扰动，同一口径只允许一个流）。
+            // 散布：**玩法**（命中判定的输入 —— 同一发必须永远同结果）。走全项目唯一的 WeaponSpread 流 ——
+            // 不用 UnityEngine.Random：它是全局静态状态，会推位模拟侧序列。
             var rng = CsRng.Stream(CsRngStream.WeaponSpread);
-            var rot = Quaternion.Euler(
-                rng.Range(-spreadDegrees, spreadDegrees),
-                rng.Range(-spreadDegrees, spreadDegrees),
-                0f);
-            return (rot * dir).normalized;
+            float x, y;
+            do
+            {
+                x = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+                y = rng.Range(-0.5f, 0.5f) + rng.Range(-0.5f, 0.5f);
+            }
+            while (pellets > 1 && x * x + y * y > 1f);
+            var t = Mathf.Tan(spreadDegrees * Mathf.Deg2Rad);
+            var right = Vector3.Cross(Vector3.up, dir);
+            if (right.sqrMagnitude < 1e-6f) right = Vector3.right;
+            right.Normalize();
+            var up = Vector3.Cross(dir, right);
+            return (dir + right * (x * t) + up * (y * t)).normalized;
         }
 
         // ==================================================================
@@ -1051,9 +1166,11 @@ namespace Cs16.Module.Match
         /// 投掷物之间互撞：两颗雷的球心距小于 <c>2 * CsMatchConst.GrenadeCollisionRadius</c> 时沿球心连线
         /// 各推开一半、并交换**法向**速度分量（切向不动）。
         ///
-        /// <para>弹性系数与质量**未取证**（原版手雷是 <c>MOVETYPE_BOUNCE</c> 实体、互撞在 <c>mp.dll</c> 里，
-        /// 载体不在盘）⇒ 取最小行为：等质量、完全弹性的法向分量交换。切开看就是"互推 + 反弹"，
-        /// 不做能量损失、不加自旋。</para>
+        /// <para><b>本判定不可达</b>：原版手雷的碰撞体是**零尺寸点**（<c>ggrenade.cpp:887-890</c> 的
+        /// <c>SOLID_BBOX</c> + <c>UTIL_SetSize(pev, Vector(0,0,0), Vector(0,0,0))</c>）⇒
+        /// <see cref="CsMatchConst.GrenadeCollisionRadius"/> = 0 ⇒ 球心距恒 ≥ 0，本判定永不成立。
+        /// 原版的实体对撞解算属引擎 <c>SV_Impact</c>（不在 <c>mp.dll</c>）**未取证** ⇒
+        /// 本工程不加自造的质量 / 弹性系数；这里保留为守卫，不进任何伤害 / 表现链。</para>
         /// </summary>
         private void ResolveProjectileCollisions()
         {

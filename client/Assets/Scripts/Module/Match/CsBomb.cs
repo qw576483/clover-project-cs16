@@ -24,12 +24,13 @@ namespace Cs16.Module.Match
         private float _plantProgress;
         private float _defuseProgress;
 
-        // ---- 蜂鸣（节奏 = 每响一次间隔 ×0.9 + 档位每响 +1，档位 0..BombBeepTierCount-1）----
-        private float _beepTimer;      // 距离下一次蜂鸣还有多久
-        private float _beepInterval;   // 当前间隔（每响一次 ×CsConst.BombBeepIntervalDecay）
-        private float _beepGap;        // 最近一响排下的等待 = 该次用的未衰减间隔
-        private int _beepSerial;       // 本次安放已经响过几次
-        private int _beepTier;         // 最近一响用的档位
+        // ---- 蜂鸣（**两条独立排期**：声音 = 固定 1.4s（首响 0.5s）；采样档 = 间隔 8s 起每档 ×0.9）----
+        private float _beepTimer;      // 声音排期：距离下一声还有多久
+        private float _beepInterval;   // 档位排期：当前换档间隔（每换一档 ×CsConst.BombBeepIntervalDecay）
+        private float _tierTimer;      // 档位排期：距离下一次换档还有多久
+        private float _beepGap;        // 最近一声排下的等待 = CsConst.BombBeepSoundInterval
+        private int _beepSerial;       // 本次安放已经响过几声
+        private int _beepTier;         // 当前采样档 0..CsConst.BombBeepTierCount-1
         private int _beepTierLogged = -1;
 
         internal CsBomb(CsMatch m)
@@ -58,18 +59,27 @@ namespace Cs16.Module.Match
         /// <summary>当前携带者 actorId（0 = 无人）。</summary>
         public long CarrierId { get; set; }
 
+        /// <summary>把包丢到地上的那个 actor（0 = 无）。</summary>
+        public long DropperActorId { get; internal set; }
+
+        /// <summary>掉落者是否已经走出过 <see cref="CsMatchConst.PickupRadius"/>。
+        /// <para>掉落点就在掉落者脚下，若一落地就允许他拾取，同一帧就会被他自己捡回去 ⇒
+        /// 包永远上不了地。语义与武器链的 <c>CsDroppedWeapon.DropperReleased</c> 完全一致。</para></summary>
+        public bool DropperReleased { get; internal set; }
+
         /// <summary>下包/拆包进度 0~1（-1 = 未在进行）。</summary>
         public float ActiveUseProgress { get; private set; } = -1f;
 
-        /// <summary>本次安放已经响过的蜂鸣次数（下包瞬间清零；未安放 = 0）。
+        /// <summary>本次安放已经响过的蜂鸣次数（下包瞬间清零；未安放 = 0）。节拍 = 首响 0.5s、之后固定 1.4s。
         /// 表现层按它判断"哪一帧该响一声"，因此不必再自带一份蜂鸣计时器。</summary>
         public int BeepSerial => _beepSerial;
 
-        /// <summary>最近一响用的档位 0..<see cref="CsConst.BombBeepTierCount"/>-1（决定放哪一支采样）；
-        /// 从未响过时为 0。最后一档之后恒为最后一档。</summary>
+        /// <summary>当前采样档 0..<see cref="CsConst.BombBeepTierCount"/>-1（决定放哪一支采样）；
+        /// 安放瞬间即第 1 档，每次换档间隔 8s 起 ×0.9；最后一档之后恒为最后一档。</summary>
         public int BeepTier => _beepTier;
 
-        /// <summary>最近一响排下的等待（秒）= 该次排期时用的未衰减间隔。</summary>
+        /// <summary>最近一声排下的等待（秒）= <see cref="CsConst.BombBeepSoundInterval"/>（首声为
+        /// <see cref="CsConst.BombBeepFirstSoundDelay"/>）。</summary>
         public float BeepGap => _beepGap;
 
         public void Reset()
@@ -80,6 +90,8 @@ namespace Cs16.Module.Match
             Position = Vector3.zero;
             LastKnownPosition = Vector3.zero;
             CarrierId = 0;
+            DropperActorId = 0;
+            DropperReleased = false;
             ActiveUseProgress = -1f;
             _plantingId = 0;
             _defusingId = 0;
@@ -94,18 +106,20 @@ namespace Cs16.Module.Match
         {
             _beepTimer = 0f;
             _beepInterval = CsConst.BombBeepIntervalInitial;
+            _tierTimer = CsConst.BombBeepIntervalInitial;
             _beepGap = 0f;
             _beepSerial = 0;
             _beepTier = 0;
             _beepTierLogged = -1;
         }
 
-        /// <summary>开始蜂鸣：首响等一个 <see cref="CsConst.BombBeepIntervalInitial"/>。</summary>
+        /// <summary>开始蜂鸣：首响等 <see cref="CsConst.BombBeepFirstSoundDelay"/>（原版 +0.5s）；
+        /// 换档排期从 <see cref="CsConst.BombBeepIntervalInitial"/>（8s）起算；安放瞬间用第 1 档采样。</summary>
         private void StartBeeping()
         {
             ResetBeepState();
-            _beepGap = _beepInterval;
-            _beepTimer = _beepInterval;
+            _beepGap = CsConst.BombBeepFirstSoundDelay;
+            _beepTimer = _beepGap;
         }
 
         /// <summary>某个 actor 是否按住 E（每帧由 CsMatch 写入，机器人写 intent.Use）。</summary>
@@ -174,27 +188,34 @@ namespace Cs16.Module.Match
 
         private void TickBeep(float dt)
         {
-            _beepTimer -= dt;
-            if (_beepTimer > 0f) return;
-
-            // 一响的节奏（原版 mp.dll: 排期 0x100449BE → 衰减 0x100449D8 → 换音 0x100449F6..0x10044A99 → 换档 0x10044AD1）：
-            // 先用**未衰减**的间隔排下一次蜂鸣，再让间隔 ×BombBeepIntervalDecay，最后把档位 +1。
-            _beepGap = _beepInterval;
-            _beepInterval *= CsConst.BombBeepIntervalDecay;
-            _beepTimer = _beepGap;
-
-            _beepSerial++;
-            _beepTier = Mathf.Min(_beepSerial - 1, CsConst.BombBeepTierCount - 1);
-
-            if (_beepTier != _beepTierLogged)
+            // ---- 档位排期（原版 mp.dll: 排期 0x100449BE → 衰减 0x100449D8 → 换音 0x100449F6.. → 计数 +1 @0x10044AD1）----
+            // 只决定"这时该放哪一支采样"，与"何时响"无关：先用**未衰减**的间隔排下一次换档，再让间隔 ×0.9，最后档位 +1。
+            _tierTimer -= dt;
+            if (_tierTimer <= 0f)
             {
-                _beepTierLogged = _beepTier;
-                Game.Logger.Info(Tag,
-                    $"C4 蜂鸣换档 → 第 {_beepTier + 1}/{CsConst.BombBeepTierCount} 档" +
-                    $"（第 {_beepSerial} 响，间隔 {_beepGap:F3}s → {_beepInterval:F3}s，剩余 {TimeLeft:F1}s）");
+                var tierGap = _beepInterval;
+                _tierTimer = tierGap;
+                _beepInterval *= CsConst.BombBeepIntervalDecay;
+                _beepTier = Mathf.Min(_beepTier + 1, CsConst.BombBeepTierCount - 1);
+
+                if (_beepTier != _beepTierLogged)
+                {
+                    _beepTierLogged = _beepTier;
+                    Game.Logger.Info(Tag,
+                        $"C4 蜂鸣换档 → 第 {_beepTier + 1}/{CsConst.BombBeepTierCount} 档" +
+                        $"（换档间隔 {tierGap:F3}s → {_beepInterval:F3}s，剩余 {TimeLeft:F1}s）");
+                }
             }
 
-            _m.RaiseBombStateChanged();
+            // ---- 声音排期（原版 mp.dll 0x10044AD7：m_flNextBeep = time + 1.4f，固定节拍，不受档位影响）----
+            _beepTimer -= dt;
+            if (_beepTimer <= 0f)
+            {
+                _beepGap = CsConst.BombBeepSoundInterval;
+                _beepTimer = _beepGap;
+                _beepSerial++;
+                _m.RaiseBombStateChanged();
+            }
         }
 
         // ==================================================================
@@ -388,9 +409,10 @@ namespace Cs16.Module.Match
             ResetBeepState();
             ActiveUseProgress = -1f;
 
-            _m.Economy.Add(a, CsConst.RewardBombDefuse, "成功拆除 C4");
-
-            Game.Logger.Info(Tag, $"★ {a.Name} 拆除 C4 成功 → CT 赢下本回合");
+            // 原版不发"拆包个人奖励"：22 格奖金表（.data 0x10163AB0）里没有这一档，
+            // 整支 mp.dll 的 .text 也没有对应的金额立即数 ⇒ 拆包者只得分队奖励。
+            Game.Logger.Info(Tag,
+                $"★ {a.Name} 拆除 C4 成功 → CT 赢下本回合（拆包者无个人奖励：原版奖金表无此档）");
 
             _m.PublishMessage(a, "炸弹已被拆除！");
             _m.EmitEvent(Events.BombDefused);
@@ -429,6 +451,8 @@ namespace Cs16.Module.Match
 
             a.HasBomb = false;
             CarrierId = 0;
+            DropperActorId = a.Id;
+            DropperReleased = false;
             ClearUseState(a.Id);
 
             if (Planted)
@@ -446,7 +470,9 @@ namespace Cs16.Module.Match
             _m.RaiseBombStateChanged();
         }
 
-        /// <summary>走到掉落的 C4 旁自动拾取。</summary>
+        /// <summary>走到掉落的 C4 旁自动拾取。
+        /// <para>与武器链同一条口径：掉落者本人必须先走出 <see cref="CsMatchConst.PickupRadius"/>
+        /// 才允许把自己丢下的包捡回 —— 否则丢包那一帧就被自己捡回，包永远上不了地。</para></summary>
         public void TryPickupDropped(CsActor a)
         {
             if (!Dropped || Planted) return;
@@ -455,7 +481,16 @@ namespace Cs16.Module.Match
 
             var d = a.Position - Position;
             d.y = 0f;
-            if (d.sqrMagnitude > CsMatchConst.PickupRadius * CsMatchConst.PickupRadius) return;
+            var near = d.sqrMagnitude <= CsMatchConst.PickupRadius * CsMatchConst.PickupRadius;
+
+            if (a.Id == DropperActorId && !DropperReleased)
+            {
+                if (near) return;
+                DropperReleased = true;
+                return;
+            }
+
+            if (!near) return;
 
             Dropped = false;
             a.HasBomb = true;

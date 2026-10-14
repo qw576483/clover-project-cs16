@@ -51,3 +51,8 @@ __pycache__/
 #   原先只拦了 Screenshots/，这里补上 _shots，拦住它被误建 / 误提交回来
 client/Assets/_shots/
 client/Assets/_shots.meta
+
+# ★ 片级证据归档（2026-10-14 加）：权威根 = 工作区根 <f-v2>\_cs16-evidence\（仓库外）；项目树内这份
+#   是"CWD=项目根 + 脚本用相对路径"的产物，曾达 382 文件 / 48.4 MB 且**未被忽略** ⇒ 一次 `git add -A`
+#   就会把全部证据扫进提交（与 *.bak 同类事故）。⇒ 拦住它；项目树内那份保留为可读副本，⛔ 不再新增。
+_cs16-evidence/

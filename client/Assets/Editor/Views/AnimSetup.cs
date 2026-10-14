@@ -19,7 +19,7 @@ namespace Cs16.EditorTools
     ///       帧率/帧数/是否循环**一律取 mdl 实测**（见 cs16_anim.py 的导出日志）；</item>
     /// <item><b>AnimatorController</b>：一条 clip = 一个 state；**state 名 = 去前缀的 mdl 序列名**
     ///       （与运行期 <c>CsViewTuning</c> 的候选逐字一致，见 <see cref="BuildController"/> 的注释）；</item>
-    /// <item><b>命中区胶囊</b>：4 段，挂在对应骨骼下（跟随动画）。</item>
+    /// <item><b>命中区胶囊</b>：5 段（头/胸/腹/左腿/右腿），挂在对应骨骼下（跟随动画）。</item>
     /// </list>
     ///
     /// <para><b>为什么用引擎的 <c>Game.Anim</c></b>：运行期 <c>ActorView</c> / <c>ViewModelRig</c>
@@ -39,6 +39,19 @@ namespace Cs16.EditorTools
 
         /// <summary>每根骨骼的网格节点的名字前缀。</summary>
         internal const string SkinName = "Skin";
+
+        /// <summary>
+        /// **按 9 路 blend 出动画**的序列名前缀：原版站立瞄准参考姿势 <c>ref_aim_*</c>
+        /// （9 路 = 3×3 瞄准方向格；索引 <c>b = pitchIdx*3 + yawIdx</c>）。
+        ///
+        /// <para>其余同样带 9 路数据的序列（<c>ref_shoot_*</c> / <c>crouch_aim_*</c> / <c>crouch_shoot_*</c>）
+        /// 这一版仍只出 blend 0 —— 9 皮肤全序列出齐会把 <c>Art/Anim</c> 撑到 GB 量级，
+        /// 而这一版只要把"瞄准姿势随瞄准方向走"这条链做通。</para>
+        /// </summary>
+        internal const string BlendSeqPrefix = "ref_aim_";
+
+        /// <summary>出 BlendTree 的路数 = 3×3 网格（<see cref="CsAimBlend.GridN"/>）。</summary>
+        private const int BlendGridCount = CsAimBlend.GridN * CsAimBlend.GridN;
 
         // ==================================================================
         //  收集贴图用法（决定材质要不要走 cutout）
@@ -78,35 +91,8 @@ namespace Cs16.EditorTools
             var bones = BuildSkeleton(body.transform, a);
             var meshCount = AttachSkin(body.transform, a, bones, mats, msg);
 
-            // 命中区：4 个胶囊挂到对应骨骼下（跟随动画）
-            var capBindWorld = a.BindWorld();
-            for (var i = 0; i < a.Caps.Count; i++)
-            {
-                var cap = a.Caps[i];
-                if (cap.Bone < 0 || cap.Bone >= bones.Length) continue;
-                var node = new GameObject(CsViewTuning.HitboxNodePrefix + cap.Zone);
-                var bt = bones[cap.Bone];
-                node.transform.SetParent(bt, false);
-
-                // 胶囊在绑定姿态下必须**竖直**（与 Body 轴对齐）：
-                // localRotation = 绑定世界旋转的逆 ⇒ 世界旋转回到 identity。
-                var bindWorld = ToMatrix(capBindWorld[cap.Bone]);
-                node.transform.localRotation = Quaternion.Inverse(bindWorld.rotation);
-                var worldCenter = new Vector3(0f, cap.CenterY, 0f);
-                node.transform.localPosition = bindWorld.inverse.MultiplyPoint3x4(worldCenter);
-
-                node.layer = PhysicsLayers.Bot;   // 运行期由 ActorView 按 bot/真人改成 Player
-                var col = node.AddComponent<CapsuleCollider>();
-                var height = Mathf.Max(cap.CapH, cap.CapR * 2.002f);   // Unity 会静默夹半径
-                col.direction = 1;
-                col.center = Vector3.zero;
-                col.radius = Mathf.Min(cap.CapR, height * 0.5f);
-                col.height = height;
-
-                var proxy = node.AddComponent<CsHitboxProxy>();
-                proxy.Hitbox = ParseZone(cap.Zone);
-                proxy.ActorId = 0;
-            }
+            // 命中区：胶囊挂到对应骨骼下（跟随动画）
+            AttachHitboxes(a, bones);
 
             root.AddComponent<ActorView>();
             AttachAnimator(root, a);
@@ -372,7 +358,8 @@ namespace Cs16.EditorTools
         /// <summary>
         /// 只按当前口径重写 <c>Art/Mesh</c> 下已有的网格资产（**就地覆盖**，GUID 与预制体的引用都不变），
         /// 不碰材质 / 动画 / 预制体。网格内容与预制体生成走同一份 <see cref="FillSkinMesh"/>。
-        /// 骨骼表为空 = 原版 <c>w_*.mdl</c> 那类静态网格（不写 boneWeights / bindposes）。
+        /// 骨骼表为空、或由 <see cref="BuildStaticModelPrefab"/> 渲染的 <c>w_*</c> 世界模型
+        /// ⇒ 不写 boneWeights / bindposes（静态网格不读蒙皮数据）。
         /// </summary>
         internal static int RebuildMeshAssetsFromModelData(string modelDataDir, out string report)
         {
@@ -380,6 +367,7 @@ namespace Cs16.EditorTools
             var files = Directory.GetFiles(modelDataDir, "*.cs16anim");
             var written = 0;
             var missing = 0;
+            var skipped = 0;
             for (var f = 0; f < files.Length; f++)
             {
                 var file = files[f].Replace('\\', '/');
@@ -389,7 +377,9 @@ namespace Cs16.EditorTools
                     Debug.LogError($"[AnimSetup] 读不了动画数据：{err}");
                     continue;
                 }
-                var bindposes = a.Bones.Count > 0 ? Bindposes(a) : null;
+                //  世界模型（w_*）由 BuildStaticModelPrefab 以 MeshFilter + MeshRenderer 渲染 ⇒ 网格不带蒙皮数据。
+                //  只按"骨骼表是否为空"判断不行：w_knife 的骨骼表非空，会拿到一份渲染时无人读取的 bindposes。
+                var bindposes = a.Bones.Count > 0 && !a.Key.StartsWith("w_") ? Bindposes(a) : null;
                 for (var s = 0; s < a.Subs.Count; s++)
                 {
                     var sub = a.Subs[s];
@@ -402,13 +392,29 @@ namespace Cs16.EditorTools
                         sb.Add($"! 缺网格 {path}（跳过）");
                         continue;
                     }
+                    //  就地覆盖写不掉"要不要蒙皮"这个差异：Mesh.Clear() 清不掉资产里已有的
+                    //  bindposes / boneWeights，照参数重填只会得到半新半旧的内容。所以状态对不上就
+                    //  拒绝改写并点名整棵生成器（它按 DeleteAsset + CreateAsset 重出，是唯一能换
+                    //  顶点通道布局的入口）。
+                    var diskSkinned = mesh.bindposes != null && mesh.bindposes.Length > 0;
+                    if (diskSkinned != (bindposes != null))
+                    {
+                        skipped++;
+                        Debug.LogError($"[AnimSetup] {path} 的蒙皮状态与生成口径不符（盘上 " +
+                                       $"{(diskSkinned ? "有" : "无")} bindposes、本入口要求 " +
+                                       $"{(bindposes != null ? "有" : "无")}）—— 就地覆盖改不了，请跑 " +
+                                       "Clover/CS16/整理视图与音效资源 重出：该入口会重建网格资产");
+                        sb.Add($"! 蒙皮状态不符 {path}（跳过；请跑整棵生成器）");
+                        continue;
+                    }
                     FillSkinMesh(mesh, a.Key, s, sub, bindposes);
                     EditorUtility.SetDirty(mesh);
                     written++;
                 }
             }
             AssetDatabase.SaveAssets();
-            report = $"重写网格 {written} 块、缺 {missing} 块（键 {files.Length} 份）\n" + string.Join("\n", sb.ToArray());
+            report = $"重写网格 {written} 块、缺 {missing} 块、跳过 {skipped} 块（键 {files.Length} 份）\n" +
+                     string.Join("\n", sb.ToArray());
             return written;
         }
 
@@ -488,11 +494,120 @@ namespace Cs16.EditorTools
                 case "Head": return CsHitbox.Head;
                 case "Chest": return CsHitbox.Chest;
                 case "Stomach": return CsHitbox.Stomach;
-                case "Leg": return CsHitbox.Leg;
+                case "LeftLeg": return CsHitbox.LeftLeg;
+                case "RightLeg": return CsHitbox.RightLeg;
                 default:
+                    // 区名来自 .cs16anim 的胶囊段（与 CsHitbox 的枚举名同源），对不上就是数据与代码脱节。
                     Debug.LogWarning($"[AnimSetup] 未知命中区名「{zone}」，按 Chest 处理");
                     return CsHitbox.Chest;
             }
+        }
+
+        // ==================================================================
+        //  命中区节点（角色预制体；BuildPlayerPrefab 与"只重建命中区"共用这一处）
+        // ==================================================================
+        /// <summary>
+        /// 按 <c>.cs16anim</c> 的命中区表建胶囊节点，挂在 <paramref name="bones"/> 里对应的骨骼下（跟随动画）。
+        /// 节点名 = <see cref="CsViewTuning.HitboxNodePrefix"/> + 区名；每个节点带
+        /// <c>CapsuleCollider</c> + <see cref="CsHitboxProxy"/>。
+        ///
+        /// <para><b>左右腿为什么能分列</b>：胶囊中心 = <c>(0, CenterY, CenterZ)</c> —— 侧向中心由
+        /// <c>.cs16anim</c> 的 <c>centerZ</c> 给出（左右腿各挂在自己那条腿骨下），竖直中心与尺寸照旧。
+        /// 其余命中区的 <c>centerZ</c> 为 0 = 仍在身体轴上。</para>
+        /// </summary>
+        /// <returns>建出来的命中区节点数。</returns>
+        internal static int AttachHitboxes(Cs16AnimAsset a, Transform[] bones)
+        {
+            var capBindWorld = a.BindWorld();
+            var made = 0;
+            for (var i = 0; i < a.Caps.Count; i++)
+            {
+                var cap = a.Caps[i];
+                if (cap.Bone < 0 || cap.Bone >= bones.Length) continue;
+                var bt = bones[cap.Bone];
+                if (bt == null) continue;
+
+                var node = new GameObject(CsViewTuning.HitboxNodePrefix + cap.Zone);
+                node.transform.SetParent(bt, false);
+
+                // 胶囊在绑定姿态下必须**竖直**（与 Body 轴对齐）：
+                // localRotation = 绑定世界旋转的逆 ⇒ 世界旋转回到 identity。
+                var bindWorld = ToMatrix(capBindWorld[cap.Bone]);
+                node.transform.localRotation = Quaternion.Inverse(bindWorld.rotation);
+                var worldCenter = new Vector3(0f, cap.CenterY, cap.CenterZ);
+                node.transform.localPosition = bindWorld.inverse.MultiplyPoint3x4(worldCenter);
+
+                node.layer = PhysicsLayers.Bot;   // 运行期由 ActorView 按 bot/真人改成 Player
+                var col = node.AddComponent<CapsuleCollider>();
+                var height = Mathf.Max(cap.CapH, cap.CapR * 2.002f);   // Unity 会静默夹半径
+                col.direction = 1;
+                col.center = Vector3.zero;
+                col.radius = Mathf.Min(cap.CapR, height * 0.5f);
+                col.height = height;
+
+                var proxy = node.AddComponent<CsHitboxProxy>();
+                proxy.Hitbox = ParseZone(cap.Zone);
+                proxy.ActorId = 0;
+                made++;
+            }
+            return made;
+        }
+
+        /// <summary>
+        /// **只重建一个角色预制体里的命中区节点**（就地覆盖预制体，不碰骨骼 / 蒙皮网格 / 材质 / 动画）。
+        ///
+        /// <para>用途：改了 <c>.cs16anim</c> 的胶囊段后，不必跑整棵资产树
+        /// （<c>ArtSetup.Generate</c> 会连带重写 <c>Art</c> 下的网格与全部预制体）就能让预制体跟上。
+        /// 幂等：先删掉预制体里全部 <see cref="CsHitboxProxy"/> 所在节点，再按数据重建。</para>
+        /// </summary>
+        /// <returns>建出来的命中区节点数；打不开预制体返回 -1。</returns>
+        internal static int RebuildHitboxNodes(Cs16AnimAsset a, string prefabPath, out string report)
+        {
+            var root = PrefabUtility.LoadPrefabContents(prefabPath);
+            if (root == null)
+            {
+                report = "打不开预制体 " + prefabPath;
+                return -1;
+            }
+            try
+            {
+                var bones = new Transform[a.Bones.Count];
+                var found = 0;
+                for (var i = 0; i < a.Bones.Count; i++)
+                {
+                    bones[i] = FindDeep(root.transform, a.Bones[i].Name);
+                    if (bones[i] != null) found++;
+                }
+
+                var removed = 0;
+                var existing = root.GetComponentsInChildren<CsHitboxProxy>(true);
+                for (var i = 0; i < existing.Length; i++)
+                {
+                    if (existing[i] == null) continue;
+                    Object.DestroyImmediate(existing[i].gameObject);
+                    removed++;
+                }
+
+                var made = AttachHitboxes(a, bones);
+                PrefabUtility.SaveAsPrefabAsset(root, prefabPath);
+                report = $"{prefabPath}：删 {removed} 个旧命中区、建 {made} 个（骨骼命中 {found}/{a.Bones.Count}）";
+                return made;
+            }
+            finally
+            {
+                PrefabUtility.UnloadPrefabContents(root);
+            }
+        }
+
+        private static Transform FindDeep(Transform t, string name)
+        {
+            if (t.name == name) return t;
+            for (var i = 0; i < t.childCount; i++)
+            {
+                var r = FindDeep(t.GetChild(i), name);
+                if (r != null) return r;
+            }
+            return null;
         }
 
         // ==================================================================
@@ -551,88 +666,72 @@ namespace Cs16.EditorTools
             for (var i = 0; i < a.Bones.Count; i++)
                 paths[i] = bones[i] == null ? null : RelativePath(root, bones[i]);
 
-            var clips = new List<AnimationClip>();
-            var stateNames = new List<string>();          // 与 clips 一一对应（state 名 = 去前缀序列名）
+            var controller = AnimatorController.CreateAnimatorControllerAtPath(ctrlPath);
+            if (controller == null)
+            {
+                Debug.LogError($"[AnimSetup] {a.Key} 的 controller 创建失败");
+                return null;
+            }
+
+            // 两个 blend 轴参数只在真有 BlendTree state 时加 —— 没有它时运行期也不喂值
+            //（ActorView 按"controller 里有没有这两个参数"决定要不要 SetFloat）。
+            for (var i0 = 0; i0 < a.Clips.Count; i0++)
+            {
+                if (!UseBlendTree(a.Clips[i0])) continue;
+                controller.AddParameter(CsAimBlend.ParamYaw, AnimatorControllerParameterType.Float);
+                controller.AddParameter(CsAimBlend.ParamPitch, AnimatorControllerParameterType.Float);
+                break;
+            }
+
+            var stateNames = new List<string>();          // 已建 state 的名字（= 去前缀序列名）
             var usedStates = new HashSet<string>();
+            var blended = 0;
+            var blendTrees = 0;
+            AnimatorState first = null;
             for (var c = 0; c < a.Clips.Count; c++)
             {
                 var clipData = a.Clips[c];
+                if (clipData.NumBlends > 1) blended++;
                 if (!usedStates.Add(clipData.Name))
                 {
                     Debug.LogWarning($"[AnimSetup] {a.Key} 的序列名「{clipData.Name}」重复 —— " +
                                      "只保留第一条的 state（state 名必须唯一，同名后一条运行期按名字查不到）");
                     continue;
                 }
-                var clipPath = $"{AnimDir}/{a.Key}_{clipData.Name}.anim";
-                if (File.Exists(clipPath)) AssetDatabase.DeleteAsset(clipPath);
 
-                var clip = new AnimationClip { name = clipData.Name, frameRate = clipData.Fps };
-                var any = false;
-                for (var b = 0; b < a.Bones.Count && b < clipData.Tracks.Length; b++)
+                if (UseBlendTree(clipData))
                 {
-                    var tr = clipData.Tracks[b];
-                    if (tr == null || tr.Count == 0) continue;
-                    if (paths[b] == null)
-                    {
-                        Debug.LogWarning($"[AnimSetup] {a.Key} 找不到骨骼节点 {a.Bones[b].Name} —— " +
-                                         "该骨骼的动画曲线被跳过（骨骼名与预制体不一致？）");
-                        continue;
-                    }
-                    var px = new Keyframe[tr.Count];
-                    var py = new Keyframe[tr.Count];
-                    var pz = new Keyframe[tr.Count];
-                    var qx = new Keyframe[tr.Count];
-                    var qy = new Keyframe[tr.Count];
-                    var qz = new Keyframe[tr.Count];
-                    var qw = new Keyframe[tr.Count];
-                    for (var k = 0; k < tr.Count; k++)
-                    {
-                        var t = tr.Times[k];
-                        px[k] = new Keyframe(t, tr.Pos[k * 3]);
-                        py[k] = new Keyframe(t, tr.Pos[k * 3 + 1]);
-                        pz[k] = new Keyframe(t, tr.Pos[k * 3 + 2]);
-                        qx[k] = new Keyframe(t, tr.Quat[k * 4]);
-                        qy[k] = new Keyframe(t, tr.Quat[k * 4 + 1]);
-                        qz[k] = new Keyframe(t, tr.Quat[k * 4 + 2]);
-                        qw[k] = new Keyframe(t, tr.Quat[k * 4 + 3]);
-                    }
-                    Set(clip, paths[b], "localPosition.x", px);
-                    Set(clip, paths[b], "localPosition.y", py);
-                    Set(clip, paths[b], "localPosition.z", pz);
-                    Set(clip, paths[b], "localRotation.x", qx);
-                    Set(clip, paths[b], "localRotation.y", qy);
-                    Set(clip, paths[b], "localRotation.z", qz);
-                    Set(clip, paths[b], "localRotation.w", qw);
-                    any = true;
-                }
-                if (!any)
-                {
-                    Debug.LogWarning($"[AnimSetup] {a.Key}/{clipData.Name} 一条曲线都没写进去 —— 跳过");
+                    var treeState = BuildBlendTreeState(controller, a, clipData, paths);
+                    if (treeState == null) continue;
+                    stateNames.Add(clipData.Name);
+                    blendTrees++;
+                    if (first == null) first = treeState;
                     continue;
                 }
 
-                var settings = AnimationUtility.GetAnimationClipSettings(clip);
-                settings.loopTime = clipData.Loop;
-                AnimationUtility.SetAnimationClipSettings(clip, settings);
-                AssetDatabase.CreateAsset(clip, clipPath);
-                clips.Add(clip);
-                stateNames.Add(clipData.Name);      // 注意：CreateAsset 会把 clip.name 改成文件名（带 key 前缀），
-                                                    // 所以 state 名从**序列名**另存一份，不读 clip.name
+                // 注意：CreateAsset 会把 clip.name 改成文件名（带 key 前缀），
+                // 所以 state 名从**序列名**另取一份，不读 clip.name。
+                var clip = BuildClipAsset(a, clipData, clipData.Tracks,
+                    $"{AnimDir}/{a.Key}_{clipData.Name}.anim", clipData.Name, paths);
+                if (clip == null) continue;
+                var single = controller.AddMotion(clip);
+                single.name = clipData.Name;
+                stateNames.Add(clipData.Name);
+                if (first == null) first = single;
             }
 
-            var controller = AnimatorController.CreateAnimatorControllerAtPath(ctrlPath);
-            if (controller == null || clips.Count == 0)
+            // 多路序列（瞄准 / 射击，9 路 = 3×3 瞄准方向格）在数据里带全部路数：`BlendSeqPrefix`
+            // 那一组出 9 条 clip + 2D BlendTree（state 名不变），其余只把第一路写成一条 clip。
+            // 没被消费的路显式报一条，免得"数据已导出、画面上却不随瞄准方向变"再被当成数据缺失排查。
+            if (blended > 0)
+                Debug.Log($"[AnimSetup] {a.Key}：{blended} 条序列带多路 blend（瞄准 / 射击）；其中 " +
+                          $"{blendTrees} 条（{BlendSeqPrefix}*）出了 9 条 clip + 2D BlendTree，" +
+                          "其余只写第一路（blend 0）的轨道");
+
+            if (stateNames.Count == 0)
             {
-                Debug.LogError($"[AnimSetup] {a.Key} 的 controller 创建失败或没有可用 clip");
+                Debug.LogError($"[AnimSetup] {a.Key} 没有任何可用 clip —— controller 不生成");
                 return null;
-            }
-
-            AnimatorState first = null;
-            for (var i = 0; i < clips.Count; i++)
-            {
-                var st = controller.AddMotion(clips[i]);
-                st.name = stateNames[i];     // = 去前缀序列名（运行时候选名），**不是** clip 资产名
-                if (first == null) first = st;
             }
 
             // 默认状态：优先 idle（角色 / 视模型的静止状态），否则第一条
@@ -653,6 +752,128 @@ namespace Cs16.EditorTools
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
             return controller;
+        }
+
+        /// <summary>
+        /// 这条序列是否按 9 路出 clip + BlendTree：名字在 <see cref="BlendSeqPrefix"/> 组里、
+        /// 且路数正好等于 3×3 网格（缺一路就不是完整格子，宁可按 1 路出，也不出一个缺角的树）。
+        /// </summary>
+        private static bool UseBlendTree(Cs16AnimClip clipData)
+        {
+            return clipData != null
+                && clipData.NumBlends == BlendGridCount
+                && clipData.Name.StartsWith(BlendSeqPrefix, System.StringComparison.Ordinal);
+        }
+
+        /// <summary>
+        /// 一条多路序列 → 一个 **2D 自由笛卡尔 BlendTree** state（state 名 = 序列名，运行期查状态的
+        /// 候选名不变）：9 路各一条 clip，落在 <c>(yawIdx, pitchIdx)</c> 的格心上。
+        ///
+        /// <para>轴与格心由 <see cref="CsAimBlend"/> 给出（<c>AimYaw</c> / <c>AimPitch</c> ∈ [0,1]，
+        /// 格心 0 / 0.5 / 1）；格内插值交给 Animator（3×3 规则格上等价双线性）。
+        /// 格序走**数据自己的索引**（<c>b % 3</c> = 偏航格、<c>b / 3</c> = 俯仰格），不按姿势代理量反推。</para>
+        /// </summary>
+        /// <returns>建好的 state；一条曲线都没写进去时返回 <c>null</c>。</returns>
+        private static AnimatorState BuildBlendTreeState(AnimatorController controller, Cs16AnimAsset a,
+            Cs16AnimClip clipData, string[] paths)
+        {
+            var state = controller.CreateBlendTreeInController(clipData.Name, out var tree);
+            if (state == null || tree == null)
+            {
+                Debug.LogError($"[AnimSetup] {a.Key}/{clipData.Name} 的 BlendTree 创建失败 —— 该序列不会出动画");
+                return null;
+            }
+            tree.blendType = BlendTreeType.FreeformCartesian2D;
+            tree.blendParameter = CsAimBlend.ParamYaw;
+            tree.blendParameterY = CsAimBlend.ParamPitch;
+
+            var wrote = 0;
+            for (var b = 0; b < clipData.NumBlends; b++)
+            {
+                var tracks = clipData.BlendTracks != null && b < clipData.BlendTracks.Length
+                    ? clipData.BlendTracks[b] : null;
+                if (tracks == null) continue;
+                var name = $"{clipData.Name}_b{b}";
+                var clip = BuildClipAsset(a, clipData, tracks, $"{AnimDir}/{a.Key}_{name}.anim", name, paths);
+                if (clip == null) continue;
+                tree.AddChild(clip, new Vector2(
+                    CsAimBlend.CellCentre(b % CsAimBlend.GridN),
+                    CsAimBlend.CellCentre(b / CsAimBlend.GridN)));
+                wrote++;
+            }
+
+            if (wrote != BlendGridCount)
+            {
+                // 非预期分支：格子里缺路 ⇒ 那一片方向的姿势会退化成邻居格（表现是"某几个瞄准角不动"）。
+                Debug.LogError($"[AnimSetup] {a.Key}/{clipData.Name} 只写出 {wrote}/{BlendGridCount} 路" +
+                               " —— 缺少的方向格会退化到邻近格");
+            }
+            state.name = clipData.Name;
+            return state;
+        }
+
+        /// <summary>
+        /// 把一条轨道集写成 <c>.anim</c> 资产（同一条序列的多路各调一次）。
+        /// </summary>
+        /// <param name="clipPath">资产路径（同一路径的旧资产先删，保证"改了生成器就生效"）。</param>
+        /// <param name="clipName">资产对象名（多路序列带 <c>_b{路号}</c> 后缀）。</param>
+        /// <returns>写好的 clip；一条曲线都没写进去时返回 <c>null</c>。</returns>
+        private static AnimationClip BuildClipAsset(Cs16AnimAsset a, Cs16AnimClip clipData,
+            Cs16AnimTrack[] tracks, string clipPath, string clipName, string[] paths)
+        {
+            if (File.Exists(clipPath)) AssetDatabase.DeleteAsset(clipPath);
+
+            var clip = new AnimationClip { name = clipName, frameRate = clipData.Fps };
+            var any = false;
+            for (var b = 0; b < a.Bones.Count && tracks != null && b < tracks.Length; b++)
+            {
+                var tr = tracks[b];
+                if (tr == null || tr.Count == 0) continue;
+                if (paths[b] == null)
+                {
+                    Debug.LogWarning($"[AnimSetup] {a.Key} 找不到骨骼节点 {a.Bones[b].Name} —— " +
+                                     "该骨骼的动画曲线被跳过（骨骼名与预制体不一致？）");
+                    continue;
+                }
+                var px = new Keyframe[tr.Count];
+                var py = new Keyframe[tr.Count];
+                var pz = new Keyframe[tr.Count];
+                var qx = new Keyframe[tr.Count];
+                var qy = new Keyframe[tr.Count];
+                var qz = new Keyframe[tr.Count];
+                var qw = new Keyframe[tr.Count];
+                for (var k = 0; k < tr.Count; k++)
+                {
+                    var t = tr.Times[k];
+                    px[k] = new Keyframe(t, tr.Pos[k * 3]);
+                    py[k] = new Keyframe(t, tr.Pos[k * 3 + 1]);
+                    pz[k] = new Keyframe(t, tr.Pos[k * 3 + 2]);
+                    qx[k] = new Keyframe(t, tr.Quat[k * 4]);
+                    qy[k] = new Keyframe(t, tr.Quat[k * 4 + 1]);
+                    qz[k] = new Keyframe(t, tr.Quat[k * 4 + 2]);
+                    qw[k] = new Keyframe(t, tr.Quat[k * 4 + 3]);
+                }
+                Set(clip, paths[b], "localPosition.x", px);
+                Set(clip, paths[b], "localPosition.y", py);
+                Set(clip, paths[b], "localPosition.z", pz);
+                Set(clip, paths[b], "localRotation.x", qx);
+                Set(clip, paths[b], "localRotation.y", qy);
+                Set(clip, paths[b], "localRotation.z", qz);
+                Set(clip, paths[b], "localRotation.w", qw);
+                any = true;
+            }
+
+            if (!any)
+            {
+                Debug.LogWarning($"[AnimSetup] {a.Key}/{clipName} 一条曲线都没写进去 —— 跳过");
+                return null;
+            }
+
+            var settings = AnimationUtility.GetAnimationClipSettings(clip);
+            settings.loopTime = clipData.Loop;
+            AnimationUtility.SetAnimationClipSettings(clip, settings);
+            AssetDatabase.CreateAsset(clip, clipPath);
+            return clip;
         }
 
         /// <summary>在已建 state 的名字表里按**去前缀序列名**找（找不到返回 null）。</summary>
@@ -710,7 +931,7 @@ namespace Cs16.EditorTools
         /// 角色与第一人称武器在画面上**完全看不见**（渲染器仍是 <c>enabled</c>、
         /// <c>isVisible=True</c>、有三角有材质 —— 所以只看渲染器状态的探针会误判成"可见"）；</item>
         /// <item>命中区胶囊拿到的是全零矩阵 ⇒ <c>localPosition = 0</c>、
-        /// <c>localRotation = inverse(全零矩阵的 rotation)</c> ⇒ 4 个命中盒全堆在骨骼原点上，
+        /// <c>localRotation = inverse(全零矩阵的 rotation)</c> ⇒ 命中盒**全部**堆在骨骼原点上，
         /// 射线命中部位全错。</item>
         /// </list>
         /// <para>实测取证：磁盘上的 <c>Mesh.asset</c> 有 22 个 <c>bindposes</c>，逐个读出**全是全零矩阵**；

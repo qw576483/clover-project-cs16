@@ -546,7 +546,8 @@ namespace Cs16.Module.Bot
 
             public bool WalkableAt(float x, float z) => Mathf.Abs(x) <= Half && Mathf.Abs(z) <= Half;
 
-            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius)
+            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
+                                 float height = CsConst.StandHeight)
             {
                 if (!WalkableAt(pos.x, pos.z)) return false;
                 for (var i = 0; i < 8; i++)
@@ -558,7 +559,8 @@ namespace Cs16.Module.Bot
             }
 
             /// <summary>假地图不做精细碰撞：钳在场地内（边界能挡住人 → 避障逻辑会被走到）。</summary>
-            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius)
+            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                                       float height = CsConst.StandHeight)
             {
                 return new Vector3(
                     Mathf.Clamp(to.x, -Half, Half),

@@ -41,6 +41,9 @@ namespace Cs16.Module.Combat
         /// <summary>本帧从模拟队列取走的射击记录（复用，避免每帧产生垃圾）。</summary>
         private readonly List<string> _drainedShots = new List<string>(CsCombatTuning.MaxShotsConsumedPerFrame);
 
+        /// <summary>与 <see cref="_drainedShots"/> **同索引**的"这一发是否装了消音器"（远端选开火采样用）。</summary>
+        private readonly List<bool> _drainedShotSilenced = new List<bool>(CsCombatTuning.MaxShotsConsumedPerFrame);
+
         private ICsMatch _match;
         private FirstPersonCamera _view;
 
@@ -158,6 +161,50 @@ namespace Cs16.Module.Combat
         /// <summary>测试入口的上一状态（只为「状态变化时打一条日志」，不参与任何判定）。</summary>
         private bool _fireHeldForTest;
 
+        /// <summary>
+        /// 测试入口：让**下一次** <see cref="FillInput"/> 视为"按下了右键"（attack2 的按下沿）。
+        ///
+        /// <para><b>为什么必须有它</b>：右键的按下沿读的是真实鼠标
+        /// （<c>input.GetKeyDown(GameKey.MouseRight)</c>），而**开镜音 / 切换音那一支就在 <see cref="FillInput"/> 里**
+        /// （不是模拟侧）⇒ 离线驱动没有鼠标层，光有 <c>input</c> 通道的 <c>zoom</c> 位取不到这两条音。
+        /// 本入口置一个一次性旗标，<see cref="FillInput"/> 消费一次即清 —— 右键是**按下沿**语义，
+        /// 用"按住"型旗标会让每一帧都翻转一次。</para>
+        ///
+        /// <para><b>不改变真实玩家行为</b>：旗标默认 false，真实路径仍只由 <c>input.GetKeyDown</c> 决定，
+        /// 没有任何 Update / 事件会调它（与 <see cref="SetFireHeldForTest"/> 同一形状）。</para>
+        /// </summary>
+        public void SetAttack2PressedForTest()
+        {
+            _attack2PressedForTest = true;
+            _log.Info("attack2.testpress",
+                "测试入口 SetAttack2PressedForTest()：下一次 FillInput 视为按下右键（离线驱动专用）");
+        }
+
+        /// <summary>测试入口的一次性旗标（被 <see cref="FillInput"/> 消费即清）。</summary>
+        private bool _attack2PressedForTest;
+
+        /// <summary>
+        /// 测试入口：让**下一次** <see cref="FillInput"/> 视为「滚轮朝该方向滚动了一次」
+        /// （&gt; 0 = 滚轮下 / 原版 <c>invnext</c>，&lt; 0 = 滚轮上 / 原版 <c>invprev</c>）。
+        ///
+        /// <para><b>为什么必须有它</b>：滚轮与左右键同属"本帧"语义、读的是真实设备
+        /// （<c>input.GetKeyDown(GameKey.MouseScrollUp/Down)</c>），而离线驱动没有鼠标层
+        /// （与 <see cref="SetAttack2PressedForTest"/> 同一形状）。本入口置一个一次性旗标，
+        /// <see cref="FillInput"/> 消费一次即清 —— 用"按住"型旗标会让每一帧都切一次枪。</para>
+        ///
+        /// <para><b>不改变真实玩家行为</b>：旗标默认 0，真实路径仍只由 <c>input.GetKeyDown</c> 决定，
+        /// 没有任何 Update / 事件会调它。</para>
+        /// </summary>
+        public void SetWheelCycleForTest(int direction)
+        {
+            _wheelCycleForTest = direction == 0 ? 0 : (direction > 0 ? 1 : -1);
+            _log.Info("wheel.testscroll",
+                $"测试入口 SetWheelCycleForTest({direction})：下一次 FillInput 视为滚轮滚动一次（离线驱动专用）");
+        }
+
+        /// <summary>测试入口的一次性旗标（被 <see cref="FillInput"/> 消费即清）。</summary>
+        private int _wheelCycleForTest;
+
         private void OnDestroy()
         {
             if (Instance == this) Instance = null;
@@ -214,6 +261,8 @@ namespace Cs16.Module.Combat
                 // ---- 右键**按下沿** = attack2（差异 #68）：USP·M4A1 拆装消音器、Glock18·FAMAS 切连发。
                 // 必须 GetKeyDown（切换型输入）：用 GetKey(按住) 会在每一帧翻转一次。
                 cmd.Attack2 = input.GetKeyDown(GameKey.MouseRight);
+                // 测试入口补的"这一次按下"（一次性旗标，消费即清）——供离线驱动取下面两条音的证。
+                if (_attack2PressedForTest) { _attack2PressedForTest = false; cmd.Attack2 = true; }
 
                 // ---- attack2 的**切换音**（差异 #68）：原版切换音在客户端层（`cl_dlls/client.dll` 的
                 // `weapons/usp_silencer_on|off.wav`、`m4a1_silencer_on|off.wav`、`famas-burst.wav`），
@@ -223,6 +272,10 @@ namespace Cs16.Module.Combat
                     var turningOn = def.CanSilence ? !local.Silenced : !local.BurstMode;
                     _audio.Play(CsWeapons.Attack2ToggleSound(def, turningOn));
                 }
+
+                // ---- 右键**开镜音**（原版只有狙击四把的 SecondaryAttack 播 `weapons/zoom.wav`；
+                //      AUG / SG552 的开镜分支里没有这条调用 ⇒ 它们的 SoundZoom 是空串 ⇒ 静音）。
+                if (cmd.Attack2 && def != null && def.CanZoom && def.SoundZoom != "") _audio.Play(def.SoundZoom);
 
                 // ---- 左键开火（门槛在模拟里也有一份，这里只是为了不产生必然失败的开火意图）----
                 if (input.GetMouseButton(0) && CanFire(local, def, match))
@@ -252,6 +305,27 @@ namespace Cs16.Module.Combat
                 else if (input.GetKeyDown(GameKey.Num3)) match.SwitchSlot(3);
                 else if (input.GetKeyDown(GameKey.Num4)) match.SwitchSlot(4);
                 else                 if (input.GetKeyDown(GameKey.Num5)) match.SwitchSlot(5);
+            }
+
+            // ---- 鼠标滚轮切枪（原版滚轮上的两条绑定：滚轮上 = `invprev`、滚轮下 = `invnext`）----
+            // 滚轮只有"本帧"语义（引擎 `Runtime/Core/Input.cs` 的 GameKey.MouseScrollUp / MouseScrollDown），
+            // 必须 GetKeyDown：用 GetKey(按住) 会在每一帧切一次枪。
+            if (inputAllowed)
+            {
+                var wheel = _wheelCycleForTest;
+                _wheelCycleForTest = 0;
+                if (wheel == 0)
+                {
+                    if (input.GetKeyDown(GameKey.MouseScrollUp)) wheel = -1;
+                    else if (input.GetKeyDown(GameKey.MouseScrollDown)) wheel = 1;
+                }
+                if (wheel != 0)
+                {
+                    match.CycleWeapon(wheel);
+                    _log.Info("input.invcycle", wheel > 0
+                        ? "滚轮下 → 下一把武器（原版 invnext）"
+                        : "滚轮上 → 上一把武器（原版 invprev）");
+                }
             }
 
             // ---- Q / G / M：原版 CS 1.6 config.cfg 的**默认绑定**
@@ -466,10 +540,12 @@ namespace Cs16.Module.Combat
 
             // ② 把本帧的记录全部取走（模拟会警告"没人消费"），再挑出属于我的那一条。
             _drainedShots.Clear();
+            _drainedShotSilenced.Clear();
             while (_drainedShots.Count < CsCombatTuning.MaxShotsConsumedPerFrame &&
-                   match.ConsumeShotFired(out var weaponId))
+                   match.ConsumeShotFired(out var weaponId, out var shotSilenced))
             {
                 _drainedShots.Add(weaponId);
+                _drainedShotSilenced.Add(shotSilenced);
             }
 
             var consumed = _drainedShots.Count;
@@ -483,6 +559,7 @@ namespace Cs16.Module.Combat
             // 别人的射击（机器人）：只放枪声（2D），**绝不**从我的眼睛里射线。
             // 本模块是这条队列的唯一消费者，因此"所有人（含 bot）的枪声"都由这里放。
             var claimed = false;
+            var otherDetail = "";
             for (var i = 0; i < consumed; i++)
             {
                 var id = _drainedShots[i];
@@ -493,13 +570,22 @@ namespace Cs16.Module.Combat
                 }
 
                 var otherDef = CsWeapons.Get(id);
-                if (otherDef != null) _audio.Play(otherDef.SoundFire);
+                // 远端开火采样按**这一发实际的消音状态**选 —— 原版把这一位随射击事件发给所有客户端
+                // （wpn_m4a1.cpp:200-201 的 PLAYBACK_EVENT_FULL 末组实参），见 ICsMatch.ConsumeShotFired。
+                if (otherDef != null)
+                {
+                    var sample = CsWeapons.FireSound(otherDef, _drainedShotSilenced[i]);
+                    _audio.Play(sample);
+                    otherDetail += (otherDetail.Length > 0 ? ", " : "") +
+                        id + (_drainedShotSilenced[i] ? "(消音)" : "(未消音)") + "→" + sample;
+                }
             }
 
             if (otherCount > 0)
             {
                 // 高频路径 → 降频（用于排查"机器人的射击有没有被误当成我的"）。
-                _log.Info("shot.others", $"本帧另有 {otherCount} 条他人射击记录（只放枪声，不做射线）");
+                _log.Info("shot.others",
+                    $"本帧另有 {otherCount} 条他人射击记录（只放枪声，不做射线）：{otherDetail}");
             }
 
             if (mineWeapon != null)
@@ -561,7 +647,8 @@ namespace Cs16.Module.Combat
             }
 
             // ---- 枪声（自己的枪声一定响）----
-            _audio.Play(def.SoundFire);
+            // 名称按**消音器状态**两态取：未装档是另一支更响的采样（出处见 CsWeapons.FireSound）。
+            _audio.Play(CsWeapons.FireSound(def, local.Silenced));
 
             // ---- 枪口火焰 / 投掷视觉 ----
             if (def.Class == CsWeaponClass.Grenade)

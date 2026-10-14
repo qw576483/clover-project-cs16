@@ -17,9 +17,21 @@ namespace Cs16.UI
         /// <summary>金钱；<see cref="UnknownMoney"/> 表示快照没提供（非本地玩家）。</summary>
         public int Money;
         public bool IsSelf;
+        /// <summary>剩余血量；<see cref="UnknownHealth"/> 表示快照没提供。</summary>
+        public int Health;
+        /// <summary>是不是机器人（记分板的延迟列对机器人显示 BOT）。</summary>
+        public bool IsBot;
+        /// <summary>网络往返毫秒；<see cref="UnknownLatency"/> 表示非网络实体（机器人）。</summary>
+        public int Latency;
+
+        /// <summary>该行拿不到延迟数据时的占位值。</summary>
+        public const int UnknownLatency = -1;
 
         /// <summary>快照未提供该玩家金钱时的占位值（显示成 <c>—</c>，不假装是 0）。</summary>
         public const int UnknownMoney = -1;
+
+        /// <summary>快照未提供该玩家血量时的占位值（显示成 <c>—</c>）。</summary>
+        public const int UnknownHealth = -1;
     }
 
     /// <summary>
@@ -192,6 +204,10 @@ namespace Cs16.UI
                     Alive = e.Alive,
                     Money = e.Money,
                     IsSelf = e.IsSelf,
+                    // 击杀累计这条链路拿不到血量与"是不是机器人"，如实标未知
+                    Health = CsScoreRow.UnknownHealth,
+                    IsBot = false,
+                    Latency = e.IsSelf ? 0 : CsScoreRow.UnknownLatency,
                 });
             }
 

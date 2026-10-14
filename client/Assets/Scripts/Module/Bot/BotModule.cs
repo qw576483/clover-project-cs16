@@ -97,6 +97,9 @@ namespace Cs16.Module.Bot
         private int _ambiguousAttribution;
         private int _prevRoundNumber;
 
+        /// <summary>解卡兜底（本项目新增）：每只 bot 身高带**连续判挡**的起始时间（<c>CsClock.Now</c>；不在表里 = 当前没判挡）。</summary>
+        private readonly Dictionary<long, float> _bodyBlockedSince = new Dictionary<long, float>();
+
         private float _nextRouteAuditAt;
         private bool _routeAuditClear = true;
         private int _routeAuditCount;
@@ -234,6 +237,62 @@ namespace Cs16.Module.Bot
 
             // 决策按每只 bot 自己的相位跑（见 ThinkDueBrains）：不再把全部 bot 挤进上面那一帧。
             if (!StaggerDisabledForTest) ThinkDueBrains(now);
+
+            UnstuckTick(now);
+        }
+
+        /// <summary>
+        /// 解卡兜底（本项目新增；差异登记见 策划/差异登记.tsv）：被放进箱体 / 墙体内部的 bot，身高带判据
+        /// 会持续判挡 ⇒ 移动解算的两条放行路都不通 ⇒ 它靠移动永远出不来。这里在**身高带持续判挡 ≥
+        /// <see cref="BotUnstuck.TriggerSeconds"/>** 时，把它挪到最近的可站格并留痕 <c>bot.unstuck.teleport</c>。
+        /// 只作用于 bot（<c>IsBot</c>）与存活个体；玩家与远端输入驱动的身体一律不动。
+        /// </summary>
+        private void UnstuckTick(float now)
+        {
+            var actors = _match.Actors;
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var a = actors[i];
+                if (a == null) continue;
+                if (!a.IsBot || !a.IsAlive)
+                {
+                    _bodyBlockedSince.Remove(a.Id);
+                    continue;
+                }
+
+                if (!BotUnstuck.IsBodyBlocked(_map, a.Position))
+                {
+                    _bodyBlockedSince.Remove(a.Id);
+                    continue;
+                }
+
+                if (!_bodyBlockedSince.TryGetValue(a.Id, out var since))
+                {
+                    _bodyBlockedSince[a.Id] = now;
+                    continue;
+                }
+
+                if (now - since < BotUnstuck.TriggerSeconds) continue;
+
+                if (!BotUnstuck.TryFindStandable(_map, a.Position, out var target))
+                {
+                    // 找不到可站点：保留起始时间，下一个窗口再试（不许把它当成"已解卡"清掉）。
+                    _bodyBlockedSince[a.Id] = now;
+                    Game.Logger.Warn(Tag,
+                        $"{a.Name} 身高带持续判挡 {now - since:F1}s，但 {BotUnstuck.SearchRadius:F1}m 内找不到"
+                        + "「站得住且身高带干净」的点 ⇒ 本次不挪（本项目解卡兜底）");
+                    continue;
+                }
+
+                var from = a.Position;
+                a.Position = target;
+                a.Velocity = Vector3.zero;
+                _bodyBlockedSince.Remove(a.Id);
+                Game.Logger.Info(Tag,
+                    $"bot.unstuck.teleport：{a.Name} 身高带持续判挡 {now - since:F1}s ⇒ 从 " +
+                    $"({from.x:F2},{from.y:F2},{from.z:F2}) 挪到 ({target.x:F2},{target.y:F2},{target.z:F2})" +
+                    "（本项目解卡兜底）");
+            }
         }
 
         // ==================================================================
@@ -390,6 +449,8 @@ namespace Cs16.Module.Bot
             using (MarkBrainThink.Auto()) intent = brain.Think(dt, now);
             _match.SubmitBotIntent(brain.ActorId, intent);
 
+            PublishRadio(brain);
+
             if (brain.ConsumeEngage())
             {
                 _stats.AddEngage(brain.Difficulty);
@@ -398,6 +459,35 @@ namespace Cs16.Module.Bot
                     $"{brain.Name}（{brain.Difficulty}）进入交战：目标 actor {brain.TargetId}；" +
                     $"该难度累计交战 {s.Engages} 次");
             }
+        }
+
+        /// <summary>
+        /// 把这只 bot 本 tick 要发的无线电行打进 HUD 消息栏（走 <c>CsMatch.PublishMessage</c> ——
+        /// 与真人按 Z/X/C 那条路同一个出口，HUD 消息栏因此不用另开一条订阅）。
+        ///
+        /// <para>拿不到具体 <see cref="CsMatch"/>（门面是别的实现）时**必须留痕**：静默丢掉 = bot 看着像发了电却没人看见。</para>
+        /// </summary>
+        private void PublishRadio(CsBotBrain brain)
+        {
+            var line = brain.ConsumeRadio();
+            if (string.IsNullOrEmpty(line)) return;
+
+            var self = _match.Find(brain.ActorId);
+            if (self == null)
+            {
+                Game.Logger.Warn(Tag, $"无线电待发但 actor {brain.ActorId} 已不在场（{brain.Name}），已丢弃：{line}");
+                return;
+            }
+
+            if (_match is CsMatch sim)
+            {
+                sim.PublishMessage(self, line);
+                return;
+            }
+
+            Game.Logger.Error(Tag,
+                $"无线电无处可发：门面不是 CsMatch（实际 {(_match == null ? "null" : _match.GetType().Name)}），" +
+                $"已丢弃 {brain.Name} 的：{line}");
         }
 
         /// <summary>
@@ -625,6 +715,8 @@ namespace Cs16.Module.Bot
         {
             if (e.KillerId == 0) return;
             if (!_brains.TryGetValue(e.KillerId, out var brain)) return;
+
+            brain.NotifyKill();   // 无线电 "Enemy down."（原版 chatter 的 EnemyDown 分支）
 
             _stats.AddKill(brain.Difficulty);
             var s = _stats.Get(brain.Difficulty);

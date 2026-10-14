@@ -61,14 +61,18 @@ namespace Cs16.Core
         Bomb = 5,       // C4
     }
 
-    /// <summary>命中部位（伤害倍率不同）。</summary>
+    /// <summary>命中部位（伤害倍率不同）。左右腿分列 —— 原版 <c>regamedll/dlls/player.cpp</c> 的
+    /// <c>HITGROUP_LEFTLEG</c> / <c>HITGROUP_RIGHTLEG</c> 是两个命中组（各自 <c>flDamage *= 0.75</c>），
+    /// 且 <c>models/player/*/*.mdl</c> 的 studiohdr 里左右腿各是独立的一组命中盒
+    /// （组号 6 / 7，挂 L Thigh..L Foot / R Thigh..R Foot）。</summary>
     public enum CsHitbox
     {
         Generic = 0,
         Head = 1,
         Chest = 2,
         Stomach = 3,
-        Leg = 4,
+        LeftLeg = 4,
+        RightLeg = 5,
     }
 
     /// <summary>仅某一方可购买的武器标记。</summary>

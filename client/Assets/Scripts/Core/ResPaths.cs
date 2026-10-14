@@ -102,21 +102,25 @@ namespace Cs16.Core
         public const string HudBuyZoneIcon = "UI/Art/hud_buyzone";
 
         /// <summary>
-        /// 雷达**俯视底图**（真实文件 <c>Resources/UI/Art/overview_de_dust2.png</c>，128×128）。
+        /// 雷达**俯视底图**（真实文件 <c>Resources/UI/Art/overview_de_dust2.png</c>，1024×768）。
         ///
-        /// <para><b>为什么不是"原版那张 bmp"</b>：原版雷达底图 = <c>cstrike/overviews/de_dust2.bmp</c>
-        /// （787510 B = 1024×768×8bpp）+ <c>overviews/de_dust2.txt</c>（ZOOM/ORIGIN/ROTATED）。
-        /// 本机 <c>原版资源/</c> 实测（见 <c>原版资源/清单.md</c>）：<c>cs16src/</c> 在盘（含这两份载体），
-        /// <c>cs109/</c> / <c>cs16-maps/</c> 不在盘，<c>解包产物/</c> 在盘但为空。工程内这份底图是**级①原始数据**产物：由工程内的
-        /// <c>Assets/ThirdParty/Dust2/de_dust2_geo.bin</c>（= 原版 de_dust2 BSP 的几何）离线俯视
-        /// 栅格化而成
-        /// （随仓库提交；口径 = 逐三角面按自身法线分"可站立面/竖直面/陡面"，
-        /// 俯视投影后按高度着色，A/B 点字母打在原版 <c>func_bomb_target</c> 的标记点质心上）。</para>
+        /// <para><b>像素来源 = 原版那张 bmp</b>：<c>cstrike/overviews/de_dust2.bmp</c>
+        /// （在盘：<c>原版资源/cs16src/cstrike/cstrike__overviews__de_dust2.bmp</c>，
+        /// 787510 B = 1024×768×8bpp，见 <c>原版资源/清单.md:87</c>）**逐像素无损转**成 PNG
+        /// （绿键色 → alpha 0）。A/B 点字母是原版图自带的（不是本项目画的）。
+        /// 窗口口径见同目录 <c>overviews/de_dust2.txt</c>（<c>ZOOM 1.50</c> / <c>ORIGIN</c> / <c>ROTATED</c>）。</para>
         ///
-        /// <para>不是手绘近似图、也不是网格截图；像素 100% 来自原版几何。拿到原版
-        /// <c>overviews/de_dust2.bmp</c> 后可**只换这个 PNG**（同名覆盖），代码一行不用改。</para>
+        /// <para>同一张图也被俯视概览（观战档位 5 / 6，<c>UI/InGame/CsOverviewWidget</c>）当全屏底图用。</para>
         /// </summary>
         public const string RadarOverviewDust2 = "UI/Art/overview_de_dust2";
+
+        /// <summary>
+        /// 击杀条**武器小图标**（真实文件 <c>Resources/UI/Art/killicon_d_&lt;名&gt;.png</c>）——
+        /// 原版就是 <c>sprites/hud.txt</c> 640 档的 <c>d_*</c> 条目（`d_ak47 640 640hud1 192 80 48 16`），
+        /// 逐件由 <c>tools/probes/spr-extract.py</c> 按该源矩形从原版 <c>640hud1/2/16.spr</c> 解出
+        /// （原版像素，非自绘）。名 → 武器的对应见 <c>CsWeapons.DeathIconId</c>。
+        /// </summary>
+        public static string KillIcon(string dName) => "UI/Art/killicon_" + dName;
 
         // ==================================================================
         //  菜单贴图 —— 落在 Resources/UI/Art/（原版 GameUI 字标）

@@ -71,8 +71,9 @@ namespace Cs16.UI
         /// <summary>
         /// 准星色 = <c>cl_crosshair_color</c> 的默认值 <c>50 250 50</c>（R/G/B 十进制）。
         ///
-        /// <para><b>出处</b>：<c>原版资源/cs16src/cs16game/app/cstrike/cl_dlls/client.dll:0x0e6e3c</c>
-        /// （默认值串；名串 <c>client.dll:0x0e6e28</c>、注册点 <c>client.dll:0x041174</c>）。</para>
+        /// <para><b>出处</b>：<c>原版资源/cs16src/cstrike/cl_dlls/client.dll:0xe7d6c</c>
+        /// （默认值串 <c>"50 250 50"</c>；名串 <c>client.dll:0xe7d58</c>、注册点 <c>client.dll:0x3f8bc</c>）。
+        /// 半透明 alpha 由 <see cref="CsCrosshairWidget.TranslucentAlpha"/> 决定，不在本色里。</para>
         /// </summary>
         public static readonly Color Crosshair = new Color32(0x32, 0xFA, 0x32, 0xFF);
 
@@ -145,11 +146,13 @@ namespace Cs16.UI
         /// <para>因此雷达边长 = <b>128</b>（原版源矩形的原生像素，不换算）。
         /// 对照表 U-06 的"差 +72"随之消除。</para>
         ///
-        /// <para>**仍无载体可证的两项**（登记在验收表「允许的差异」）：① 雷达**在屏幕上的落点**
-        /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）；② 原版 <c>radar640.spr</c> 与
-        /// <c>overviews/de_dust2.bmp</c> **本机不在盘** ⇒ 底图由原版几何离线生成
-        /// （<c>Resources/UI/Art/overview_de_dust2.png</c>），
-        /// 圆盘底框与 <c>cl_radartype</c> 两型未复刻。</para>
+        /// <para>**仍无载体可证的一项**（登记在验收表「允许的差异」）：雷达**在屏幕上的落点**
+        /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）。底图 = 原版
+        /// <c>overviews/de_dust2.bmp</c>（在盘，<c>原版资源/清单.md:87</c>：787510 B / 1024×768）
+        /// 的逐像素转 PNG（<c>Resources/UI/Art/overview_de_dust2.png</c>）；
+        /// 载体**在盘**（<c>原版资源/cs16src/cstrike/cstrike__sprites__radar640.spr</c>；早前记的"不在盘"是
+        /// <b>前缀盲搜假阴性</b>）⇒ <b>本工程未实现</b>圆盘底框与 <c>cl_radartype</c> 两型；
+        /// <b>已转 HUD-* owner 评估可做性与排期</b>。</para>
         /// </summary>
         public const float RadarSize = 128f;
 
@@ -196,6 +199,18 @@ namespace Cs16.UI
         public const float RadarMapPixelAspect = 1024f / 768f;
 
         /// <summary>
+        /// 俯视概览底图的**高 / 宽** = <see cref="RadarWindowHalfXUnits"/> / <see cref="RadarWindowHalfZUnits"/>
+        /// = 2048 / 2730.6667 = <b>0.75</b>（= 768/1024，与底图像素同比例）。
+        ///
+        /// <para><b>为什么这是原版口径（等比，不是各向异性铺满）</b>：<c>hud_spectator.cpp:1150-1151</c>
+        /// 的两个步长是 <c>xStep = -(2*4096/zoom)/xTiles</c>、<c>yStep = -(2*4096/(zoom*screenaspect))/yTiles</c>，
+        /// 代入 <c>xTiles=8</c>、<c>yTiles=6</c>、<c>screenaspect=4/3</c>（<c>:1081-1091</c>）⇒
+        /// <b>两者同为 1024/zoom</b> ⇒ 每块 tile 是正方形、单一标量（各向同性）。
+        /// 全幅 = 6 块 × 8 块 = 6144/zoom × 8192/zoom 世界单位，长宽比 0.75。</para>
+        /// </summary>
+        public const float OverviewMapAspect = RadarWindowHalfXUnits / RadarWindowHalfZUnits;
+
+        /// <summary>
         /// 雷达世界窗口的**中心**（本工程世界坐标，米）= 原版 <c>ORIGIN</c> 经**地标配准**换算到本坐标系。
         ///
         /// <para><b>推导（每个数字都是实测，不是估的）</b>：</para>
@@ -233,6 +248,55 @@ namespace Cs16.UI
         /// 具体 alpha 无载体可证 ⇒ 取 0.75，只调"能看清地图"这一件事。不谎称原版值。</para>
         /// </summary>
         public static readonly Color RadarMapTint = new Color(1f, 1f, 1f, 0.75f);
+
+        // ═══════════════════════ 俯视概览（观战档位 5 / 6）═══════════════════════
+        //
+        // 档位 5 / 6（原版 OBS_MAP_FREE / OBS_MAP_CHASE）不是 3D 机位：view.cpp:1545-1551 把
+        // pparams->onlyClientDraw 置真（契约 = 引擎除 clientDraw 外什么都不画，common/ref_params.h:70），
+        // 画面 = 客户端自己画的俯视概览图 + 投到图上的玩家。窗口/缩放/底图与雷达**同一套**
+        // （原版两处共用 overviews/<map>.txt 与 CHudSpectator::DrawOverviewLayer）。
+
+        /// <summary>
+        /// 俯视概览的默认缩放 = <see cref="CsConst.OverviewZoomDefault"/>（真源在 Core：视图状态
+        /// <c>CsSpectator.MapZoom</c> 也在 Core）。
+        /// 口径：缩放 = 相对"底图正好铺满屏"那一档的倍数 ⇒ 可见世界窗口半宽 =
+        /// <see cref="RadarWindowHalfXUnits"/> / <see cref="RadarWindowHalfZUnits"/> × (默认 / 当前)。
+        /// </summary>
+        public const float OverviewZoomDefault = CsConst.OverviewZoomDefault;
+
+        /// <summary>见 <see cref="CsConst.OverviewZoomMin"/>。</summary>
+        public const float OverviewZoomMin = CsConst.OverviewZoomMin;
+
+        /// <summary>见 <see cref="CsConst.OverviewZoomMax"/>。</summary>
+        public const float OverviewZoomMax = CsConst.OverviewZoomMax;
+
+        /// <summary>
+        /// 俯视概览底图**铺满屏**时的着色：原版概览是客户端的 clientDraw 底图（不透明压在空白画面上，
+        /// 不是雷达那种半透明叠加）⇒ alpha = 1。只有一档 alpha，不谎称原版值。
+        /// </summary>
+        public static readonly Color OverviewMapTint = Color.white;
+
+        /// <summary>
+        /// 俯视概览上玩家标记的队伍色。出处：原版 <c>overview.cpp:77-89</c>（<c>CHudOverview::Draw</c> 的
+        /// teamnumber 分支）—— <c>teamnumber == 1</c>（本工程 <c>CsTeam.T</c>）蓝 <c>(0,0,1)</c>、
+        /// <c>== 2</c>（<c>CsTeam.CT</c>）红 <c>(1,0,0)</c>、其余（未分队）橙 <c>(1,0.7,0)</c>。
+        /// </summary>
+        public static readonly Color OverviewTeamT = new Color(0f, 0f, 1f, 1f);
+
+        /// <summary>见 <see cref="OverviewTeamT"/>。</summary>
+        public static readonly Color OverviewTeamCT = new Color(1f, 0f, 0f, 1f);
+
+        /// <summary>见 <see cref="OverviewTeamT"/>（未分队 / 观察者）。</summary>
+        public static readonly Color OverviewNobody = new Color(1f, 0.7f, 0f, 1f);
+
+        /// <summary>概览标记下方那行文字（名字 + 血量百分比）的颜色。原版 <c>DrawConsoleString</c> 用控制台色（偏白）。</summary>
+        public static readonly Color OverviewText = new Color(1f, 1f, 1f, 0.9f);
+
+        /// <summary>概览标记文字字号（px，参考分辨率 1920×1080）。原版字号由字符宽决定，本工程取可读值。</summary>
+        public const int OverviewTextSize = 14;
+
+        /// <summary>概览上"被观察者"标记的描边色（把当前目标与其他人区分开）。</summary>
+        public static readonly Color OverviewTargetRing = new Color(0.16f, 0.9f, 0.16f, 1f);
 
         //
         // 绿这一支还有第二个旁证：原版 `radar640.spr` 的调色板是 `(0, G, 0)`（纯绿族，

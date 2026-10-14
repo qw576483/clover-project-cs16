@@ -64,6 +64,13 @@ namespace Cs16.Module.View
         /// </summary>
         private CsActor _preLocal;
 
+        /// <summary>
+        /// 上一帧的**消音器状态位**与它当时所属的武器 —— 两者合起来才判得出"这一帧按右键换了态"
+        /// （只看状态位会在切枪时误判，见 <see cref="UpdateAnim"/> 的消音器段）。
+        /// </summary>
+        private bool _preSilenced;
+        private string _preSilenceWeapon;
+
         /// <summary>当前是否处于"reload 覆盖态"（见 <see cref="UpdateAnim"/> 的换弹段）。</summary>
         private bool _reloadAnimActive;
 
@@ -154,24 +161,34 @@ namespace Cs16.Module.View
                 return;
             }
 
-            if (match.IsSpectating || !local.IsAlive || match.IsZoomed)
+            // 视模型的**主角**：本地玩家；**观战档位 4（OBS_IN_EYE）时 = 被观察者** ——
+            // 原版把被观察者当前武器的视模型塞进 GetViewModel() 并播 idle
+            //（view.cpp:1483-1514：V_FindViewModelByWeaponModel(ent->curstate.weaponmodel) + pfnWeaponAnim(0,0)）。
+            var actor = local;
+            if (match.IsSpectating && Cs16.Core.CsSpectator.Mode == Cs16.Core.CsSpectatorMode.FirstPerson)
+            {
+                var t = match.SpectateTarget;
+                if (t != null) actor = t;
+            }
+
+            if (!actor.IsAlive || match.IsZoomed)
             {
                 // 观战 / 死亡：把枪收起来（CS 里观战没有第一人称武器）。
                 // 开镜（狙击枪）：原版开镜后**根本不画视模型** —— 画面里只有镜筒遮罩与十字线
                 //（出处：原版开镜实机原图 原版资源/参照物/viewmodel/viewmodel_awp_scoped.png，
                 // 画面内没有任何枪身）⇒ 这里同样收起，遮罩另由 UI/InGame/CsScopeOverlayWidget 画。
-                DiagReload(match, local,
-                    $"闸门C IsSpectating={match.IsSpectating} IsAlive={local.IsAlive} IsZoomed={match.IsZoomed}");
+                DiagReload(match, actor,
+                    $"闸门C IsSpectating={match.IsSpectating} 主角={actor.Name} IsAlive={actor.IsAlive} IsZoomed={match.IsZoomed}");
                 SetModelVisible(false);
-                ResetSnapshot(local);
+                ResetSnapshot(actor);
                 return;
             }
 
             SetModelVisible(true);
-            SyncModel(local);
-            DiagReload(match, local, "运行");
-            UpdateAnim(local);
-            ApplyBob(local);
+            SyncModel(actor);
+            DiagReload(match, actor, "运行");
+            UpdateAnim(actor);
+            ApplyBob(actor);
             ProbeReloadAnim();
             SettleReload();
             CheckOverrideFinished();
@@ -252,16 +269,35 @@ namespace Cs16.Module.View
             return Time.time - _overrideSetAt > OverrideLimit;
         }
 
-        /// <summary>状态名是不是换弹那一段（<see cref="CsViewTuning.VmStateReload"/> 的候选表）。</summary>
+        /// <summary>状态名是不是换弹那一段（<see cref="CsViewTuning.VmStateReload"/> 的两态候选表）。</summary>
         private static bool IsReloadState(string state)
         {
             if (state == null) return false;
-            var cand = CsViewTuning.VmStateReload;
-            for (var i = 0; i < cand.Length; i++)
+            if (InTable(CsViewTuning.VmStateReload, state)) return true;
+            return InTable(CsViewTuning.VmStateReloadUnsil, state);
+        }
+
+        private static bool InTable(string[] table, string state)
+        {
+            for (var i = 0; i < table.Length; i++)
             {
-                if (string.Equals(cand[i], state, System.StringComparison.Ordinal)) return true;
+                if (string.Equals(table[i], state, System.StringComparison.Ordinal)) return true;
             }
             return false;
+        }
+
+        /// <summary>
+        /// 按**当前消音状态**在"装消音 / 未装消音"两套候选里挑一套（只有 <c>CanSilence</c> 的武器分两套）。
+        ///
+        /// <para>两套的出处 = <c>v_usp.mdl</c> 的序列 0..6（装）/ 8..14（未装），逐条见
+        /// <see cref="CsViewTuning.VmStateIdleUnsil"/> 的注释。两张候选表都是"先自己那一条、再回落到
+        /// 装消音那一套" ⇒ 未装档的 clip 还没导出时，挑不到就回落，行为与原来完全一致。</para>
+        /// </summary>
+        private static string[] SilenceVariant(string[] silenced, string[] unsil, CsActor local)
+        {
+            var def = local != null ? local.ActiveDef : null;
+            if (def == null || !def.CanSilence) return silenced;
+            return local.Silenced ? silenced : unsil;
         }
 
         /// <summary>下发一个覆盖态（一次性动作开始）：记录起点与"片段时长未知"。</summary>
@@ -308,6 +344,8 @@ namespace Cs16.Module.View
         private static readonly string[] TraceStates =
         {
             "idle", "fire1", "fire2", "fire3", "firelast", "reload", "draw",
+            "idle_unsil", "fire1_unsil", "fire2_unsil", "fire3_unsil", "firelast_unsil",
+            "reload_unsil", "draw_unsil", "add_silencer", "detach_silencer",
         };
 
         /// <summary>当前 <see cref="AnimatorStateInfo"/> 对应的状态名；都不匹配 ⇒ <c>&lt;其他&gt;</c>。</summary>
@@ -765,7 +803,10 @@ namespace Cs16.Module.View
             _anim.OnComplete(OnClipFinished);
 
             // 切枪：原版切枪会先播 draw（抬起）—— 与"新模型刚挂上"一一对应。
-            var st = ResolveState(CsViewTuning.VmStateDraw);
+            // 消音两态按 `_preLocal`（同一玩家的上一帧快照；本方法没有 actor 形参）挑一套，
+            // 它读的是 actor 的**当前** ActiveDef，所以拿到的是刚切上的那把枪。
+            var st = ResolveState(SilenceVariant(CsViewTuning.VmStateDraw,
+                                                 CsViewTuning.VmStateDrawUnsil, _preLocal));
             if (st != null)
             {
                 _anim.Play(st, 0f);
@@ -773,7 +814,8 @@ namespace Cs16.Module.View
             }
             else
             {
-                var idle = ResolveState(CsViewTuning.VmStateIdle);
+                var idle = ResolveState(SilenceVariant(CsViewTuning.VmStateIdle,
+                                                       CsViewTuning.VmStateIdleUnsil, _preLocal));
                 if (idle != null) { _anim.Play(idle, 0f); _lastState = idle; }
             }
         }
@@ -888,6 +930,30 @@ namespace Cs16.Module.View
                 _shotIndex = 0;
             }
 
+            // 消音器（差异 #68）：状态位翻一次 ⇒ 播原版那一条拆装序列。
+            // 出处（序列名与帧数见 CsViewTuning.VmStateAddSilencer 的注释；态位翻的动作出处 =
+            // 同族的 `regamedll/dlls/wpn_shared/wpn_m4a1.cpp` 的 `CM4A1::SecondaryAttack`，
+            // 即 `m_iWeaponState` 翻一下 + `SendWeaponAnim(<ATTACH|DETACH>_SILENCER)`）。
+            // 切枪那一帧**不**播拆装动作：原版 `Deploy()` 只换一套序列（`USP_DRAW` / `USP_UNSIL_DRAW`），
+            // 不播拆装 —— 所以这里以"武器 id 没变"为判边沿的前提。
+            var silenceSwitch = !string.Equals(local.ActiveWeapon, _preSilenceWeapon, System.StringComparison.Ordinal);
+            var silDef = local.ActiveDef;
+            if (silenceSwitch)
+            {
+                _preSilenceWeapon = local.ActiveWeapon;
+                _preSilenced = local.Silenced;
+            }
+            else if (silDef != null && silDef.CanSilence && local.Silenced != _preSilenced)
+            {
+                _preSilenced = local.Silenced;
+                var silState = ResolveState(local.Silenced
+                    ? CsViewTuning.VmStateAddSilencer
+                    : CsViewTuning.VmStateDetachSilencer);
+                if (silState != null) { _anim.Play(silState, 0f); SetOverride(silState); }
+                _log.Always($"第一人称{(local.Silenced ? "装上" : "拆下")}消音器 " +
+                            $"状态={silState ?? "<状态机没有这一条>"}（{_modelKey}）");
+            }
+
             //   信号甲（推）= ReloadSeq 变了：能盖住"同帧跨完 / 掉了中间帧"。
             //   信号乙（拉）= "现在正在换弹"（ReloadEndTime 尚未到）：能盖住"对象被换掉、
             //                 序号从 0 重来、边沿被判成没变"以及"边沿落在没有快照的那一帧"。
@@ -899,7 +965,8 @@ namespace Cs16.Module.View
             if (seqEdge || (reloading && !_reloadAnimActive))
             {
                 _preReloadSeq = local.ReloadSeq;
-                var st = ResolveState(CsViewTuning.VmStateReload);
+                var st = ResolveState(SilenceVariant(CsViewTuning.VmStateReload,
+                                                     CsViewTuning.VmStateReloadUnsil, local));
                 if (st != null)
                 {
                     _anim.Play(st, 0f);
@@ -938,11 +1005,12 @@ namespace Cs16.Module.View
                     mag = ammo.inMag;      // **只读**：直接查字典，不用会在缺项时写回的 CsActor.GetAmmo
                 }
 
+                // 两态的候选（只有 CanSilence 的武器分两套）：未装消音时走 *_unsil 那一条。
                 string[] cand;
-                if (mag <= 0) cand = CsViewTuning.VmStateFireLast;            // 弹匣打空的那一发
-                else if (_shotIndex == 0) cand = CsViewTuning.VmStateFire1;
-                else if (_shotIndex == 1) cand = CsViewTuning.VmStateFire2;
-                else cand = CsViewTuning.VmStateFire3;
+                if (mag <= 0) cand = SilenceVariant(CsViewTuning.VmStateFireLast, CsViewTuning.VmStateFireLastUnsil, local);   // 弹匣打空的那一发
+                else if (_shotIndex == 0) cand = SilenceVariant(CsViewTuning.VmStateFire1, CsViewTuning.VmStateFire1Unsil, local);
+                else if (_shotIndex == 1) cand = SilenceVariant(CsViewTuning.VmStateFire2, CsViewTuning.VmStateFire2Unsil, local);
+                else cand = SilenceVariant(CsViewTuning.VmStateFire3, CsViewTuning.VmStateFire3Unsil, local);
                 _shotIndex = (_shotIndex + 1) % 3;
 
                 var st = ResolveState(cand);
@@ -952,7 +1020,8 @@ namespace Cs16.Module.View
 
             if (_overrideState != null) return;    // 一次性动作播完前不回 idle
 
-            var idle = ResolveState(CsViewTuning.VmStateIdle);
+            var idle = ResolveState(SilenceVariant(CsViewTuning.VmStateIdle,
+                                                   CsViewTuning.VmStateIdleUnsil, local));
             if (idle != null && idle != _lastState)
             {
                 _lastState = idle;

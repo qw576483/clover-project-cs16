@@ -74,6 +74,36 @@ namespace UnityEngine
             => string.Format(CultureInfo.InvariantCulture, "({0:F3}, {1:F3}, {2:F3})", x, y, z);
     }
 
+    /// <summary>二维向量（CsMap 的抬腿落点采样偏移用到：分量读写 / `zero` / 标量乘）。</summary>
+    public struct Vector2 : IEquatable<Vector2>
+    {
+        public float x;
+        public float y;
+
+        public Vector2(float x, float y) { this.x = x; this.y = y; }
+
+        public static Vector2 zero => new Vector2(0f, 0f);
+
+        public float sqrMagnitude => x * x + y * y;
+        public float magnitude => (float)Math.Sqrt(sqrMagnitude);
+
+        public static Vector2 operator +(Vector2 a, Vector2 b) => new Vector2(a.x + b.x, a.y + b.y);
+        public static Vector2 operator -(Vector2 a, Vector2 b) => new Vector2(a.x - b.x, a.y - b.y);
+        public static Vector2 operator -(Vector2 a) => new Vector2(-a.x, -a.y);
+        public static Vector2 operator *(Vector2 a, float s) => new Vector2(a.x * s, a.y * s);
+        public static Vector2 operator *(float s, Vector2 a) => new Vector2(a.x * s, a.y * s);
+        public static Vector2 operator /(Vector2 a, float s) => new Vector2(a.x / s, a.y / s);
+
+        public static float Distance(Vector2 a, Vector2 b) => (a - b).magnitude;
+        public static float Dot(Vector2 a, Vector2 b) => a.x * b.x + a.y * b.y;
+
+        public bool Equals(Vector2 other) => x == other.x && y == other.y;
+        public override bool Equals(object obj) => obj is Vector2 v && Equals(v);
+        public override int GetHashCode() => x.GetHashCode() ^ (y.GetHashCode() << 2);
+        public override string ToString()
+            => string.Format(CultureInfo.InvariantCulture, "({0:F3}, {1:F3})", x, y);
+    }
+
     /// <summary>二维整数向量（引擎 `Rng` 的整数区间重载用到）。</summary>
     public struct Vector2Int : IEquatable<Vector2Int>
     {

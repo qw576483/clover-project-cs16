@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
 using UnityEngine;
@@ -14,7 +15,12 @@ namespace Cs16.UI
     }
 
     /// <summary>
-    /// 数字键 1~5 选一句 → 发 <c>Events.RadioCommand</c>。
+    /// 数字键 1~9 选一句 → 发 <c>Events.RadioCommand</c>。
+    ///
+    /// <para><b>条目来源</b>：三组的内容、分组与顺序直接取自 <see cref="CsRadio"/> ——
+    /// 原版 <c>radio1</c> / <c>radio2</c> / <c>radio3</c> 的 6 + 6 + 9 条，按原版枚举
+    /// （<c>GameEvent.h</c> 的 <c>EVENT_RADIO_*</c>）顺序、槽位号即菜单数字键。
+    /// 面板不再自带一份文本副本，两处各改各的会在"哪一组是哪几条"上分叉。</para>
     ///
     /// <para><b>文本去哪了</b>：<c>MatchModule</c> 收到 <c>RadioCommand</c> 后会调
     /// <c>CsMatch.PublishMessage</c>，那条消息同时进 <see cref="CsHudSnapshot.LastMessage"/>
@@ -27,47 +33,34 @@ namespace Cs16.UI
     public class RadioMenuPanel : CsPanelBase
     {
         private const float BoxWidth = 620f;
-        private const float BoxHeight = 300f;
         private const float RowHeight = 32f;
-        private const int EntriesPerGroup = 5;
 
-        /// <summary>CS 1.6 的 radio1 / radio2 / radio3 三组命令（原版文本）。</summary>
-        private static readonly string[][] RadioTexts =
-        {
-            new[]
-            {
-                "Go, go, go!",
-                "Team, fall back!",
-                "Stick together, team!",
-                "Follow me!",
-                "Taking fire, need assistance!",
-            },
-            new[]
-            {
-                "Cover me!",
-                "You take the point!",
-                "Hold this position!",
-                "Regroup team!",
-                "Sector clear!",
-            },
-            new[]
-            {
-                "Enemy spotted!",
-                "Need backup!",
-                "I'm in position!",
-                "Reporting in!",
-                "Get out of there, it's gonna blow!",
-            },
-        };
+        /// <summary>原版三组里最大的一组 = radio3 的九条；行控件按它建数，短组留空行。</summary>
+        private const int MaxEntries = 9;
+
+        /// <summary>标题区高度：标题在 y=-12，第一行在 y=-52。</summary>
+        private const float HeaderHeight = 52f;
+
+        /// <summary>底部提示带高度：提示条在 y=10、高 26。</summary>
+        private const float HintBand = 36f;
+
+        private const float BoxHeight = HeaderHeight + MaxEntries * RowHeight + HintBand;
 
         private static readonly string[] GroupTitles = { "RADIO A（Z）", "RADIO B（X）", "RADIO C（C）" };
         private static readonly GameKey[] GroupKeys = { GameKey.Z, GameKey.X, GameKey.C };
+
+        private static readonly GameKey[] NumberKeys =
+        {
+            GameKey.Num1, GameKey.Num2, GameKey.Num3, GameKey.Num4, GameKey.Num5,
+            GameKey.Num6, GameKey.Num7, GameKey.Num8, GameKey.Num9,
+        };
 
         [SerializeField] private Text _titleText;
         [SerializeField] private Text[] _rowTexts;
         [SerializeField] private Text _hintText;
 
         private CsRadioGroup _group = CsRadioGroup.A;
+        private List<CsRadioLine> _entries;
         private bool _warnedRefs;
 
         public override UILayer Layer => UILayer.Popup;
@@ -83,13 +76,13 @@ namespace Cs16.UI
                 CsHudTheme.Message);
             CsHudTheme.PlaceTopLeft(_titleText.rectTransform, new Vector2(20f, -12f), new Vector2(560f, 32f));
 
-            _rowTexts = new Text[EntriesPerGroup];
+            _rowTexts = new Text[MaxEntries];
             for (var i = 0; i < _rowTexts.Length; i++)
             {
                 var text = CsHudTheme.CreateText($"Row{i}", boxRt, string.Empty, 20, TextAnchor.MiddleLeft,
                     CsHudTheme.TextHud);
                 CsHudTheme.PlaceTopLeft(text.rectTransform,
-                    new Vector2(24f, -52f - i * RowHeight), new Vector2(560f, RowHeight));
+                    new Vector2(24f, -HeaderHeight - i * RowHeight), new Vector2(560f, RowHeight));
                 _rowTexts[i] = text;
             }
 
@@ -103,8 +96,9 @@ namespace Cs16.UI
             if (!_warnedRefs)
             {
                 _warnedRefs = true;
-                if (_titleText == null || _rowTexts == null || _rowTexts.Length != EntriesPerGroup)
-                    Game.Logger?.Error(Tag, "RadioMenuPanel 文本引用不完整（预制体未由 UiBuilder 生成？），条目可能显示不出来");
+                if (_titleText == null || _rowTexts == null || _rowTexts.Length < MaxEntries)
+                    Game.Logger?.Error(Tag,
+                        $"RadioMenuPanel 文本引用不完整（预制体未由 UiBuilder 生成？），条目可能显示不出来");
             }
 
             if (param is CsRadioGroup group) _group = group;
@@ -117,7 +111,7 @@ namespace Cs16.UI
             }
 
             RefreshLabels();
-            Game.Logger?.Info(Tag, $"无线电菜单已打开：{GroupTitles[(int)_group]}");
+            Game.Logger?.Info(Tag, $"无线电菜单已打开：{GroupTitles[(int)_group]}（{_entries.Count} 条）");
         }
 
         public override void OnUpdate(float dt)
@@ -134,10 +128,11 @@ namespace Cs16.UI
                 return;
             }
 
-            // 1~5 选择
-            for (var i = 0; i < EntriesPerGroup; i++)
+            // 1~9 选择（只覆盖本组实际条数）
+            var count = _entries?.Count ?? 0;
+            for (var i = 0; i < count && i < NumberKeys.Length; i++)
             {
-                if (!input.GetKeyDown(NumberKey(i))) continue;
+                if (!input.GetKeyDown(NumberKeys[i])) continue;
                 Send(i);
                 return;
             }
@@ -156,15 +151,17 @@ namespace Cs16.UI
             }
         }
 
-        private static GameKey NumberKey(int index)
+        /// <summary>菜单数字键 → 原版 <c>radio1</c>/<c>radio2</c>/<c>radio3</c> 三组之一。</summary>
+        private static CsRadioSet SetOf(CsRadioGroup group)
         {
-            switch (index)
+            switch (group)
             {
-                case 0: return GameKey.Num1;
-                case 1: return GameKey.Num2;
-                case 2: return GameKey.Num3;
-                case 3: return GameKey.Num4;
-                default: return GameKey.Num5;
+                case CsRadioGroup.A: return CsRadioSet.Radio1;
+                case CsRadioGroup.B: return CsRadioSet.Radio2;
+                case CsRadioGroup.C: return CsRadioSet.Radio3;
+                default:
+                    Game.Logger?.Warn(Tag, $"RadioMenuPanel 收到未知分组 {(int)group}，按 radio1 处理");
+                    return CsRadioSet.Radio1;
             }
         }
 
@@ -173,27 +170,31 @@ namespace Cs16.UI
             var index = Mathf.Clamp((int)_group, 0, GroupTitles.Length - 1);
             if (_titleText != null) _titleText.text = GroupTitles[index];
 
-            var texts = RadioTexts[index];
+            _entries = CsRadio.Of(SetOf(_group));
+            if (_entries.Count > _rowTexts.Length)
+                Game.Logger?.Error(Tag,
+                    $"无线电组 {GroupTitles[index]} 有 {_entries.Count} 条，超过行控件 {_rowTexts.Length} 个，超出的条目显示不出来");
+
             for (var i = 0; i < _rowTexts.Length; i++)
             {
                 if (_rowTexts[i] == null) continue;
-                _rowTexts[i].text = i < texts.Length ? $"{i + 1}. {texts[i]}" : string.Empty;
+                _rowTexts[i].text = i < _entries.Count ? $"{i + 1}. {_entries[i].Text}" : string.Empty;
             }
 
             if (_hintText != null)
-                _hintText.text = "1~5 选择　·　松开开关键（Z/X/C）或 ESC 收起";
+                _hintText.text = $"1~{_entries.Count} 选择　·　松开开关键（Z/X/C）或 ESC 收起";
         }
 
         private void Send(int index)
         {
-            var texts = RadioTexts[Mathf.Clamp((int)_group, 0, RadioTexts.Length - 1)];
-            if (index < 0 || index >= texts.Length)
+            if (_entries == null || index < 0 || index >= _entries.Count)
             {
-                Game.Logger?.Warn(Tag, $"无线电选择序号 {index} 越界（本组共 {texts.Length} 条），已忽略");
+                Game.Logger?.Warn(Tag,
+                    $"无线电选择序号 {index} 越界（本组共 {_entries?.Count ?? 0} 条），已忽略");
                 return;
             }
 
-            var text = texts[index];
+            var text = _entries[index].Text;
             Game.Logger?.Info(Tag, $"无线电发送（{GroupTitles[(int)_group]}）：{text}");
             Game.Event.Emit(Events.RadioCommand, text);
 

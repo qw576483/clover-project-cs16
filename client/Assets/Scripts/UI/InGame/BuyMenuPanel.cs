@@ -30,11 +30,12 @@ namespace Cs16.UI
     /// <c>CsWeaponDef.Price/DisplayName</c>）—— 界面上没有任何硬编码的价格或武器名。</para>
     ///
     /// <para><b>分类口径</b>：手枪 / 霰弹 / 冲锋 / 步枪（含狙击）/ 机枪 / 主武器弹药 / 副武器弹药 /
-    /// 装备（含手雷）—— 8 行，顺序、编号与 <c>ypos</c> 取自原版分类页。后两页是原版
+    /// 装备（含手雷）—— 8 行，顺序、编号与 <c>ypos</c> 取自原版分类页。后两行是原版
     /// <c>&amp;6 PRIMARY AMMO</c> / <c>&amp;7 SECONDARY AMMO</c>（<c>Command primammo / secammo</c>）：
-    /// 列出**当前该槽位里那把枪**，点一下买一份备用弹药（价格与份量见 <see cref="CsAmmoBuy"/>）。
-    /// <b>买不起 / 买不了</b>：买不起或备弹已满的条目变灰且不可点（规格 G3）；
-    /// 不在买枪区 / 不在买枪时间时，底部红字提示并且点击会被本地拦下（不发事件、给出原因）。</para>
+    /// 原版这两个命令**点一下就买**，不弹子页 —— 本工程照此：点该行（或按它的数字键）立刻给当前
+    /// <b>主 / 副武器</b>槽补一份备弹（价格与份量见 <see cref="CsAmmoBuy"/>），菜单停在分类页。
+    /// <b>买不起 / 买不了</b>：备弹已满 / 钱不够 / 不在买枪区 / 不在买枪时间时给出原因并拦下，
+    /// 不发事件（规格 G3）。</para>
     /// </summary>
     public class BuyMenuPanel : CsPanelBase
     {
@@ -124,8 +125,8 @@ namespace Cs16.UI
         /// <c>OrderCT</c> / <c>OrderTER</c> = 该页条目的**顺序与集合**，逐条搬自原版武器页 `.res` 的
         /// <c>labelText</c> 序列（CT 页 / TER 页各一份 —— 原版两阵营的页内容不同，见数组注释）。
         ///
-        /// <para><b>弹药页（<c>&amp;6</c> / <c>&amp;7</c>）</b>：<see cref="IsAmmo"/> = true 时该页不列武器表，
-        /// 而是列出"当前<b>主 / 副武器</b>槽里的那把枪"（<see cref="AmmoSlot"/>），点它就补一份备弹 ——
+        /// <para><b>弹药分类（<c>&amp;6</c> / <c>&amp;7</c>）</b>：<see cref="IsAmmo"/> = true 时点这一行**不弹子页**，
+        /// 而是立刻给 <see cref="AmmoSlot"/> 指的槽位（当前<b>主 / 副武器</b>）补一份备弹 ——
         /// 判定与扣钱在 <c>CsMatch.TryBuyAmmoFor</c>（原版 <c>buyammo1</c> / <c>buyammo2</c>）。</para>
         /// </summary>
         private struct Category
@@ -540,9 +541,22 @@ namespace Cs16.UI
                 return;
             }
 
+            var category = Categories[index];
+
+            // 原版 `&6` / `&7` 是 `Command primammo / secammo`：点一下就买，没有子页
+            // （`MainBuyMenu.res:155-174 / :175-194` 的 Command 是命令，而武器分类行是
+            //   `"Command" "Resource/UI/Buy*.res"` 开子页 —— 见 :152）。
+            if (category.IsAmmo)
+            {
+                var ammo = BuildAmmoRow(category);
+                if (ammo != null) TryBuyAmmo(ammo);
+                Refresh();
+                return;
+            }
+
             _category = index;
             _itemPage = true;
-            Game.Logger?.Info(Tag, $"买枪分类打开：{Categories[index].Label}");
+            Game.Logger?.Info(Tag, $"买枪分类打开：{category.Label}");
             RebuildItems();
             Refresh();
         }
@@ -576,11 +590,12 @@ namespace Cs16.UI
             _titleText.color = CsHudTheme.TextMain;
 
             var team = CsHudSnapshot.Team;
-            if (category.IsAmmo)
+            var ammo = category.IsAmmo ? BuildAmmoRow(category) : null;
+            if (ammo != null)
             {
-                AddAmmoRow(category);
+                _items.Add(ammo);
             }
-            else
+            else if (!category.IsAmmo)
             {
                 // 页面条目 = 原版该页 `.res` 列出的顺序与集合（不是按武器大类临场筛）
                 var order = team == CsTeam.T ? category.OrderTER : category.OrderCT;
@@ -632,7 +647,7 @@ namespace Cs16.UI
             }
 
             // 分类列表为空 = 数据/阵营组合有问题，不能静默留一片空白
-            // （弹药页为空有它自己的原因，AddAmmoRow 已经逐条留痕）
+            // （弹药分类的槽位 / 弹药表问题由 BuildAmmoRow 逐条留痕）
             if (_items.Count == 0 && !category.IsAmmo)
                 Game.Logger?.Warn(Tag, $"买枪分类「{category.Label}」在当前阵营（{team}）下没有任何可买武器");
 
@@ -646,10 +661,10 @@ namespace Cs16.UI
         }
 
         /// <summary>
-        /// 弹药页（原版 <c>&amp;6</c> / <c>&amp;7</c>）：列出<b>当前该槽位里的那把枪</b>，一行 = 买一份备弹。
-        /// 槽位是空的 / 那把枪在原版弹药表里没有价格 ⇒ 一行为空并留痕（不静默留一片空白）。
+        /// 弹药分类（原版 <c>&amp;6</c> / <c>&amp;7</c>）要买的那一条 = <b>当前该槽位里的那把枪</b>的一份备弹。
+        /// 槽位是空的 / 那把枪在原版弹药表里没有价格 ⇒ 返回 null 并留痕（不静默买成 0）。
         /// </summary>
-        private void AddAmmoRow(Category category)
+        private RowData BuildAmmoRow(Category category)
         {
             var slotName = category.AmmoSlot == CsAmmoBuy.PrimarySlot ? "主武器" : "副武器";
             var weaponId = category.AmmoSlot == CsAmmoBuy.PrimarySlot
@@ -661,28 +676,28 @@ namespace Cs16.UI
 
             if (string.IsNullOrEmpty(weaponId))
             {
-                Game.Logger?.Info(Tag, $"买弹药页「{category.Label}」：{slotName}槽里没有武器，无条目可列");
+                Game.Logger?.Info(Tag, $"买弹药分类「{category.Label}」：{slotName}槽里没有武器，买不了");
                 HudPanel.Notify($"{slotName}槽没有武器，无法补充弹药");
-                return;
+                return null;
             }
 
             var def = CsWeapons.Get(weaponId);
             if (def == null)
             {
-                Game.Logger?.Warn(Tag, $"买弹药页「{category.Label}」：{slotName}槽是 {weaponId}，武器表里没有它");
-                return;
+                Game.Logger?.Warn(Tag, $"买弹药分类「{category.Label}」：{slotName}槽是 {weaponId}，武器表里没有它");
+                return null;
             }
 
             var price = CsAmmoBuy.Price(def.Id);
             if (price <= 0 || CsAmmoBuy.Box(def.Id) <= 0)
             {
                 Game.Logger?.Warn(Tag,
-                    $"买弹药页「{category.Label}」：{def.DisplayName} 在原版弹药表里没有价格/每份量，不给买");
+                    $"买弹药分类「{category.Label}」：{def.DisplayName} 在原版弹药表里没有价格/每份量，不给买");
                 HudPanel.Notify($"{def.DisplayName} 不能补充弹药");
-                return;
+                return null;
             }
 
-            _items.Add(new RowData
+            return new RowData
             {
                 Id = def.Id,
                 Name = def.DisplayName + " 备弹",
@@ -692,7 +707,7 @@ namespace Cs16.UI
                 AmmoSlot = category.AmmoSlot,
                 Reserve = reserve,
                 ReserveMax = def.ReserveAmmo,
-            });
+            };
         }
 
         private static string PriceText(int price) => price > 0 ? $"${price}" : "-";

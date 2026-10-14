@@ -8,39 +8,48 @@ namespace Cs16.UI
 {
     /// <summary>
     /// 记分板（规格 G11，按住 <c>TAB</c> 显示）：按阵营分组，列出
-    /// <c>玩家名 | 击杀 | 死亡 | 存活 | 金钱 | 延迟 | 状态</c>，自己那行高亮、死亡者变灰，
+    /// <c>玩家名 | HP | Money | Score | Deaths | Latency</c>，自己那行高亮、死亡者变灰，
     /// 底部显示比分与回合数。
     ///
     /// <para><b>层</b>：<see cref="UILayer.Normal"/> —— 它是"按住 TAB 看一眼"的信息板，
     /// 不该抢输入（<c>Popup</c> 会把开着的买枪菜单顶掉，也会让 ESC 误判成"有遮挡"）。</para>
     ///
-    /// <para><b>数据源</b>：逐人统计来自常驻 HUD 上的 <see cref="CsIngameStats"/>
-    /// （<c>Game.UI.Get&lt;HudPanel&gt;().BuildScoreRows(...)</c>），它的口径与比赛模块的击杀事件同源。
-    /// 快照里没有花名册这点，界面底部有一行明确说明 —— 不假装数据是完整的。</para>
+    /// <para><b>数据源</b>：<see cref="CsHudSnapshot.Roster"/>（比赛模块每帧填的逐人花名册：
+    /// 名字 / 阵营 / 击杀 / 死亡 / 存活 / 金钱 / 血量 / 是否机器人）。花名册为空时退回
+    /// <see cref="CsIngameStats"/> 的击杀累计（<c>Game.UI.Get&lt;HudPanel&gt;().BuildScoreRows(...)</c>）。</para>
     ///
-    /// <para><b>延迟列</b>：单机版本地模拟，没有网络往返 ⇒ 自己显示 <c>0</c>，机器人显示 <c>—</c>
+    /// <para><b>列落点（原版实测）</b>：载体 <c>原版资源/参照物/hud/hud_scoreboard_tab.png</c>（640×360）。
+    /// 外框 = 左右边框 x=42 / x=596、上边框 y=47、下边框 y=307 ⇒ 555×260 @360 ⇒ <b>1665×780 @1080</b>；
+    /// 数据行行距 15.7 @360 ⇒ <b>47 @1080</b>。数值列一律"值右缘 = 表头右缘"：
+    /// HP 右缘 x=371、Money x=431、Score x=479、Deaths x=529、Latency x=581 @640
+    /// ⇒ 下表常量 = (原版 x − 42) × 3（再减 <see cref="RowRootX"/> 换成行内坐标）。
+    /// 死亡者在 HP 那一格显示左对齐的 <c>Dead</c>（原版 x[271..293]），活的显示右对齐的血量数字。</para>
+    ///
+    /// <para><b>延迟列</b>：单机版本地模拟，没有网络往返 ⇒ 自己显示 <c>0</c>，机器人显示 <c>BOT</c>
     /// （机器人不是网络实体，编一个 ping 值才是造假）。</para>
     /// </summary>
     public class ScoreboardPanel : CsPanelBase
     {
-        private const float BoxWidth = 1120f;
-        private const float BoxHeight = 660f;
-        private const float RowHeight = 30f;
-        private const float HeaderHeight = 28f;
+        // 外框：原版 555×260 @360（x[42..596] / y[47..307]）
+        private const float BoxWidth = 1665f;
+        private const float BoxHeight = 780f;
+        private const float RowHeight = 47f;      // 原版数据行行距 15.7 @360
+        private const float HeaderHeight = 47f;   // 组标题占一整行
         private const int MaxRows = 24;
 
         /// <summary>行区域相对对话框左边缘的偏移（表头与数据行必须共用它才能对齐）。</summary>
         private const float RowRootX = 24f;
 
-        // 列（相对行左边缘的 x）
-        private const float ColName = 20f;
-        private const float ColKills = 380f;
-        private const float ColDeaths = 470f;
-        private const float ColAlive = 560f;
-        private const float ColMoney = 660f;
-        private const float ColPing = 800f;
-        private const float ColStatus = 890f;
-        private const float ColWidth = 88f;
+        // 列（相对行左边缘的 x；数值列右对齐 ⇒ 值右缘 = 表头右缘 = x + ColNumWidth）
+        private const float ColName = 72f;       // 名字左缘 = 面板左缘 + 96 @1080（原版 x=74）
+        private const float ColHp = 743f;        // 数值右缘 963 行内（= 面板左缘 + 987，原版 HP 右缘 x=371）
+        private const float ColHpDead = 663f;    // Dead 左对齐（= 面板左缘 + 687，原版 x=271）
+        private const float ColMoney = 923f;     // 右缘 1143（原版 x=431）
+        private const float ColScore = 1067f;    // 右缘 1287（原版 x=479）
+        private const float ColDeaths = 1217f;   // 右缘 1437（原版 x=529）
+        private const float ColPing = 1373f;     // 右缘 1593（原版 x=581）
+        private const float ColNumWidth = 220f;
+        private const float ColNameWidth = 520f;
 
         [SerializeField] private Text _titleText;
         [SerializeField] private Text _scoreText;
@@ -60,12 +69,12 @@ namespace Cs16.UI
             public RectTransform Rt;
             public Image Bg;
             public Text Name;
-            public Text Kills;
-            public Text Deaths;
-            public Text Alive;
+            public Text Hp;
+            public Text HpDead;
             public Text Money;
+            public Text Score;
+            public Text Deaths;
             public Text Ping;
-            public Text Status;
         }
 
         private sealed class GroupHeader
@@ -87,24 +96,24 @@ namespace Cs16.UI
 
             _titleText = CsHudTheme.CreateText("Title", boxRt, "SCOREBOARD", 30, TextAnchor.MiddleLeft,
                 CsHudTheme.TextMain);
-            CsHudTheme.PlaceTopLeft(_titleText.rectTransform, new Vector2(24f, -14f), new Vector2(500f, 38f));
+            CsHudTheme.PlaceTopLeft(_titleText.rectTransform, new Vector2(24f, -16f), new Vector2(700f, 40f));
 
             _roundText = CsHudTheme.CreateText("Round", boxRt, "第 1 回合", 22, TextAnchor.MiddleRight,
                 CsHudTheme.TextDim);
-            CsHudTheme.PlaceTopRight(_roundText.rectTransform, new Vector2(-24f, -14f), new Vector2(300f, 38f));
+            CsHudTheme.PlaceTopRight(_roundText.rectTransform, new Vector2(-24f, -16f), new Vector2(420f, 40f));
 
             _scoreText = CsHudTheme.CreateText("Score", boxRt, "CT 0 : 0 T", 32, TextAnchor.MiddleCenter,
                 CsHudTheme.TextHud);
-            CsHudTheme.PlaceTopCenter(_scoreText.rectTransform, new Vector2(0f, -56f), new Vector2(500f, 40f));
+            CsHudTheme.PlaceTopCenter(_scoreText.rectTransform, new Vector2(0f, -64f), new Vector2(600f, 44f));
 
             // 表头：每列单独一个 Text，x 偏移与数据行完全一致（比例字体下用空格对齐是假的）
-            var headers = new[] { "玩家名", "击杀", "死亡", "存活", "金钱", "延迟", "状态" };
-            var xs = new[] { ColName, ColKills, ColDeaths, ColAlive, ColMoney, ColPing, ColStatus };
-            var widths = new[] { 300f, ColWidth, ColWidth, ColWidth, ColWidth + 40f, ColWidth, 200f };
+            var headers = new[] { "玩家名", "HP", "Money", "Score", "Deaths", "Latency" };
+            var xs = new[] { ColName, ColHp, ColMoney, ColScore, ColDeaths, ColPing };
+            var widths = new[] { ColNameWidth, ColNumWidth, ColNumWidth, ColNumWidth, ColNumWidth, ColNumWidth };
             var anchors = new[]
             {
-                TextAnchor.MiddleLeft, TextAnchor.MiddleCenter, TextAnchor.MiddleCenter,
-                TextAnchor.MiddleCenter, TextAnchor.MiddleRight, TextAnchor.MiddleCenter, TextAnchor.MiddleLeft,
+                TextAnchor.MiddleLeft, TextAnchor.MiddleRight, TextAnchor.MiddleRight,
+                TextAnchor.MiddleRight, TextAnchor.MiddleRight, TextAnchor.MiddleRight,
             };
 
             _headerCells = new Text[headers.Length];
@@ -113,13 +122,13 @@ namespace Cs16.UI
                 var cell = CsHudTheme.CreateText($"Head{i}", boxRt, headers[i], 19, anchors[i],
                     CsHudTheme.TextDim);
                 CsHudTheme.PlaceTopLeft(cell.rectTransform,
-                    new Vector2(RowRootX + xs[i], -100f), new Vector2(widths[i], 26f));
+                    new Vector2(RowRootX + xs[i], -116f), new Vector2(widths[i], 40f));
                 _headerCells[i] = cell;
             }
 
             var rowRoot = UIFactory.CreateNode("Rows", boxRt);
-            CsHudTheme.PlaceTopLeft(rowRoot, new Vector2(RowRootX, -132f),
-                new Vector2(BoxWidth - RowRootX * 2f, BoxHeight - 190f));
+            CsHudTheme.PlaceTopLeft(rowRoot, new Vector2(RowRootX, -160f),
+                new Vector2(BoxWidth - RowRootX * 2f, BoxHeight - 216f));
             _rowRoot = rowRoot;
 
             _footerText = CsHudTheme.CreateText("Footer", boxRt, string.Empty, 18, TextAnchor.MiddleLeft,
@@ -149,21 +158,32 @@ namespace Cs16.UI
         private void Refresh()
         {
             var hud = Game.UI?.Get<HudPanel>();
-            if (hud == null)
+            var roster = CsHudSnapshot.Roster;
+
+            if (roster.Count == 0)
             {
-                // HUD 不在 = 不在局内（或 HUD 被异常关掉）。这里必须留痕，并且明确显示"拿不到数据"
-                if (!_noHudWarned)
+                // 花名册没填（不在局内，或比赛模块尚未发布）⇒ 退回 HUD 侧的击杀累计
+                if (hud == null)
                 {
-                    _noHudWarned = true;
-                    Game.Logger?.Error(Tag,
-                        "记分板拿不到 HudPanel（它承载逐人统计）—— 只有在比赛进行中 HUD 常驻时才有数据");
+                    // HUD 不在 = 不在局内（或 HUD 被异常关掉）。这里必须留痕，并且明确显示"拿不到数据"
+                    if (!_noHudWarned)
+                    {
+                        _noHudWarned = true;
+                        Game.Logger?.Error(Tag,
+                            "记分板拿不到花名册也拿不到 HudPanel —— 只有在比赛进行中才有数据");
+                    }
+                    _rows.Clear();
                 }
-                _rows.Clear();
+                else
+                {
+                    _noHudWarned = false;
+                    hud.BuildScoreRows(_rows);
+                }
             }
             else
             {
                 _noHudWarned = false;
-                hud.BuildScoreRows(_rows);
+                BuildRowsFromRoster(roster);
             }
 
             if (_scoreText != null) _scoreText.text = $"CT {CsHudSnapshot.ScoreCT}  :  {CsHudSnapshot.ScoreT} T";
@@ -172,10 +192,9 @@ namespace Cs16.UI
 
             if (_footerText != null)
             {
-                _footerText.text = _rows.Count <= 1
-                    ? "本场尚无击杀记录。记分板名册由快照的击杀信息累计得出（CsHudSnapshot 不提供花名册：\n" +
-                      "未参与过击杀的玩家不会出现，金钱只有自己知道 —— 需要完整名册请让比赛模块把花名册写进快照）。"
-                    : "统计口径：与比赛模块的击杀事件同源累计；金钱仅本地玩家已知（其余显示 —）；延迟在单机版为 0（机器人 —）。";
+                _footerText.text = _rows.Count == 0
+                    ? "本场还没有花名册（比赛未开始或已结束）。"
+                    : "统计口径：与比赛模块同源的花名册（含机器人与阵亡者）；延迟在单机版为自己 0、机器人 BOT。";
             }
 
             LayoutRows();
@@ -184,6 +203,55 @@ namespace Cs16.UI
         private bool _noHudWarned;
 
         private static string TABHint() => "松开 TAB 关闭";
+
+        /// <summary>把快照花名册搬成界面行（自己那行永远排本队第一）。</summary>
+        private void BuildRowsFromRoster(List<CsScoreRosterItem> roster)
+        {
+            _rows.Clear();
+            for (var i = 0; i < roster.Count; i++)
+            {
+                var item = roster[i];
+                _rows.Add(new CsScoreRow
+                {
+                    Name = item.Name,
+                    Team = item.Team,
+                    Kills = item.Kills,
+                    Deaths = item.Deaths,
+                    Alive = item.Alive,
+                    Money = item.Money,
+                    IsSelf = item.IsSelf,
+                    Health = item.Health,
+                    IsBot = item.IsBot,
+                    Latency = item.Latency,
+                });
+            }
+            _rows.Sort(Compare);
+        }
+
+        private static int Compare(CsScoreRow a, CsScoreRow b)
+        {
+            // **先按阵营分组**（记分板要求"两组各一行表头"，自己那行插在队里，不能把队拆开）
+            // 组序：CT → T → 观察者（与 HUD 顶部比分的 CT 在左一致）
+            var rankA = TeamRank(a.Team);
+            var rankB = TeamRank(b.Team);
+            if (rankA != rankB) return rankA.CompareTo(rankB);
+
+            // 组内：自己在前 → 击杀多在前 → 死亡少在前 → 名字
+            if (a.IsSelf != b.IsSelf) return a.IsSelf ? -1 : 1;
+            if (a.Kills != b.Kills) return b.Kills.CompareTo(a.Kills);
+            if (a.Deaths != b.Deaths) return a.Deaths.CompareTo(b.Deaths);
+            return string.CompareOrdinal(a.Name, b.Name);
+        }
+
+        private static int TeamRank(CsTeam team)
+        {
+            switch (team)
+            {
+                case CsTeam.CT: return 0;
+                case CsTeam.T: return 1;
+                default: return 2;
+            }
+        }
 
         private void LayoutRows()
         {
@@ -264,22 +332,27 @@ namespace Cs16.UI
             }
 
             var valueColor = dead ? CsHudTheme.Disabled : CsHudTheme.TextHud;
-            ui.Kills.text = row.Kills.ToString();
-            ui.Kills.color = valueColor;
-            ui.Deaths.text = row.Deaths.ToString();
-            ui.Deaths.color = valueColor;
-            ui.Alive.text = row.Alive ? "存活" : "死亡";
-            ui.Alive.color = row.Alive ? CsHudTheme.HealthOk : CsHudTheme.Disabled;
+
+            // HP：活的显示右对齐血量数字；死的把数字收起来，只留原版那个左对齐的 Dead
+            var showHp = row.Alive && row.Health != CsScoreRow.UnknownHealth;
+            if (ui.Hp.gameObject.activeSelf != showHp) ui.Hp.gameObject.SetActive(showHp);
+            if (showHp) ui.Hp.text = row.Health.ToString();
+
+            var showDead = !row.Alive;
+            if (ui.HpDead.gameObject.activeSelf != showDead) ui.HpDead.gameObject.SetActive(showDead);
+            if (showDead) ui.HpDead.text = "Dead";
+
             ui.Money.text = row.Money == CsScoreRow.UnknownMoney ? "—" : $"${row.Money}";
             ui.Money.color = row.Money == CsScoreRow.UnknownMoney ? CsHudTheme.Disabled : CsHudTheme.MoneyNormal;
+            ui.Score.text = row.Kills.ToString();
+            ui.Score.color = valueColor;
+            ui.Deaths.text = row.Deaths.ToString();
+            ui.Deaths.color = valueColor;
 
-            // 单机版：只有本地玩家走"本机回环"（0），机器人不是网络实体 → 不编 ping
-            ui.Ping.text = row.IsSelf ? "0" : "—";
+            // 单机版：只有本地玩家走"本机回环"（0），机器人不是网络实体 → 不编 ping，照原版显示 BOT
+            var bot = row.IsBot || row.Latency == CsScoreRow.UnknownLatency;
+            ui.Ping.text = bot ? "BOT" : row.Latency.ToString();
             ui.Ping.color = CsHudTheme.TextDim;
-
-            ui.Status.text = row.IsSelf ? (row.Alive ? "你 · 存活" : "你 · 死亡")
-                : (row.Alive ? "在场" : "阵亡");
-            ui.Status.color = dead ? CsHudTheme.Disabled : CsHudTheme.TextDim;
 
             // 自己那行高亮（规格：自己那行高亮）
             if (ui.Bg != null)
@@ -309,13 +382,13 @@ namespace Cs16.UI
             {
                 Rt = bg.rectTransform,
                 Bg = bg,
-                Name = Cell(bg.rectTransform, "Name", ColName, 300f, TextAnchor.MiddleLeft),
-                Kills = Cell(bg.rectTransform, "Kills", ColKills, ColWidth, TextAnchor.MiddleCenter),
-                Deaths = Cell(bg.rectTransform, "Deaths", ColDeaths, ColWidth, TextAnchor.MiddleCenter),
-                Alive = Cell(bg.rectTransform, "Alive", ColAlive, ColWidth, TextAnchor.MiddleCenter),
-                Money = Cell(bg.rectTransform, "Money", ColMoney, ColWidth + 40f, TextAnchor.MiddleRight),
-                Ping = Cell(bg.rectTransform, "Ping", ColPing, ColWidth, TextAnchor.MiddleCenter),
-                Status = Cell(bg.rectTransform, "Status", ColStatus, 200f, TextAnchor.MiddleLeft),
+                Name = Cell(bg.rectTransform, "Name", ColName, ColNameWidth, TextAnchor.MiddleLeft),
+                Hp = Cell(bg.rectTransform, "Hp", ColHp, ColNumWidth, TextAnchor.MiddleRight),
+                HpDead = Cell(bg.rectTransform, "HpDead", ColHpDead, ColNumWidth, TextAnchor.MiddleLeft),
+                Money = Cell(bg.rectTransform, "Money", ColMoney, ColNumWidth, TextAnchor.MiddleRight),
+                Score = Cell(bg.rectTransform, "Score", ColScore, ColNumWidth, TextAnchor.MiddleRight),
+                Deaths = Cell(bg.rectTransform, "Deaths", ColDeaths, ColNumWidth, TextAnchor.MiddleRight),
+                Ping = Cell(bg.rectTransform, "Ping", ColPing, ColNumWidth, TextAnchor.MiddleRight),
             };
             return row;
         }

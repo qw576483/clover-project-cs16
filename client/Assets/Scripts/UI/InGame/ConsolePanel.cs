@@ -307,11 +307,10 @@ namespace Cs16.UI
         /// 用法串 @ file <c>0xe9530</c>，处理函数 <c>hud_spectator.cpp:48-63</c> → <c>SetModes(atoi(argv1), …)</c>）；
         /// 原版档位范围 1..6 与非法档位原文 <c>"Invalid spectator mode."</c> 出处同文件 <c>:799-803</c>。
         ///
-        /// <para><b>只接受有机位的档位</b>（本工程 = <c>1</c> 锁定追尾 / <c>2</c> 自由追尾 / <c>3</c> 自由飞行 /
-        /// <c>4</c> 目标第一人称，判据 <c>CsSpectator.IsImplemented</c>）：切到别的档位则**状态不变**、给
-        /// <c>Not implemented in this build: …</c> 并留 Warn —— 不存在"名字切了、机位没动"的中间态。
-        /// 5 / 6 为什么没有机位，见 <c>CsSpectator.IsImplemented</c> 的说明
-        /// （登记在 <c>策划/差异登记.tsv</c>）。</para>
+        /// <para><b>合法档位 1..6，六档全部实现</b>（判据 <c>CsSpectator.IsImplemented</c>）：
+        /// <c>1</c> 锁定追尾 / <c>2</c> 自由追尾 / <c>3</c> 自由飞行 / <c>4</c> 目标第一人称 /
+        /// <c>5</c> 自由俯瞰 / <c>6</c> 跟随俯瞰（后两档的画面由 <c>UI/InGame/CsOverviewWidget</c> 表达）。
+        /// 越界或非法输入按原版回 <c>Invalid spectator mode.</c> / 用法串，且**状态不变**。</para>
         ///
         /// <para>第二个参数（inset 第二画面，原版 <c>spec_pip</c> / <c>INSET_*</c>）本工程没有实现，
         /// 且其档位数值的载体 <c>hltv.h</c> 不在盘 ⇒ 收到就 Warn 并忽略，不静默吞掉。</para>
@@ -323,7 +322,7 @@ namespace Cs16.UI
                 Game.Logger?.Warn(Tag, "控制台 spec_mode 缺参数");
                 SetStatus(CsSpectator.SpecModeUsageText, true);
                 LogBuffer.Push($"{CsSpectator.SpecModeUsageText}" +
-                               $"（可切档位 1 / 2 / 3 / 4；当前 {CsSpectator.ModeName(CsSpectator.Mode)}）");
+                               $"（可切档位 1~6；当前 {CsSpectator.ModeName(CsSpectator.Mode)}）");
                 return;
             }
 

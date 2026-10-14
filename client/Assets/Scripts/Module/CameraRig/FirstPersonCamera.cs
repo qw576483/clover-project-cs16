@@ -33,20 +33,24 @@ namespace Cs16.Module.CameraRig
     /// <item><b>相机本体</b>：舞台场景不保证有相机，自建一台常驻相机（比赛未运行时关闭）
     /// 可以彻底消除"进图后黑屏 / 和菜单相机抢 <c>Camera.main</c>"这两类问题。rig 用
     /// <c>Bind(camera)</c> 显式绑它（不走 <c>Game.Camera.Main</c>：那台可能不是我们这台）。</item>
-    /// <item><b>眼位</b>：眼位来自**逻辑**（<c>CsActor.Position + 眼高</c>，没有 Transform），
-    /// 故本组件维护一个隐藏的眼位锚点 Transform（<c>CsFpsEyeAnchor</c>）并只平滑**眼高**那一个标量
-    /// （站↔蹲、上下台阶不跳变，瞬移直接吸附）；引擎 <c>EyeSmoothTau</c> 是**整点**平滑（会让机位
-    /// 在水平方向落后于玩家）故置 0。</item>
+    /// <item><b>视位</b>：视位来自**逻辑**（<c>CsActor.Position</c>，没有 Transform），故本组件维护一个
+    /// 隐藏的眼位锚点 Transform（<c>CsFpsEyeAnchor</c>），锚点落在**视位**上、<c>EyeOffset</c> 再给眼高。
+    /// 视位 = 模拟原点 + 原版位置回放位移（<see cref="CsViewInterp.Playback"/>）+ 上台阶竖直平滑
+    /// （<see cref="CsViewInterp.StepOffset"/>）；眼高的**蹲下**过渡走原版 <c>TIME_TO_DUCK</c>
+    /// （<see cref="CsViewInterp.AdvanceDuckFraction"/>），起身按原版 <c>PM_UnDuck</c> 立即拨回；
+    /// 出生 / 复活 / 传送直接吸附。
+    /// 引擎 <c>EyeSmoothTau</c> 是**整点**平滑（会让机位在水平方向落后于玩家）故置 0。</item>
     /// <item><b>输入映射</b>：视角输入由玩家模块采集（<c>PlayerMotor.Yaw/Pitch</c>），
     /// 本组件每帧 <c>SetView(motor.Yaw, motor.Pitch)</c> 喂给 rig；rig 自己的鼠标读取**关掉**
     /// （<c>SetControlEnabled(false)</c>）—— 两处读鼠标会把灵敏度算两遍。这是项目专有的输入映射。</item>
-    /// <item><b>四种观战机位</b>：第三人称追尾（<see cref="ResolveChaseDistance"/>，原版
+    /// <item><b>四种 3D 观战机位</b>：第三人称追尾（<see cref="ResolveChaseDistance"/>，原版
     /// <c>V_GetChaseOrigin</c>，view.cpp:894-1050；档位 1 锁定追尾 / 档位 2 自由追尾共用位置算法，
     /// 角度来源见 <c>CsSpectator.TryChaseCameraAngles</c>）、目标第一人称（原版 <c>V_GetInEyePos</c>，
     /// view.cpp:1289-1321；相机落在被观察者眼位、朝向随他）、自由飞行（原版 <c>OBS_ROAMING</c>，
     /// view.cpp:1538-1540：相机在**观察者自己的漫游原点**、朝向 = 他自己的鼠标角；原点推进 =
-    /// <c>CsSpectatorRoam.Step</c>）—— 由观战档位 <c>CsSpectator.Mode</c> 选（有机位的档位见
-    /// <c>CsSpectator.ImplementedModes</c>）；
+    /// <c>CsSpectatorRoam.Step</c>）—— 由观战档位 <c>CsSpectator.Mode</c> 选（六档全部实现，见
+    /// <c>CsSpectator.ImplementedModes</c>；档位 5 / 6 是俯视概览、**不动机位**，画面由
+    /// <c>UI/InGame/CsOverviewWidget</c> 整块盖住 3D 相机）。
     /// 另有模型显隐、外来主相机 / 音频监听器收编、FOV 与机位的自证日志。</item>
     /// </list>
     ///
@@ -125,8 +129,22 @@ namespace Cs16.Module.CameraRig
         /// 每帧转交给引擎 rig 的 <c>FovX</c>，垂直换算 / 平滑都在引擎里。</summary>
         private float _baseFov = CsConst.DefaultFov;
 
-        /// <summary>本帧眼高（米，脚面之上）：只平滑这一个标量（见类注释"本组件自己保留的"第 2 条）。</summary>
+        /// <summary>本帧眼高（米，脚面之上）：**蹲下**按原版 <c>TIME_TO_DUCK</c> 过渡（见
+        /// <see cref="CsViewInterp.AdvanceDuckFraction"/>），过渡期间在 <see cref="_duckFromEye"/> 与
+        /// <see cref="_duckToEye"/> 之间按原版 <c>PM_SplineFraction</c> 的形状取值；**起身**是立即的
+        /// （原版 <c>PM_UnDuck</c>）。</summary>
         private float _eyeHeight;
+        private float _duckProgress;
+        private bool _duckTarget;
+        private float _duckFromEye;
+        private float _duckToEye;
+
+        /// <summary>视位回放 / 上台阶平滑（原版 <c>view.cpp</c> 的两段；模拟原点入历史缓冲、视位取回放）。</summary>
+        private CsViewInterp _viewInterp;
+
+        /// <summary>回放用的时间轴（秒，比赛内单调累加）：与历史位置一起记进环形缓冲。</summary>
+        private float _viewClock;
+
         private Vector3 _lastActorPosition;
         private bool _hasLastPosition;
 
@@ -267,7 +285,7 @@ namespace Cs16.Module.CameraRig
                 {
                     EyeAnchor = _eyeAnchor,
                     // 整点眼位平滑会让机位在**水平方向**落后于玩家（锚点随玩家移动）⇒ 置 0：
-                    // 本组件只平滑"眼高"这一个标量（见 _eyeHeight 的那段注释），与既有实现行为一致。
+                    // 视位的回放 / 上台阶平滑由本组件按原版两段自己算（见 _viewInterp）。
                     EyeSmoothTau = 0f,
                     PitchLimit = CsCombatTuning.PitchLimit,
                     RecoilRiseTau = CsCombatTuning.RecoilRiseTau,
@@ -442,13 +460,20 @@ namespace Cs16.Module.CameraRig
             }
 
             // 观战档位（控制面）决定机位：4 = 原版 OBS_IN_EYE（目标第一人称）、2 = 原版 OBS_CHASE_FREE（追尾）、
-            // 3 = 原版 OBS_ROAMING（观察者**自己**的自由飞行）。非观战永远是自己第一人称。
+            // 3 = 原版 OBS_ROAMING（观察者**自己**的自由飞行）、5 / 6 = 俯视概览（不动 3D 机位，见下面 overview）。
+            // 非观战永远是自己第一人称。
             var inEye = spectating && CsSpectator.Mode == CsSpectatorMode.FirstPerson;
 
             // 自由飞行**不要求有观战目标**（原版 SetModes 里 OBS_ROAMING 是唯一"没有 g_iUser2 也放行"的档位，
             // 见 hud_spectator.cpp:814；它的原点就是观察者自己、不看别人）⇒ 判据只取 IsSpectating。
             // 其余两档都要目标：`spectating` = "相机在看**别人**"，自由飞行时它是 false 也不影响本档。
             var freeLook = _match.IsSpectating && CsSpectator.Mode == CsSpectatorMode.FreeLook;
+
+            // 俯视概览档位（5 / 6）：原版把主画面交给 clientDraw（onlyClientDraw=true，view.cpp:1545-1551），
+            // 3D 机位不动 —— 画面由 UI/InGame/CsOverviewWidget 整块盖住（见该件注释）。
+            var overview = spectating && (CsSpectator.Mode == CsSpectatorMode.FreeOverview ||
+                                          CsSpectator.Mode == CsSpectatorMode.ChaseOverview);
+
             var observeCamera = spectating || freeLook;
 
             var targetChanged = _lastTargetId != target.Id;
@@ -485,6 +510,14 @@ namespace Cs16.Module.CameraRig
                 {
                     _log.Always($"观战机位 → 目标第一人称（原版 Spec_Mode4 / OBS_IN_EYE）：相机落在 {target.Name} 的眼位、" +
                                 "朝向随他（view.cpp:1289-1321 V_GetInEyePos）");
+                }
+                else if (overview)
+                {
+                    // 原版这两档不动 3D 机位：主画面被 onlyClientDraw 关掉、改画俯视概览
+                    // （view.cpp:1545-1551 + hud_spectator.cpp:1069-1193）。
+                    _log.Always($"观战机位 → 俯视概览（原版 Spec_Mode{(int)CsSpectator.Mode} / " +
+                                (CsSpectator.Mode == CsSpectatorMode.ChaseOverview ? "OBS_MAP_CHASE" : "OBS_MAP_FREE") +
+                                "）：不动 3D 机位，画面由俯视概览面板盖住（CsOverviewWidget）");
                 }
                 else
                 {
@@ -549,25 +582,67 @@ namespace Cs16.Module.CameraRig
             }
             else
             {
-                // ---- 眼高（站/蹲与台阶做平滑；瞬移直接吸附）----
-                // 只平滑"眼高"这一个标量：引擎 rig 的 EyeSmoothTau 是**整点**平滑，会让机位在水平方向
-                // 落后于玩家（锚点跟着玩家跑），所以那边置 0、由这里承担平滑（与既有实现行为一致）。
-                var eyeTarget = target.EyeHeight;
-                if (!_hasLastPosition || Vector3.Distance(target.Position, _lastActorPosition) > CsCombatTuning.TeleportSnapDistance)
+                // ---- 视位：原版 view.cpp 的位置回放 + 上台阶平滑；眼高走原版蹲姿过渡 ----
+                // 位置：模拟原点逐帧记进历史缓冲（模拟侧记历史）→ 取按 cl_vsmoothing 窗口的回放位移
+                //（相机侧回放）→ 再叠上台阶那一档竖直平滑。回放的门与原版逐字一致（multiplayer + 移动平台），
+                // 本图 de_dust2 没有移动平台 ⇒ 该项为 0，视位就是模拟原点。
+                // 眼高：**蹲下**按原版 TIME_TO_DUCK 0.4 s 过渡（pm_shared.c:82 / PM_Duck :1676-1746），
+                // 形状用原版 PM_SplineFraction；**起身**按原版 PM_UnDuck 立即拨回站姿眼高。
+                if (_viewInterp == null) _viewInterp = new CsViewInterp();
+
+                var simPosition = target.Position;
+                _viewClock += dt;
+
+                if (!_hasLastPosition ||
+                    Vector3.Distance(simPosition, _lastActorPosition) > CsViewInterp.MaxInterpDelta)
                 {
-                    _eyeHeight = eyeTarget;
+                    // 出生 / 复活 / 换观察目标：历史作废，眼高与蹲姿进度直接吸附（不拿旧位置去插值）。
+                    _viewInterp.Reset();
+                    _eyeHeight = target.EyeHeight;
+                    _duckTarget = target.IsCrouching;
+                    _duckProgress = _duckTarget ? 1f : 0f;
+                    _duckFromEye = target.EyeHeight;
+                    _duckToEye = target.EyeHeight;
+                }
+
+                if (target.IsCrouching)
+                {
+                    // 蹲下：从**按下蹲的那一帧的眼高**起算，0.4 s 内整到蹲姿眼高（原版 PM_Duck 的曲线）。
+                    if (!_duckTarget)
+                    {
+                        _duckTarget = true;
+                        _duckFromEye = _eyeHeight;
+                        _duckToEye = target.EyeHeight;
+                        _duckProgress = 0f;
+                    }
+
+                    _duckProgress = CsViewInterp.AdvanceDuckFraction(_duckProgress, dt);
+                    _eyeHeight = Mathf.Lerp(_duckFromEye, _duckToEye,
+                                            CsViewInterp.SplineFraction(_duckProgress, 1f));
                 }
                 else
                 {
-                    _eyeHeight = CameraMath.Follow(_eyeHeight, eyeTarget, dt, CsCombatTuning.EyeHeightSmoothTau);
+                    // 起身：原版 PM_UnDuck（pm_shared.c:1658-1661）把视高**立即**拨回 VEC_VIEW ⇒ 不走过渡曲线。
+                    _duckTarget = false;
+                    _duckProgress = 0f;
+                    _duckFromEye = target.EyeHeight;
+                    _duckToEye = target.EyeHeight;
+                    _eyeHeight = target.EyeHeight;
                 }
 
-                _lastActorPosition = target.Position;
+                _lastActorPosition = simPosition;
                 _hasLastPosition = true;
 
-                // 眼位锚点搬到目标脚下，"脚 → 眼"的高度交给 rig 的 EyeOffset ⇒
-                // rig.EyePosition = 锚点位置 + EyeOffset = target.Position + (0, _eyeHeight, 0)（与既有实现等价）。
-                _eyeAnchor.position = target.Position;
+                _viewInterp.Record(simPosition, _viewClock);
+                var viewPosition = simPosition + _viewInterp.Playback(simPosition, _viewClock,
+                                                                     CsViewInterp.DefaultWindow,
+                                                                     smoothing: false);
+                viewPosition.y += _viewInterp.StepOffset(simPosition.y, dt, target.OnGround,
+                                                        smoothing: false);
+
+                // 眼位锚点落在视位上，"脚 → 眼"的高度交给 rig 的 EyeOffset
+                // ⇒ rig.EyePosition = 视位 + (0, _eyeHeight, 0)。
+                _eyeAnchor.position = viewPosition;
                 _rig.EyeOffset = new Vector3(0f, _eyeHeight, 0f);
             }
 

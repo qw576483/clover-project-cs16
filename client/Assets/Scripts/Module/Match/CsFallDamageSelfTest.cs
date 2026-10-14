@@ -174,8 +174,10 @@ namespace Cs16.Module.Match
             public void Unload() { }
 
             public bool WalkableAt(float x, float z) => true;
-            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius) => true;
-            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius) => to;
+            public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
+                                 float height = CsConst.StandHeight) => true;
+            public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
+                                       float height = CsConst.StandHeight) => to;
             public float SampleGround(Vector3 pos, float maxDrop = 8f) => 0f;
 
             public bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f)

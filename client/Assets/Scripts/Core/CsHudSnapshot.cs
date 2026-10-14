@@ -26,6 +26,45 @@ namespace Cs16.Core
     }
 
     /// <summary>
+    /// 俯视概览（观战档位 5 / 6）上的一个玩家标记。原版 <c>CHudOverview::Draw</c> 画的就这些字段：
+    /// 队伍色方块（按 <c>pl-&gt;angles[1]</c> 旋转）+ 名字与血量（<c>"%s (%i%%)"</c>）。
+    /// </summary>
+    public struct CsOverviewMark
+    {
+        public float X;         // 世界 X（米）
+        public float Z;         // 世界 Z（米）
+        public float Yaw;       // 世界朝向（度；原版 pl->angles[1]，overview.cpp:109-114）
+        public CsTeam Team;
+        public string Name;
+        public int Health;
+        /// <summary>是不是当前被观察者（原版概览不区分；本工程用它把目标画亮一档）。</summary>
+        public bool IsSpectateTarget;
+    }
+
+    /// <summary>
+    /// 记分板花名册的一行：本场**每一个**在场实体（含从未参与击杀的玩家与机器人）的逐人统计。
+    /// 由比赛模块每帧填，UI 只读。
+    /// </summary>
+    public struct CsScoreRosterItem
+    {
+        public string Name;
+        public CsTeam Team;
+        public int Kills;
+        public int Deaths;
+        public bool Alive;
+        public int Money;
+        public int Health;
+        public bool IsBot;
+        /// <summary>是不是本地玩家（界面据此高亮自己那行）。</summary>
+        public bool IsSelf;
+        /// <summary>网络往返毫秒；<see cref="UnknownLatency"/> = 非网络实体（机器人）。</summary>
+        public int Latency;
+
+        /// <summary>该行拿不到延迟数据时的占位值（界面显示成 BOT，不编一个 ping）。</summary>
+        public const int UnknownLatency = -1;
+    }
+
+    /// <summary>
     /// **UI 与业务之间的唯一数据契约**（只读快照）。
     ///
     /// <para>原因：`reference/architecture.md` 要求 UI 不许 `using` 任何 `Module.*`。
@@ -45,6 +84,11 @@ namespace Cs16.Core
         public static bool IsAlive;
         public static bool IsSpectating;
         public static string SpectateName;
+        /// <summary>被观察者的世界 X / Z（米）。俯视概览档位 6 的窗口中心 = 它
+        /// （原版 <c>V_GetMapChasePosition</c> 取 <c>ent-&gt;origin</c>，view.cpp:1365）。
+        /// 无观战目标时两者都保持 0（不会被读；概览档位 5 用固定中心）。</summary>
+        public static float SpectateX;
+        public static float SpectateZ;
         public static int Health;
         public static int Armor;
         public static bool HasHelmet;
@@ -96,6 +140,12 @@ namespace Cs16.Core
         // ---- 列表（每帧由模拟清空并重填）----
         public static readonly List<CsKillFeedItem> KillFeed = new List<CsKillFeedItem>(8);
         public static readonly List<CsRadarDot> Radar = new List<CsRadarDot>(32);
+        /// <summary>俯视概览要画的**全部活人**（不分可见性；原版 overview 就是这样）。</summary>
+        public static readonly List<CsOverviewMark> Overview = new List<CsOverviewMark>(32);
+
+        // ---- 记分板花名册（每帧清空重填）----
+        /// <summary>本场全部实体（含机器人与阵亡者）的逐人统计 —— 记分板按它成行。</summary>
+        public static readonly List<CsScoreRosterItem> Roster = new List<CsScoreRosterItem>(32);
         /// <summary>最近一条系统/无线电消息 + 它的剩余显示时间。</summary>
         public static string LastMessage;
         public static float LastMessageTime;
@@ -111,6 +161,8 @@ namespace Cs16.Core
             IsAlive = false;
             IsSpectating = false;
             SpectateName = null;
+            SpectateX = 0f;
+            SpectateZ = 0f;
             Health = 0;
             Armor = 0;
             HasHelmet = false;
@@ -144,6 +196,8 @@ namespace Cs16.Core
             DamageFromYaw = 0f;
             KillFeed.Clear();
             Radar.Clear();
+            Overview.Clear();
+            Roster.Clear();
             LastMessage = null;
             LastMessageTime = 0f;
         }

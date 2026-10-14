@@ -88,9 +88,6 @@ namespace Cs16.UI
         [SerializeField] private Image _healthIcon;
         /// <summary>护甲图标（原版位图精灵 hud.txt:135/137；按有无头盔换 sprite）。</summary>
         [SerializeField] private Image _armorIcon;
-        [SerializeField] private Text _roundNumberText;
-        [SerializeField] private Text _phaseText;
-        [SerializeField] private Text _bombText;
         /// <summary>
         /// 买枪区提示 = **原版 `buyzone` 位图精灵**（`hud.txt:131` = `640hud7` 的 96,148,32,32，32×32）。
         /// 原版这里没有文字，所以本节点是 Image 而不是 Text。
@@ -116,6 +113,9 @@ namespace Cs16.UI
         /// （原版开镜时金钱/血量仍在黑底之上）⇒ 由刷新路径按需补建，旧预制体也照样有。
         /// </summary>
         private CsScopeOverlayWidget _scope;
+        /// <summary>俯视概览（观战档位 5 / 6）。同 <see cref="_scope"/>：不进 <see cref="BuildLayout"/>，
+        /// 由刷新路径按需补建并塞到**第一个子节点**（压在 3D 画面之上、整组 HUD 之下）。</summary>
+        private CsOverviewWidget _overview;
         [SerializeField] private CsRadarWidget _radar;
         [SerializeField] private CsKillFeedWidget _killFeed;
         [SerializeField] private CsSpectatorWidget _spectator;
@@ -264,21 +264,6 @@ namespace Cs16.UI
             _stopwatchIcon.enabled = false;
 
             ApplyScoreBlock();
-
-            _roundNumberText = CsHudTheme.CreateText("RoundNumber", hud, "第 1 回合", 20,
-                TextAnchor.MiddleCenter, CsHudTheme.TextDim);
-            CsHudTheme.PlaceTopCenter(_roundNumberText.rectTransform, new Vector2(0f, -60f),
-                new Vector2(320f, 26f));
-
-            _phaseText = CsHudTheme.CreateText("Phase", hud, string.Empty, 20, TextAnchor.MiddleCenter,
-                CsHudTheme.Warn);
-            CsHudTheme.PlaceTopCenter(_phaseText.rectTransform, new Vector2(0f, -84f),
-                new Vector2(320f, 26f));
-
-            _bombText = CsHudTheme.CreateText("Bomb", hud, string.Empty, 20, TextAnchor.MiddleCenter,
-                CsHudTheme.Danger);
-            CsHudTheme.PlaceTopCenter(_bombText.rectTransform, new Vector2(0f, -108f),
-                new Vector2(420f, 26f));
 
             // ---- 左上：雷达（H6）+ 消息栏（无线电/系统提示，G13）----
             _radar = new CsRadarWidget();
@@ -902,18 +887,6 @@ namespace Cs16.UI
                 if (_mapText.text != content) _mapText.text = content;
                 LogMapTextOnce(mapName);
             }
-            if (_roundNumberText != null) _roundNumberText.text = $"第 {CsHudSnapshot.RoundNumber} 回合";
-            if (_phaseText != null) _phaseText.text = CsHudTheme.PhaseText(CsHudSnapshot.Phase);
-
-            // ---- 炸弹（G7：下包后剩余时间）----
-            if (_bombText != null)
-            {
-                if (CsHudSnapshot.BombPlanted && CsHudSnapshot.BombTimeLeft >= 0f)
-                    _bombText.text = $"\u2605 C4 已安放 {CsHudSnapshot.BombTimeLeft:0.0}s";
-                else
-                    _bombText.text = string.Empty;
-            }
-
             // ---- Buy Zone 图标（H10，原版 `buyzone` 精灵）----
             if (_buyZoneIcon != null)
             {
@@ -942,10 +915,13 @@ namespace Cs16.UI
             if (_useLabel != null)
             {
                 if (_useLabel.gameObject.activeSelf != useVisible) _useLabel.gameObject.SetActive(useVisible);
+                // 文案的判据 = **炸弹是否已安放**（未安放 ⇒ 正在下包；已安放 ⇒ 正在拆包）。
+                // ⛔ 不许用本地玩家阵营判：那条进度条画的是"场上正在发生的操作"（可能是别人的包），
+                //    按阵营判会在"我是 CT、看着 T 下包"时显示成"拆包中…"。
                 if (useVisible)
-                    _useLabel.text = CsHudSnapshot.Team == CsTeam.T
-                        ? $"下包中… {using01 * 100f:0}%"
-                        : $"拆包中… {using01 * 100f:0}%";
+                    _useLabel.text = CsHudSnapshot.BombPlanted
+                        ? $"拆包中… {using01 * 100f:0}%"
+                        : $"下包中… {using01 * 100f:0}%";
             }
 
             // ---- 流光消息栏的过期（按本地时钟算，不依赖快照的 BornTime 时钟）----
@@ -962,8 +938,9 @@ namespace Cs16.UI
         ///
         /// <para><b>口径（本项目）：</b>原版这一行是 <c>mp_timelimit</c> 的余量，而本机没有该 cvar 的
         /// 载体（随包 <c>server.cfg</c> 不在盘、<c>mp.dll</c> 里只有名字串）⇒ 本工程是单地图、
-        /// <b>30 回合</b>（<see cref="CsConst.MaxRounds"/>）的单机比赛、没有地图时间上限，
-        /// 因此取"整场剩余时间" = **本回合还没走完的标称阶段** + 剩余整回合的标称时长。
+        /// <b>回合数不限</b>（<see cref="CsConst.MaxRounds"/> = 0 = 原版 <c>mp_maxrounds</c> 默认值）、
+        /// 没有地图时间上限，因此取"整场剩余时间" = **本回合还没走完的标称阶段** + 剩余整回合的标称时长
+        /// （上限为 0 时后一项不成立，只剩本回合那一段）。
         /// 与原版的语义差异登记在 <c>策划/差异登记.tsv</c>。</para>
         ///
         /// <para><b>必须按阶段补上本回合剩余的名义时长</b>：冻结期只有 4 s、交战期有 105 s，
@@ -1021,7 +998,24 @@ namespace Cs16.UI
             }
             _scope.Refresh(CsHudSnapshot.IsZoomed);
 
-            _crosshair?.Refresh(alive && !CsHudSnapshot.IsZoomed && !overlayOpen,
+            // 俯视概览（观战档位 5 / 6）：按需补建 + 只在概览档位显示。
+            // 建在面板根节点并塞到**第一个子节点** ⇒ 压在 3D 画面之上、整组 HUD 之下（同开镜遮罩）。
+            if (_overview == null)
+            {
+                _overview = new CsOverviewWidget();
+                _overview.Build(transform as RectTransform);
+                _overview.Root?.SetAsFirstSibling();
+            }
+            var mapMode = CsHudSnapshot.IsSpectating && CsSpectator.IsMapMode(CsSpectator.Mode);
+            _overview.Refresh(mapMode, CsSpectator.Mode, CsHudSnapshot.SpectateX, CsHudSnapshot.SpectateZ);
+
+            // 准星：活着时显示；**观战档位 3（Free Look）/ 4（First Person）也显示** ——
+            // 原版只在这两档给准星设 rect（hud_spectator.cpp:860-867：g_iUser1 == OBS_IN_EYE ||
+            // OBS_ROAMING ⇒ SetCrosshair(24,0,48,24,255,255,255)，其余档清零）。
+            var specCrosshair = CsHudSnapshot.IsSpectating &&
+                                (CsSpectator.Mode == CsSpectatorMode.FreeLook ||
+                                 CsSpectator.Mode == CsSpectatorMode.FirstPerson);
+            _crosshair?.Refresh((alive || specCrosshair) && !CsHudSnapshot.IsZoomed && !overlayOpen,
                 CsHudSnapshot.CrosshairSpread, CsHudSnapshot.HitMarkerTime, CsHudSnapshot.HitMarkerHeadshot);
 
             UpdateRadarBounds();
@@ -1111,6 +1105,12 @@ namespace Cs16.UI
 
         /// <summary>
         /// 往 HUD 消息栏推一条（无线电 / 系统提示 / 本工程各面板的操作回执）。
+        ///
+        /// <para><b>计时口径 = <c>Time.unscaledTime</c></b>（与 <see cref="RefreshMessages"/> 同一口径）：
+        /// "显示多久"是 UI 自身的节奏，不跟 <c>Time.timeScale</c> 走 —— 被缩放的时间会让
+        /// <c>Time.timeScale &lt; 1</c> 时这条 6 s 的寿命被拉长（0.02 时 ≈ 300 真实秒），
+        /// 于是上一回合的提示会一直挂在屏幕上。引擎的 UI 通用件同一口径（"否则提示永不消失"，
+        /// 见 <c>clover-client-unity-engine</c> 的 <c>Runtime/Presentation/UI.cs</c> 的 Tick）。</para>
         /// </summary>
         public void PushMessage(string text)
         {
@@ -1123,7 +1123,7 @@ namespace Cs16.UI
                 _messageUntil[i] = _messageUntil[i - 1];
             }
             _messageCache[0] = text;
-            _messageUntil[0] = Time.time + CsHudTheme.MessageLifetime;
+            _messageUntil[0] = Time.unscaledTime + CsHudTheme.MessageLifetime;
             RefreshMessages();
         }
 
@@ -1131,7 +1131,7 @@ namespace Cs16.UI
         {
             if (_messageTexts == null) return;
 
-            var now = Time.time;
+            var now = Time.unscaledTime;
             for (var i = 0; i < _messageTexts.Length; i++)
             {
                 var text = _messageTexts[i];

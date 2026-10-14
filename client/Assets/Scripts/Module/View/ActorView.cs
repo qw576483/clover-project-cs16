@@ -16,7 +16,7 @@ namespace Cs16.Module.View
     /// <code>
     /// ActorView 根（不缩放；position = CsActor.Position，rotation = yaw）   ← 本组件
     ///   └─ Body（承载"整体缩放/贴地"；脚本只碰这一个节点的 localScale/localPosition）
-    ///        ├─ Hitbox_Leg / Hitbox_Stomach / Hitbox_Chest / Hitbox_Head
+    ///        ├─ Hitbox_LeftLeg / Hitbox_RightLeg / Hitbox_Stomach / Hitbox_Chest / Hitbox_Head
     ///        │    （每个都带 MeshRenderer + CapsuleCollider + CsHitboxProxy）
     ///   └─ Plate（名牌预制体实例，不缩放，每帧 billboard）
     /// </code>
@@ -38,6 +38,10 @@ namespace Cs16.Module.View
         private CsHitboxProxy[] _proxies = new CsHitboxProxy[0];
         private Renderer[] _renderers = new Renderer[0];
         private Collider[] _colliders = new Collider[0];
+
+        /// <summary>"背上的 C4 包"那一块网格的渲染（材质名含 <see cref="CsViewTuning.BackpackMaterialToken"/>；
+        /// 原版靠玩家模型的 <c>backpack</c> bodygroup 开关，见该常量的出处）。已就绪但当前不持 C4 时为关闭态。</summary>
+        private Renderer[] _backpackRenderers = new Renderer[0];
 
         private Transform _body;
         private Nameplate _plate;
@@ -66,6 +70,12 @@ namespace Cs16.Module.View
         private Animator _animator;
         private IAnimPlayer _anim;
         private bool _animFailedLogged;
+
+        /// <summary>本视图的 controller 上是否真有 <see cref="CsAimBlend.ParamYaw"/> /
+        /// <see cref="CsAimBlend.ParamPitch"/> 这两个 float 参数。
+        /// <para>必须在装配时问一次并缓存：给**没有这个参数**的控制器 <c>SetFloat</c>，
+        /// Unity 每帧刷一条 "Parameter 'X' does not exist" 警告（旧资产没有这两个参数）。</para></summary>
+        private bool _aimParamsReady;
 
         /// <summary>下次"恒更新复查"的时间（见 <see cref="EnsureAlwaysAnimateTick"/>）：异步加载的身体网格
         /// 与运行时挂上的武器都可能晚于 <see cref="Bind"/> 出现，所以不能只扫一次。</summary>
@@ -136,7 +146,7 @@ namespace Cs16.Module.View
         /// <summary>本具身体播过几次换弹（差异 #72 的断言用：每个成功换弹序号都该对上这里 +1）。</summary>
         private int _reloadAnimsPlayed;
 
-        /// <summary>绑定的 actor id（与 4 个 <see cref="CsHitboxProxy.ActorId"/> 一致）。</summary>
+        /// <summary>绑定的 actor id（与 5 个 <see cref="CsHitboxProxy.ActorId"/> 一致）。</summary>
         public long ActorId { get; private set; }
 
         /// <summary>阵营（决定模型目录与名牌颜色）。</summary>
@@ -155,6 +165,32 @@ namespace Cs16.Module.View
 
         /// <summary>本地玩家自己的视图（渲染被隐藏、碰撞体保留）。</summary>
         public bool IsLocal => _isLocal;
+
+        /// <summary>
+        /// 相机本帧是否正处在**本角色的眼位**（由 <see cref="ViewModule"/> 每帧写入）：
+        /// 观战档位 4（目标第一人称）时，被观察者就是"当前这台相机的眼睛"。
+        /// 这种情形下本体不该被画（藏渲染、**保留碰撞体**）—— 原版 <c>OBS_IN_EYE</c> 那一支
+        /// （<c>view.cpp:1545-1551</c>）相机取的就是目标眼位，画面上只有视模型 + 准星 + HUD。
+        /// </summary>
+        private bool _spectateEye;
+
+        /// <summary>
+        /// 由 <see cref="ViewModule"/> 每帧写入；只有观战档位 4 的被观察者会被置 true。
+        /// 按**状态边沿**动作（同一值重复写 = 什么都不做）：进档位 4 藏本体，**离开档位 4 必须还渲染**
+        /// —— 只藏不还的话本体一直隐形（实机实测：档位 2 的渲染可见数与档位 4 相同）。
+        /// 本地玩家那条路不在这里管（<see cref="Bind"/> / <see cref="EnterCorpse"/> 自己藏与还）。
+        /// </summary>
+        public void SetSpectateEye(bool on)
+        {
+            if (_spectateEye == on) return;
+            _spectateEye = on;
+            if (_isLocal || !_alive) return;
+            if (on) HideOwnRenderers();
+            else ShowOwnRenderers();
+        }
+
+        /// <summary>相机是否在本角色眼位（本地第一人称玩家 / 观战档位 4 的被观察者）。</summary>
+        private bool EyeCam => _isLocal || _spectateEye;
 
         // ==================================================================
         //  对象池复用前置清理
@@ -228,11 +264,13 @@ namespace Cs16.Module.View
                 _weaponSocket = null;
             }
             _anim = null;
+            _aimParamsReady = false;
             _fitScale = 1f;
             _modelLift = 0f;
             _modelMeshes = new SkinnedMeshRenderer[0];
             _alignClampWarned = false;
             _crouchScale = 1f;
+            _backpackRenderers = new Renderer[0];
             IsShown = false;
         }
 
@@ -240,7 +278,7 @@ namespace Cs16.Module.View
         //  绑定
         // ==================================================================
         /// <summary>绑定 actor 身份，并做**量测优先**的尺寸/贴地校正。</summary>
-        /// <param name="actorId">actor id（写进 4 个 <see cref="CsHitboxProxy"/>）</param>
+        /// <param name="actorId">actor id（写进 5 个 <see cref="CsHitboxProxy"/>）</param>
         /// <param name="team">阵营</param>
         /// <param name="isBot">机器人 → 物理层 <c>PhysicsLayers.Bot</c>；真人 → <c>PhysicsLayers.Player</c></param>
         /// <param name="isLocal">本地玩家自己（渲染隐藏、碰撞体保留）</param>
@@ -266,6 +304,7 @@ namespace Cs16.Module.View
             _proxies = GetComponentsInChildren<CsHitboxProxy>(true);
             _renderers = GetComponentsInChildren<Renderer>(true);
             _colliders = GetComponentsInChildren<Collider>(true);
+            _backpackRenderers = CollectBackpackRenderers(_renderers);
             // 贴地基准只取 Body 下的蒙皮网格：Body 之外的任何几何（头顶名牌）都不该参与。（此刻还没挂名牌，
             // 但池复用时上一世的名牌由 PrepareForReuse 清掉，两条路一起保证这里量到的只是身体。）
             _modelMeshes = _body.GetComponentsInChildren<SkinnedMeshRenderer>(true);
@@ -288,13 +327,21 @@ namespace Cs16.Module.View
             if (!_proxiesChecked)
             {
                 _proxiesChecked = true;
-                if (_proxies.Length != 4)
+                if (_proxies.Length != 5)
                 {
                     // 不是"预期分支"就必须留痕：命中盒数量错了 → 射线认不出人/缺部位（打不中）。
                     _log.Error("proxy.count",
-                        $"角色视图「{name}」的 CsHitboxProxy 数量 = {_proxies.Length}，期望 4（头/胸/腹/腿）。" +
+                        $"角色视图「{name}」的 CsHitboxProxy 数量 = {_proxies.Length}，" +
+                        "期望 5（头/胸/腹/左腿/右腿）。" +
                         "射线命中判定会缺部位 —— 请检查 ArtSetup 生成的 player.prefab");
                 }
+            }
+
+            if (_backpackRenderers.Length > 0)
+            {
+                _log.Info("backpack.found",
+                    $"角色视图「{name}」背上的 C4 包 = {_backpackRenderers.Length} 块网格" +
+                    $"（材质名含 {CsViewTuning.BackpackMaterialToken}）—— 只在该角色持 C4 时显示");
             }
 
             Measure();
@@ -329,6 +376,11 @@ namespace Cs16.Module.View
                     "请重跑菜单 Clover/CS16/整理视图与音效资源");
                 return;
             }
+
+            // 瞄准 blend 的两个轴参数只有"出了 9 路 BlendTree 的控制器"才有（见 AnimSetup.BuildController）
+            // ⇒ 在这里问一次并缓存，运行期按它决定要不要喂值。
+            _aimParamsReady = HasFloatParameter(_animator, CsAimBlend.ParamYaw)
+                              && HasFloatParameter(_animator, CsAimBlend.ParamPitch);
 
             var anim = Game.Anim;
             if (anim == null)
@@ -386,6 +438,13 @@ namespace Cs16.Module.View
         ///
         /// <para>走 / 跑的分档按**实际水平速度**（<see cref="CsViewTuning.AnimRunSpeedThreshold"/>），
         /// 与原版一致；<c>IsWalking</c>（Shift 标志）只决定期望速度，不参与选序列。</para>
+        ///
+        /// <para><b>站定那一档是瞄准姿势</b>：原版 <c>CBasePlayer::SetAnimation</c> 的 <c>ACT_WALK</c> 分支
+        /// 在 <c>speed &lt;= 135 u/s</c> 时取 <c>ref_aim_&lt;武器动画类&gt;</c>
+        /// （出处 <c>原版资源/cs16src/regamedll/dlls/player.cpp:2875-2929</c>），
+        /// 该 state 是 9 路 2D BlendTree ⇒ 上身随瞄准方向（见 <see cref="FeedAimBlend"/>）。
+        /// 其余档（空中 / 蹲 / 走 / 跑）不走这条，与原版的双通道口径（腿走 gait 序列、上身播 aim）
+        /// 无关 —— 本工程没有 gait 通道，所以只有**站定**这一档切到瞄准姿势。</para>
         /// </summary>
         private static string[] LocomotionStates(CsActor actor)
         {
@@ -395,7 +454,7 @@ namespace Cs16.Module.View
             if (!actor.OnGround) return CsViewTuning.PStateJump;
             if (actor.IsCrouching)
                 return moving ? CsViewTuning.PStateCrouchRun : CsViewTuning.PStateCrouchIdle;
-            if (!moving) return CsViewTuning.PStateIdle;
+            if (!moving) return CsViewTuning.PlayerAimStates(actor.ActiveWeapon);
             return speed > CsViewTuning.AnimRunSpeedThreshold ? CsViewTuning.PStateRun : CsViewTuning.PStateWalk;
         }
 
@@ -476,6 +535,46 @@ namespace Cs16.Module.View
             }
         }
 
+        /// <summary>
+        /// 把"视线相对移动方向"喂给 Animator 的两个 blend 轴（<see cref="CsAimBlend"/> 的两个参数）。
+        ///
+        /// <para><b>契约</b>：pitch 轴 = <c>-actor.Pitch</c>（原版 <c>pev-&gt;angles.x</c> 正 = 向下看，
+        /// 本工程的 <see cref="CsActor.Pitch"/> 正 = 抬头）；yaw 轴 = 视线 yaw − 移动方向 yaw，移动方向由
+        /// **水平速度方向**给出（原版 <c>StudioEstimateGait</c> 同款 <c>atan2(vy,vx)</c>；两个角度同域，
+        /// 差值即原版 <c>pev-&gt;angles.y - m_flGaityaw</c>）。静止（速度低于
+        /// <see cref="CsViewTuning.AnimMoveSpeedEpsilon"/>）时把移动方向当作视线方向 —— 原版在没有速度时
+        /// 让 <c>m_flGaityaw</c> 追平视线方向，结果同为"相对角 0"。</para>
+        ///
+        /// <para>只有"controller 里真有这两个参数"的模型才喂（见 <see cref="_aimParamsReady"/>）。
+        /// 参数只在多路 BlendTree 的 state 上有意义，其余 state 忽略它。</para>
+        /// </summary>
+        private void FeedAimBlend(CsActor actor)
+        {
+            if (!_aimParamsReady || _animator == null) return;
+
+            var v = actor.Velocity;
+            var speed = new Vector2(v.x, v.z).magnitude;
+            var moving = speed > CsViewTuning.AnimMoveSpeedEpsilon;
+            var gaitYaw = moving ? Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg : actor.Yaw;
+
+            _animator.SetFloat(CsAimBlend.ParamYaw, CsAimBlend.YawAxis(actor.Yaw, gaitYaw, moving));
+            _animator.SetFloat(CsAimBlend.ParamPitch, CsAimBlend.PitchAxis(-actor.Pitch));
+        }
+
+        /// <summary>
+        /// controller 里有没有这个 float 参数（大小写敏感，与生成器写的名字逐字一致）。
+        /// <para><c>Animator.parameters</c> 每次调用都会新建数组 ⇒ 只在装配时问一次并缓存。</para>
+        /// </summary>
+        private static bool HasFloatParameter(Animator animator, string name)
+        {
+            var ps = animator.parameters;
+            for (var i = 0; i < ps.Length; i++)
+            {
+                if (ps[i].type == AnimatorControllerParameterType.Float && ps[i].name == name) return true;
+            }
+            return false;
+        }
+
         // ==================================================================
         //  第三人称手持武器（差异 #75 同族：别的角色手里要看得见那把枪）
         // ==================================================================
@@ -497,6 +596,12 @@ namespace Cs16.Module.View
         /// </summary>
         private void EnsureHeldWeapon(CsActor actor)
         {
+            // 本地玩家存活时整段本体被 HideOwnRenderers 隐藏（Bind 与每帧两处），而运行时挂上来的
+            // 武器不在那一快照里 ⇒ 第一人称会看见自己手上那把第三人称世界模型。原版第一人称只渲染
+            // 视模型（v_*.mdl 挂在 fps 相机下，由 ViewModelRig 负责），第三人称武器模型只属于旁观视角
+            // 与尸体那一路（EnterCorpse 的 ShowOwnRenderers 把 _alive 翻 false 后才会挂上）。
+            if (_isLocal && _alive) { ReleaseHeldWeapon(); return; }
+
             var weaponId = actor.ActiveWeapon;
             if (string.IsNullOrEmpty(weaponId)) { ReleaseHeldWeapon(); return; }
             if (_heldKey == weaponId && _heldWeapon != null) return;   // 同一把枪，不用换
@@ -581,6 +686,46 @@ namespace Cs16.Module.View
             // 运行期挂上来的几何不在 Bind 的快照里 ⇒ 挂上这一帧就把"恒更新"补掉，
             // 不等降频复查（这段时间里那把枪的蒙皮网格照旧会按绑定盒被裁）。
             EnsureAlwaysAnimate();
+        }
+
+        /// <summary>
+        /// 第三人称持枪的**瞄准朝向**：把枪管（载体给的原点→枪口方向）转到该 actor 的 aim 方向。
+        ///
+        /// <para><b>为什么需要这一步</b>：本件给模型根只下 yaw（<c>Apply</c> 里
+        /// <c>Quaternion.Euler(0f, actor.Yaw, 0f)</c>），而原版引擎会把玩家 pitch 灌进玩家模型的
+        /// **骨控制器** —— <c>terror.mdl</c> 实测 <c>numbonecontrollers = 1</c>：控制器在
+        /// <c>Bone01</c>（父 <c>Bip01 Head</c>）上、类型 <c>ZR</c>、量程 <c>[0, 30]°</c>
+        /// （逐字段读自 <c>原版资源/cs16src/cstrike/cstrike__models__player__terror__terror.mdl</c>；
+        /// 读法 = <c>.ai-tmp/test/specfix2-bonecontroller.py</c>）⇒ 原版第三人称的枪随俯仰抬落。
+        /// 我们没移植那一步 ⇒ 敌人抬枪时枪口不指向射击目标。</para>
+        ///
+        /// <para><b>做法</b>：枪管方向取**载体自己的枪口列**（<c>MuzzleLocalPosition</c> −
+        /// <c>LocalPosition</c>，两者同在手骨局部系），再用**最小旋转**
+        /// （<c>Quaternion.FromToRotation</c>）把它拉到 <see cref="CameraMath.AimDirection"/> 给出的
+        /// 瞄准方向 —— 枪的横滚仍由手骨动画决定，只有"管口指向"被拉正。</para>
+        ///
+        /// <para>⚠️ 手骨位姿在本帧的 Animator 求值**之前**读取 ⇒ 修正量有一帧延迟（60 fps 下不可见）。</para>
+        /// </summary>
+        private void AimHeldWeapon(CsActor actor)
+        {
+            if (_heldWeapon == null || _weaponSocket == null) return;
+
+            var align = CsViewTuning.HeldWeaponAlignOf(_heldKey);
+            var barrelLocal = align.MuzzleLocalPosition - align.LocalPosition;
+            if (barrelLocal.sqrMagnitude < 1e-8f) return;   // 表里没有该武器 ⇒ 不给朝向（⛔ 不瞎补）
+
+            // 枪管方向必须取**武器自己当前的朝向**（不是挂点朝向）：本方法每帧都会改
+            // `_heldWeapon.transform.rotation`，若拿"挂点 + 静态对齐"那个**未修正**的方向当起点，
+            // 每帧都会再叠一次同样的修正 ⇒ 枪会自己转走（Play 实测 angleToAim 70~115°）。
+            // 载体给的「枪口 − 枪身原点」是**手骨局部系**的量，换算到武器局部系要左乘 alignRot⁻¹
+            // （alignRot = 武器在手骨系里的朝向，就是下面 `Quaternion.Euler(align.LocalEuler)`）。
+            // 这样写是**幂等**的：修正后下一帧 barrelWorld == aim ⇒ 修正量退化为 identity。
+            var barrelInGun =
+                Quaternion.Inverse(Quaternion.Euler(align.LocalEuler)) * barrelLocal.normalized;
+            var barrelWorld = (_heldWeapon.transform.rotation * barrelInGun).normalized;
+            var aim = CameraMath.AimDirection(actor.Yaw, actor.Pitch);
+            _heldWeapon.transform.rotation =
+                Quaternion.FromToRotation(barrelWorld, aim) * _heldWeapon.transform.rotation;
         }
 
         /// <summary>
@@ -678,7 +823,7 @@ namespace Cs16.Module.View
 
         /// <summary>
         /// 死亡：蹲着死走原版 <c>crouch_die</c>（<c>FL_DUCKING</c> 分支），否则走 <c>death1/2/3</c>
-        /// （按 actorId 稳定取一条）。播完冻住留场（见 <see cref="_corpseHeld"/>）。
+        /// （**三选一随机**取一条，同原版"每次死亡的倒地姿势不同"）。播完冻住留场（见 <see cref="_corpseHeld"/>）。
         /// </summary>
         private void PlayDeath(CsActor actor)
         {
@@ -702,8 +847,11 @@ namespace Cs16.Module.View
                 }
             }
 
+            // 起始条 = 随机抽一条（原版 death1..3 每次随机取，不是按 actorId 固定）。
+            // 随机源走 CsRng 的表现层子流 FxVariant（独立于玩法各流）⇒ 抽多少都不推位玩法序列，
+            // 且随本局 seed 可重放；抽到的起始条进日志，取证直接读日志。
             var arr = CsViewTuning.PStateDeath;
-            var start = (int)(ActorId % arr.Length);
+            var start = CsRng.Stream(CsRngStream.FxVariant).Next(0, arr.Length);
             var cand = new string[arr.Length];
             for (var i = 0; i < arr.Length; i++) cand[i] = arr[(start + i) % arr.Length];
             var st = ResolveState(cand);
@@ -715,7 +863,7 @@ namespace Cs16.Module.View
             _deathState = st;
             _anim.Play(st, 0f);
             _overrideState = st;
-            _log.Info("anim.death.play", $"角色视图「{name}」死亡 → 状态 {st}（蹲={actor != null && actor.IsCrouching}）");
+            _log.Info("anim.death.play", $"角色视图「{name}」死亡 → 状态 {st}（随机起始条 {start + 1}/{arr.Length}，蹲={actor != null && actor.IsCrouching}）");
         }
 
         /// <summary>
@@ -943,6 +1091,7 @@ namespace Cs16.Module.View
                 // 尸体：确保可见（尸体不被"上一帧的隐藏"带走）+ 名牌/血条关掉（死人头顶不该有血条）。
                 if (_corpseHeld) EnsureCorpseShown();
                 if (_hideAfterDeath) SetShown(false);
+                ApplyBackpack(actor);
                 return;
             }
 
@@ -972,18 +1121,26 @@ namespace Cs16.Module.View
             // ---- 骨骼动画：按权威状态切原版序列 ----
             UpdateAnim(actor);
 
+            // ---- 瞄准 blend：视线相对移动方向的偏角 → Animator 两个轴（多路 BlendTree 的 state 用）----
+            FeedAimBlend(actor);
+
             // ---- "恒更新"复查（降频 1s）：异步加载的身体网格 / 运行时挂上的武器都必须被覆盖到，
             //      否则它们拿绑定姿态包围盒当可见性判据 ⇒ 姿态卡在绑定姿势 + 网格被裁（见 EnsureAlwaysAnimateTick）----
             EnsureAlwaysAnimateTick();
 
             // ---- 手里的枪：换枪/拾枪时把模型换掉（别人手里要看得见那把枪，差异 #75 同族）----
             EnsureHeldWeapon(actor);
+            // 持枪朝向：按 actor 的 aim（yaw+pitch）拉正枪管（见 AimHeldWeapon 的注释）
+            AimHeldWeapon(actor);
 
             // ---- 脚底贴地：按**当前姿态**（idle / walk / crouch 各有各的最低点）对齐，见 AlignFeetToGround ----
             if (actor.OnGround) AlignFeetToGround();
 
-            // ---- 本地玩家：自己的第三人称模型隐藏渲染、保留碰撞体 ----
-            if (_isLocal) HideOwnRenderers();
+            // ---- 相机在本角色眼位（本地第一人称 / 观战档位 4 的被观察者）：本体隐藏渲染、保留碰撞体 ----
+            if (EyeCam) HideOwnRenderers();
+
+            // ---- 背上的 C4 包：与权威持包状态对齐（必须排在 HideOwnRenderers 之后）----
+            ApplyBackpack(actor);
 
             // ---- 头顶名牌 ----
             if (_plate != null)
@@ -994,6 +1151,54 @@ namespace Cs16.Module.View
                     _plate.Refresh(actor.Name, actor.Health, CsConst.MaxHealth,
                         TeamColorOf(actor.Team), showName, true);
                 }
+            }
+        }
+
+        /// <summary>
+        /// 从本具视图的全部渲染里挑出"背上的 C4 包"那一块。
+        ///
+        /// <para><b>认法</b>：材质名含 <see cref="CsViewTuning.BackpackMaterialToken"/>（生成器按原版模型
+        /// 内嵌贴图名 <c>Backpack1</c>/<c>Backpack2</c> 命名材质），见该常量的出处。生成器把这一块做成了
+        /// 独立节点，所以能整块开关 —— 等价于原版对玩家模型 <c>backpack</c> bodygroup 的开关。</para>
+        /// </summary>
+        private static Renderer[] CollectBackpackRenderers(Renderer[] all)
+        {
+            var picked = new List<Renderer>(2);
+            for (var i = 0; i < all.Length; i++)
+            {
+                var r = all[i];
+                if (r == null) continue;
+
+                var mats = r.sharedMaterials;
+                for (var j = 0; j < mats.Length; j++)
+                {
+                    var m = mats[j];
+                    if (m == null || string.IsNullOrEmpty(m.name)) continue;
+                    if (m.name.IndexOf(CsViewTuning.BackpackMaterialToken,
+                            System.StringComparison.OrdinalIgnoreCase) < 0) continue;
+                    picked.Add(r);
+                    break;
+                }
+            }
+            return picked.ToArray();
+        }
+
+        /// <summary>
+        /// 背上的 C4 包与权威持包状态对齐：**只有持 C4 的角色显示它** ——
+        /// 下包（<c>PlantComplete</c> 置 <c>HasBomb=false</c>）、掉包、换阵营后立即消失。
+        ///
+        /// <para>本地玩家活着时整具第三人称模型被第一人称隐藏（<see cref="HideOwnRenderers"/>）⇒
+        /// 背上的包必须跟着一起藏，否则会在自己眼前露出一块。</para>
+        /// </summary>
+        private void ApplyBackpack(CsActor actor)
+        {
+            if (_backpackRenderers.Length == 0) return;
+
+            var show = actor != null && actor.HasBomb && !(_isLocal && _alive);
+            for (var i = 0; i < _backpackRenderers.Length; i++)
+            {
+                var r = _backpackRenderers[i];
+                if (r != null && r.enabled != show) r.enabled = show;
             }
         }
 
@@ -1029,7 +1234,7 @@ namespace Cs16.Module.View
             IsShown = shown;
             if (gameObject.activeSelf != shown) gameObject.SetActive(shown);
             if (_plate != null) _plate.SetVisible(shown);
-            if (shown && _isLocal && _alive) HideOwnRenderers();
+            if (shown && EyeCam && _alive) HideOwnRenderers();
         }
 
         // ==================================================================
@@ -1047,7 +1252,13 @@ namespace Cs16.Module.View
         private void EnterCorpse()
         {
             var off = DisableColliders();
-            if (_isLocal) ShowOwnRenderers();
+            // 两种"相机已离开他的眼位"都在这儿还渲染：本地玩家死后转观战；观战档位 4 的目标死后
+            // 相机要换人（观战对象只取活人）⇒ 顺手把眼位标记清掉，免得尸体被当成眼位继续藏着。
+            if (_isLocal || _spectateEye)
+            {
+                _spectateEye = false;
+                ShowOwnRenderers();
+            }
             _log.Info("corpse.enter",
                 $"角色视图「{name}」阵亡（本地={_isLocal}）：已关掉 {off}/{_colliders.Length} 个碰撞体" +
                 "（尸体不挡活人、也不再被子弹打中），随后播原版倒地序列");

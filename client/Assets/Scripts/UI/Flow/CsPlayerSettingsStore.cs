@@ -117,6 +117,29 @@ namespace Cs16.UI
             sound.SetVolume(SoundGroup.Voice, s.SfxVolume * s.MasterVolume);
         }
 
+        /// <summary>
+        /// 即时生效（不写盘）：把设置同步进 <c>Game.Setting</c> 的内存值并推给引擎。
+        /// 落盘仍由 <see cref="Save"/> 负责 —— 滑块拖动途中只改内存，取消时用打开面板时的快照恢复。
+        /// </summary>
+        public static void ApplyLive(CsPlayerSettings s)
+        {
+            if (s == null) return;
+            Normalize(s);
+
+            var setting = Game.Setting;
+            if (setting != null)
+            {
+                setting.Set(CsSettingsKeys.VolumeMaster, s.MasterVolume);
+                setting.Set(CsSettingsKeys.VolumeSfx, s.SfxVolume);
+                setting.Set(CsSettingsKeys.VolumeBgm, s.BgmVolume);
+                setting.Set(CsSettingsKeys.Sensitivity, s.MouseSensitivity);
+                setting.Set(CsSettingsKeys.InvertY, s.InvertMouseY);
+                setting.Set(CsSettingsKeys.Fov, s.Fov);
+            }
+
+            ApplyToEngine(s);
+        }
+
         public static void Normalize(CsPlayerSettings s)
         {
             if (s == null) return;

@@ -23,6 +23,7 @@ namespace Cs16.EditorTools
     /// <code>
     /// Level/
     ///   Visual/&lt;贴图名&gt;    真实 dust2 网格（每材质一个合并 Mesh）+ MeshCollider + 真实贴图材质
+    ///   Visual/Solid/Solid_i 原版 BSP 的 solid 实心体积（不可见、非 trigger —— 见 BuildSolid）
     ///   Blockers/Blocker_i    每格一个轴对齐 BoxCollider（**唯一参与烘焙的障碍**）
     ///   Markers/&lt;标记名&gt;     空物体，名字严格取 CsMarkers 常量（出生点/包点/买枪区/路线）
     ///   Lighting/            沙漠方向光（BSP light_environment 的真实参数）+ 天空盒
@@ -49,6 +50,17 @@ namespace Cs16.EditorTools
 
         /// <summary>箱体容器（挂在 <c>Level/Visual</c> 下：烘焙前关 Visual 碰撞体时它们一起被关）。</summary>
         private const string CratesRootName = "Breakables";
+
+        /// <summary>
+        /// 原版 solid 实心体积的容器（同样挂在 <c>Level/Visual</c> 下 ⇒ 烘焙前被一起关掉 ⇒ 不进位图）。
+        /// </summary>
+        private const string SolidRootName = "Solid";
+
+        /// <summary>
+        /// <b>回滚开关</b>：<c>false</c> = 不补实心体积（生成器其余步骤照常），改回 <c>true</c> 或直接删除本常量
+        /// 即恢复。整条回滚 = 把它置 false 后重跑「生成 de_dust2 场景」。
+        /// </summary>
+        private const bool BuildSolidVolume = true;
 
         // ==================================================================
         //  入口
@@ -123,6 +135,10 @@ namespace Cs16.EditorTools
 
             // ---- ② 阻挡体（唯一参与烘焙的障碍）----
             BuildBlockers(geo, blockerRoot);
+
+            // ---- ②' 原版 solid 实心体积（见 BuildSolid）----
+            if (BuildSolidVolume) BuildSolid(geo, visualRoot);
+            else Debug.Log($"{Tag} 原版 solid 实心体积：按开关 BuildSolidVolume=false 跳过（回滚态）");
 
             // ---- ③ 标记点（名字 = CsMarkers 常量）----
             DumpMarkers(geo, markerRoot);
@@ -682,6 +698,75 @@ namespace Cs16.EditorTools
             }
             Debug.Log($"{Tag} 阻挡体：{all.Length} 个轴对齐 BoxCollider（每格一个，合并过）" +
                       $"｜其中封格 {Dust2SealCells.Cells.Length} 个（位图可走但真几何无地面，见 Dust2SealCells）");
+        }
+
+        // ==================================================================
+        //  原版 solid 实心体积
+        // ==================================================================
+
+        /// <summary>
+        /// 把原版 BSP 的 solid 空间补成**实心碰撞体**，挂到 <paramref name="visualRoot"/> 下。
+        ///
+        /// <para><b>为什么挂在 Level/Visual 下</b>：<see cref="MapBakeRunner"/> 烘焙前会把
+        /// <c>Level/Visual</c> 下全部 Collider 临时关掉并存盘（只留 <c>Level/Blockers</c> 参与位图烘焙），
+        /// 烘完再恢复。与 <see cref="CratesRootName"/> 同一处落点 ⇒「实心体积**不进位图**」这一条
+        /// 由既有机制保证，既不用改烘焙器、也不用重烘。</para>
+        ///
+        /// <para><b>盒的语义</b>：不可见（不挂 Renderer）、**非 trigger**（要参与身体体积检测 / 射线；与
+        /// <c>Blocker_*</c> 的 trigger 语义相反）、物理层由 <see cref="AssignWorldLayer"/> 统一标成
+        /// <c>CsWorld</c>（<c>CsMap</c> 的地面 / 身体射线只打这一层）。</para>
+        ///
+        /// <para>盒表来源与判据见 <see cref="Dust2Solid"/>。</para>
+        /// </summary>
+        private static void BuildSolid(Dust2GeoData geo, GameObject visualRoot)
+        {
+            // "哪一格可走" = **运行时读到的那张位图**：阻挡盒复算 + 封格（Dust2SealCells）+ 烘焙后处理
+            //   （Dust2WalkSeal 的单连通收敛）。同一条链也是 MapConnectivityProbe 复算产物的口径，
+            //   所以这里补盒的格集合与运行时位图逐格一致 —— 可走格一个不漏、不可走格不补。
+            var blocked = geo.BuildBlockedBitmap();
+            Dust2SealCells.Apply(blocked, geo.Width, geo.Depth);
+            var walkable = new bool[blocked.Length];
+            for (int i = 0; i < blocked.Length; i++) walkable[i] = !blocked[i];
+            walkable = Dust2WalkSeal.Transform(walkable, geo.Width, geo.Depth,
+                                               out int sealedCells, out int openedCells);
+
+            var boxes = Dust2Solid.Build(geo, walkable,
+                                         out int probe, out int danger, out int aboveSolid, out int faceCells);
+            if (boxes.Length == 0)
+            {
+                Debug.LogError($"{Tag} 原版 solid 实心体积：一个盒都没算出来" +
+                               "（检查 de_dust2.bsp 是否在盘、版本是否 v30）");
+                return;
+            }
+
+            var root = NewChild(visualRoot, SolidRootName);
+            float cell = geo.CellSize;
+            for (int i = 0; i < boxes.Length; i++)
+            {
+                var b = boxes[i];
+                float w = (b.Ix1 - b.Ix0 + 1) * cell;
+                float d = (b.Iz1 - b.Iz0 + 1) * cell;
+                float h = b.YMax - b.YMin;
+
+                var go = new GameObject($"Solid_{i:0000}");
+                go.transform.SetParent(root.transform, false);
+                go.transform.position = new Vector3(
+                    geo.OriginX + b.Ix0 * cell + w * 0.5f, b.YMin + h * 0.5f, geo.OriginZ + b.Iz0 * cell + d * 0.5f);
+
+                var col = go.AddComponent<BoxCollider>();
+                col.size = new Vector3(w, h, d);
+                // 必须是**实心**：本行的目的就是让"原版实心空间"在体积检测 / 射线里真的被占住。
+                // 不挂 Renderer ⇒ 不可见（否则整张图会被一排隐形块的阴影盖住）。
+                col.isTrigger = false;
+            }
+
+            Debug.Log($"{Tag} 原版 solid 实心体积：{probe} 个候选盒 → 合并 {boxes.Length} 个实心 BoxCollider" +
+                      $"（挂 Level/{SolidRootName} = Level/Visual 下；不可见、非 trigger）" +
+                      $"｜可站面格 {faceCells}（位图封 {sealedCells} / 开 {openedCells} 格后的口径）" +
+                      $"｜最大可站面之上仍实心 {aboveSolid} 格｜顶面插进更低层站立带 {danger} 个");
+            if (danger > 0)
+                Debug.LogError($"{Tag} 有 {danger} 个实心盒的**顶面**落在更低一层的站立带里 ⇒ " +
+                               "会把那一层的合法地板顶掉（检查 Dust2Solid 的盒顶口径）");
         }
 
         // ==================================================================

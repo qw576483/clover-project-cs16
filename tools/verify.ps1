@@ -52,6 +52,117 @@ $root = Split-Path $PSScriptRoot -Parent
 $script:fail = 0
 $script:human = 0
 
+# --- compile errors reported by UNITY'S OWN pipeline (added 2026-10-13, menu2) ----------------
+# WHY IT EXISTS (measured 2026-10-13 15:17): the engine package interface gained two members; two
+# fake implementations in the engine package Tests had not caught up => 18 x error CS0535 on the
+# Unity side.  Unity then REFUSED to enter Play (editor_play said "Entered play mode", the very next
+# editor_status said playMode=stopped), while this gate's freshness check ("every dll is newer than
+# its sources") passed happily -- a FRESH BINARY IS NOT A SUCCESSFUL BUILD.  The offline compile in
+# item 3 only covers Cs16 / Assets/Editor/**; the engine package's own assemblies (Tests, Editor)
+# are compiled by Unity's pipeline and were invisible here.
+# WINDOW: only what arrived AFTER the compile started is judged -- an offset for the append-only
+# Editor.log and a seq for the engine console JSON (it carries a per-entry timestamp too).
+# NOT a whole-file scan: Editor.log already holds 18 historical `error CS` lines, so scanning all of
+# it would fail every run (that count is kept as the reverse control).
+# UNDECIDABLE => fail-open: a rotated log or an unparseable JSON must not block a delivery gate.
+# TIMING (wpnval, 2026-10-13): a compile's verdict is written only once the compile finishes, so a
+# single read can catch "compile started, nothing flushed yet" and report a silent PASS.  TWO reads
+# ~1s apart are unioned here, and the item below refuses to call an EMPTY window a pass: "0 errors"
+# and "nothing to judge" must never look the same (aifix measured Editor.log at 238 MB / 2.59M lines
+# with 2.2% non-ASCII bytes, so the window is cut BY BYTES and decoded afterwards -- a character
+# offset would be millions of positions off).
+# ANCHOR RULE (wpnval measured it, 2026-10-13 -- do NOT "simplify" this away): the window anchor MUST
+# be a snapshot taken BEFORE the compile -- the Editor.log BYTE length and/or the console JSON's
+# lastSeq.  NEVER the dll mtime: (i) pipeline_console_log.json is a 2000-entry RING BUFFER (measured
+# lastSeq=85019 while entries hold only seq 83003..85002, timestamps ~3 h behind the file), so
+# "entries newer than the dll" is 0 because the buffer has no record of THIS compile -- not because it
+# was clean (that is a silent PASS, the direction we refuse); (ii) a FAILED compile does not rewrite
+# the dll, so a dll-anchored window rolls back past the last successful build (false FAIL).
+# MORE RULES: offsets are BYTE counts, never decoded string lengths (measured 2,853,749 B vs 2,811,642
+# chars in the JSON alone); the file is appended to while we read it, so its tail may end MID-LINE and
+# only whole lines are judged; read under FileShare.ReadWrite (a running Unity holds Editor.log --
+# specfix2 and aifix both measured the default share mode failing with err=32).
+# UNDECIDABLE is a THIRD state, never a pass: empty window / rotation / unreadable / unparseable =>
+# Undecided + the reason printed, so "0 errors" can never be mistaken for "nothing was read".
+# RETURNS a hashtable: Hits (source lines), Note (what the window actually contained), Undecided.
+function Get-UnityCompileErrors([string]$EditorLog, [long]$LogOffset, [string]$ConsoleJson, [int]$SeqFrom) {
+  $read = {
+    param($el, $off, $cj, $sf)
+    $h = @(); $nb = 0; $ne = 0; $rot = $false; $errs = @()
+    if (($el -ne '') -and ($off -ge 0) -and (Test-Path -LiteralPath $el)) {
+      try {
+        $len = (Get-Item -LiteralPath $el).Length
+        if ($len -lt $off) { $rot = $true } else {
+          $nb = [int]($len - $off)
+          if ($nb -gt 0) {
+            # FileShare.ReadWrite so a RUNNING Unity (it holds Editor.log while in Play) does not make
+            # this throw -- and if it still does, the catch below turns it into "not judged", never
+            # into "0 errors = clean" (specfix2 hit exactly this: an IOException read as an empty log).
+            $fs = [System.IO.File]::Open($el, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::ReadWrite)
+            try {
+              [void]$fs.Seek($off, [System.IO.SeekOrigin]::Begin)
+              $buf = New-Object byte[] $nb
+              [void]$fs.Read($buf, 0, $nb)
+            } finally { $fs.Close() }
+            foreach ($ln in ([System.Text.Encoding]::UTF8.GetString($buf) -split "`r?`n")) {
+              if ($ln -match 'error CS[0-9]{3,4}') { $h += ('Editor.log: ' + $ln.Trim()) }
+            }
+          }
+        }
+      } catch { $errs += ('Editor.log unreadable (' + $_.Exception.GetType().Name + '): was it locked by a running Unity?') }
+    }
+    if (($cj -ne '') -and ($sf -ge 0) -and (Test-Path -LiteralPath $cj)) {
+      try {
+        $j = [System.IO.File]::ReadAllText($cj) | ConvertFrom-Json
+        # INTERVAL GUARD (roundfx2 measured it, 2026-10-13): the console is a 2000-entry ring buffer
+        # that can also be REPLACED wholesale.  If the snapshot predates the buffer's own start, then
+        # `seq > snapshot` sweeps in records that have nothing to do with this compile -- a false
+        # verdict either way ("clean" or "failed").  That must be UNDECIDED, never a verdict.
+        $seqs = @(@($j.entries) | ForEach-Object { [int]$_.seq })
+        $clo = -1; $chi = -1
+        if ($seqs.Count -gt 0) {
+          $clo = (($seqs | Measure-Object -Minimum).Minimum); $chi = (($seqs | Measure-Object -Maximum).Maximum)
+        }
+        if (($seqs.Count -gt 0) -and ($sf -lt $clo)) {
+          # STOP HERE: do not collect any hit.  A caller that checks hits before the Undecided flag
+          # would otherwise fail the build on a record that belongs to some other session.
+          return @{ h = @(); nb = $nb; ne = 0; rot = $false; crange = ('' + $clo + '-' + $chi); quirk = $false; errs = @(
+            'window snapshot seq=' + $sf + ' is OLDER than the console buffer start (' + $clo + ') -- buffer rolled/replaced, so which records belong to this compile cannot be told') }
+        }
+        foreach ($e in @($j.entries)) {
+          if ([int]$e.seq -gt $sf) {
+            $ne++
+            if ([string]$e.message -match 'error CS[0-9]{3,4}') { $h += ('console seq=' + $e.seq + ': ' + ([string]$e.message).Trim()) }
+          }
+        }
+      } catch { $errs += 'console JSON unparseable' }
+    }
+    return @{ h = $h; nb = $nb; ne = $ne; rot = $rot; crange = ('' + $clo + '-' + $chi); quirk = ($chi -ge 0 -and $sf -gt $chi); errs = $errs }
+  }
+  $r1 = & $read $EditorLog $LogOffset $ConsoleJson $SeqFrom
+  Start-Sleep -Milliseconds 1000
+  $r2 = & $read $EditorLog $LogOffset $ConsoleJson $SeqFrom
+  $hits = @($r1.h) + @($r2.h) | Select-Object -Unique
+  $nb = [Math]::Max($r1.nb, $r2.nb); $ne = [Math]::Max($r1.ne, $r2.ne)
+  $rot = ($r1.rot -or $r2.rot); $errs = @($r1.errs) + @($r2.errs) | Select-Object -Unique
+  $quirk = ($r1.quirk -and $r2.quirk); $crange = $r1.crange
+  $undecided = $false
+  if ($rot) { $note = 'Editor.log was rotated/truncated inside the window => Unity side NOT judged (fail-open)'; $undecided = $true }
+  elseif ($errs.Count -gt 0) { $note = ($errs -join '; ') + ' => Unity side NOT judged (fail-open)'; $undecided = $true }
+  elseif (($nb -eq 0) -and ($ne -eq 0)) { $note = 'no new Unity pipeline output arrived in the window (nothing was judged, NOT "clean")'; $undecided = $true }
+  else {
+    $note = ('' + $hits.Count + ' error(s) in new pipeline output (' + $nb + ' new byte(s) of Editor.log + ' + $ne + ' new console entr(ies))')
+    if (($ne -eq 0) -and $quirk) {
+      # movefix measured this (2026-10-13): lastSeq is an EMIT COUNTER, so a snapshot can sit ABOVE the
+      # retained range (e.g. lastSeq=85020 while entries hold [83003..85002]).  The console arm then
+      # contributes nothing -- that is "the console arm judged nothing", NOT "the console is clean",
+      # and it must never be the reason for a verdict (the Editor.log arm above is the reading).
+      $note += ' ; console arm: snapshot seq=' + $SeqFrom + ' sits ABOVE the retained range [' + $crange + '] (lastSeq is an emit counter, not the retained window) => the console arm judged nothing, which is NOT a console "clean" verdict'
+    }
+  }
+  return @{ Hits = @($hits); Note = $note; Undecided = $undecided }
+}
+
 function Say([string]$status, [string]$name, [string]$detail) {
   Write-Output ("{0,-11} {1}  {2}" -f $status, $name, $detail)
 }
@@ -255,6 +366,16 @@ function Invoke-Checks {
   # e.g. it lacks MapBakeOptions.MarkerRootName while Editor\MapBake\MapBakeOptions.cs:119
   # declares it public).  A red here therefore means the current sources disagree.
   $ccScript = Join-Path $root 'tools\probes\compile-check.ps1'
+  # Window markers for the Unity-side errors: captured BEFORE the compile below, so only the bytes /
+  # entries that arrive afterwards are judged (see Get-UnityCompileErrors for why this is bounded).
+  $uLog = Join-Path $root 'client\Logs\Editor.log'
+  $uJson = Join-Path $root 'client\Temp\pipeline_console_log.json'
+  $uOff = -1
+  if (Test-Path -LiteralPath $uLog) { $uOff = (Get-Item -LiteralPath $uLog).Length }
+  $uSeq = -1
+  if (Test-Path -LiteralPath $uJson) {
+    try { $uSeq = [int](([System.IO.File]::ReadAllText($uJson) | ConvertFrom-Json).lastSeq) } catch { $uSeq = -1 }
+  }
   if (-not (Test-Path $ccScript)) {
     $script:fail++
     Say 'FAIL' 'editor-assembly-compiles' ('missing ' + $ccScript + ' -- the Editor assembly is unverifiable offline')
@@ -264,13 +385,147 @@ function Invoke-Checks {
     $ccRc = $LASTEXITCODE
     $ccOut | Set-Content -Encoding UTF8 $ccTmp
     $ccErrs = @($ccOut | Where-Object { $_ -match ': error CS\d+' })
-    if (($ccRc -eq 0) -and ($ccErrs.Count -eq 0)) {
-      Say 'PASS' 'editor-assembly-compiles' ('Assets/Editor/** compiles as the Editor assembly (UnityEditor.dll + UnityEditor.CoreModule, UNITY_EDITOR defined), 0 error -- raw output: ' + $ccTmp)
+    # Unity's own pipeline (engine package Tests/Editor assemblies included) since the compile began
+    $uRes = Get-UnityCompileErrors -EditorLog $uLog -LogOffset $uOff -ConsoleJson $uJson -SeqFrom $uSeq
+    $uHits = @($uRes.Hits)
+    $uTail = '; Unity pipeline window (every assembly Unity itself builds, incl. the engine package Tests/Editor): ' + $uRes.Note + ' -- a fresh dll is NOT a successful build, this is what proves the build'
+    if ($uRes.Undecided) { $uTail += ' [NOT JUDGED on the Unity side => fail-open, printed so "0 errors" can never be confused with "nothing was read"]' }
+    if (($ccRc -eq 0) -and ($ccErrs.Count -eq 0) -and ($uHits.Count -eq 0)) {
+      Say 'PASS' 'editor-assembly-compiles' ('Assets/Editor/** compiles as the Editor assembly (UnityEditor.dll + UnityEditor.CoreModule, UNITY_EDITOR defined), 0 error -- raw output: ' + $ccTmp + $uTail)
     } else {
       $script:fail++
-      Say 'FAIL' 'editor-assembly-compiles' ('' + $ccErrs.Count + ' compile error(s) in Assets/Editor/** (csc exit=' + $ccRc + ') -- raw output: ' + $ccTmp)
+      Say 'FAIL' 'editor-assembly-compiles' ('' + $ccErrs.Count + ' offline compile error(s) in Assets/Editor/** (csc exit=' + $ccRc + ') + ' + $uHits.Count + ' Unity-pipeline compile error(s) -- raw output: ' + $ccTmp + $uTail)
       $ccErrs | Select-Object -First 10 | ForEach-Object { Sub $_ }
+      $uHits | Select-Object -First 10 | ForEach-Object { Sub $_ }
     }
+  }
+
+  # --- comment-only edits must not age a shot (added 2026-10-13, menu2) ----------------------
+  # WHY IT EXISTS (measured): the per-row rule below compares a shot's mtime against its row's
+  # implementation file.  A COMMENT-ONLY edit bumps that mtime without changing behaviour, so a
+  # perfectly good picture was reported stale -- three Flow\*.cs comment fixes voided the menu
+  # slice's shots, which would have been "fixed" by re-shooting pictures that were still correct.
+  # WHAT IT DOES: the comparison becomes content-based through a "code fingerprint" -- the file's
+  # bytes with comments (`//`, `///`, `/* */`) and ALL whitespace removed, hashed.  A pair that is
+  # fresh by mtime pins its fingerprint in the manifest; a pair that is stale by mtime but whose
+  # fingerprint is UNCHANGED since that pin is kept fresh and reported as [comment-only].
+  # DIRECTION: one-way.  A code change changes the fingerprint => the old mtime rule stands and
+  # the shot is void; no pin at all (first run) => the old rule stands.  It can therefore only
+  # ever stop marking comment/whitespace churn as stale, never mask a behaviour change.
+  # WHY A SCANNER AND NOT A REGEX (wpnval, 2026-10-13 -- both holes make a real code change
+  # INVISIBLE, i.e. a FALSE FRESH, which is the dangerous direction):
+  #   * `//` inside a string literal ("see http://doc") made a regex cut the REST OF THE LINE out of
+  #     the fingerprint => changing that string's tail (e.g. a path or a caption) changed behaviour
+  #     but not the fingerprint.
+  #   * `/*` inside a string literal plus a later `*/` inside a comment made a regex cut out EVERYTHING
+  #     between them -- a whole span of real code left the fingerprint.
+  # So the normaliser walks the characters and only recognises comments OUTSIDE literals, and it keeps
+  # literal contents (including their spaces) verbatim: C# `"..."` with \" escapes, `@"..."` with ""
+  # escapes, and 'c' char literals.  Whitespace outside literals is dropped (formatting must not age
+  # evidence); anything else is part of the fingerprint.
+  # LAST LINE OF DEFENCE -- keep this property (wpnval, 2026-10-13): because literal contents are hashed
+  # VERBATIM, a mis-classified literal is still hashed character by character.  The worst a scanner bug
+  # can therefore do is get a COMMENT decision wrong; it can never make a CODE change invisible (that
+  # is what the two holes above did).  Do NOT "simplify" this back into a regex or into a
+  # comment-only stripper: dropping literal contents is exactly the trade that created those holes.
+  $fpManifest = Join-Path $tmpRoot 'test\evidence-code-hash.tsv'
+  $fpNoBom = New-Object Text.UTF8Encoding($false)
+  function Read-CodePins([string]$p) {
+    # The manifest is a SHARED, APPEND-ONLY state (several slices run this gate).  One line per pin,
+    # later lines win for the same key -- whole-table rewrite is forbidden (team rule 2026-10-13:
+    # "read whole table, modify, write whole table" loses concurrent updates).  Last-wins also makes
+    # an outdated line harmless: a pin is only ever consulted together with the CURRENT fingerprint,
+    # so a stale pin can never make a pair look fresh.
+    $out = @{}
+    if (-not (Test-Path $p)) { return $out }
+    foreach ($ln in @([System.IO.File]::ReadAllLines($p, [Text.Encoding]::UTF8))) {
+      if ($ln.TrimStart().StartsWith('#')) { continue }
+      $c = $ln -split "`t"
+      if ($c.Count -ge 4) { $out[[string]$c[0] + "`t" + [string]$c[1] + "`t" + [string]$c[2]] = [string]$c[3] }
+    }
+    return $out
+  }
+  $fpPinned = Read-CodePins $fpManifest
+  $fpFresh = @{}
+  $commentOnly = 0
+  function Get-CodeFingerprint([string]$p) {
+    try {
+      $t = [System.IO.File]::ReadAllText($p, [Text.Encoding]::UTF8)
+      $sb = New-Object Text.StringBuilder
+      $i = 0
+      $n = $t.Length
+      while ($i -lt $n) {
+        $c = $t[$i]
+        $nx = if ($i + 1 -lt $n) { $t[$i + 1] } else { [char]0 }
+        if (($c -eq '/') -and ($nx -eq '/')) {                      # line comment
+          while (($i -lt $n) -and ($t[$i] -ne "`n")) { $i++ }
+          continue
+        }
+        if (($c -eq '/') -and ($nx -eq '*')) {                      # block comment
+          $i += 2
+          while (($i + 1 -lt $n) -and -not (($t[$i] -eq '*') -and ($t[$i + 1] -eq '/'))) { $i++ }
+          $i = [Math]::Min($i + 2, $n)
+          continue
+        }
+        # Verbatim string: `"..."` opened by @", @$" or $@" (the @ and the $ may come in either
+        # order -- wpnval's case 12: detecting it by "the char right before the quote is @" misses
+        # `@$"` and then the ""-escape is not honoured, which can shift where the literal closes).
+        $vbLen = 0
+        if ($c -eq '@') {
+          if ($nx -eq '"') { $vbLen = 2 }
+          elseif (($nx -eq '$') -and ($i + 2 -lt $n) -and ($t[$i + 2] -eq '"')) { $vbLen = 3 }
+        } elseif (($c -eq '$') -and ($nx -eq '@') -and ($i + 2 -lt $n) -and ($t[$i + 2] -eq '"')) { $vbLen = 3 }
+        if ($vbLen -gt 0) {                                         # verbatim string: "" = one quote
+          [void]$sb.Append($t.Substring($i, $vbLen))
+          $i += $vbLen
+          while ($i -lt $n) {
+            if ($t[$i] -eq '"') {
+              if (($i + 1 -lt $n) -and ($t[$i + 1] -eq '"')) { [void]$sb.Append('""'); $i += 2; continue }
+              [void]$sb.Append('"'); $i++; break
+            }
+            [void]$sb.Append($t[$i]); $i++
+          }
+          continue
+        }
+        if (($c -eq '"') -or ($c -eq "'")) {                        # string / char literal
+          $q = $c
+          [void]$sb.Append($c); $i++
+          while ($i -lt $n) {
+            if ($t[$i] -eq '\') {
+              [void]$sb.Append($t[$i])
+              if ($i + 1 -lt $n) { [void]$sb.Append($t[$i + 1]) }
+              $i += 2
+              continue
+            }
+            if ($t[$i] -eq $q) { [void]$sb.Append($q); $i++; break }
+            [void]$sb.Append($t[$i]); $i++
+          }
+          continue
+        }
+        if (-not [char]::IsWhiteSpace($c)) { [void]$sb.Append($c) }
+        $i++
+      }
+      $sha = [System.Security.Cryptography.SHA1]::Create()
+      try { $h = $sha.ComputeHash([Text.Encoding]::UTF8.GetBytes($sb.ToString())) } finally { $sha.Dispose() }
+      return (([BitConverter]::ToString($h)) -replace '-', '').ToLower()
+    } catch { return '' }
+  }
+  function Test-EvidenceFresh {
+    # returns 'fresh' (shot at least as new as its row's implementation file), 'comment-only'
+    # (older by mtime, but the code fingerprint is unchanged since the shot was pinned) or 'stale'.
+    param([datetime]$ShotTime, [datetime]$ImplTime, [string]$ImplPath, [string]$Key,
+          [hashtable]$Pins, [hashtable]$PinsOut)
+    if ($ShotTime -ge $ImplTime) {
+      $fp = Get-CodeFingerprint $ImplPath
+      if ($fp -ne '') { $PinsOut[$Key] = $fp }
+      return 'fresh'
+    }
+    $fp2 = Get-CodeFingerprint $ImplPath
+    if (($fp2 -ne '') -and $Pins.ContainsKey($Key) -and ($Pins[$Key] -eq $fp2)) {
+      $PinsOut[$Key] = $fp2
+      return 'comment-only'
+    }
+    return 'stale'
   }
 
   # --- 4) evidence-freshness -- judged PER ACCEPTANCE ROW ----------------------------------
@@ -332,7 +587,15 @@ function Invoke-Checks {
         if (-not $shotFiles.ContainsKey($p.ToLower())) { $goneShots++; continue }
         $sf = $shotFiles[$p.ToLower()]
         $cmpPairs++
-        if ($sf.LastWriteTime -lt $tImpl) {
+        $fpKey = $rid + "`t" + $sf.Name + "`t" + (Split-Path $newest -Leaf)
+        $verdict = Test-EvidenceFresh -ShotTime $sf.LastWriteTime -ImplTime $tImpl -ImplPath $newest `
+                                      -Key $fpKey -Pins $fpPinned -PinsOut $fpFresh
+        if ($verdict -eq 'comment-only') {
+          $commentOnly++
+          Sub ('row ' + $rid + ': shot ' + $sf.Name + ' (' + $sf.LastWriteTime.ToString('MM-dd HH:mm') +
+               ') is older by mtime than ' + (Split-Path $newest -Leaf) + ' (' + $tImpl.ToString('MM-dd HH:mm') +
+               ') but the CODE FINGERPRINT is unchanged since that shot was pinned => [comment-only], NOT stale')
+        } elseif ($verdict -eq 'stale') {
           $void += [pscustomobject]@{ Row = $rid; Text = ('row ' + $rid + ': shot ' + $sf.Name + ' (' + $sf.LastWriteTime.ToString('MM-dd HH:mm') +
                    ') is older than that row implementation file ' + (Split-Path $newest -Leaf) +
                    ' (' + $tImpl.ToString('MM-dd HH:mm') + ')') }
@@ -340,6 +603,26 @@ function Invoke-Checks {
       }
     }
   }
+  # Persist the pins: rewrite the manifest with exactly the pairs that are valid NOW (fresh by
+  # mtime, or kept by an unchanged fingerprint).  Rewriting (not appending) keeps it self-cleaning:
+  # a pair that stopped being evaluated loses its pin instead of lingering as a stale silencer.
+  try {
+    if (-not (Test-Path $fpManifest)) {
+      [IO.File]::AppendAllText($fpManifest,
+        ('# row<TAB>shot<TAB>impl<TAB>code_fingerprint -- APPEND-ONLY, later lines win; written by verify.ps1 item 4.' + "`r`n" +
+         '# A pair whose fingerprint is unchanged since it was pinned is [comment-only], not stale.' + "`r`n" +
+         '# Deleting this file only removes that tolerance (the mtime rule then stands alone).' + "`r`n"), $fpNoBom)
+    }
+    # append ONLY new/changed pins, so a steady state writes nothing (no update can ever be lost).
+    $fpNew = @()
+    foreach ($k in @($fpFresh.Keys | Sort-Object)) {
+      if ((-not $fpPinned.ContainsKey($k)) -or ($fpPinned[$k] -ne $fpFresh[$k])) { $fpNew += ($k + "`t" + $fpFresh[$k]) }
+    }
+    if ($fpNew.Count -gt 0) { [IO.File]::AppendAllText($fpManifest, (($fpNew -join "`r`n") + "`r`n"), $fpNoBom) }
+  } catch {
+    Sub ('NOTE: could not write the code-fingerprint manifest (' + $fpManifest + '): ' + $_.Exception.Message + ' -- mtime rule alone applies next run')
+  }
+
   # batch freeze point (merged from `freeze-before-capture`), printed, never double counted
   $batchNote = 'batch freeze point: no *.manifest.tsv under tools\probes (nothing to pin)'
   $mf = @(Get-ChildItem $probesDir -Filter '*.manifest.tsv' -File -ErrorAction SilentlyContinue |
@@ -378,24 +661,29 @@ function Invoke-Checks {
     $script:human++
     Say 'HUMAN-ONLY' 'evidence-freshness' "no (row,shot) pair could be compared (rows without a shot: $noShotRows; rows without a resolvable implementation file: $noImplRows; cited shot names that do not resolve to a file: $goneShots) - needs a manual check"
     Sub $batchNote
+    if ($commentOnly -gt 0) { Sub ('  ' + $commentOnly + ' (row,shot) pair(s) stayed valid because the CODE FINGERPRINT is unchanged since capture [comment-only edits]; manifest: ' + $fpManifest) }
   } elseif ($freeVoid.Count -gt 0) {
     $script:fail++
     Say 'FAIL' 'evidence-freshness' "$($freeVoid.Count) of $cmpPairs (row,shot) pair(s) are stale and NOT adjudicated => only those rows are void, the rest stay valid (to register a known/owned void: '# adjudicated: evidence-freshness -- row <id> -- <reason >= 12 chars>' in .ai-tmp/test/dispatch-log.tsv)"
     $freeVoid | ForEach-Object { Sub $_.Text }
     if ($adjVoid.Count -gt 0) { Sub ('also stale but adjudicated (not counted here): ' + (($adjVoid | ForEach-Object { [string]$_.Row }) -join ',')) }
     Sub $batchNote
+    if ($commentOnly -gt 0) { Sub ('  ' + $commentOnly + ' (row,shot) pair(s) stayed valid because the CODE FINGERPRINT is unchanged since capture [comment-only edits]; manifest: ' + $fpManifest) }
   } elseif ($staleAdj.Count -gt 0) {
     $script:fail++
     Say 'FAIL' 'evidence-freshness' "$($staleAdj.Count) adjudicated row(s) are NOT stale any more ('$($staleAdj -join ',')') => the registration outlived the void, remove it from .ai-tmp/test/dispatch-log.tsv"
     Sub $batchNote
+    if ($commentOnly -gt 0) { Sub ('  ' + $commentOnly + ' (row,shot) pair(s) stayed valid because the CODE FINGERPRINT is unchanged since capture [comment-only edits]; manifest: ' + $fpManifest) }
   } elseif ($void.Count -eq 0) {
-    Say 'PASS' 'evidence-freshness' "$cmpRows acceptance row(s) / $cmpPairs (row,shot) pair(s) compared per row: every cited shot is at least as new as its own row implementation file; $noShotRows row(s) without a shot and $noImplRows row(s) without a resolvable implementation file are HUMAN-ONLY; $goneShots unroutable shot name(s) are left to shot-citations"
+    Say 'PASS' 'evidence-freshness' "$cmpRows acceptance row(s) / $cmpPairs (row,shot) pair(s) compared per row: every cited shot is at least as new as its own row implementation file ($commentOnly of them kept fresh by an UNCHANGED code fingerprint = comment/whitespace-only edits since capture); $noShotRows row(s) without a shot and $noImplRows row(s) without a resolvable implementation file are HUMAN-ONLY; $goneShots unroutable shot name(s) are left to shot-citations"
     Sub $batchNote
+    if ($commentOnly -gt 0) { Sub ('  ' + $commentOnly + ' (row,shot) pair(s) stayed valid because the CODE FINGERPRINT is unchanged since capture [comment-only edits]; manifest: ' + $fpManifest) }
   } else {
     $script:human++
     Say 'HUMAN-ONLY' 'evidence-freshness' "$($adjVoid.Count) of $cmpPairs (row,shot) pair(s) are stale and ADJUDICATED: the other $($cmpPairs - $adjVoid.Count) pair(s) are fresh. The void shot(s) are NOT valid evidence -- a human must have the owning slice re-capture those rows; remove the registration once re-captured"
     $adjVoid | ForEach-Object { Sub ($_.Text + '  || adjudication: ' + $adj[[string]$_.Row]) }
     Sub $batchNote
+    if ($commentOnly -gt 0) { Sub ('  ' + $commentOnly + ' (row,shot) pair(s) stayed valid because the CODE FINGERPRINT is unchanged since capture [comment-only edits]; manifest: ' + $fpManifest) }
   }
 
   # --- 5) reference-table-refs -- cited carrier paths / file:line must exist on disk -------
@@ -485,6 +773,13 @@ function Invoke-Checks {
     $pngs = @($pngs | Sort-Object -Unique)
     $byPathN = 0; $byBaseN = 0; $byArcN = 0
     $missShot = @(); $hintShot = @()
+    # AMBIGUITY ledger (2026-10-13, menu2 + team-lead): the basename/archive fallbacks below take the
+    # FIRST hit.  With two archive rounds kept side by side under the archive root (e.g. screenshots/
+    # and screenshots-r2/ with UNCHANGED basenames -- the sanctioned anti-overwrite shape) the same
+    # basename has 2+ hits with different bytes, so a citation can silently resolve to the wrong
+    # round's image.  Every extra hit is therefore reported (with sha256) as a WARN sub-line: the
+    # verdict, the counts and the resolution note stay exactly as they were.
+    $ambShot = @()
     foreach ($p in $pngs) {
       $rel = ($p -replace '/', '\')
       if ($rel.StartsWith('.\')) { $rel = $rel.Substring(2) }
@@ -496,9 +791,18 @@ function Invoke-Checks {
         # -Filter takes a wildcard pattern: a name carrying [ ] * ? would turn the fallback into a
         # match-anything lookup, so it only runs for plain file names.
         if ($bn -match '^[0-9A-Za-z_\.\-]+$') {
-          $hitBn = @(Get-ChildItem $tmpRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue | Select-Object -First 1)
-          if ($hitBn.Count -eq 0 -and (Test-Path -LiteralPath $arcRoot)) { $hitArc = @(Get-ChildItem $arcRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue | Select-Object -First 1); if ($hitArc.Count -gt 0) { $byArcN++; $ok = $true } }
-          if ($hitBn.Count -gt 0) { $byBaseN++; $ok = $true }
+          $hitBn = @(Get-ChildItem $tmpRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue)
+          if ($hitBn.Count -eq 0 -and (Test-Path -LiteralPath $arcRoot)) {
+            $hitArc = @(Get-ChildItem $arcRoot -Recurse -Filter $bn -File -ErrorAction SilentlyContinue)
+            if ($hitArc.Count -gt 0) {
+              $byArcN++; $ok = $true
+              if ($hitArc.Count -gt 1) { $ambShot += ('shot: ' + $bn + '  WARN: ' + $hitArc.Count + ' hits under the archive root -- the citation resolves to the FIRST one; the others are ' + (@($hitArc | ForEach-Object { $_.FullName + ' [sha256 ' + (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower().Substring(0, 16) + ']' }) -join ' ; ')) }
+            }
+          }
+          if ($hitBn.Count -gt 0) {
+            $byBaseN++; $ok = $true
+            if ($hitBn.Count -gt 1) { $ambShot += ('shot: ' + $bn + '  WARN: ' + $hitBn.Count + ' hits under .ai-tmp -- the citation resolves to the FIRST one; give the rounds separate names or cite the full path: ' + (@($hitBn | Select-Object -First 4 | ForEach-Object { $_.FullName }) -join ' ; ')) }
+          }
         }
       }
       if ($ok) { continue }
@@ -516,13 +820,15 @@ function Invoke-Checks {
       $exNote = '; ' + $exempt.Count + ' cited name(s) exempt as asset names registered in the entity list'
     }
     if ($missShot.Count -eq 0) {
-      Say 'PASS' 'shot-citations' ('' + $pngs.Count + ' cited evidence shot(s) all exist on disk' + $resNote + $exNote + ' (' + $regNote + ')' + $(if ($hintShot.Count -gt 0) { '; ' + $hintShot.Count + ' ambiguous citation(s) reported as HINT' } else { '' }))
+      Say 'PASS' 'shot-citations' ('' + $pngs.Count + ' cited evidence shot(s) all exist on disk' + $resNote + $exNote + ' (' + $regNote + ')' + $(if ($hintShot.Count -gt 0) { '; ' + $hintShot.Count + ' ambiguous citation(s) reported as HINT' } else { '' }) + $(if ($ambShot.Count -gt 0) { '; ' + $ambShot.Count + ' same-name WARN(s) with 2+ hits (see below)' } else { '' }))
       $hintShot | ForEach-Object { Sub $_ }
+      $ambShot | ForEach-Object { Sub $_ }
     } else {
       $script:fail++
       Say 'FAIL' 'shot-citations' ('' + $missShot.Count + ' cited evidence shot(s) are TRULY dangling (file absent at the cited path and no backup variant)' + $resNote + $exNote + ' (' + $regNote + ')')
       $missShot | ForEach-Object { Sub ('shot: ' + $_) }
       $hintShot | Select-Object -First 5 | ForEach-Object { Sub $_ }
+      $ambShot | Select-Object -First 5 | ForEach-Object { Sub $_ }
     }
   } else {
     $script:fail++
