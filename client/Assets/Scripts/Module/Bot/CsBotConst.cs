@@ -78,6 +78,129 @@ namespace Cs16.Module.Bot
         /// <summary>同一个 actor 的枪声噪声最小间隔（秒）。出处：**本项目新增**（同上）。</summary>
         public const float GunshotNoiseInterval = 0.1f;
 
+        // ==================== 感知分档（视野 / 记忆 / 听觉）====================
+        // 这三组量在 CsBotProfile 里没有对应字段（它只放反应 / 瞄准误差 / 转视角 / 连发 / 视野距离 /
+        // 偏好距离 / 买枪档 / 爆头率 / 重决策），所以三档表落在这里，不存在第二套。
+        // 出处：**本项目新增**（A = CS 1.6 本体不含机器人 AI，官方 bot 属 Condition Zero / PodBot）。
+
+        /// <summary>视野角（度，全角）—— Easy 90 / Normal 100 / Hard 110。
+        /// 全局上限 = <c>CsConst.BotFovDegrees</c>(110)：Hard 取满值，其余两档依次收窄。</summary>
+        public const float FovDegreesEasy = 90f;
+
+        /// <summary>视野角（度）—— Normal。见 <see cref="FovDegreesEasy"/>。</summary>
+        public const float FovDegreesNormal = 100f;
+
+        /// <summary>视野角（度）—— Hard。见 <see cref="FovDegreesEasy"/>。</summary>
+        public const float FovDegreesHard = 110f;
+
+        /// <summary>目标记忆时长（秒）—— Easy：丢视野超过它就删掉这个敌人的记忆。</summary>
+        public const float MemorySecondsEasy = 0.8f;
+
+        /// <summary>目标记忆时长（秒）—— Normal。</summary>
+        public const float MemorySecondsNormal = 1.2f;
+
+        /// <summary>目标记忆时长（秒）—— Hard。</summary>
+        public const float MemorySecondsHard = 1.8f;
+
+        /// <summary>枪声听觉半径（米）—— Easy：枪声只在这么近才听得见。</summary>
+        public const float GunshotHearRadiusEasy = 10f;
+
+        /// <summary>枪声听觉半径（米）—— Normal。</summary>
+        public const float GunshotHearRadiusNormal = 14f;
+
+        /// <summary>枪声听觉半径（米）—— Hard。取 <c>CsConst.BotHearRadius</c>(18) 的满值。</summary>
+        public const float GunshotHearRadiusHard = 18f;
+
+        /// <summary>脚步听觉半径（米）—— Easy：跑动声只在这么近才听得见。</summary>
+        public const float StepHearRadiusEasy = 4f;
+
+        /// <summary>脚步听觉半径（米）—— Normal。</summary>
+        public const float StepHearRadiusNormal = 6f;
+
+        /// <summary>脚步听觉半径（米）—— Hard。</summary>
+        public const float StepHearRadiusHard = 8f;
+
+        /// <summary>
+        /// 听觉方向的不确定半角（度）：感知给出的是"声源来自这个方位 ± 它"的区间，
+        /// 不是精确坐标。取值大于 0 的作用是让守点 / 搜索用区间而不是钉死一个点。
+        /// 出处：**本项目新增**（bot 听觉模型参数，A 无 bot AI）。
+        /// </summary>
+        public const float HearBearingConeDegrees = 20f;
+
+        /// <summary>听觉命中日志的每 bot 最小间隔（秒）。出处：**本项目新增**（日志降频参数）。</summary>
+        public const float HearLogInterval = 2f;
+
+        /// <summary>记忆生效日志的每 bot 最小间隔（秒）。出处：**本项目新增**（日志降频参数）。</summary>
+        public const float MemoryLogInterval = 3f;
+
+        /// <summary>某一档的视野角（度）。未知档位按 Normal 处理并告警一次。</summary>
+        public static float FovDegrees(CsBotDifficulty d)
+        {
+            switch (d)
+            {
+                case CsBotDifficulty.Easy: return FovDegreesEasy;
+                case CsBotDifficulty.Normal: return FovDegreesNormal;
+                case CsBotDifficulty.Hard: return FovDegreesHard;
+                default:
+                    WarnIllegalTier(d, "FovDegrees");
+                    return FovDegreesNormal;
+            }
+        }
+
+        /// <summary>某一档的目标记忆时长（秒）。未知档位按 Normal 处理并告警一次。</summary>
+        public static float MemorySeconds(CsBotDifficulty d)
+        {
+            switch (d)
+            {
+                case CsBotDifficulty.Easy: return MemorySecondsEasy;
+                case CsBotDifficulty.Normal: return MemorySecondsNormal;
+                case CsBotDifficulty.Hard: return MemorySecondsHard;
+                default:
+                    WarnIllegalTier(d, "MemorySeconds");
+                    return MemorySecondsNormal;
+            }
+        }
+
+        /// <summary>某一档的枪声听觉半径（米）。未知档位按 Normal 处理并告警一次。</summary>
+        public static float GunshotHearRadius(CsBotDifficulty d)
+        {
+            switch (d)
+            {
+                case CsBotDifficulty.Easy: return GunshotHearRadiusEasy;
+                case CsBotDifficulty.Normal: return GunshotHearRadiusNormal;
+                case CsBotDifficulty.Hard: return GunshotHearRadiusHard;
+                default:
+                    WarnIllegalTier(d, "GunshotHearRadius");
+                    return GunshotHearRadiusNormal;
+            }
+        }
+
+        /// <summary>某一档的脚步听觉半径（米）。未知档位按 Normal 处理并告警一次。</summary>
+        public static float StepHearRadius(CsBotDifficulty d)
+        {
+            switch (d)
+            {
+                case CsBotDifficulty.Easy: return StepHearRadiusEasy;
+                case CsBotDifficulty.Normal: return StepHearRadiusNormal;
+                case CsBotDifficulty.Hard: return StepHearRadiusHard;
+                default:
+                    WarnIllegalTier(d, "StepHearRadius");
+                    return StepHearRadiusNormal;
+            }
+        }
+
+        /// <summary>非法难度值只告警一次（难度只来自 <c>CsActor.Difficulty</c>，越界说明枚举/回包被写坏）。</summary>
+        private static bool _warnedIllegalTier;
+
+        private static void WarnIllegalTier(CsBotDifficulty d, string what)
+        {
+            if (_warnedIllegalTier) return;
+            _warnedIllegalTier = true;
+
+            var logger = CloverEngine.Game.Logger;
+            if (logger != null) logger.Warn(BotModule.Tag, $"{what}：收到非法难度值 {(int)d}，已按 Normal 处理");
+        }
+
         // ==================== 导航 ====================
         /// <summary>路点到达半径（米）：进入它就推进到下一个路点。
         /// 出处：**本项目新增**（导航实现参数；原版无 bot 导航，A 无 bot AI）。</summary>
@@ -503,28 +626,38 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 开火角度门限 = AimErrorDegrees × 它 + AimGateExtraDegrees。
         ///
-        /// <para><b>为什么取这么宽</b>：门限是"必须先把视角转到位才扣扳机"的闸门。原值（scale 2 / extra 2 /
-        /// max 16 ⇒ Normal 只有 8°）要求"抬枪完成 → 开火"两段式，实测在真实对局里机器人**几乎永远开不出枪**
-        /// （22 次交战 0 发：目标一直在动 ⇒ 瞄点每帧变 ⇒ 朝向差总是差几度 ⇒ 门限永远过不去，扳机永远不扣）。
-        /// CS 的真实玩家是**边转边打**的；放宽后 Hard 仍最严（≈12°）、Easy 最松（≈26°），
-        /// 三档的"准/不准"差异由 <c>AimErrorDegrees</c> 继续承担。</para>
+        /// <para><b>量与什么</b>：夹角是"本 tick 提交给模拟的瞄向（<c>SmoothAim</c> 的方向，也就是子弹要飞的
+        /// 方向）"与"到目标瞄点的方向"之差，**不是**角色朝向与瞄点之差 —— 角色朝向由模拟按难度转视角速度追，
+        /// 落后十几度是常态，拿它当判据等于允许子弹沿偏十几度的方向打出去（实测 77%~86% 的弹着点是墙）。
+        /// 提交的瞄向由本类自己逐帧平滑，几十毫秒内就收敛，所以门限可以收紧到瞄准误差的量级。</para>
+        ///
+        /// <para>三档门限：Easy ±6° → 4.8°，Normal ±3° → 3.0°，Hard ±1.2° → 2.2°，
+        /// 与 <c>AimErrorDegrees</c> 同向（越准的档越早扣扳机、偏得也越少）。</para>
         ///
         /// <para>出处：**本项目新增**（门限系数，A 无 bot AI；被乘的 <c>AimErrorDegrees</c> 真源 =
         /// 规格 §2.4 三档瞄准误差 ±6° / ±3° / ±1.2°，落在 <c>CsBotProfile.For</c>）。</para>
         /// </summary>
-        public const float AimGateErrorScale = 3f;
+        public const float AimGateErrorScale = 0.6f;
 
         /// <summary>开火角度门限的固定附加值（度）。
         /// 出处：**本项目新增**（门限项，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
-        public const float AimGateExtraDegrees = 8f;
+        public const float AimGateExtraDegrees = 1.2f;
 
         /// <summary>开火角度门限下限（度）。
         /// 出处：**本项目新增**（门限钳制下限，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
-        public const float AimGateMinDegrees = 12f;
+        public const float AimGateMinDegrees = 2.2f;
 
         /// <summary>开火角度门限上限（度）。
         /// 出处：**本项目新增**（门限钳制上限，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
-        public const float AimGateMaxDegrees = 30f;
+        public const float AimGateMaxDegrees = 5f;
+
+        /// <summary>
+        /// "站定"判据相对开火门限的倍数：瞄向差 ≤ 门限 × 它就先停下来等速度归零，
+        /// 落定后再按门限扣扳机。站定判据必须比开火门限宽，否则瞄向没收敛时一直侧移、
+        /// 水平速度永不归零，扳机永远扣不下去。
+        /// 出处：**本项目新增**（bot 交火实现参数，A 无 bot AI）。
+        /// </summary>
+        public const float StandGateScale = 3f;
 
         /// <summary>交战开火的俯仰角上限（度）：瞄准方向相对地平线的 |pitch| 超过它即视为未锁定、不开火。
         /// 出处：**本项目新增**（原版视角上限 89°，交战瞄准不应超过 45° —— 修"AI 朝天开枪"）。</summary>
@@ -574,6 +707,129 @@ namespace Cs16.Module.Bot
         /// <summary>"视线只被角色受体挡住"（按 CS 语义放行）日志的每-bot 最小间隔（秒）。
         /// 出处：**本项目新增**（诊断日志降频参数）。</summary>
         public const float SightActorBlockLogInterval = 10f;
+
+        /// <summary>
+        /// 远距点射的门槛距离（米）：超过它每串只打 <see cref="BurstMaxRounds"/> 发以内的点射。
+        /// 步枪连发时后坐力/散布随时间累积，远距离整梭扫射的命中率低于点射；
+        /// 近于 <see cref="BurstAutoRange"/> 才允许连发。
+        /// 出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。
+        /// </summary>
+        public const float BurstFarRange = 15f;
+
+        /// <summary>允许连发的近身距离（米）：小于它不限制连发（贴脸时射速优先于精度）。
+        /// 出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。</summary>
+        public const float BurstAutoRange = 8f;
+
+        /// <summary>点射的每串最少发数。出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。</summary>
+        public const int BurstMinRounds = 2;
+
+        /// <summary>点射的每串最多发数。出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。</summary>
+        public const int BurstMaxRounds = 4;
+
+        /// <summary>
+        /// 每串发数从最多降到最少的距离上界（米）：到该距离取 <see cref="BurstMinRounds"/> 发。
+        /// 距离越远、目标角尺寸越小，串内后几发的散布越可能直接脱靶 ⇒ 远距离只打短点射。
+        /// 出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。
+        /// </summary>
+        public const float BurstRoundsDropRange = 30f;
+
+        /// <summary>两串点射之间的停火时长（秒）：停火期间只保持指向、不扣扳机。
+        /// 出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。</summary>
+        public const float BurstPauseSeconds = 0.28f;
+
+        /// <summary>
+        /// 远距"只打慢目标"的距离门槛（米）：超过它时目标横向速度大于
+        /// <see cref="FarFireMaxTargetSpeed"/> 就不扣扳机。判据来自外推的失效边界：
+        /// 在该距离上，一个身位（约 0.7m）对应的角度已经小于瞄准误差，跑动中的目标靠外推打不中。
+        /// 出处：**本项目新增**（bot 交火节奏阈值，A 无 bot AI）。
+        /// </summary>
+        public const float FarFireRange = 25f;
+
+        /// <summary>远距仍允许开火的目标横向速度上限（米/秒）：走位 / 静步 / 站定都在此之内，跑动超过它。
+        /// 出处：**本项目新增**（bot 交火节奏阈值；量级参照静步 0.52 倍速与跑速 5.4 m/s 之间）。</summary>
+        public const float FarFireMaxTargetSpeed = 2f;
+
+        /// <summary>
+        /// 主动换弹的弹匣余量比例：低于它就换弹（前提见 <c>CsBotBrain.ShouldReloadNow</c> ——
+        /// 看不见敌人、或敌人在 <see cref="ReloadSafeDistance"/> 之外）。
+        /// 出处：**本项目新增**（bot 换弹时机阈值，A 无 bot AI）。
+        /// </summary>
+        public const float ReloadLowMagRatio = 0.25f;
+
+        /// <summary>换弹时"敌人至少这么远才安全"（米）。出处：**本项目新增**（bot 换弹时机阈值）。</summary>
+        public const float ReloadSafeDistance = 30f;
+
+        /// <summary>
+        /// 目标离开视野后按速度外推的**上限秒数**：瞄点 = 最后所见位置 + 目标速度 ×
+        /// min(离开视野时长, 它)。外推只在外推量仍然可信的窗口内有效，再久就按"记忆位置"静瞄。
+        /// 出处：**本项目新增**（bot 预瞄实现参数，A 无 bot AI）。
+        /// </summary>
+        public const float PredictLastSeenMaxSeconds = 0.35f;
+
+        /// <summary>
+        /// 可见目标的固定提前量（秒）= 半个决策 tick：决策到实际扣扳机之间平均隔半个
+        /// <see cref="CsConst.BotTickInterval"/>，不补偿就等于每发都打在目标半个 tick 前的位置上。
+        /// 出处：**本项目新增**（bot 预瞄实现参数，A 无 bot AI）；被乘的 tick 真源 =
+        /// <c>CsConst.BotTickInterval = 0.1f</c>（<c>Core/CsConst.cs:688</c> 的 AI 决策频率 10Hz）。
+        /// </summary>
+        public const float PredictTickLeadSeconds = CsConst.BotTickInterval * 0.5f;
+
+        /// <summary>远距离优先用狙击枪的距离门槛（米）：手上有狙且目标在这个距离外就先切回主武器。
+        /// 出处：**本项目新增**（bot 选枪阈值，A 无 bot AI）。</summary>
+        public const float SniperRange = 30f;
+
+        /// <summary>
+        /// 残血后撤的血量门槛：血量低于它、且护甲低于 <see cref="RetreatArmorBelow"/>、
+        /// 且目标在 <see cref="RetreatTriggerRange"/> 之外 ⇒ 先脱离交火找掩体。
+        /// 出处：**本项目新增**（bot 撤退阈值，A 无 bot AI）。
+        /// </summary>
+        public const int RetreatHealthBelow = 30;
+
+        /// <summary>残血后撤的护甲门槛。出处：**本项目新增**（bot 撤退阈值，A 无 bot AI）。</summary>
+        public const int RetreatArmorBelow = 20;
+
+        /// <summary>残血后撤的目标距离下限（米）：只有远距离对枪才值得后撤，近距离撤离等于送背身。
+        /// 出处：**本项目新增**（bot 撤退阈值，A 无 bot AI）。</summary>
+        public const float RetreatTriggerRange = 25f;
+
+        /// <summary>一次后撤的持续时长（秒）：窗口内不开火、只朝掩体移动，结束后重新交战。
+        /// 出处：**本项目新增**（bot 撤退实现参数，A 无 bot AI）。</summary>
+        public const float RetreatHoldSeconds = 1.6f;
+
+        /// <summary>两次后撤之间的最小间隔（秒）：残血且敌人仍远时，后撤-交战会反复发生，
+        /// 这个冷却让每次后撤之后至少打一段再走。出处：**本项目新增**（bot 撤退实现参数）。</summary>
+        public const float RetreatCooldownSeconds = 5f;
+
+        /// <summary>后撤落点的候选扇面（度）：以"远离目标"为中线向两侧各扫
+        /// <see cref="RetreatCoverSteps"/> × 它，挑一个有掩体、离目标最远的可站立点。
+        /// 出处：**本项目新增**（bot 撤退实现参数，A 无 bot AI）。</summary>
+        public const float RetreatCoverStepDegrees = 20f;
+
+        /// <summary>后撤候选扇面的单侧步数（每步 <see cref="RetreatCoverStepDegrees"/> 度）。
+        /// 出处：**本项目新增**（bot 撤退实现参数）。</summary>
+        public const int RetreatCoverSteps = 4;
+
+        /// <summary>
+        /// 后撤落点评分的"掩体权重"（米）：断视线（<c>ICsMatch.HasLineOfSight</c> 为假）的候选点
+        /// 加这么多分，与"离目标多远"同量纲比较。取 10m ⇒ 有掩体的近点优先于无掩体的远点，
+        /// 但掩体后仍会挑更远的那个。出处：**本项目新增**（bot 撤退实现参数）。
+        /// </summary>
+        public const float RetreatCoverWeightMeters = 10f;
+
+        /// <summary>
+        /// 投掷前"预测落点距自己"的安全余量（米）：实际投掷方向带难度瞄准误差
+        /// （<c>CsActor.Yaw/Pitch</c> 由模拟按 <c>AimErrorDegrees</c> 扰动后再积分），
+        /// 预测落点与真实落点会差一小段，余量保证误差吃掉之后仍在爆心半径之外。
+        /// 出处：**本项目新增**（投掷安全实现参数，A 无 bot AI）。
+        /// </summary>
+        public const float GrenadeSelfSafetyMargin = 0.5f;
+
+        /// <summary>
+        /// 释放瞬间发现"这一投会落在自己爆心半径内"（视角尚未收敛到位）时的重试间隔（秒）：
+        /// 换一颗雷的代价远小于自伤，稍等让视角收敛再投。
+        /// 出处：**本项目新增**（投掷安全实现参数，A 无 bot AI）。
+        /// </summary>
+        public const float GrenadeSelfRetrySeconds = 2f;
 
         // ==================== 炸弹 ====================
         /// <summary>CT 停下拆包的距离（米）。必须 ≤ 模拟内部允许的拆包半径，否则按 E 会被判"离炸弹太远"。

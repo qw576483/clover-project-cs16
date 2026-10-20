@@ -23,6 +23,15 @@ namespace Cs16.Module.Bot
         private const string Tag = BotModule.Tag;
 
         /// <summary>
+        /// 同一个守位点上最多站几个人。超过这个数就把后来者挤去同包点的次优守位
+        /// （规格要求：同一守位点最多 2 人，第 3 人挑同 site 的次优守位）。
+        /// </summary>
+        public const int MaxPerSpot = 2;
+
+        /// <summary>判定"某队友站在该守位上"的水平半径（米）—— 与守位最小间距同一口径。</summary>
+        private const float OccupiedRadius = CsBotConst.HoldSpotMinSeparation;
+
+        /// <summary>
         /// 构造某包点的守位表：取该包点的标记点 → 过滤"站得下"（<c>ICsMap.CanStand</c>，与移动解算同一判据）
         /// → 确定性排序（x 后 z，保证同一张地图每台机器得到同一张表）→ 折叠间距过近的点。
         /// </summary>
@@ -126,12 +135,15 @@ namespace Cs16.Module.Bot
 
             var best = -1;
             var bestScore = float.MinValue;
+            var cappedBest = -1;
+            var cappedScore = float.MinValue;
 
             for (var i = 0; i < spots.Count; i++)
             {
                 if (i == current) continue;
 
                 var nearestMate = float.MaxValue;
+                var occupants = 0;
                 for (var a = 0; a < actors.Count; a++)
                 {
                     var o = actors[a];
@@ -141,6 +153,7 @@ namespace Cs16.Module.Bot
                     d.y = 0f;
                     var dist = d.magnitude;
                     if (dist < nearestMate) nearestMate = dist;
+                    if (dist < OccupiedRadius) occupants++;
                 }
 
                 if (nearestMate == float.MaxValue) nearestMate = 1e6f;   // 附近没队友 → 都行
@@ -150,10 +163,27 @@ namespace Cs16.Module.Bot
 
                 // 主判据 = 离队友远（×1000 让它压倒次判据）；次判据 = 离自己近（换位别绕半张图）
                 var score = nearestMate * 1000f - dz.magnitude;
-                if (score <= bestScore) continue;
+                if (score > bestScore)
+                {
+                    bestScore = score;
+                    best = i;
+                }
 
-                bestScore = score;
-                best = i;
+                // 人数上限是硬闸：满载（≥ MaxPerSpot）的守位只在"全部满载"时才作为兜底候选。
+                if (occupants >= MaxPerSpot) continue;
+                if (score <= cappedScore) continue;
+
+                cappedScore = score;
+                cappedBest = i;
+            }
+
+            if (cappedBest >= 0) return cappedBest;
+
+            if (LogThrottle.ShouldLog("bot.holdspot.full." + self.Id, CsBotConst.StuckWarnCooldown))
+            {
+                Game.Logger?.Warn(Tag,
+                    $"{self.Name} 的 {spots.Count} 个守位**全部**已站满 {MaxPerSpot} 人" +
+                    $"（判定半径 {OccupiedRadius:F1}m）→ 按「离队友最远」兜底选位，该守位点会超过 {MaxPerSpot} 人");
             }
 
             return best >= 0 ? best : 0;

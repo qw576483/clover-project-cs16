@@ -1343,10 +1343,18 @@ namespace Cs16.Module.Bot
                 : 0f;
         }
 
-        /// <summary>累计本 bot 成功求出路径的次数（<see cref="_replanCount"/> 的唯一自增口）。</summary>
+        /// <summary>累计本 bot 成功求出路径的次数（<see cref="_replanCount"/> 的唯一自增口），
+        /// 并按 bot 降频留一条 <c>astar</c> 现场（起终点格 + 拐点数 + 累计次数）。</summary>
         private void PathLog(Vector2Int from, Vector2Int to, List<Vector2Int> path)
         {
             _replanCount++;
+
+            if (LogThrottle.ShouldLog("bot.astar." + _ownerName, CsBotConst.StuckWarnCooldown))
+            {
+                Game.Logger.Info(Tag,
+                    $"{_ownerName} astar 段：{from} → {to}，路径 {path.Count} 个拐点" +
+                    $"（本 bot 累计求路径成功 {_replanCount} 次；判据 = 引擎 AStarContext.TryFindSmoothed）");
+            }
         }
 
         /// <summary>

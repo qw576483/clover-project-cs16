@@ -2561,6 +2561,14 @@ namespace Cs16.Module.Match
                 SwapHalves();
             }
 
+            // C4 是回合级状态：上一回合可能在"已安放"状态下结束（CT 全灭 / 比分达标结束比赛），
+            // 此时倒计时停在剩余值上。不复位就会带着上一回合的引信进入本回合：开局即"已安放"，
+            // 剩余时间一到凭空爆炸（本回合没有任何安放动作）。
+            Bomb.Reset();
+            Game.Logger.Info(Tag,
+                $"第 {roundNumber} 回合开局炸弹状态：Planted={Bomb.Planted} " +
+                $"TimeLeft={(Bomb.Planted ? Bomb.TimeLeft : -1f):F1}s Dropped={Bomb.Dropped}");
+
             RespawnAllForRound(keepLoadout: !halftime);
             GiveBombToRandomT();
             GrantRoundStartMoney();
@@ -2605,6 +2613,9 @@ namespace Cs16.Module.Match
         {
             Game.Logger.Info(Tag,
                 $"回合 {info.RoundNumber} 结束：胜方 {info.Winner}（{info.Reason}）比分 CT {info.ScoreCT} : {info.ScoreT} T");
+            Game.Logger.Info(Tag,
+                $"第 {info.RoundNumber} 回合结束炸弹状态：Planted={Bomb.Planted} " +
+                $"TimeLeft={(Bomb.Planted ? Bomb.TimeLeft : -1f):F1}s Dropped={Bomb.Dropped}");
 
             RaiseRoundEnd(info);
 

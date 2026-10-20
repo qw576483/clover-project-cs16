@@ -50,18 +50,24 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// 听最近的**敌方**声响（<see cref="CsConst.BotHearRadius"/> 内）。枪声比跑动更"可信"，
-        /// 同样距离下优先返回枪声（权重式，不用第二个魔法半径）。
+        /// 听最近的**敌方**声响：枪声用 <paramref name="gunRadius"/>、跑动声用 <paramref name="stepRadius"/>，
+        /// 两种半径各按难度分档（见 <see cref="CsBotConst.GunshotHearRadius"/> /
+        /// <see cref="CsBotConst.StepHearRadius"/>）。
+        ///
+        /// <para>两类线索按**实际水平距离**比较、近者优先：半径已经分档，再叠一个"枪声权重"
+        /// 等于在同一个模型里放两条远近口径，读日志时无法从距离反推是哪一类被听见。</para>
         /// </summary>
-        public bool TryHearEnemy(CsTeam selfTeam, UnityEngine.Vector3 listener, float radius,
-            out UnityEngine.Vector3 position, out float time, out bool gunshot)
+        /// <param name="distance">被采纳的那条线索到听者的水平距离（米）。</param>
+        public bool TryHearEnemy(CsTeam selfTeam, UnityEngine.Vector3 listener,
+            float gunRadius, float stepRadius,
+            out UnityEngine.Vector3 position, out float time, out bool gunshot, out float distance)
         {
             position = default;
             time = 0f;
             gunshot = false;
+            distance = float.MaxValue;
 
-            var r2 = radius * radius;
-            var bestScore = float.MaxValue;
+            var bestSq = float.MaxValue;
             var found = false;
 
             for (var i = 0; i < _items.Count; i++)
@@ -77,15 +83,16 @@ namespace Cs16.Module.Bot
                 var d = n.Position - listener;
                 d.y = 0f;
                 var sq = d.sqrMagnitude;
-                if (sq > r2) continue;
 
-                var score = n.Gunshot ? sq * 0.5f : sq;
-                if (score >= bestScore) continue;
+                var radius = n.Gunshot ? gunRadius : stepRadius;
+                if (sq > radius * radius) continue;
+                if (sq >= bestSq) continue;
 
-                bestScore = score;
+                bestSq = sq;
                 position = n.Position;
                 time = n.Time;
                 gunshot = n.Gunshot;
+                distance = UnityEngine.Mathf.Sqrt(sq);
                 found = true;
             }
 

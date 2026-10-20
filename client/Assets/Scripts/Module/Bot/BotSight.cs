@@ -5,7 +5,7 @@ using UnityEngine;
 namespace Cs16.Module.Bot
 {
     /// <summary><see cref="BotSight.Check"/> 的判定结果（"机器人这一眼到底看没看见"）。</summary>
-    internal enum BotSightResult
+    public enum BotSightResult
     {
         /// <summary>看得见（契约与物理两层都通过，或被"只该忽略的角色受体"挡住后放行）。</summary>
         Clear = 0,
@@ -137,6 +137,35 @@ namespace Cs16.Module.Bot
 
             blocker = "无碰撞体的遮挡物（烟雾？）";
             return BotSightResult.BlockedUnknown;
+        }
+
+        /// <summary>
+        /// 判定"看不看得见"（口径 = <see cref="Check"/> 的眼位射线），并给出**本 tick 判定通畅的瞄点**：
+        /// 眼位与胸部都通 ⇒ 给胸部（受弹面更大），否则给眼位。
+        ///
+        /// <para><b>为什么瞄点也要走同一次判定</b>：可见性与瞄点来自同一条 <see cref="Check"/> 口径，
+        /// 任何读 <c>CsBotPercept.TargetAimPoint</c> 去瞄准的一方，射的都是"本 tick 已验证通畅"的那一点，
+        /// 不会出现"看见了、瞄的点却被墙挡着"。</para>
+        ///
+        /// <para>返回 <see cref="BotSightResult.BlockedByActorOnly"/> 时调用方应按可见处理
+        /// （CS 语义：其它玩家不挡视线）。</para>
+        /// </summary>
+        /// <param name="head">眼位（<c>CsActor.EyePosition</c>）。</param>
+        /// <param name="chest">胸部瞄点（<c>Position + up × Height × ChestHeightRatio</c>）。</param>
+        public static BotSightResult CheckBody(ICsMatch match, Vector3 eye, Vector3 head, Vector3 chest,
+            float range, out Vector3 clearPoint, out string blocker, out Vector3 blockerPoint)
+        {
+            var headResult = Check(match, eye, head, range, out blocker, out blockerPoint);
+            clearPoint = head;
+
+            if (headResult != BotSightResult.Clear && headResult != BotSightResult.BlockedByActorOnly)
+                return headResult;   // 看不见：瞄点无意义，保留眼位的诊断信息
+
+            var chestResult = Check(match, eye, chest, range, out _, out _);
+            if (chestResult == BotSightResult.Clear || chestResult == BotSightResult.BlockedByActorOnly)
+                clearPoint = chest;
+
+            return headResult;
         }
 
         /// <summary>判定结果 → 一行中文（日志用）。</summary>

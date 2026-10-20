@@ -293,8 +293,8 @@ namespace Cs16.Module.Match
                 case CsBotDifficulty.Easy:
                     return new CsBotProfile
                     {
-                        // 1.0s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.65s）
-                        ReactionTime = 1.0f,
+                        // 0.55s：三档里最慢一档（发现到开火的延迟）
+                        ReactionTime = 0.55f,
                         AimErrorDegrees = 6.0f,
                         AimSpeedDegrees = 160f,
                         FireBurstMin = 0.12f, FireBurstMax = 0.30f,
@@ -308,8 +308,8 @@ namespace Cs16.Module.Match
                 case CsBotDifficulty.Hard:
                     return new CsBotProfile
                     {
-                        // 0.45s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.15s）
-                        ReactionTime = 0.45f,
+                        // 0.20s：三档里最快一档
+                        ReactionTime = 0.20f,
                         AimErrorDegrees = 1.2f,
                         AimSpeedDegrees = 520f,
                         FireBurstMin = 0.28f, FireBurstMax = 0.60f,
@@ -323,8 +323,8 @@ namespace Cs16.Module.Match
                 default: // Normal
                     return new CsBotProfile
                     {
-                        // 0.7s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.32s）
-                        ReactionTime = 0.7f,
+                        // 0.35s：三档里的中间档
+                        ReactionTime = 0.35f,
                         AimErrorDegrees = 3.0f,
                         AimSpeedDegrees = 300f,
                         FireBurstMin = 0.18f, FireBurstMax = 0.42f,
