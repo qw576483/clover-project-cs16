@@ -818,7 +818,7 @@ namespace Cs16.Module.Bot
                     ? StuckWarnReasonReplan
                     : StuckWarnReasonWall;
 
-            if (StuckWarnAllowed(reason, now))
+            if (!StuckIsExpectedStand() && StuckWarnAllowed(reason, now))
             {
                 Game.Logger.Warn(Tag,
                     BuildStuckLine(self, move, window, moved, mate, mateBlocking, reachable));

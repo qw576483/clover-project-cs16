@@ -81,6 +81,26 @@ namespace Cs16.Module.Bot
 
 
 
+        /// <summary>
+        /// 这次"想走却不动"是否属于**预期站定**：开火中、正在按（下包 / 拆包）、已经站在守位上。
+        /// 这三类不参与卡住告警统计（否则每局都会被它们占满，真正的几何卡住被埋掉）。
+        /// </summary>
+        private bool StuckIsExpectedStand()
+        {
+            if (_tickIntent.Fire) return true;
+            if (_tickSelf != null && _tickSelf.UseProgress >= 0f) return true;
+
+            if ((_state == CsBotState.Camp || _state == CsBotState.Plant) && _goalValid && _tickSelf != null)
+            {
+                var d = _goalPos - _tickSelf.Position;
+                d.y = 0f;
+                if (d.magnitude <= CsBotConst.WaypointArriveRadius) return true;
+            }
+
+            return false;
+        }
+
+
         /// <summary>组装卡住 Warn 的一整行（字段顺序 = 排查时的阅读顺序）。</summary>
         private string BuildStuckLine(CsActor self, Vector3 move, float window, float moved,
             CsActor mate, bool mateBlocking, bool reachable)
