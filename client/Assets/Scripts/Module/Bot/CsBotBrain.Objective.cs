@@ -92,6 +92,30 @@ namespace Cs16.Module.Bot
             _nextFireDiagAt = 0f;
             _nextGraceLogAt = 0f;
 
+            // 搜点 / 听声调查的回合内状态（已搜格是 per-bot 的，队级共享表在回合切换时清空）
+            if (!ReferenceEquals(_searchShareMatch, _match) || _searchShareRound != _match.RoundNumber)
+            {
+                _searchShareMatch = _match;
+                _searchShareRound = _match.RoundNumber;
+                _searchSharedCells[0].Clear();
+                _searchSharedCells[1].Clear();
+            }
+
+            _searchKind = BotSearchKind.None;
+            _searchGoal = Vector3.zero;
+            _searchStartedAt = 0f;
+            _searchDeadline = 0f;
+            _searchArrived = false;
+            _sweepStartedAt = 0f;
+            _sweepDirUntil = 0f;
+            _sweepOrderPos = 0;
+            _sweepOrderCount = 0;
+            _sweepSearched = 0;
+            _searchedCells.Clear();
+            _lastKnownSearchedSeenTime = -1f;
+            _nextNoiseInvestigateAt = 0f;
+            _noisePos = Vector3.zero;
+
             ChoosePlan(self, now);
         }
 
@@ -2105,6 +2129,440 @@ namespace Cs16.Module.Bot
             return true;
         }
 
+
+
+        // ==================================================================
+        //  搜点与听声调查
+        // ==================================================================
+        //
+        // 出处：原版 cs_bot.h:65 HuntState → 去最后已知敌人位置搜索；
+        //       cs_bot.h:118 InvestigateNoiseState → 听到枪声/脚步去查看；
+        //       cs_bot.h:436 TaskType::MOVE_TO_LAST_KNOWN_ENEMY_POSITION。
+        //
+        // 两个动作都只在"没有可见敌人、且不在记忆追击里"时接管本 tick（树上挂在交战之后、
+        // 炸弹任务之前），下包/拆包/持包推进期间一律不接管。
+
+        /// <summary>最后已知位置在短时记忆过期后的保留时长（秒）。</summary>
+        private const float LastKnownRetainSeconds = 15f;
+
+        /// <summary>去最后已知位置的赶路上限（秒）：超过就放弃，交回任务层。</summary>
+        private const float LastKnownApproachSeconds = 12f;
+
+        /// <summary>到"最后已知位置"算到达的水平距离（米）。</summary>
+        private const float SearchArriveRadius = 2f;
+
+        /// <summary>声源在这么近时不再"走过去查"（人就在跟前，交由交战 / 守点朝向处理）。</summary>
+        private const float NoiseSkipRadius = 5f;
+
+        /// <summary>听声调查的到位半径（米）：走到声源 2m 内确认（仍在 5m 查看范围内）。</summary>
+        private const float NoiseArriveRadius = 2f;
+
+        /// <summary>听声调查的赶路上限（秒）。</summary>
+        private const float NoiseApproachSeconds = 10f;
+
+        /// <summary>8 方向扫视半径（米）。</summary>
+        private const float SearchSweepRadius = 6f;
+
+        /// <summary>扫视时每个方向的停留时长（秒）。</summary>
+        private const float SearchStepSeconds = 0.6f;
+
+        /// <summary>一轮 8 方向扫视的总时长上限（秒）：扫完全部方向或到时即结束。</summary>
+        private const float SearchMaxSeconds = 6f;
+
+        /// <summary>听声调查到达后原地扫视的总时长（秒）。</summary>
+        private const float NoiseSweepSeconds = 1.5f;
+
+        /// <summary>两次听声调查之间的最小间隔（秒）：不被枪声牵着跑。</summary>
+        private const float NoiseInvestigateCooldown = 12f;
+
+        /// <summary>听见声响后允许据以出发的最长延迟（秒）。</summary>
+        private const float NoiseReactionSeconds = 2f;
+
+        private enum BotSearchKind
+        {
+            None = 0,
+            LastKnown = 1,
+            Noise = 2,
+        }
+
+        private BotSearchKind _searchKind;
+
+        /// <summary>本次搜索的目的地（最后已知位置 / 声源）。</summary>
+        private Vector3 _searchGoal;
+
+        private float _searchStartedAt;
+
+        /// <summary>赶路阶段的截止时刻。</summary>
+        private float _searchDeadline;
+
+        /// <summary>已经到达目的地、进入扫视阶段。</summary>
+        private bool _searchArrived;
+
+        private float _sweepStartedAt;
+
+        /// <summary>当前方向的时隙截止时刻。</summary>
+        private float _sweepDirUntil;
+
+        /// <summary>8 方向扫视顺序（优先没搜过的方向）。</summary>
+        private readonly int[] _sweepOrder = new int[8];
+
+        private int _sweepOrderPos;
+
+        private int _sweepOrderCount;
+
+        /// <summary>本轮扫视走过的方向数（日志用）。</summary>
+        private int _sweepSearched;
+
+        /// <summary>扫视中心（到达目的地时的站位）与基准朝向（8 方向由此旋转）。</summary>
+        private Vector3 _sweepCenter;
+
+        private Vector3 _sweepForward = Vector3.forward;
+
+        /// <summary>本 bot 本回合搜过的格（<see cref="BotNavigator.CellKeyOf"/> 打包键）。</summary>
+        private readonly HashSet<long> _searchedCells = new HashSet<long>();
+
+        /// <summary>已经去搜过的那一次"最后所见"时刻（同一时刻不重复出发）。</summary>
+        private float _lastKnownSearchedSeenTime = -1f;
+
+        /// <summary>下一次允许听声调查的时刻。</summary>
+        private float _nextNoiseInvestigateAt;
+
+        /// <summary>最近一次听到的声源（探针 / 日志只读）。</summary>
+        private Vector3 _noisePos;
+
+        /// <summary>队级共享的"已搜格"（只读参考：自己搜过的格子，队友也读得到）。</summary>
+        private static ICsMatch _searchShareMatch;
+
+        private static int _searchShareRound = int.MinValue;
+
+        private static readonly HashSet<long>[] _searchSharedCells =
+        {
+            new HashSet<long>(),      // T
+            new HashSet<long>(),      // CT
+        };
+
+        /// <summary>当前搜索种类（探针只读：0 = 无 / 1 = 去最后已知位置 / 2 = 听声调查）。</summary>
+        public int SearchKindForProbe => (int)_searchKind;
+
+        /// <summary>当前搜索目的地（探针只读）。</summary>
+        public Vector3 SearchGoalForProbe => _searchGoal;
+
+        /// <summary>本回合本 bot 已搜过的格数（探针只读）。</summary>
+        public int SearchedCellCountForProbe => _searchedCells.Count;
+
+        /// <summary>
+        /// 本 tick 尝试接管"去最后已知位置 / 听声调查"。
+        /// 返回 true = 本 tick 的移动与瞄点已经写进 <c>_tickIntent</c>。
+        /// </summary>
+        private bool TrySearchStep(float now)
+        {
+            var self = _tickSelf;
+            if (self == null || !self.IsAlive) return false;
+
+            if (SearchBlockedByObjective(self))
+            {
+                AbortSearch(now, "任务层优先（下包 / 拆包 / 持包推进）");
+                return false;
+            }
+
+            // 交战分支先于本节点执行；走到这里还带着"有目标"的搜索 = 上一次搜索被交战打断。
+            if (_visibleNow || _targetId != 0)
+            {
+                AbortSearch(now, "出现交战目标");
+                return false;
+            }
+
+            if (_searchKind == BotSearchKind.None && !TryBeginSearch(self, now)) return false;
+            return ContinueSearch(self, ref _tickIntent, now);
+        }
+
+
+        /// <summary>下包 / 拆包 / 持包下包期间不搜点、不调查。</summary>
+        private bool SearchBlockedByObjective(CsActor self)
+        {
+            if (self.UseProgress >= 0f) return true;                        // E 正在按（下包 / 拆包）
+            if (self.Team == CsTeam.CT && _match.BombPlanted) return true;  // C4 已下：拆包优先
+            if (self.Team == CsTeam.T && self.HasBomb && !_match.BombPlanted) return true;  // 持包推进下包
+            return false;
+        }
+
+
+        /// <summary>按"听声调查优先于搜点"的顺序决定是否出发；返回 true = 已开始一次搜索。</summary>
+        private bool TryBeginSearch(CsActor self, float now)
+        {
+            // ① 听声调查：枪声 / 脚步，听见后 2s 内出发，每 12s 最多一次。
+            //    声源已在查看半径内时不出发 —— 此时人就在跟前，走过去的位移为零，
+            //    看一眼由交战 / 守点的朝向逻辑负责；只有"需要走过去"的声响才值得打断当前任务。
+            if (_heardFresh && now - _heardTime <= NoiseReactionSeconds && now >= _nextNoiseInvestigateAt &&
+                _heardDistance > NoiseSkipRadius)
+            {
+                _noisePos = _heardPos;
+                _nextNoiseInvestigateAt = now + NoiseInvestigateCooldown;
+                BeginSearch(BotSearchKind.Noise, _noisePos, now, NoiseApproachSeconds);
+
+                Game.Logger.Info(Tag,
+                    $"{_name}（{_difficulty}）听声调查 heard={(_heardGunshot ? "gun" : "step")} " +
+                    $"dist={_heardDistance:F1}m 声源=({_noisePos.x:F1},{_noisePos.z:F1}) " +
+                    $"距响声 {now - _heardTime:F2}s ≤ {NoiseReactionSeconds:F0}s → 去 {NoiseArriveRadius:F0}m 内查看" +
+                    $"（本 bot {NoiseInvestigateCooldown:F0}s 内最多一次）");
+                return true;
+            }
+
+            // ② 去最后已知位置：短时记忆已过期（记忆期内由交战分支追击），最后所见仍在保留期内。
+            if (_lastSeenTime <= 0f || _lastSeenPos.sqrMagnitude < 0.0001f) return false;
+
+            var age = now - _lastSeenTime;
+            if (age <= CsBotConst.TargetMemorySeconds) return false;
+            if (age > LastKnownRetainSeconds) return false;
+            if (Mathf.Abs(_lastKnownSearchedSeenTime - _lastSeenTime) < 0.001f) return false;
+
+            var flat = _lastSeenPos - self.Position;
+            flat.y = 0f;
+
+            BeginSearch(BotSearchKind.LastKnown, _lastSeenPos, now, LastKnownApproachSeconds);
+
+            Game.Logger.Info(Tag,
+                $"{_name}（{_difficulty}）去最后已知位置 ({_lastSeenPos.x:F1},{_lastSeenPos.y:F1},{_lastSeenPos.z:F1}) " +
+                $"age={age:F2}s（短时记忆 {CsBotConst.TargetMemorySeconds:F1}s 已过期，最后已知保留 {LastKnownRetainSeconds:F0}s）" +
+                $"距 {flat.magnitude:F1}m → 到达 {SearchArriveRadius:F0}m 内做 {SearchSweepRadius:F0}m 8 方向扫视");
+            return true;
+        }
+
+
+        private void BeginSearch(BotSearchKind kind, Vector3 goal, float now, float approachSeconds)
+        {
+            _searchKind = kind;
+            _searchGoal = goal;
+            _searchStartedAt = now;
+            _searchDeadline = now + approachSeconds;
+            _searchArrived = false;
+            _sweepStartedAt = 0f;
+            _sweepDirUntil = 0f;
+            _sweepOrderPos = 0;
+            _sweepOrderCount = 0;
+            _sweepSearched = 0;
+        }
+
+
+        /// <summary>赶路 → 到达 → 扫视。返回 false = 本次搜索已结束（交回任务层）。</summary>
+        private bool ContinueSearch(CsActor self, ref CsBotIntent intent, float now)
+        {
+            var arrive = _searchKind == BotSearchKind.Noise ? NoiseArriveRadius : SearchArriveRadius;
+
+            if (!_searchArrived)
+            {
+                if (now >= _searchDeadline)
+                {
+                    EndSearch(self, now, "赶路超时");
+                    return false;
+                }
+
+                if (BotNavigator.Arrived(self.Position, _searchGoal, arrive))
+                {
+                    BeginSweep(self, now);
+                }
+                else
+                {
+                    SetState(CsBotState.Patrol, now);
+                    intent.State = CsBotState.Patrol;
+                    intent.Move = _nav.ComputeMove(self.Position, _searchGoal, arrive, now,
+                                                   viaRoute: false, hullHeight: self.Height);
+                    intent.AimPoint = WithEyeHeight(_searchGoal);
+                    return true;
+                }
+            }
+
+            return SweepStep(self, ref intent, now);
+        }
+
+
+        private void BeginSweep(CsActor self, float now)
+        {
+            _searchArrived = true;
+            _sweepStartedAt = now;
+            _sweepCenter = self.Position;
+            _sweepForward = Forward(self.Yaw, 0f);
+            _sweepOrderPos = 0;
+            _sweepSearched = 0;
+
+            // 8 方向 = 基准朝向每 45° 一个；顺序上把"没搜过的格"排前面。
+            _sweepOrderCount = 8;
+            for (var i = 0; i < _sweepOrderCount; i++) _sweepOrder[i] = i;
+            for (var i = 1; i < _sweepOrderCount; i++)
+            {
+                var cur = _sweepOrder[i];
+                var curSearched = CellSearched(SweepPoint(cur), self.Team) ? 1 : 0;
+                var j = i - 1;
+                while (j >= 0 && (CellSearched(SweepPoint(_sweepOrder[j]), self.Team) ? 1 : 0) > curSearched)
+                {
+                    _sweepOrder[j + 1] = _sweepOrder[j];
+                    j--;
+                }
+                _sweepOrder[j + 1] = cur;
+            }
+
+            var step = StepSeconds();
+            _sweepDirUntil = now + step;
+
+            Game.Logger.Info(Tag,
+                $"{_name}（{_difficulty}）{KindLabel()}到达 ({self.Position.x:F1},{self.Position.z:F1}) " +
+                $"→ 开始扫视（{SearchSweepRadius:F0}m × 8 方向，{(_searchKind == BotSearchKind.Noise ? NoiseSweepSeconds : SearchMaxSeconds):F1}s）");
+        }
+
+
+        private bool SweepStep(CsActor self, ref CsBotIntent intent, float now)
+        {
+            var step = StepSeconds();
+
+            // 时隙推进：一个方向看满 step 秒就记格子换下一个；8 个方向走完即结束。
+            while (now >= _sweepDirUntil)
+            {
+                MarkSweptCell(self);
+                _sweepOrderPos++;
+                if (_sweepOrderPos >= _sweepOrderCount)
+                {
+                    EndSearch(self, now, "8 方向已扫完");
+                    return false;
+                }
+                _sweepDirUntil += step;
+            }
+
+            // 最后已知位置：扫视超过 6s 直接结束（不无限转圈）。
+            if (_searchKind == BotSearchKind.LastKnown && now - _sweepStartedAt >= SearchMaxSeconds)
+            {
+                EndSearch(self, now, $"扫视 {SearchMaxSeconds:F0}s 超时");
+                return false;
+            }
+
+            var point = SweepPoint(_sweepOrder[_sweepOrderPos]);
+            var canWalk = _searchKind == BotSearchKind.LastKnown && PointReachable(self, point);
+
+            SetState(canWalk ? CsBotState.Patrol : CsBotState.Camp, now);
+            intent.State = _state;
+            intent.Move = canWalk
+                ? _nav.ComputeMove(self.Position, point, 0.8f, now, viaRoute: false, hullHeight: self.Height)
+                : Vector3.zero;
+            intent.AimPoint = WithEyeHeight(point);
+            return true;
+        }
+
+
+        private float StepSeconds()
+        {
+            return _searchKind == BotSearchKind.Noise ? NoiseSweepSeconds / 8f : SearchStepSeconds;
+        }
+
+
+        /// <summary>第 <paramref name="dirIndex"/> 个扫视方向上的世界点（基准朝向旋转 45°×i，半径 6m，贴地）。</summary>
+        private Vector3 SweepPoint(int dirIndex)
+        {
+            var dir = Quaternion.Euler(0f, dirIndex * 45f, 0f) * _sweepForward;
+            dir.y = 0f;
+            if (dir.sqrMagnitude < 0.0001f) dir = Vector3.forward;
+            dir.Normalize();
+
+            var p = _sweepCenter + dir * SearchSweepRadius;
+            if (_map != null && _map.IsLoaded &&
+                _map.TrySampleGround(p + Vector3.up * 2f, out var ground, out _, 4f))
+            {
+                p.y = ground.y;
+            }
+            return p;
+        }
+
+
+        private bool PointReachable(CsActor self, Vector3 point)
+        {
+            if (_map == null || !_map.IsLoaded) return false;
+            if (!_map.CanStand(point)) return false;
+            return _nav.CanReach(self.Position, point);
+        }
+
+
+        /// <summary>这个格是否已经搜过（本 bot 搜过的 + 队友搜过的）。</summary>
+        private bool CellSearched(Vector3 point, CsTeam team)
+        {
+            var key = BotNavigator.CellKeyOf(point);
+            if (key == long.MinValue) return false;
+            if (_searchedCells.Contains(key)) return true;
+            var idx = TeamCellIndex(team);
+            return idx >= 0 && _searchSharedCells[idx].Contains(key);
+        }
+
+
+        private void MarkSweptCell(CsActor self)
+        {
+            var key = BotNavigator.CellKeyOf(SweepPoint(_sweepOrder[_sweepOrderPos]));
+            if (key == long.MinValue) return;
+
+            if (_searchedCells.Add(key)) _sweepSearched++;
+
+            var idx = TeamCellIndex(self.Team);
+            if (idx >= 0) _searchSharedCells[idx].Add(key);
+        }
+
+
+        private static int TeamCellIndex(CsTeam team)
+        {
+            switch (team)
+            {
+                case CsTeam.T: return 0;
+                case CsTeam.CT: return 1;
+                default: return -1;
+            }
+        }
+
+
+        private string KindLabel()
+        {
+            return _searchKind == BotSearchKind.Noise ? "听声调查" : "去最后已知位置";
+        }
+
+
+        private void EndSearch(CsActor self, float now, string why)
+        {
+            if (_searchKind == BotSearchKind.None) return;
+
+            var kind = _searchKind;
+            if (kind == BotSearchKind.LastKnown) _lastKnownSearchedSeenTime = _lastSeenTime;
+
+            Game.Logger.Info(Tag,
+                $"{_name}（{_difficulty}）{KindLabel()}结束：{why}（扫过 {_sweepSearched} 个方向，" +
+                $"本回合已搜 {_searchedCells.Count} 格，耗时 {now - _searchStartedAt:F1}s）");
+
+            _searchKind = BotSearchKind.None;
+            _searchGoal = Vector3.zero;
+            _searchStartedAt = 0f;
+            _searchDeadline = 0f;
+            _searchArrived = false;
+            _sweepStartedAt = 0f;
+            _sweepDirUntil = 0f;
+            _sweepOrderPos = 0;
+            _sweepOrderCount = 0;
+            _sweepSearched = 0;
+        }
+
+
+        /// <summary>任务层接管时中止搜索（只留一条痕，不重复刷）。</summary>
+        private void AbortSearch(float now, string why)
+        {
+            if (_searchKind == BotSearchKind.None) return;
+
+            Game.Logger.Info(Tag,
+                $"{_name}（{_difficulty}）{KindLabel()}中止：{why}（已走 {now - _searchStartedAt:F1}s、" +
+                $"扫过 {_sweepSearched} 个方向）");
+
+            _searchKind = BotSearchKind.None;
+            _searchGoal = Vector3.zero;
+            _searchStartedAt = 0f;
+            _searchDeadline = 0f;
+            _searchArrived = false;
+            _sweepStartedAt = 0f;
+            _sweepDirUntil = 0f;
+            _sweepOrderPos = 0;
+            _sweepOrderCount = 0;
+            _sweepSearched = 0;
+        }
 
 
         // ==================================================================

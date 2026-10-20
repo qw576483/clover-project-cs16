@@ -44,6 +44,8 @@ namespace Cs16.Module.Bot
         // ==================================================================
         private CsBotIntent Engage(CsActor self, CsBotIntent intent, float now)
         {
+            MaybeRetarget(self, now);
+
             var target = _match.Find(_targetId);
             if (target == null || !target.IsAlive)
             {
@@ -1467,6 +1469,793 @@ namespace Cs16.Module.Bot
         }
 
 
+
+        // ==================================================================
+        //  多目标威胁排序
+        // ==================================================================
+        // 出处：原版 `cs_bot_vision.cpp` 的 `FindMostDangerousThreat()`（`cs_bot.h:955`）从视野内所有敌人里
+        // 挑一个"最危险"的（原始注释：feeds into reaction time queue）。本工程能观测的只有位置 / 朝向 /
+        // 血量 / 手持武器 ⇒ 按这四项加权；权重值**本项目新增**（A 的 profile 数据不在盘，见差异 #58）。
+        /// <summary>"对方正在瞄我"的朝向夹角（度）：与感知选目标同一口径（敌人朝向与我方夹角 ≤ 它）。</summary>
+        private const float ThreatAimingConeDegrees = 20f;
+
+        /// <summary>残血敌人在威胁排序里的血量门槛：低于它就优先补枪。</summary>
+        private const int ThreatLowHealth = 50;
+
+        /// <summary>换目标所需的威胁提升比例：新目标必须高出 20% 才换，防两个目标交替抖动。</summary>
+        private const float ThreatSwitchRatio = 1.2f;
+
+        /// <summary>判定"这个敌人本 tick 可见"的时间容差（秒）：感知在同一个 <c>now</c> 刷新记忆。</summary>
+        private const float ThreatVisibleEpsilonSeconds = 0.02f;
+
+        /// <summary>
+        /// 换到新目标后的锁定窗口（秒）：感知每 tick 按"最近优先"重新选目标，会把刚换的目标立刻改回去
+        /// （实测同一对 actor 一秒内来回换 4 次）。窗口内以这里的选择为准，窗口过了再交给威胁排序。
+        /// </summary>
+        private const float RetargetHoldSeconds = 1.5f;
+
+        /// <summary>
+        /// 关掉片 C 的三条交战分支（狙蹲守 / 掩体 / peek），只留威胁排序。
+        /// 测试入口：用于同一环境里对"有 / 无这三条分支"的命中率做对照，不改变任何玩法数值。
+        /// </summary>
+        public static bool BranchDisabledForTest { get; set; }
+
+        /// <summary>锁定的目标 id（0 = 没锁）；<see cref="_pinnedUntil"/> 到期后失效。</summary>
+        private long _pinnedTargetId;
+
+        private float _pinnedUntil;
+
+        /// <summary>一次威胁评估的分项（数值用于比较，布尔用于日志里的原因文字）。</summary>
+        private struct ThreatParts
+        {
+            public float Score;
+            public float Distance;
+            public bool AimingAtMe;
+            public bool LowHealth;
+            public bool PrimaryWeapon;
+        }
+
+        /// <summary>
+        /// 交战目标重选：从本 tick 可见的敌人里取威胁最高者；只有高出当前目标
+        /// <see cref="ThreatSwitchRatio"/> 倍时才换（防抖），换时打一行"换目标"。
+        /// 当前目标本 tick 不可见（记忆期内）时不设门限 —— 有可见敌人就先打看得见的。
+        /// </summary>
+        private void MaybeRetarget(CsActor self, float now)
+        {
+            // 锁定窗口内以刚换的目标为准（感知会按"最近优先"把它改回去，这里静默掰回来，不重复记日志）。
+            if (_pinnedTargetId != 0)
+            {
+                if (now >= _pinnedUntil) _pinnedTargetId = 0;
+                else if (VisibleThisTick(_pinnedTargetId))
+                {
+                    var pinned = _match.Find(_pinnedTargetId);
+                    if (pinned != null && pinned.IsAlive)
+                    {
+                        if (_targetId != _pinnedTargetId) AdoptTarget(self, pinned, now);
+                        return;
+                    }
+                }
+                else
+                {
+                    _pinnedTargetId = 0;
+                }
+            }
+
+            var current = default(ThreatParts);
+            var currentVisible = false;
+            var best = default(ThreatParts);
+            CsActor bestActor = null;
+
+            var actors = _match.Actors;
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var enemy = actors[i];
+                if (enemy == null || !enemy.IsAlive || enemy.Id == self.Id) continue;
+                if (enemy.Team == self.Team) continue;
+                if (enemy.Team != CsTeam.T && enemy.Team != CsTeam.CT) continue;
+                if (!_enemyMemory.TryGetValue(enemy.Id, out var memory)) continue;
+                if (Mathf.Abs(memory.LastSeenTime - now) > ThreatVisibleEpsilonSeconds) continue;
+
+                var parts = ThreatOf(self, enemy);
+                if (enemy.Id == _targetId)
+                {
+                    current = parts;
+                    currentVisible = true;
+                    continue;
+                }
+
+                if (bestActor != null && parts.Score <= best.Score) continue;
+                best = parts;
+                bestActor = enemy;
+            }
+
+            if (bestActor == null) return;
+
+            var switchOver = !currentVisible || best.Score > current.Score * ThreatSwitchRatio;
+            if (!switchOver) return;
+
+            var oldId = _targetId;
+            var oldScore = currentVisible ? current.Score : 0f;
+            AdoptTarget(self, bestActor, now);
+            _pinnedTargetId = bestActor.Id;
+            _pinnedUntil = now + RetargetHoldSeconds;
+            Game.Logger.Info(Tag,
+                $"换目标 actor {oldId} → actor {bestActor.Id}：威胁 {oldScore:F2} → {best.Score:F2}" +
+                $"（{(currentVisible ? $"新目标高出 {(ThreatSwitchRatio - 1f):P0} 才换" : "原目标本 tick 不可见")}；" +
+                $"{ThreatText(best)}）");
+        }
+
+        /// <summary>威胁 = 1/距离 + 正在瞄我 0.5 + 血量低 0.3 + 手持主武器 0.2（分项含义见 <see cref="ThreatText"/>）。</summary>
+        private static ThreatParts ThreatOf(CsActor self, CsActor enemy)
+        {
+            var dist = Vector3.Distance(self.EyePosition, enemy.EyePosition);
+            var parts = new ThreatParts { Distance = dist, Score = 1f / Mathf.Max(1f, dist) };
+
+            var toMe = self.EyePosition - enemy.EyePosition;
+            toMe.y = 0f;
+            if (toMe.sqrMagnitude > 0.0004f &&
+                Vector3.Angle(Forward(enemy.Yaw, 0f), toMe) <= ThreatAimingConeDegrees)
+            {
+                parts.AimingAtMe = true;
+                parts.Score += 0.5f;
+            }
+
+            if (enemy.Health <= ThreatLowHealth)
+            {
+                parts.LowHealth = true;
+                parts.Score += 0.3f;
+            }
+
+            var def = string.IsNullOrEmpty(enemy.ActiveWeapon) ? null : CsWeapons.Get(enemy.ActiveWeapon);
+            if (def != null &&
+                (def.Class == CsWeaponClass.Rifle || def.Class == CsWeaponClass.SMG ||
+                 def.Class == CsWeaponClass.Shotgun || def.Class == CsWeaponClass.MachineGun ||
+                 def.Class == CsWeaponClass.Sniper))
+            {
+                parts.PrimaryWeapon = true;
+                parts.Score += 0.2f;
+            }
+
+            return parts;
+        }
+
+        /// <summary>威胁分项的可读文字（写进"换目标"日志：为什么它更危险）。</summary>
+        private static string ThreatText(ThreatParts parts)
+        {
+            var text = $"距 {parts.Distance:F1}m";
+            if (parts.AimingAtMe) text += "、正瞄我";
+            if (parts.LowHealth) text += $"、残血≤{ThreatLowHealth}";
+            if (parts.PrimaryWeapon) text += "、持主武器";
+            return text;
+        }
+
+        /// <summary>
+        /// 把交战目标切到 <paramref name="enemy"/>，并把"最后所见 / 反应计时 / 可打点"一起搬到它身上
+        /// —— 与 <see cref="UpdatePerception"/> 选中目标时的写法同口径（反应计时绑敌人身份，不重算已见过的敌人）。
+        /// </summary>
+        private void AdoptTarget(CsActor self, CsActor enemy, float now)
+        {
+            var memorySeconds = CsBotConst.MemorySeconds(_difficulty);
+            if (!_enemySeenAt.TryGetValue(enemy.Id, out var seenAt) || now - seenAt > memorySeconds)
+            {
+                _firstSeenTime = now;
+                _wobbleRefreshAt = 0f;
+                _headRollAt = 0f;
+            }
+
+            _enemySeenAt[enemy.Id] = now;
+            _targetId = enemy.Id;
+            _lastSeenTime = now;
+            _lastSeenPos = enemy.EyePosition;
+            _lastSeenVel = enemy.Velocity;
+            _visibleNow = true;
+            _closestVisibleDist = Vector3.Distance(self.EyePosition, enemy.EyePosition);
+
+            var chest = enemy.Position + Vector3.up * (enemy.Height * CsBotConst.ChestHeightRatio);
+            BotSight.CheckBody(_match, self.EyePosition, enemy.EyePosition, chest, _profile.VisionRange,
+                out var aimPoint, out _, out _);
+            _targetAimPoint = aimPoint;
+        }
+
+
+
+        // ==================================================================
+        //  掩体选择（Hide）
+        // ==================================================================
+        // 出处：原版 `HideState`（`cs_bot.h:195`）的 `SetHidingSpot` / `SetDuration` —— 先选一个藏身点、
+        // 再按持续时间躲。本工程没有 nav 藏身点表 ⇒ 以自身为圆心在 3~8m 环形采样可站立点，
+        // 用物理射线判"这一点能不能挡住敌人视线"（旧的"反方向后退"不判遮挡，方向对但可能仍暴露）。
+        /// <summary>残血躲掩体的血量门槛（HP 低于它且敌人可见 ⇒ 找掩体）。</summary>
+        private const float HideHealthBelow = 35f;
+
+        /// <summary>被这么多敌人同时看见（视野内可见敌人数）⇒ 找掩体。</summary>
+        private const int HideVisibleEnemies = 2;
+
+        /// <summary>触发找掩体的敌人距离上限（米）：更远的敌人不值得脱离交火。</summary>
+        private const float HideThreatRange = 30f;
+
+        /// <summary>掩体候选采样的最近半径（米）。</summary>
+        private const float HideCoverMin = 3f;
+
+        /// <summary>掩体候选采样的最远半径（米）。</summary>
+        private const float HideCoverMax = 8f;
+
+        /// <summary>掩体候选采样的半径步长（米）：3/4/5/6/7/8 共 6 圈。</summary>
+        private const float HideCoverRingStep = 1f;
+
+        /// <summary>每圈的采样点数（15° 一个）。</summary>
+        private const int HideCoverAngles = 24;
+
+        /// <summary>掩体点到敌人的最小水平距离（米）：贴脸点挡不住也来不及蹲。</summary>
+        private const float HideEnemyMinGap = 6f;
+
+        /// <summary>到达掩体点后蹲下的时长（秒）。</summary>
+        private const float HideCrouchSeconds = 1.2f;
+
+        /// <summary>从开始移动到掩体点的兜底时限（秒）：超时按"没走到"收尾，不无限卡在移动里。</summary>
+        private const float HideTravelSeconds = 4f;
+
+        /// <summary>两次找掩体之间的最小间隔（秒）：条件（残血 / 多敌可见）会持续成立，没有它就会每 tick 重试。</summary>
+        private const float HideCooldown = 6f;
+
+        /// <summary>下次允许尝试找掩体的时刻（失败也起算，避免同一 tick 反复刷"失败"）。</summary>
+        private float _hideRetryAt;
+
+        /// <summary>选中的可达掩体点最多试几个（按离自己由近到远）：每个要跑一次 A*，只在小范围内试。</summary>
+        private const int HideReachProbes = 6;
+
+        /// <summary>掩体候选（一个可站立点 + 它挡住的敌人数 / 到最近敌人的距离）。</summary>
+        private struct CoverCandidate
+        {
+            public Vector3 Point;
+            public float SelfDistance;
+            public float EnemyGap;
+            public int Covered;
+        }
+
+        /// <summary>本次搜索的候选缓冲（只在进入掩体分支时填充，不在每 tick 上分配）。</summary>
+        private readonly List<CoverCandidate> _coverCandidates = new List<CoverCandidate>(128);
+
+        /// <summary>本次躲掩体的兜底截止时刻（0 = 不在躲）。</summary>
+        private float _hideDeadline;
+
+        /// <summary>选定的掩体点（世界坐标）。</summary>
+        private Vector3 _hideGoal;
+
+        /// <summary>是否已走到掩体点。</summary>
+        private bool _hideArrived;
+
+        /// <summary>到达掩体点后蹲到这一刻。</summary>
+        private float _hideCrouchUntil;
+
+        /// <summary>掩体候选的敌人缓冲（当前目标排第 0 位，其余可见敌人在后）。</summary>
+        private readonly CsActor[] _coverEnemies = new CsActor[4];
+
+        /// <summary>
+        /// 是否该找掩体：有可见敌人、最近可见敌人在 <see cref="HideThreatRange"/> 内，
+        /// 且（HP &lt; <see cref="HideHealthBelow"/> 或 同时被 <see cref="HideVisibleEnemies"/> 人可见）。
+        /// </summary>
+        private bool HideDue()
+        {
+            var self = _tickSelf;
+            if (self == null || !self.IsAlive) return false;
+            if (CsClock.Now < _hideRetryAt) return false;
+            if (!_visibleNow || _targetId == 0) return false;
+            if (_closestVisibleDist > HideThreatRange) return false;
+            if (self.Health < HideHealthBelow) return true;
+            return _visibleEnemies >= HideVisibleEnemies;
+        }
+
+        /// <summary>
+        /// 掩体分支：进入时选点（成功 → 打"找掩体 成功"并走过去；失败 → 打"找掩体 失败"并让出分支，
+        /// 由后续的交战 / 后撤分支接手）。到点后蹲 <see cref="HideCrouchSeconds"/> 秒再结束。
+        /// </summary>
+        private BtStatus HideStep(CsActor self, ref CsBotIntent intent, float now)
+        {
+            intent.Fire = false;
+            intent.Walk = false;
+            intent.AimPoint = _lastSeenPos.sqrMagnitude > 0.0001f ? _lastSeenPos : LookAhead(self);
+
+            if (_hideDeadline <= 0f)
+            {
+                if (!TryChooseCover(self, out var point, out var coverCount, out var enemies, out var gap))
+                {
+                    Game.Logger.Info(Tag,
+                        $"找掩体 失败：{_name}（{_difficulty}）HP {self.Health}、可见敌 {_visibleEnemies} 人，" +
+                        $"{HideCoverMin:F0}~{HideCoverMax:F0}m 内没有既挡视线、距敌又 ≥{HideEnemyMinGap:F0}m 的落点" +
+                        $" → 退回后撤");
+                    _hideRetryAt = now + HideCooldown;
+                    return BtStatus.Failure;
+                }
+
+                _hideGoal = point;
+                _hideArrived = false;
+                _hideCrouchUntil = 0f;
+                _hideDeadline = now + HideTravelSeconds;
+                Game.Logger.Info(Tag,
+                    $"找掩体 成功：{_name}（{_difficulty}）HP {self.Health}、可见敌 {_visibleEnemies} 人 → " +
+                    $"掩体点 ({point.x:F1},{point.z:F1})，距自己 {HorizontalDistance(self.Position, point):F1}m，" +
+                    $"距最近敌人 {gap:F1}m（对 {coverCount}/{enemies} 个可见敌人都挡住视线）");
+            }
+
+            SetState(CsBotState.Engage, now);
+            intent.State = CsBotState.Engage;
+
+            if (!_hideArrived)
+            {
+                if (HorizontalDistance(self.Position, _hideGoal) <= 0.6f)
+                {
+                    _hideArrived = true;
+                    _hideCrouchUntil = now + HideCrouchSeconds;
+                    intent.Move = Vector3.zero;
+                    intent.Crouch = true;
+                    Game.Logger.Info(Tag,
+                        $"{_name} 已到掩体点 ({_hideGoal.x:F1},{_hideGoal.z:F1}) → 蹲下 {HideCrouchSeconds:F1}s 等交火窗口");
+                }
+                else if (now >= _hideDeadline)
+                {
+                    _hideDeadline = 0f;
+                    Game.Logger.Info(Tag,
+                        $"{_name} 走到掩体点超时（{HideTravelSeconds:F1}s，仍在 {HorizontalDistance(self.Position, _hideGoal):F1}m 外）" +
+                        $" → 就地交战");
+                    return BtStatus.Success;
+                }
+                else
+                {
+                    intent.Move = _nav.ComputeMove(self.Position, _hideGoal, 0.5f, now,
+                                                   viaRoute: false, hullHeight: self.Height);
+                    intent.Crouch = false;
+                    return BtStatus.Running;
+                }
+            }
+
+            intent.Move = Vector3.zero;
+            intent.Crouch = true;
+
+            if (now < _hideCrouchUntil) return BtStatus.Running;
+
+            _hideDeadline = 0f;
+            return BtStatus.Success;
+        }
+
+        /// <summary>
+        /// 在自身周围 <see cref="HideCoverMin"/>~<see cref="HideCoverMax"/> 的环上找掩体点：
+        /// 对每个可站立点做 <c>Physics.Linecast(敌人眼 → 点+1.6m)</c>，要求当前目标与其它可见敌人都被**世界几何**挡住
+        /// （只被角色挡住不算掩体），且到每个敌人 ≥ <see cref="HideEnemyMinGap"/>；在合格点里取离自己最近的。
+        /// </summary>
+        private bool TryChooseCover(CsActor self, out Vector3 point, out int coverCount, out int enemies, out float gap)
+        {
+            point = self.Position;
+            coverCount = 0;
+            enemies = 0;
+            gap = float.MaxValue;
+
+            if (_map == null || !_map.IsLoaded) return false;
+
+            enemies = CollectVisibleEnemies(self, _coverEnemies);
+            if (enemies == 0) return false;
+
+            _coverCandidates.Clear();
+
+            for (var ring = 0; ring < 6; ring++)
+            {
+                var radius = HideCoverMin + ring * HideCoverRingStep;
+                for (var a = 0; a < HideCoverAngles; a++)
+                {
+                    var cand = self.Position +
+                               Quaternion.Euler(0f, a * (360f / HideCoverAngles), 0f) * Vector3.forward * radius;
+                    if (!_map.CanStand(cand, CsConst.PlayerRadius, self.Height)) continue;
+
+                    var candEye = cand + Vector3.up * CsConst.EyeHeight;
+                    var covered = 0;
+                    var nearest = float.MaxValue;
+                    var usable = true;
+
+                    for (var i = 0; i < enemies; i++)
+                    {
+                        var enemy = _coverEnemies[i];
+                        var d = HorizontalDistance(cand, enemy.Position);
+                        if (d < HideEnemyMinGap)
+                        {
+                            usable = false;
+                            break;
+                        }
+
+                        if (d < nearest) nearest = d;
+                        if (LineBlockedByWorld(enemy.EyePosition, candEye)) covered++;
+                        else if (i == 0)
+                        {
+                            // 第 0 位是当前交战目标：这个点必须挡住它（"能挡住当前敌人视线的点"）；
+                            // 其余可见敌只作为加分项，不强求一次挡住所有人（否则开阔地永远找不到）。
+                            usable = false;
+                            break;
+                        }
+                    }
+
+                    if (!usable) continue;
+
+                    _coverCandidates.Add(new CoverCandidate
+                    {
+                        Point = cand,
+                        SelfDistance = HorizontalDistance(self.Position, cand),
+                        EnemyGap = nearest,
+                        Covered = covered,
+                    });
+                }
+            }
+
+            if (_coverCandidates.Count == 0) return false;
+
+            // 取最近的那几个候选，逐个问"导航走得到吗"：CanStand 只说明这一点站得住，
+            // 不说明它和现在的位置连通（隔墙的落点会让机器人顶着墙推 2s，变成卡住告警）。
+            _coverCandidates.Sort((x, y) => x.SelfDistance.CompareTo(y.SelfDistance));
+            var probes = Mathf.Min(HideReachProbes, _coverCandidates.Count);
+            for (var i = 0; i < probes; i++)
+            {
+                var c = _coverCandidates[i];
+                if (!_nav.CanReach(self.Position, c.Point)) continue;
+
+                point = c.Point;
+                coverCount = c.Covered;
+                gap = c.EnemyGap;
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// 这一段"敌人眼 → 目标点"是否被**世界几何**挡住。只被角色受击体挡住不算掩体
+        /// （CS 1.6 里其它玩家不挡视线，与 <see cref="BotSight"/> 同一语义）。
+        /// </summary>
+        private static bool LineBlockedByWorld(Vector3 from, Vector3 to)
+        {
+            var delta = to - from;
+            if (delta.sqrMagnitude < 0.0001f) return false;
+            if (!Physics.Linecast(from, to, out var hit, ~0, QueryTriggerInteraction.Ignore)) return false;
+            var proxy = hit.collider != null ? hit.collider.GetComponentInParent<CsHitboxProxy>() : null;
+            return proxy == null;
+        }
+
+        /// <summary>收集本 tick 可见的敌人（当前目标排第 0 位）；返回写入缓冲的条数。</summary>
+        private int CollectVisibleEnemies(CsActor self, CsActor[] buffer)
+        {
+            var n = 0;
+            var target = _targetId != 0 ? _match.Find(_targetId) : null;
+            if (target != null && target.IsAlive && VisibleThisTick(target.Id))
+            {
+                buffer[n++] = target;
+            }
+
+            var actors = _match.Actors;
+            for (var i = 0; i < actors.Count && n < buffer.Length; i++)
+            {
+                var enemy = actors[i];
+                if (enemy == null || !enemy.IsAlive || enemy.Id == self.Id) continue;
+                if (enemy.Team == self.Team) continue;
+                if (enemy.Team != CsTeam.T && enemy.Team != CsTeam.CT) continue;
+                if (target != null && enemy.Id == target.Id) continue;
+                if (!VisibleThisTick(enemy.Id)) continue;
+                buffer[n++] = enemy;
+            }
+
+            return n;
+        }
+
+        /// <summary>这个敌人在本 tick 的感知里是否可见（记忆在同一个 <c>now</c> 刷新）。</summary>
+        private bool VisibleThisTick(long actorId)
+        {
+            return _enemyMemory.TryGetValue(actorId, out var memory) &&
+                   Mathf.Abs(memory.LastSeenTime - CsClock.Now) <= ThreatVisibleEpsilonSeconds;
+        }
+
+
+
+        // ==================================================================
+        //  Peek 节奏
+        // ==================================================================
+        // 出处：原版 `AttackState`（`cs_bot.h:80`）的 `DodgeStateType`（`cs_bot.h:92`：STEADY_ON / SLIDE_LEFT /
+        // SLIDE_RIGHT / JUMP）—— 交火期按"站定 / 侧滑"的节奏换姿态，而不是一直站着。这里的 peek =
+        // 蹲着藏 1.5s、起身探 0.5s 的循环（周期 2s），只在贴着实体掩体时用。
+        /// <summary>贴掩体多久之后才值得探身（秒）：刚躲进来先稳住，不立刻探头。</summary>
+        private const float PeekCoverSeconds = 3f;
+
+        /// <summary>一次探身循环的周期（秒）。</summary>
+        private const float PeekCycleSeconds = 2f;
+
+        /// <summary>每个周期里探身（站起、可开火）的时长（秒）。</summary>
+        private const float PeekExposeSeconds = 0.5f;
+
+        /// <summary>每次探身朝敌人平移的距离上限（米）。</summary>
+        private const float PeekOffsetMeters = 0.8f;
+
+        /// <summary>探身的最小 / 最大交战距离（米）：太近没得探，太远不属于同一个掩体交战。</summary>
+        private const float PeekMinRange = 10f;
+        private const float PeekMaxRange = 45f;
+
+        /// <summary>判定"贴着实体掩体"的探测半径（米）。</summary>
+        private const float PeekProbeRadius = 1.2f;
+
+        /// <summary>贴掩体探测的方位数（8 方位）。</summary>
+        private const int PeekProbeCount = 8;
+
+        /// <summary>开始贴掩体的时刻（0 = 当前没贴掩体）。</summary>
+        private float _coveredSince;
+
+        /// <summary>本次 peek 循环的起点时刻（0 = 不在循环里）。</summary>
+        private float _peekCycleStart;
+
+        /// <summary>本次探身的起点位置（用来把"向敌平移"限在 <see cref="PeekOffsetMeters"/> 内）。</summary>
+        private Vector3 _peekOrigin;
+
+        /// <summary>上一 tick 是否处在"探出"相位（用来只在相位边沿打日志）。</summary>
+        private bool _peekExposing;
+
+        /// <summary>本回合累计探身次数（日志计数）。</summary>
+        private int _peekCount;
+
+        /// <summary>
+        /// 是否该走 peek 节奏：有交战目标、手里有子弹、距离在
+        /// <see cref="PeekMinRange"/>~<see cref="PeekMaxRange"/>，且**身边 1.2m 内存在能挡住敌人视线的实锹掩体**、
+        /// 已经贴了 <see cref="PeekCoverSeconds"/> 秒。目标的可见性用记忆窗口判（蹲下时看不见是正常的）。
+        /// </summary>
+        private bool PeekDue(CsActor self)
+        {
+            if (self == null || !self.IsAlive || _targetId == 0)
+            {
+                ResetPeek();
+                return false;
+            }
+
+            var target = _match.Find(_targetId);
+            if (target == null || !target.IsAlive)
+            {
+                ResetPeek();
+                return false;
+            }
+
+            var def = self.ActiveDef;
+            if (def == null || def.Magazine <= 0 || self.GetAmmo(def.Id).inMag <= 0)
+            {
+                ResetPeek();
+                return false;
+            }
+
+            // 只对"此刻真的看得见"的敌人探身：看不见还说自己在探身，就会演成躲在墙后不出来。
+            if (!_visibleNow)
+            {
+                ResetPeek();
+                return false;
+            }
+
+            var dist = Vector3.Distance(self.Position, target.Position);
+            if (dist < PeekMinRange || dist > PeekMaxRange || !CoverAdjacent(self, target))
+            {
+                ResetPeek();
+                return false;
+            }
+
+            var now = CsClock.Now;
+            if (_lastSeenTime <= 0f || now - _lastSeenTime > CsBotConst.TargetMemorySeconds)
+            {
+                ResetPeek();
+                return false;
+            }
+
+            if (_coveredSince <= 0f) _coveredSince = now;
+            return now - _coveredSince >= PeekCoverSeconds;
+        }
+
+        /// <summary>peek 分支：探出相位跑一次 <see cref="Engage"/>（照常瞄 / 开火），再叠加"起身 + 向敌平移"；
+        /// 缩回相位蹲下、不扣扳机、准星仍留在敌人身上。</summary>
+        private BtStatus PeekStep(CsActor self, ref CsBotIntent intent, float now)
+        {
+            // 叶子返回 Running 之后，树会从叶子本身续跑、不再回看前置条件 ⇒ 条件失效必须在这里退出。
+            if (!PeekDue(self)) return BtStatus.Failure;
+
+            var target = _match.Find(_targetId);
+            if (target == null || !target.IsAlive) return BtStatus.Failure;
+
+            if (_peekCycleStart <= 0f) _peekCycleStart = now;
+            var phase = (now - _peekCycleStart) % PeekCycleSeconds;
+            var exposing = phase < PeekExposeSeconds;
+            var toEnemy = HorizontalDir(self.Position, target.Position);
+            if (toEnemy.sqrMagnitude < 0.0001f) toEnemy = Forward(self.Yaw, 0f);
+
+            if (exposing)
+            {
+                intent = Engage(self, intent, now);
+
+                if (!_peekExposing)
+                {
+                    _peekOrigin = self.Position;
+                    _peekCount++;
+                    Game.Logger.Info(Tag,
+                        $"peek 探身第 {_peekCount} 次：{_name}（{_difficulty}）距敌 " +
+                        $"{Vector3.Distance(self.Position, target.Position):F1}m，已贴掩体 " +
+                        $"{now - _coveredSince:F1}s → 站起 {PeekExposeSeconds:F1}s（周期 {PeekCycleSeconds:F1}s，" +
+                        $"向敌平移 {PeekOffsetMeters:F1}m）");
+                }
+
+                // 平移方向先看一格可走：探身那 0.5s 顶着墙推，会变成一条"站住不动"的卡住告警。
+                var moved = HorizontalDistance(self.Position, _peekOrigin);
+                var stepOk = _map == null || !_map.IsLoaded ||
+                             _map.WalkableAt(self.Position.x + toEnemy.x * PeekOffsetMeters,
+                                             self.Position.z + toEnemy.z * PeekOffsetMeters);
+                intent.Move = moved < PeekOffsetMeters && stepOk ? toEnemy : Vector3.zero;
+                intent.Crouch = false;
+                _peekExposing = true;
+                return BtStatus.Running;
+            }
+
+            _peekExposing = false;
+            intent.Fire = false;
+            intent.Move = Vector3.zero;
+            intent.Crouch = true;
+            intent.AimPoint = target.EyePosition;
+            SetState(CsBotState.Engage, now);
+            intent.State = CsBotState.Engage;
+            return BtStatus.Running;
+        }
+
+        /// <summary>身边 <see cref="PeekProbeRadius"/> 内是否存在"敌人眼看不到"的实心点（= 贴着掩体）。</summary>
+        private bool CoverAdjacent(CsActor self, CsActor enemy)
+        {
+            for (var i = 0; i < PeekProbeCount; i++)
+            {
+                var dir = Quaternion.Euler(0f, i * (360f / PeekProbeCount), 0f) * Vector3.forward;
+                var probe = self.Position + dir * PeekProbeRadius + Vector3.up * CsConst.EyeHeight;
+                if (LineBlockedByWorld(enemy.EyePosition, probe)) return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>清掉 peek 的贴掩体计时与循环起点（条件不成立时调用）。</summary>
+        private void ResetPeek()
+        {
+            if (_peekExposing) _peekExposing = false;
+            _coveredSince = 0f;
+            _peekCycleStart = 0f;
+        }
+
+
+
+        // ==================================================================
+        //  狙击蹲守
+        // ==================================================================
+        // 出处：原版 `cs_bot.h:438` 的 `TaskType::SNIPING` / `MOVE_TO_SNIPER_SPOT`，以及
+        // `cs_bot.h:640` 的 `IsSniping()` 注释（moving to sniper spot or settled in）。
+        // 开镜（scope）由模拟按武器档位推进，Bot 侧没有开镜意图位 ⇒ 这里管住"站定不动 + 蹲下 + 只在
+        // 准星 ±3° 内开火"，用站定保证不出现"带镜跑动"。
+        /// <summary>持狙蹲守的敌人距离下限（米）：<see cref="CsBotConst.SniperRange"/>(30m) 之上再收一档。</summary>
+        private const float SniperHoldRange = 35f;
+
+        /// <summary>被近身到这个距离（米）就切手枪（原版 sniper 的近距离处置）。</summary>
+        private const float SniperFallbackRange = 12f;
+
+        /// <summary>蹲守时允许开火的准星夹角（度）：敌人没进准星就不开枪（AWP 一发定生死）。</summary>
+        private const float SniperFireConeDegrees = 3f;
+
+        /// <summary>本回合第几次蹲守（日志计数）。</summary>
+        private int _sniperHoldCount;
+
+        /// <summary>蹲守日志已记过的回合 / 敌人（同一次蹲守只记一行）。</summary>
+        private int _sniperHoldRound = -1;
+        private long _sniperHoldTarget;
+
+        /// <summary>是否该走狙击蹲守：手持狙，且（可见敌人 &gt; <see cref="SniperHoldRange"/> 或 敌人 &lt; <see cref="SniperFallbackRange"/>）。</summary>
+        private bool SniperHoldDue(CsActor self)
+        {
+            if (self == null || !self.IsAlive) return false;
+
+            var def = self.ActiveDef;
+            if (def == null || def.Class != CsWeaponClass.Sniper) return false;
+
+            var target = _targetId != 0 ? _match.Find(_targetId) : null;
+            if (target == null || !target.IsAlive) return false;
+
+            var dist = Vector3.Distance(self.EyePosition, target.EyePosition);
+            if (dist < SniperFallbackRange) return true;
+            return _visibleNow && dist > SniperHoldRange;
+        }
+
+        /// <summary>
+        /// 狙击分支：近身（&lt; 12m）切副武器；远距（&gt; 35m 且可见）站定蹲下，
+        /// 只在提交瞄向与瞄点夹角 ≤ <see cref="SniperFireConeDegrees"/> 时扣扳机。
+        /// </summary>
+        private BtStatus SniperHoldStep(CsActor self, ref CsBotIntent intent, float now)
+        {
+            var target = _match.Find(_targetId);
+            if (target == null || !target.IsAlive) return BtStatus.Failure;
+
+            var dist = Vector3.Distance(self.EyePosition, target.EyePosition);
+            intent.Move = Vector3.zero;
+            intent.Walk = false;
+            intent.AimPoint = _targetAimPoint.sqrMagnitude > 0.0001f ? _targetAimPoint : target.EyePosition;
+
+            if (dist < SniperFallbackRange)
+            {
+                var secondary = self.SecondaryWeapon;
+                if (!string.IsNullOrEmpty(secondary) && self.ActiveWeapon != secondary)
+                {
+                    intent.SwitchTo = secondary;
+                    intent.Fire = false;
+                    intent.Crouch = false;
+                    SetState(CsBotState.Engage, now);
+                    intent.State = CsBotState.Engage;
+                    Game.Logger.Info(Tag,
+                        $"狙近身：{_name}（{_difficulty}）距敌 {dist:F1}m < {SniperFallbackRange:F0}m → " +
+                        $"切副武器 {secondary}（{self.ActiveWeapon} 收枪）");
+                    return BtStatus.Success;
+                }
+
+                return BtStatus.Failure;
+            }
+
+            // 蹲守：站定 + 蹲下；开火只看"子弹方向 vs 敌人"的夹角（SubmittedAimAngle 就是这一发的飞行方向）。
+            var speed = self.Velocity;
+            var horizontalSpeed = new Vector2(speed.x, speed.z).magnitude;
+            var angle = SubmittedAimAngle(self, intent.AimPoint);
+            var clear = AimPathClear(self, intent.AimPoint, out _);
+            var ammo = self.ActiveDef != null ? self.GetAmmo(self.ActiveDef.Id) : (inMag: 0, reserve: 0);
+            var canFire = _visibleNow &&
+                          angle <= SniperFireConeDegrees &&
+                          clear &&
+                          self.OnGround && horizontalSpeed <= CsBotConst.FireStandSpeed &&
+                          now >= self.FlashEndTime &&
+                          (self.ActiveDef == null || self.ActiveDef.Magazine <= 0 || ammo.inMag > 0);
+
+            intent.Crouch = true;
+            intent.Fire = canFire;
+
+            if (_sniperHoldRound != _match.RoundNumber || _sniperHoldTarget != _targetId)
+            {
+                _sniperHoldRound = _match.RoundNumber;
+                _sniperHoldTarget = _targetId;
+                _sniperHoldCount++;
+                Game.Logger.Info(Tag,
+                    $"狙蹲守 第 {_sniperHoldCount} 次：{_name}（{_difficulty}）持 {self.ActiveWeapon}，" +
+                    $"距敌 {dist:F1}m > {SniperHoldRange:F0}m → 站定蹲下，只在准星 ±{SniperFireConeDegrees:F0}° 内开火" +
+                    $"（当前夹角 {angle:F1}°，弹道{(clear ? "通" : "被挡")}）");
+            }
+
+            SetState(CsBotState.Engage, now);
+            intent.State = CsBotState.Engage;
+            return BtStatus.Success;
+        }
+
+
+
+        // ==================================================================
+        //  片 C 的树叶子（挂点见 CsBotBrain.Tree.cs 的 engage-body）
+        // ==================================================================
+        /// <summary>掩体分支：选点 → 走过去 → 蹲 1.2s → 结束（外层冷却由 <c>BtCooldown</c> 给）。</summary>
+        private sealed class LeafHide : BtNode
+        {
+            public LeafHide() { Name = "engage-hide"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+                => b.HideStep(b._tickSelf, ref b._tickIntent, now);
+        }
+
+        /// <summary>Peek 分支：蹲着藏 / 起身探的 2s 循环。</summary>
+        private sealed class LeafPeek : BtNode
+        {
+            public LeafPeek() { Name = "engage-peek"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+                => b.PeekStep(b._tickSelf, ref b._tickIntent, now);
+        }
+
+        /// <summary>狙击分支：远距蹲守 / 近身切手枪。</summary>
+        private sealed class LeafSniperHold : BtNode
+        {
+            public LeafSniperHold() { Name = "engage-sniper-hold"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+                => b.SniperHoldStep(b._tickSelf, ref b._tickIntent, now);
+        }
 
     }
 }

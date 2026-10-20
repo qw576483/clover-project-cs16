@@ -22,6 +22,9 @@ namespace Cs16.Module.Bot
 
             // 正在下包/拆包时不换目标（一移动进度就清零）；拆包任务的目标是 C4，换目标没有意义。
             if (self.UseProgress >= 0f) return;
+
+            // 搜点 / 听声调查自带赶路超时，期间换目标只会让搜索半途而废（交战中不拦，交战的卡住恢复优先）。
+            if (_searchKind != BotSearchKind.None && _targetId == 0 && !_visibleNow) return;
             if (_match.BombPlanted && self.Team == CsTeam.CT) return;
 
             //   没有这道闸时：0.5s 一次判定 / 2 次即升级 ⇒ 最快 1.0s 就换一次目标，而每个新目标都在

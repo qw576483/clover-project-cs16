@@ -2361,6 +2361,19 @@ namespace Cs16.Module.Bot
                                   Mathf.FloorToInt((p.z - map.Origin.z) / map.CellSize));
         }
 
+        /// <summary>
+        /// 世界坐标 → 位图格坐标的打包键（"已搜格"记忆用；取整口径与 <see cref="CellOf"/> 相同）。
+        /// 地图未加载时返回 <c>long.MinValue</c>（调用方据此判"这一格记不了"）。
+        /// </summary>
+        public static long CellKeyOf(Vector3 position)
+        {
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) return long.MinValue;
+
+            var cell = CellOf(map, position);
+            return ((long)cell.x << 32) ^ (uint)cell.y;
+        }
+
         /// <summary>水平距离（**忽略 y**：格心 y 取 0，机器人可能站在高台上，比 3D 距离会把"同一格"判成很远）。</summary>
         private static float FlatDistance(Vector3 position, Vector2Int cell)
         {

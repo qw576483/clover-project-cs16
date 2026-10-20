@@ -58,6 +58,8 @@ namespace Cs16.Module.Bot
                 new BtSequence("live",
                     new LeafPerception(),
                     new LeafHandleStuck(),
+                    // 任务层在感知之后、所有战术分支之前推导一次（每 0.5s 真算，其余 tick 只做观测）。
+                    new LeafTaskTick(),
                     new BtSelector("live-body",
                         new BtSequence("grenade", new LeafGrenade()),
                         new BtSequence("tactical",
@@ -68,7 +70,22 @@ namespace Cs16.Module.Bot
                                     new LeafContinueUse()),
                                 new BtSequence("engage",
                                     new BtCondition("branch==Engage", b => b._tickBranch == CsBotFsmStates.Engage),
+                                    // 任务层的 disposition 在这里把关：无视敌人（下包/拆包/逃爆）时不进交战。
+                                    new BtCondition("disposition-allows", b => b.EngageAllowed()),
                                     new BtSelector("engage-body",
+                                        // 狙击蹲守 → 掩体 → peek → 后撤 → 换弹 → 交战。
+                                        // 前三条在 CsBotBrain.Combat.cs 里（持狙远距蹲守 / 挡视线的掩体点 / 2s 探身节奏）。
+                                        new BtSequence("engage-sniper-hold",
+                                            new BtCondition("sniper-hold-due",
+                                                b => !BranchDisabledForTest && b.SniperHoldDue(b._tickSelf)),
+                                            new LeafSniperHold()),
+                                        new BtSequence("engage-hide",
+                                            new BtCondition("hide-due", b => !BranchDisabledForTest && b.HideDue()),
+                                            new BtCooldown("hide-cooldown", HideCooldown, new LeafHide())),
+                                        new BtSequence("engage-peek",
+                                            new BtCondition("peek-due",
+                                                b => !BranchDisabledForTest && b.PeekDue(b._tickSelf)),
+                                            new LeafPeek()),
                                         // 撤退 → 换弹 → 交战：残血且敌人还远才退；退的过程中本分支独占，
                                         // 窗口结束后 Success，由 BtCooldown 冷却一段时间再允许下一次后撤。
                                         new BtSequence("engage-retreat",
@@ -80,6 +97,20 @@ namespace Cs16.Module.Bot
                                             new BtCondition("reload-due", b => b.ShouldReloadNow()),
                                             new LeafReload()),
                                         new LeafEngage())),
+                                // 任务层独占的三支（撤离 / 守爆点 / 跟随队长）：在交战之后、
+                                // 搜索与炸弹任务之前，命中即本 tick 结束。
+                                new BtSequence("task-escape",
+                                    new BtCondition("task==escape", b => b._task == CsBotTask.EscapeFromBomb),
+                                    new LeafTaskEscape()),
+                                new BtSequence("task-hold-bomb",
+                                    new BtCondition("task==hold-bomb",
+                                        b => b._task == CsBotTask.HoldPosition && b._match.BombPlanted),
+                                    new LeafTaskHoldBomb()),
+                                new BtSequence("task-follow",
+                                    new BtCondition("task==follow", b => b._task == CsBotTask.Follow),
+                                    new LeafTaskFollow()),
+                                new BtSequence("search",
+                                    new BtAction("search", (b, dt, n) => b.TrySearchStep(n) ? BtStatus.Success : BtStatus.Failure)),
                                 new BtSequence("objective-commit",
                                     new BtCondition("objective-commit", b => b.ObjectiveCommit()),
                                     new LeafBombObjective()),
@@ -271,6 +302,55 @@ namespace Cs16.Module.Bot
             public override BtStatus Tick(CsBotBrain b, float dt, float now)
             {
                 return b.TryBombObjective(b._tickSelf, ref b._tickIntent, now)
+                    ? BtStatus.Success
+                    : BtStatus.Failure;
+            }
+        }
+
+        /// <summary>任务层 tick：每 tick 观测士气 / 炸弹，每 0.5s 重推一次任务（见 <see cref="TaskTick"/>）。</summary>
+        private sealed class LeafTaskTick : BtNode
+        {
+            public LeafTaskTick() { Name = "task-tick"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+            {
+                b.TaskTick(b._tickSelf, now);
+                return BtStatus.Success;
+            }
+        }
+
+        /// <summary>撤离爆点（<see cref="CsBotTask.EscapeFromBomb"/>）：朝包点外的落点跑。</summary>
+        private sealed class LeafTaskEscape : BtNode
+        {
+            public LeafTaskEscape() { Name = "task-escape"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+            {
+                b.EscapeStep(b._tickSelf, ref b._tickIntent, now);
+                return BtStatus.Success;
+            }
+        }
+
+        /// <summary>守爆点（<see cref="CsBotTask.HoldPosition"/>）：在爆点外一圈站住盯住 C4。</summary>
+        private sealed class LeafTaskHoldBomb : BtNode
+        {
+            public LeafTaskHoldBomb() { Name = "task-hold-bomb"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+            {
+                b.HoldBombStep(b._tickSelf, ref b._tickIntent, now);
+                return BtStatus.Success;
+            }
+        }
+
+        /// <summary>跟随队长（<see cref="CsBotTask.Follow"/>）：队长已不在场时交回后续分支。</summary>
+        private sealed class LeafTaskFollow : BtNode
+        {
+            public LeafTaskFollow() { Name = "task-follow"; }
+
+            public override BtStatus Tick(CsBotBrain b, float dt, float now)
+            {
+                return b.FollowStep(b._tickSelf, ref b._tickIntent, now)
                     ? BtStatus.Success
                     : BtStatus.Failure;
             }
