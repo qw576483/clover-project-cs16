@@ -3054,9 +3054,15 @@ namespace Cs16.Module.Bot
         /// </summary>
         private void ReportStuck(float moved, float now)
         {
+            // 路线走完（剩余路点 0）之后的"朝 goal 直线走"没有"被挡在路点之间"这回事：
+            // 走到终点附近被几何体顶住是**终点可达性**问题，由上层换目标 / 大脑 2s 诊断负责，
+            // 在这里记一条"路上被挡"只会把真正的路上阻挡埋掉。
+            // 卡住自恢复（换向逃逸）与 escalate 不受影响，仍然照常。
+            if (_marker != null && RouteExhausted) return;
+
             var reason = _marker == null
                 ? "无路线（直奔目标）"
-                : (RouteExhausted ? "路线已走完（剩余路点 0）" : "路上被挡");
+                : "路上被挡";
 
             var key = "stuck." + reason;
             _stuckLogCounts.TryGetValue(key, out var n);
