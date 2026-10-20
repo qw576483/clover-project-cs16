@@ -92,6 +92,33 @@ namespace Cs16.Module.Match
         /// </summary>
         public static float MovementSpeed(CsActor a)
         {
+            var speed = BaseMaxSpeed(a);
+
+            if (a.IsCrouching) speed *= CsConst.SpeedCrouchMultiplier;
+            else if (a.IsWalking)
+            {
+                // 原版两条链：客户端把 cl_*speed 命令乘 min(cl_movespeedkey, 0.52)
+                //（client.dll `0x01957E17`：fld [cvar+0xC] → 与 0.52f 比较 → fmul 三个命令分量），
+                // 服务端再 `wishspeed = min(|cmd|, maxspeed)`（原版资源/hlsdk/pm_shared/pm_shared.c:953-974）
+                // ⇒ 慢走速度 = min(cl_forwardspeed 400u/s × 0.52, 武器最大速度) = 208 u/s，**各武器同速**。
+                speed = Mathf.Min(speed, CsConst.ClForwardSpeed * CsConst.SpeedWalkMultiplier);
+            }
+
+            return speed;
+        }
+
+        /// <summary>
+        /// 当前档的最大移动速度（m/s）= 原版 <c>pmove-&gt;maxspeed</c>：逐武器 <c>GetMaxSpeed</c>
+        /// （开镜档优先），该类未覆盖时退回 <see cref="CsConst.SpeedDefault"/>。
+        ///
+        /// <para>⛔ 不含蹲姿 / 慢走倍率 —— 原版那两项乘的是**命令分量**
+        /// （<c>PM_Duck</c> 的 <c>cmd.*= ×0.333</c>、客户端的 <c>cl_movespeedkey</c>），
+        /// 之后才在 <c>PM_WalkMove</c> 里与 <c>maxspeed</c> 取小。连跳上限
+        /// （<c>PM_PreventMegaBunnyJumping</c> 的 <c>1.2 × maxspeed</c>）用的就是这个值。</para>
+        /// </summary>
+        public static float BaseMaxSpeed(CsActor a)
+        {
+            if (a == null) return CsConst.SpeedDefault;
             var def = a.ActiveDef;
             var scoped = a.Scoped;
 
@@ -128,16 +155,6 @@ namespace Cs16.Module.Match
                         speed = CsConst.SpeedDefault;
                         break;
                 }
-            }
-
-            if (a.IsCrouching) speed *= CsConst.SpeedCrouchMultiplier;
-            else if (a.IsWalking)
-            {
-                // 原版两条链：客户端把 cl_*speed 命令乘 min(cl_movespeedkey, 0.52)
-                //（client.dll `0x01957E17`：fld [cvar+0xC] → 与 0.52f 比较 → fmul 三个命令分量），
-                // 服务端再 `wishspeed = min(|cmd|, maxspeed)`（原版资源/hlsdk/pm_shared/pm_shared.c:953-974）
-                // ⇒ 慢走速度 = min(cl_forwardspeed 400u/s × 0.52, 武器最大速度) = 208 u/s，**各武器同速**。
-                speed = Mathf.Min(speed, CsConst.ClForwardSpeed * CsConst.SpeedWalkMultiplier);
             }
 
             return speed;
@@ -188,6 +205,12 @@ namespace Cs16.Module.Match
             a.RecoilDir = 1;
             a.BurstShotsLeft = 0;
             a.NextBurstShotTime = 0f;
+            a.ShellReloadLeft = 0;
+            a.SilencedWeapons.Clear();   // 武器实例随装备一起消失 ⇒ 消音 / 连发状态不跨这一轮
+            a.BurstWeapons.Clear();
+            a.PreviousWeapon = null;
+            a.FireHeld = false;
+            a.Scoped = false;
             ResetAccuracy(a);            // 差异 #94：卸装 = acc 与 m_iShotsFired 归位
         }
 
@@ -241,17 +264,20 @@ namespace Cs16.Module.Match
             a.ActiveWeapon = null;
         }
 
-        /// <summary>购买成功后的装备落地（价格已由 CsEconomy 扣掉）。</summary>
-        public void GivePurchased(CsActor a, CsWeaponDef def, float now)
+        /// <summary>
+        /// 购买成功后的装备落地（价格已由 CsEconomy 扣掉）。
+        /// </summary>
+        /// <returns>装备真的落到角色身上返回 true；无法装备返回 false（调用方据此退款）。</returns>
+        public bool GivePurchased(CsActor a, CsWeaponDef def, float now)
         {
-            if (def == null) return;
+            if (def == null) return false;
 
             if (def.Class == CsWeaponClass.Grenade)
             {
                 var cur = GrenadeCount(a, def.Id);
                 a.SetAmmo(def.Id, cur + 1, 0);
                 SwitchWeapon(a, def.Id, now);
-                return;
+                return true;
             }
 
             if (def.Class == CsWeaponClass.Equipment)
@@ -276,14 +302,15 @@ namespace Cs16.Module.Match
                 else
                 {
                     _m.RateWarn("buy.equipment.unknown", $"未知装备 {def.Id}（{a.Name}）");
+                    return false;
                 }
-                return;
+                return true;
             }
 
             if (def.Class == CsWeaponClass.Bomb)
             {
                 _m.RateWarn("buy.bomb", $"C4 不可购买（{a.Name}）");
-                return;
+                return false;
             }
 
             switch (def.Slot)
@@ -292,18 +319,18 @@ namespace Cs16.Module.Match
                     a.PrimaryWeapon = def.Id;
                     a.SetAmmo(def.Id, def.Magazine, def.ReserveAmmo);
                     SwitchWeapon(a, def.Id, now);
-                    break;
+                    return true;
                 case CsWeaponSlot.Secondary:
                     a.SecondaryWeapon = def.Id;
                     a.SetAmmo(def.Id, def.Magazine, def.ReserveAmmo);
                     SwitchWeapon(a, def.Id, now);
-                    break;
+                    return true;
                 case CsWeaponSlot.Knife:
                     a.KnifeWeapon = def.Id;
-                    break;
+                    return true;
                 default:
                     _m.RateWarn("buy.slot.unknown", $"{def.DisplayName} 没有可装备的槽位（{a.Name}）");
-                    break;
+                    return false;
             }
         }
 
@@ -585,9 +612,22 @@ namespace Cs16.Module.Match
                 return;
             }
 
+            // 原版 `DefaultDeploy` 把 FOV 复位成 90（`原版资源/hlsdk/dlls/weapons.cpp:976`：
+            // `m_pPlayer->m_iFOV = m_pPlayer->pev->fov = 90;`）⇒ 任何切枪都退出开镜。
+            // 这里先落下 `Scoped`；档位号由 `CsMatch.UpdateLocalPlayer` 在发现手持武器变了时清零。
+            // 只记**仍然持有**的那把（投出的最后一颗手雷已经不在手上 ⇒ 不参与 lastinv）。
+            if (!string.IsNullOrEmpty(a.ActiveWeapon) && a.ActiveWeapon != weaponId && Owns(a, a.ActiveWeapon))
+                a.PreviousWeapon = a.ActiveWeapon;
+
             a.ActiveWeapon = weaponId;
             a.SwitchEndTime = now + SwitchTimeFor(def);
-            a.ReloadEndTime = 0f;
+            // `NextFireTime` 是**角色级**单一时间戳（原版是每把武器自己的 `m_flNextPrimaryAttack`）
+            // ⇒ 切枪必须清零，否则会继承上一把枪的冷却：AWP 开一枪（1.45s）立刻切手枪，
+            // 手枪在 1.45s 内会被 `now < NextFireTime` 静默拦下。切枪节奏只由 `SwitchEndTime` 管。
+            a.NextFireTime = 0f;
+            a.ReloadEndTime = 0f;        // 切枪取消换弹（原版 Holster）；已装进弹匣的子弹保留
+            a.ShellReloadLeft = 0;
+            a.Scoped = false;
             ResetAccuracy(a);            // 差异 #94：切枪 = 原版 Deploy ⇒ acc 与 m_iShotsFired 归位
             a.ConsecutiveShots = 0;
             a.RecoilPitch = 0f;
@@ -646,7 +686,10 @@ namespace Cs16.Module.Match
                 return;
             }
 
-            a.ReloadEndTime = now + def.ReloadTime;
+            // 霰弹枪：原版 DefaultShotgunReload 先等第一发的 fStartDelay，之后每 fDelay 装一发，
+            // 每发消耗一颗备弹（wpn_m3.cpp:189 + weapons.cpp:1586-1633）；其余武器一次装满。
+            a.ShellReloadLeft = def.ShellReload ? Mathf.Min(def.Magazine - ammo.inMag, ammo.reserve) : 0;
+            a.ReloadEndTime = now + (def.ShellReload ? def.ShellReloadStart : def.ReloadTime);
             // 差异 #72：单调序号 = 表现层判"换弹开始"的唯一信号。ReloadEndTime 会被 ① 结算归零
             // ② 切枪归零 ③ 同帧跨完 而漏掉边沿；序号不会被这三种情况吃掉。
             a.ReloadSeq++;
@@ -658,7 +701,10 @@ namespace Cs16.Module.Match
             a.NextBurstShotTime = 0f;
             // 唯一必须先确定的事实是"序号到底有没有推进"（表现层只认序号边沿）。
             // 不改任何判定，只是把已经存在的字段写进日志。
-            Game.Logger.Info(Tag, $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）seq={a.ReloadSeq}");
+            Game.Logger.Info(Tag, def.ShellReload
+                ? $"{a.Name} 开始换弹 {def.DisplayName}（逐发装填 {a.ShellReloadLeft} 发，" +
+                  $"首发 {def.ShellReloadStart:F2}s / 每发 {def.ShellReloadInterval:F2}s）seq={a.ReloadSeq}"
+                : $"{a.Name} 开始换弹 {def.DisplayName}（{def.ReloadTime:F2}s）seq={a.ReloadSeq}");
         }
 
         /// <summary>
@@ -706,13 +752,43 @@ namespace Cs16.Module.Match
                 $"{a.Name} 的 {def.DisplayName} 右键无动作：原版 attack2 的逐武器分支里没有它（差异 #68；⛔ 无出处不加效果）");
         }
 
-        internal void CompleteReload(CsActor a)
+        /// <summary>
+        /// 到一个装填周期：普通武器一次装满，霰弹枪一发一发装（原版 <c>DefaultShotgunReload</c>：
+        /// 每转一圈 <c>m_iClip++</c> 且备弹 −1，装到满或没备弹为止）。
+        /// </summary>
+        internal void CompleteReload(CsActor a, float now)
         {
             var def = a.ActiveDef;
             if (def == null) return;
 
             var ammo = a.GetAmmo(def.Id);
-            if (ammo.inMag >= def.Magazine) return;
+            if (ammo.inMag >= def.Magazine)
+            {
+                a.ShellReloadLeft = 0;
+                return;
+            }
+
+            if (def.ShellReload)
+            {
+                if (a.ShellReloadLeft <= 0) return;
+                if (ammo.reserve <= 0)
+                {
+                    a.ShellReloadLeft = 0;
+                    _m.RateWarn("reload.empty." + def.Id, $"{a.Name} 装填时备弹为 0（{def.DisplayName}）");
+                    return;
+                }
+
+                a.SetAmmo(def.Id, ammo.inMag + 1, ammo.reserve - 1);
+                a.ShellReloadLeft--;
+                if (a.ShellReloadLeft > 0)
+                {
+                    a.ReloadEndTime = now + def.ShellReloadInterval;
+                    _m.RateInfo("reload.shell." + def.Id,
+                        $"{a.Name} 装填 {def.DisplayName} 一发（弹匣 {ammo.inMag + 1}/{def.Magazine}，" +
+                        $"余 {a.ShellReloadLeft} 发）");
+                }
+                return;
+            }
 
             var need = def.Magazine - ammo.inMag;
             var take = Mathf.Min(need, ammo.reserve);
@@ -766,7 +842,8 @@ namespace Cs16.Module.Match
                     _m.RateWarn("fire.nogrenade." + def.Id, $"{a.Name} 手上没有 {def.DisplayName} 了");
                     return false;
                 }
-                a.NextFireTime = now + CsConst.SwitchTimePistol;
+                // 原版投出后 `m_flNextPrimaryAttack = GetNextAttackDelay(0.5)`（wpn_hegrenade.cpp:210 等）。
+                a.NextFireTime = now + CsConst.GrenadeNextAttack;
                 ThrowGrenade(a, def, now);
                 weaponId = def.Id;
                 return true;
@@ -779,6 +856,7 @@ namespace Cs16.Module.Match
             }
 
             // 弹药
+            var magAfter = -1;
             if (def.Magazine > 0)
             {
                 var ammo = a.GetAmmo(def.Id);
@@ -788,6 +866,7 @@ namespace Cs16.Module.Match
                     return false;
                 }
                 a.SetAmmo(def.Id, ammo.inMag - 1, ammo.reserve);
+                magAfter = ammo.inMag - 1;
             }
 
             // 差异 #68：连发档 = 一次扣扳机打满一轮。首发在这里打掉，其余发给 TickBurst 按原版间隔补发；
@@ -814,6 +893,11 @@ namespace Cs16.Module.Match
             AccumulateRecoil(a, def);
 
             weaponId = def.Id;
+            // 扣弹成功的**唯一权威判据行**：这一行出现 ⇒ 模拟侧真的打出了这一发（弹匣已 -1）。
+            // `mag=-1` = 该类不吃弹匣（刀 / 手雷 / C4 的刀与雷走前面各自的分支，这里是刀）。
+            Game.Logger.Info(Tag,
+                $"shot.discharge {a.Name} {def.Id} mag={magAfter} now={now:F3} " +
+                $"local={localPlayer} swEnd={a.SwitchEndTime:F3} nextFire={a.NextFireTime:F3}");
             _m.RecordShotFired(def.Id, a.Silenced);
 
             if (def.Class == CsWeaponClass.Knife) FireKnife(a, def);
@@ -831,7 +915,9 @@ namespace Cs16.Module.Match
             // 其余武器沿用旧的"两态系数 + 移动 / 离地附加"。
             var spread = FireSpread(a, def);
 
-            var range = def.Range > 0f ? def.Range : CsConst.BotVisionRange;
+            // 射线长度 = 原版开火点的射程实参（手枪 4096 / 其余 8192 / 霰弹 3000·3048 世界单位），
+            // 见 CsWeapons.ShotRange；不是旧模型的 def.Range（"有效射程"）。
+            var range = CsWeapons.ShotRange(def);
             var pellets = def.Pellets > 0 ? def.Pellets : 1;
 
             for (var p = 0; p < pellets; p++)
@@ -1089,14 +1175,21 @@ namespace Cs16.Module.Match
                 Landed = false,
             };
             _grenades.Add(proj);
+            _m.RaiseGrenadeThrown(a, def.Id, proj.Position, dir);
 
             Game.Logger.Info(Tag, $"{a.Name} 投出 {def.DisplayName}（剩余 {Mathf.Max(0, count - 1)} 颗）" +
                 $" nade.throw id={def.Id} pitch={a.Pitch:F1} yaw={a.Yaw:F1} speed={speed:F3} " +
                 $"from=({proj.Position.x:F3},{proj.Position.y:F3},{proj.Position.z:F3}) " +
                 $"v=({proj.Velocity.x:F3},{proj.Velocity.y:F3},{proj.Velocity.z:F3})");
 
-            // 手上这颗没了就自动换回武器（官方行为）。
-            if (GrenadeCount(a, def.Id) <= 0) SelectBestWeapon(a);
+            // 手上这颗没了 ⇒ 换回**投掷前那把武器**（原版 RetireWeapon / SelectLastItem）；
+            // 没有上一把（例如开局就拿手雷）才退回"最该拿的"那一把。
+            if (GrenadeCount(a, def.Id) <= 0)
+            {
+                var prev = a.PreviousWeapon;
+                if (!string.IsNullOrEmpty(prev) && prev != def.Id && Owns(a, prev)) SwitchWeapon(a, prev, now);
+                else SelectBestWeapon(a);
+            }
         }
 
         public void TickProjectiles(float dt, float now)

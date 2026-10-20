@@ -27,6 +27,16 @@ namespace Cs16.Module.View
         /// 与生成器 <c>Assets/Editor/Views/ArtSetup.cs</c> 共用同一份常量）。</summary>
         public const string ArtRoot = "Art/";
 
+        /// <summary>
+        /// 角色/武器**贴图目录**（<c>Resources</c> 路径，不带扩展名）。
+        /// 出处：**本项目新增**（生成器 <c>ArtSetup</c> 把 PNG 落在 <c>Assets/Resources/Art/Tex</c>）。
+        ///
+        /// <para><b>为什么运行时也要它</b>：一批历史材质的 <c>_MainTex</c> 是空的（生成器只找
+        /// 「裸贴图名」PNG，而盘上只有带模型前缀的 <c>player_T_arctic_ARTIC_Working1.png</c> 这类文件）
+        /// ⇒ <c>ActorView</c> 用 <c>Resources.LoadAll&lt;Texture2D&gt;</c> 从这里按名字回绑贴图。</para>
+        /// </summary>
+        public const string TexArtRoot = ArtRoot + "Tex";
+
         /// <summary>阵营子目录名（Art/T/**、Art/CT/**）。出处：**本项目新增**（本工程归一的目录命名；
         /// 原版阵营模型目录名是 <c>models/player/{terror,leet,arctic,guerilla,urban,gsg9,sas,gign,vip}</c>，见规格 §5）。</summary>
         public const string TeamFolderT = "T";
@@ -66,20 +76,13 @@ namespace Cs16.Module.View
         /// </summary>
         public const string BackpackMaterialToken = "Backpack";
 
-        /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名（名牌放它外面，才不会被蹲下压扁）。
+        /// <summary>角色预制体里承载"整体缩放/贴地"的子节点名。
         /// 出处：**本项目新增**（预制体内部节点名 = 本工程命名）。</summary>
         public const string BodyNodeName = "Body";
 
         /// <summary>命中区子节点名前缀：<c>Hitbox_{CsHitbox}</c>（Hitbox_Head / Hitbox_Chest / ...）。
         /// 出处：**本项目新增**（节点名前缀 = 本工程命名；命中区的**语义**出处 = <c>CsHitbox</c> 枚举，见 <c>Core/CsEnums.cs</c>）。</summary>
         public const string HitboxNodePrefix = "Hitbox_";
-
-        /// <summary>名牌预制体实例在角色视图下的节点名。出处：**本项目新增**（本工程命名）。</summary>
-        public const string PlateNodeName = "Plate";
-
-        /// <summary>头顶名牌的**世界空间**预制体（只在 Resources/UI 下放这一个）。
-        /// 出处：**本项目新增**（本工程资源路径；原版队友名牌的绘制在 <c>client.dll</c>，没有对应预制体）。</summary>
-        public const string NameplatePath = "UI/WorldNameplate";
 
         // ==================================================================
         //  角色视图
@@ -118,50 +121,27 @@ namespace Cs16.Module.View
         /// <summary>一次位置跳变超过它（米）就直接吸附，不做插值（出生 / 复活 / 传送）。</summary>
         public const float TeleportSnapDistance = 2.5f;
 
-        // ==================================================================
-        //  头顶名牌 / 血条
-        // ==================================================================
-        /// <summary>超过该距离不显示名牌（米）。</summary>
-        public const float NameplateMaxDistance = 55f;
-
-        /// <summary>从该距离开始淡出（米）。</summary>
-        public const float NameplateFadeStart = 45f;
-
-        /// <summary>名牌离脚底的高度（米）—— 略高于身高，避免与头部模型重叠。</summary>
-        public const float NameplateHeight = (float)(CsConst.StandHeight + 0.20);
-
-        /// <summary>名牌文字高度（米，世界空间）。</summary>
-        public const float NameplateTextHeight = 0.16f;
-
-        /// <summary>血条世界宽度 / 高度（米）。</summary>
-        public const float NameplateBarWidth = 0.70f;
-        public const float NameplateBarHeight = 0.075f;
-
-        public const bool ShowEnemyHealth = true;
-
-        /// <summary>是否给敌人显示**名字**（CS 1.6 原版只显示队友名字，默认关）。</summary>
-        public const bool ShowEnemyName = false;
-
-        /// <summary>视线判定打的是目标的躯干高度（米），不是头顶 —— 头顶容易被掩体挡住而误判。</summary>
-        public const float LosTargetHeight = 1.10f;
-
+        // ---- 脚底贴地圆影（blob shadow，见 CsBlobShadow）----
         /// <summary>
-        /// 名字/血条只在"大致看向他"时显示：相机前向与目标方向的点积下限（≈ cos 70°）。
-        /// 与 CS 里"看着队友才见名字"的观感一致，也顺手省掉背后一堆名牌。
+        /// 脚底圆影的半径（米）。取值 = <see cref="CsConst.PlayerRadius"/>（玩家碰撞半径 0.36 m）
+        /// ⇒ 影子足迹与碰撞足迹同宽。原版 GoldSrc 没有玩家投影的贴图载体
+        /// （<c>原版资源/cs16src/*/sprites/</c> 下只有 blood 系与 HUD 系 spr，逐一查过），
+        /// 圆斑由 <see cref="CsBlobShadow"/> 程序化生成。
         /// </summary>
-        public const float NameplateMinFacingDot = 0.34f;
+        public const float BlobShadowRadius = CsConst.PlayerRadius;
 
-        /// <summary>世界空间画布的局部缩放（UI 像素 → 世界米：0.01 表示 100px = 1m）。</summary>
-        public const float NameplateCanvasScale = 0.01f;
+        /// <summary>脚底圆影的不透明度（纯黑 × 该 alpha）。取常用区间的中值 0.42
+        /// （区间 0.35~0.5：低于下界在 dust2 的浅色地面看不出来，高于上界像一块脏斑）。</summary>
+        public const float BlobShadowAlpha = 0.42f;
 
-        // 队色（与 CS 1.6 的雷达/记分板观感一致：T 偏红、CT 偏蓝）
-        public static readonly Color TeamColorT = new Color(1.00f, 0.42f, 0.35f, 1f);
-        public static readonly Color TeamColorCT = new Color(0.42f, 0.68f, 1.00f, 1f);
-        public static readonly Color TeamColorSpec = new Color(0.75f, 0.75f, 0.78f, 1f);
-        public static readonly Color HpHigh = new Color(0.35f, 0.85f, 0.30f, 1f);
-        public static readonly Color HpMid = new Color(0.95f, 0.75f, 0.20f, 1f);
-        public static readonly Color HpLow = new Color(0.90f, 0.20f, 0.20f, 1f);
-        public static readonly Color HpBack = new Color(0.05f, 0.05f, 0.06f, 0.78f);
+        /// <summary>圆影离脚面的抬升（米）：0.015 m 避免与地面共面 z-fighting，又不到肉眼可辨的悬空。</summary>
+        public const float BlobShadowLift = 0.015f;
+
+        /// <summary>离地（跳跃 / 下落）时圆影缩到的比例 —— 越高离得越远，影子越小。</summary>
+        public const float BlobShadowAirScale = 0.55f;
+
+        /// <summary>圆影透明度 / 尺寸的平滑时间常数（秒）：跳起时 0.08 s 内淡出，落地时同速淡回。</summary>
+        public const float BlobShadowBlendTau = 0.08f;
 
         // ==================================================================
         //  第一人称武器视图（viewmodel）
@@ -382,9 +362,13 @@ namespace Cs16.Module.View
         /// <summary>骨骼层级挂载节点名（生成器在角色预制体的 <c>Body</c> 下 / 视模型根下建它）。</summary>
         public const string SkeletonNodeName = "Skeleton";
 
-        /// <summary>状态切换的过渡时长（秒）——原版序列本身就是连续的，这里只做极短过渡，
-        /// 避免"跳帧"感；不要当成"手感参数"去调。</summary>
-        public const float AnimCrossFade = 0.06f;
+        /// <summary>
+        /// 状态切换的过渡时长（**秒**）—— 原版序列的 blend 默认 0.1 s。
+        ///
+        /// <para>引擎 <c>IAnimPlayer.CrossFade(state, seconds)</c> 的第二参就是秒（内部走
+        /// <c>Animator.CrossFadeInFixedTime</c>），直接传本值即可。</para>
+        /// </summary>
+        public const float AnimCrossFade = 0.1f;
 
         /// <summary>
         /// 判定"在移动"的最小水平速度（米/秒）。不高于它 = 静止（放静止序列）。
@@ -411,6 +395,39 @@ namespace Cs16.Module.View
         /// 为 250 u/s 设计的 <c>run</c>（60fps 循环）⇒ 腿在飞、人在挪。</para>
         /// </summary>
         public const float AnimRunSpeedThreshold = 135f * CsConst.UnitToMeter;
+
+        /// <summary>
+        /// 走 / 跑分档的迟滞带（米/秒）：在 <see cref="AnimRunSpeedThreshold"/> 两侧各留这么宽，
+        /// 速度落在带内时保持当前档，不重新发起 0.1 s 过渡。
+        ///
+        /// <para>原版是直接换整段序列（无过渡），不需要这条带；本工程的位移序列按走过的距离推进、
+        /// 切换时走 <c>CrossFade</c>。速度在阈值附近逐帧抖动时（撞墙清零 / 加速交替），不带迟滞
+        /// 会每帧重启一次过渡 —— 过渡期间 Animator 报不出当前 clip，画面退回绑定姿态。</para>
+        /// </summary>
+        public const float AnimRunSpeedHysteresis = 0.35f;
+
+        /// <summary>
+        /// 位移序列的**设计速度**（米/秒）= 该序列一个循环走过的地面距离 ÷ 循环时长。
+        ///
+        /// <para><b>出处</b>：原版 <c>mstudioseqdesc_t.linearmovement.x</c> 与 fps/numframes，
+        /// 逐条读自 <c>原版资源/cs16src/cstrike/cstrike__models__player__terror__terror.mdl</c>
+        /// （结构见 <c>原版资源/cs16src/cs16_mdl.py</c> 的 <c>Sequence</c>；<c>gsg9.mdl</c> 同值）：
+        /// <c>walk</c> 64 u / 1.067 s = 60 u/s、<c>run</c> 150 u / 0.600 s = 250 u/s、
+        /// <c>crouchrun</c> 75 u / 1.000 s = 75 u/s。</para>
+        ///
+        /// <para><b>为什么要它</b>：原版按**走过的距离**推进步态
+        /// （<c>player.cpp:9192-9195</c>：<c>m_flGaitframe += (m_flGaitMovement / linearmovement.x) * numframes</c>）
+        /// ⇒ 播放速率 = 实际速度 ÷ 本值。固定 1 倍速会让慢走时脚步周期比地面速度慢数倍（滑步）。</para>
+        /// </summary>
+        /// <returns>该状态的设计速度（m/s）；不是位移序列返回 0（调用方保持 1 倍速）。</returns>
+        public static float LocoDesignSpeed(string state)
+        {
+            if (string.IsNullOrEmpty(state)) return 0f;
+            if (string.Equals(state, PStateWalk[0], System.StringComparison.Ordinal)) return 60f * CsConst.UnitToMeter;
+            if (string.Equals(state, PStateRun[0], System.StringComparison.Ordinal)) return 250f * CsConst.UnitToMeter;
+            if (string.Equals(state, PStateCrouchRun[0], System.StringComparison.Ordinal)) return 75f * CsConst.UnitToMeter;
+            return 0f;
+        }
 
         /// <summary>角色静止（站）。</summary>
         public static readonly string[] PStateIdle = { "idle1", "idle" };
@@ -530,11 +547,21 @@ namespace Cs16.Module.View
         /// <summary>视模型：**拆下**消音器。出处 = 序列 15 `detach_silencer`（<c>USP_DETACH_SILENCER</c>，116 帧 @37 fps）。</summary>
         public static readonly string[] VmStateDetachSilencer = { "detach_silencer" };
 
+        /// <summary>双手手枪在**射击 / 换弹 / 瞄准组**里的动画类后缀 —— mdl 实际标签是
+        /// <c>dualpistols</c>（第二条射击组是 <c>shoot2_dualpistols</c>），原版 <c>Deploy()</c> 的
+        /// <c>m_szAnimExtension</c> 也是 <c>"dualpistols"</c>，见
+        /// <c>原版资源/cs16src/regamedll/dlls/wpn_shared/wpn_elite.cpp:71</c>。</summary>
+        private const string DualPistolsSeq = "dualpistols";
+
+        /// <summary><see cref="PlayerAnimClass"/> 给双手手枪的返回值（带 <c>_1</c> 后缀，与 mdl 的
+        /// <c>shoot2</c> 组区分开；取序列名时必须折成 <see cref="DualPistolsSeq"/>）。</summary>
+        private const string DualPistolsClass = "dualpistols_1";
+
         /// <summary>
         /// **武器 → 角色模型动画类**。原版把角色模型的射击/换弹序列按"武器动画类"命名
         /// （<c>ref_shoot_&lt;类&gt;</c>），类名集合由 mdl 自己决定 —— 实测 <c>models/player/*/*.mdl</c>
-        /// 的 group0 序列里只有这些后缀：<c>carbine / onehanded / dualpistols_1 / dualpistols_2 /
-        /// rifle / mp5 / shotgun / m249 / grenade / c4 / knife / ak47 / shield*</c>。
+        /// 的 group0 序列里只有这些后缀：<c>carbine / onehanded / dualpistols / rifle / mp5 /
+        /// shotgun / m249 / grenade / c4 / knife / ak47 / shield*</c>。
         ///
         /// <para><b>逐把枪的出处</b>：mp.dll 的 <c>WeaponInfo::m_szAnimExtension</c> 实测到
         /// <c>aug→carbine</c> / <c>deagle→onehanded</c> / <c>elite→dualpistols</c>
@@ -571,17 +598,25 @@ namespace Cs16.Module.View
         }
 
         /// <summary>角色开枪时要播的 state 候选（蹲姿优先，其次站姿）。</summary>
-        public static string[] PlayerShootStates(string weaponId, bool crouch)
+        /// <param name="variant">双手手枪的左右手轮换位（0 = 左手组 <c>shoot</c>、1 = 右手组 <c>shoot2</c>）；
+        /// 其它武器忽略。原版 <c>CELITE::PrimaryAttack</c> 逐发翻 <c>WPNSTATE_ELITE_LEFT</c> 并分别
+        /// <c>SetAnimation(PLAYER_ATTACK1/2)</c>（<c>wpn_shared/wpn_elite.cpp:172-195</c>）⇒ 两条射击组交替播。</param>
+        public static string[] PlayerShootStates(string weaponId, bool crouch, int variant = 0)
         {
             var cls = PlayerAnimClass(weaponId);
             if (string.IsNullOrEmpty(cls)) return new string[0];
-            if (cls == "dualpistols_1")
+            // 双手手枪的射击组在 mdl 里叫 ref_shoot_dualpistols / ref_shoot2_dualpistols
+            // （= 原版 GetAnimDesired("shoot"/"shoot2") 拼出的那两条，见 player.cpp:2825 / :2840），
+            // 没有 ref_shoot_dualpistols_1。
+            if (cls == DualPistolsClass)
             {
-                // 原版双手手枪只有左右手两组（shoot_left*/shoot_right*），没有 ref_shoot_dualpistols_1
-                // 的“站姿单序列”——用原版自己的左手组作代表。
-                return crouch
-                    ? new[] { "crouch_shoot_dualpistols_1", "ref_shoot_dualpistols_1" }
-                    : new[] { "ref_shoot_dualpistols_1", "crouch_shoot_dualpistols_1" };
+                cls = DualPistolsSeq;
+                if ((variant & 1) != 0)
+                {
+                    return crouch
+                        ? new[] { "crouch_shoot2_" + cls, "crouch_shoot_" + cls, "ref_shoot_" + cls }
+                        : new[] { "ref_shoot2_" + cls, "ref_shoot_" + cls, "crouch_shoot_" + cls };
+                }
             }
             return crouch
                 ? new[] { "crouch_shoot_" + cls, "ref_shoot_" + cls }
@@ -593,7 +628,10 @@ namespace Cs16.Module.View
         {
             var cls = PlayerAnimClass(weaponId);
             if (string.IsNullOrEmpty(cls)) return new string[0];
-            // 原版**没有** ref_reload_ak47 / ref_reload_grenade / ref_reload_knife（实测 group0 标签表）
+            // 双手手枪的换弹组同样没有 *_dualpistols_1（mdl 里是 ref_reload_dualpistols）。
+            if (cls == DualPistolsClass) cls = DualPistolsSeq;
+            // 原版 mdl 里 ref_reload_ak47 与 ref_reload_rifle 的轨道逐字节相同
+            // （两条 clip 的全部骨骼关键帧一致）⇒ 统一走 rifle；grenade / knife 没有换弹序列。
             if (cls == "ak47") cls = "rifle";
             if (cls == "grenade" || cls == "knife") return new string[0];
             return crouch
@@ -608,8 +646,8 @@ namespace Cs16.Module.View
         /// （出处 <c>原版资源/cs16src/regamedll/dlls/player.cpp:2645-2652</c> 与 <c>:2875-2929</c>）。
         ///
         /// <para><b>类名映射</b>：<see cref="PlayerAnimClass"/> 给双手手枪返 <c>dualpistols_1</c>
-        /// （那是**射击组**自己的标签 —— mdl 里有 <c>ref_shoot_dualpistols_1</c>），而瞄准组在 mdl 里
-        /// 只有 <c>ref_aim_dualpistols</c> ⇒ 这里折成 <c>dualpistols</c>；其余类名两组同名。</para>
+        /// （用来区分 <c>shoot2</c> 组），而瞄准组在 mdl 里只有 <c>ref_aim_dualpistols</c>
+        /// ⇒ 这里折成 <c>dualpistols</c>；其余类名各组同名。</para>
         ///
         /// <para><b>回落</b>：取不到武器类（空手 / 未知武器）与状态不存在（该皮肤缺这条序列）都落到
         /// 候选表尾部的 <c>idle1</c> / <c>idle</c>（<see cref="ActorView.ResolveState"/> 按顺序取第一个存在的）
@@ -619,7 +657,7 @@ namespace Cs16.Module.View
         {
             var cls = PlayerAnimClass(weaponId);
             if (string.IsNullOrEmpty(cls)) return PStateIdle;
-            if (cls == "dualpistols_1") cls = "dualpistols";
+            if (cls == DualPistolsClass) cls = DualPistolsSeq;
             string[] cached;
             if (AimStatesByClass.TryGetValue(cls, out cached)) return cached;
             cached = new[] { "ref_aim_" + cls, "idle1", "idle" };
@@ -627,9 +665,35 @@ namespace Cs16.Module.View
             return cached;
         }
 
+        /// <summary>
+        /// 角色**蹲姿瞄准**时要播的 state 候选。原版 <c>GetAnimDesired("aim", ANIM_CROUCH)</c> 在
+        /// <c>FL_DUCKING</c> 时给序列名加 <c>crouch_</c> 前缀
+        /// （出处 <c>原版资源/cs16src/regamedll/dlls/player.cpp:2647</c>）⇒ <c>crouch_aim_&lt;武器动画类&gt;</c>。
+        ///
+        /// <para>与 <see cref="PlayerAimStates"/> 同口径折 <c>dualpistols_1 → dualpistols</c>；
+        /// 取不到武器 / 该皮肤缺这条序列时回落到站姿瞄准（<see cref="PlayerAimStates"/>）——
+        /// 上身层不能没有姿势，否则露出绑定姿态的手臂。</para>
+        /// </summary>
+        public static string[] PlayerCrouchAimStates(string weaponId)
+        {
+            var cls = PlayerAnimClass(weaponId);
+            if (string.IsNullOrEmpty(cls)) return PlayerAimStates(weaponId);
+            if (cls == DualPistolsClass) cls = DualPistolsSeq;
+            string[] cached;
+            if (CrouchAimStatesByClass.TryGetValue(cls, out cached)) return cached;
+            var stand = PlayerAimStates(weaponId);
+            cached = new[] { "crouch_aim_" + cls, stand[0] };
+            CrouchAimStatesByClass[cls] = cached;
+            return cached;
+        }
+
         /// <summary>武器动画类 → <see cref="PlayerAimStates"/> 的候选数组（**共用**：该方法在位移状态选择里
         /// 每帧被调用一次，不能每帧新建数组）。</summary>
         private static readonly Dictionary<string, string[]> AimStatesByClass =
+            new Dictionary<string, string[]>(System.StringComparer.Ordinal);
+
+        /// <summary>武器动画类 → <see cref="PlayerCrouchAimStates"/> 的候选数组（同上，共用）。</summary>
+        private static readonly Dictionary<string, string[]> CrouchAimStatesByClass =
             new Dictionary<string, string[]>(System.StringComparer.Ordinal);
 
         // ==================================================================

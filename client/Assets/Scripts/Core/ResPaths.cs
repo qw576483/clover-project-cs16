@@ -326,11 +326,34 @@ namespace Cs16.Core
         /// <summary>血雾贴图帧数（= <see cref="FxBloodSprayKeys"/> 的长度）。</summary>
         public static int FxBloodSprayVariants => FxBloodSprayKeys.Length;
 
-        // `valve/sprites/blood.spr`（16×16×9 帧）与 `valve/sprites/blooddrop.spr`（16×16×2 帧）
-        //    两张载体都在盘（`--info` 两条恒等式 OK），**刻意不落盘**：`mp.dll` 的血迹临时实体给的是
-        //    **两个**模型索引（`0x101aeddc` 血雾 + `0x101aedd8` 血滴，VA 0x1008f653 / 0x1008f661）
-        //    加**一个**数量字节，而"这一条消息里两个模型各画几张"的规则在引擎 `hw.dll`（未解出）
-        //    ⇒ 落盘即"文件在盘上但无人读"。缺口登记在 `策划/差异登记.tsv` #74。
+        /// <summary>
+        /// **命中血点**九变体 key 表：真实文件 <c>Resources/UI/Art/fx_bloodhit1.png</c> … <c>fx_bloodhit9.png</c>
+        /// （各 16×16）。
+        ///
+        /// <para><b>载体</b>：原版 <c>valve/sprites/blood.spr</c>（3,294 B，16×16×**9 帧**，
+        /// <c>texFormat=3</c> ALPHATEST / <c>synctype=1</c>；两条恒等式见
+        /// <c>tools/probes/spr-extract.py --info</c>）。普通命中（非爆头）的血雾用这套；
+        /// 爆头用 <see cref="FxBloodSprayKeys"/> 的十帧大图。</para>
+        ///
+        /// <para>同样逐条字面量（理由见 <see cref="FxBulletHoleKeys"/>）。</para>
+        /// </summary>
+        public static readonly string[] FxBloodHitKeys =
+        {
+            "UI/Art/fx_bloodhit1",
+            "UI/Art/fx_bloodhit2",
+            "UI/Art/fx_bloodhit3",
+            "UI/Art/fx_bloodhit4",
+            "UI/Art/fx_bloodhit5",
+            "UI/Art/fx_bloodhit6",
+            "UI/Art/fx_bloodhit7",
+            "UI/Art/fx_bloodhit8",
+            "UI/Art/fx_bloodhit9",
+        };
+
+        /// <summary>命中血点帧数（= <see cref="FxBloodHitKeys"/> 的长度）。</summary>
+        public static int FxBloodHitVariants => FxBloodHitKeys.Length;
+
+        // `valve/sprites/blooddrop.spr`（16×16×2 帧）不落盘：它属于引擎的滴血消息，本工程没有对应的表现路径。
 
         /// <summary>击中火星精灵（真实文件 <c>Resources/UI/Art/fx_spark.png</c>，16×16）。</summary>
         public const string FxSpark = "UI/Art/fx_spark";

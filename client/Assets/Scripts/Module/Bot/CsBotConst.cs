@@ -61,6 +61,14 @@ namespace Cs16.Module.Bot
         /// <summary>听觉记忆时长（秒）。出处：**本项目新增**（bot 听觉模型参数，A 无 bot AI）。</summary>
         public const float NoiseMemorySeconds = 2f;
 
+        /// <summary>
+        /// 听觉的**楼层容差**（米）：声源与听者高差超过它就不算"听见"。
+        /// 出处：原版 <c>cs_bot_listen.cpp:53</c> 的 <c>oneStoreyHeight = 120.0f</c>（GoldSrc 单位，
+        /// 换算到本工程 1 单位 = 0.025 m ⇒ 3.0 m）。没有这条时，楼上/楼下跑动的敌人
+        /// 会把正在守点的 bot 引到楼下对着天花板看。
+        /// </summary>
+        public const float NoiseMaxFloorDelta = 3f;
+
         /// <summary>噪声环形缓冲容量（条）。出处：**本项目新增**（bot 听觉模型的实现容量，A 无 bot AI）。</summary>
         public const int NoiseCapacity = 24;
 
@@ -88,6 +96,45 @@ namespace Cs16.Module.Bot
         /// 但**不复用**它 —— 卡住检测的周期与"路径新鲜度"是两件事，混用会让调其中一个时另一个跟着变）。</para>
         /// </summary>
         public const float PathReplanInterval = 1f;
+
+        /// <summary>
+        /// 沿既有路径这一秒是否算"在前进"的距离阈值（米）：到当前拐点的距离缩短 ≥ 它才算有进展，
+        /// 有进展就**不重求**路径。
+        /// <para>为什么要它：重求会用当前格重跑一次 A*，等价代价的两条分支（绕左边 / 绕右边）会在
+        /// 起点的微小变化下互换 ⇒ 机器人按新路径掉头，表现为"同一路点上来回拉锯、整回合进不去包点"。</para>
+        /// <para>出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float PathProgressEpsilon = 0.3f;
+
+        /// <summary>
+        /// 捡包者放弃的时长（秒）：连续这么久到掉落点的距离没有实质缩短 ⇒ 换下一个离 C4 最近的 T。
+        /// <para>为什么要有它：被选中的捡包者可能站在走不到的一侧（隔离/高台/被自己人挤住），
+        /// 其余 T 又在交战 ⇒ 整回合没人捡包、回合直接作废。兜底后至少能换人再试一次。</para>
+        /// <para>出处：**本项目新增**（导航自恢复实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float PickupGiveUpSeconds = 9f;
+
+        /// <summary>捡包"有进展"的距离阈值（米）：到落点缩短 ≥ 它才把计时锚点刷新。</summary>
+        public const float PickupProgressMeters = 1.5f;
+
+        /// <summary>捡包时"落点走得到吗"（<c>CanReach</c>，内含一次 A*）的检查间隔（秒）。</summary>
+        public const float PickupReachCheckInterval = 1f;
+
+        /// <summary>
+        /// 捡包者放弃后**换人**所需的最小距离收益（米）：下一个候选必须比当前捡包者至少近这么多才换。
+        /// <para>为什么要有它：没有收益门槛时，"40m 外走不动"会换给 48m 外的队友 —— 两个人都在路上耗，
+        /// 本回合再没人捡包；换人只在"确实有人更近"时才有意义。门槛取 5m ≈ 1 秒的正常步速。</para>
+        /// <para>出处：**本项目新增**（捡包实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float PickupHandoffMinGain = 5f;
+
+        /// <summary>
+        /// "没有更近的候选人 ⇒ 本人继续去捡"最多重复几个窗口（窗口长 <see cref="PickupGiveUpSeconds"/>）。
+        /// <para>上限的目的：落点真的走不到时，不许让一只 T 整回合追一个捡不到的包（它会因此丢掉
+        /// 下包与交战）。到上限后照旧弃权，回交战/推进。</para>
+        /// <para>出处：**本项目新增**（捡包实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const int PickupKeepWindows = 2;
 
         /// <summary>
         /// "起点/终点格不可走时"向外找最近可走格的半径（格）。
@@ -165,6 +212,38 @@ namespace Cs16.Module.Bot
         /// <summary>避障偏角的保持时长（秒）：带惯性，避免左右抖动。
         /// 出处：**本项目新增**（避障实现参数，A 无 bot AI）。</summary>
         public const float ProbeHoldSeconds = 0.5f;
+
+        /// <summary>
+        /// 避障"选定一侧"之后的保持时长（秒）：这一侧没有更进一步的可走候选、也没有实质进展之前，
+        /// 不许换到另一侧。
+        ///
+        /// <para>只靠 <see cref="ProbeHoldSeconds"/> 不够：偏角缓存到期、或机器人沿偏角走开一小段之后
+        /// 期望方向又能走，就会立刻退回直线 ⇒ 直线把人送回同一个转角 ⇒ 输出方向以"缓存时长"的周期
+        /// 在同一段墙前来回。保持时长必须长到"沿这一侧绕过这个转角"的量级：4.7m/s × 1.2s ≈ 5.6m。</para>
+        ///
+        /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI；同族参数 = <see cref="ProbeHoldSeconds"/>）。</para>
+        /// </summary>
+        public const float AvoidSideHoldSeconds = 1.2f;
+
+        /// <summary>
+        /// 侧向保持期间的"实质进展"判据（米）：到最终目标的水平距离比选定这一侧时缩短这么多，
+        /// 这段障碍就算绕过去了 —— 允许立刻重新选向（不必等满 <see cref="AvoidSideHoldSeconds"/>）。
+        ///
+        /// <para>取 0.6m：小于一格，够灵敏；又大于逐帧位置抖动（格宽 1m），不会被噪声触发。</para>
+        ///
+        /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float AvoidSideProgressMeters = 0.6f;
+
+        /// <summary>
+        /// 期望方向变化超过这个角度就作废侧向保持（度）：换目标 / 改用 A* 拐点之后是另一段路，
+        /// 不是"同一个转角的两侧"，继续沿旧侧走会绕远。
+        ///
+        /// <para>取 35°：与 <see cref="BlockedDirDegrees"/> 同一个"算同一个方向"的容差口径。</para>
+        ///
+        /// <para>出处：**本项目新增**（避障实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float AvoidSideDesiredDegrees = 35f;
 
         /// <summary>
         /// 单帧（或少数几帧）的"不可走"**不算数** —— <see cref="WalkableAhead"/> 的判定落在
@@ -279,6 +358,71 @@ namespace Cs16.Module.Bot
         /// </summary>
         public const float StuckWarnMinInterval = 15f;
 
+        // ==================== 全局卡住诊断（有移动意图却连续不动）====================
+        /// <summary>卡住诊断的判定窗口（秒）：有移动意图、且这整段时间水平位移不足就算一次卡住。
+        /// 出处：**本项目新增**（诊断参数，A 无 bot AI；与 <see cref="StuckCheckInterval"/> 分开 ——
+        /// 后者是导航内部的短周期自恢复，这里要的是"持续不动"的稳定结论）。</summary>
+        public const float StuckDiagSeconds = 2f;
+
+        /// <summary>判定窗口内水平位移低于它就算"没动"（米）。与 <see cref="StuckMoveEpsilon"/> 同值，
+        /// 但两者各自独立：改一个不会连带改另一个。</summary>
+        public const float StuckDiagMoveEpsilon = 0.15f;
+
+        /// <summary>意图的水平移动分量低于它就不算"想走"（守点 / 下包 / 拆包本身就该站定，不能算卡住）。</summary>
+        public const float StuckIntentMoveEpsilon = 0.1f;
+
+        /// <summary>同一只 bot 两次卡住 Warn 之间的最小间隔（秒）—— 计数逐次累计，只有日志限频。</summary>
+        public const float StuckDiagLogInterval = 4f;
+
+        /// <summary>"贴身挡路"的判定半径（米）：这个距离内且在本 tick 的目标方向上，就认为是被角色堵住。</summary>
+        public const float StuckNeighborRadius = 1f;
+
+        // ==================== 行进朝向（无交战目标时朝移动方向看）====================
+        /// <summary>
+        /// 非交战时注视点的最小前视距离（米）：注视方向不变，只把注视点推到这么远。
+        /// 近处目标点（路点常常只有 1~3m）会让 ±0.1m 的横向微动放大成 ±4° 的朝向摆动，
+        /// 表现是观战视角逐帧抖；推到 10m 后同样的微动只占 ~0.6°。
+        /// </summary>
+        public const float TravelAimDistance = 10f;
+
+        /// <summary>
+        /// 非交战时"当前注视方向与移动方向的夹角余弦"低于它就改看移动方向（-0.2 ⇒ 夹角 &gt; 101°）：
+        /// 只有真的背对行进方向（避障偏角带偏 / 让行后退）才改朝向；侧移不改 —— 侧移时跟随
+        /// 移动方向会把避障方向的逐帧跳动直接放大成朝向摆动。
+        /// </summary>
+        public const float TravelFaceMoveDot = -0.2f;
+
+        /// <summary>
+        /// 交战中允许连续纯后退（dot(move, 朝向) &lt; -0.5）的最长时间（秒）：超过就改成横向侧移。
+        /// </summary>
+        public const float MaxBackpedalSeconds = 0.6f;
+
+        /// <summary>
+        /// 纯后退的判定余弦（dot(move, 朝向) 低于它 = 边打边退）：-0.5 ⇒ 与朝向夹角 &gt; 120°。
+        /// </summary>
+        public const float BackpedalDot = -0.5f;
+
+        /// <summary>
+        /// 瞄准平滑的、**小角度跳变**档角速度上限（度/秒）：180°/s ≈ 60fps 下 3°/帧，
+        /// 与验收口径（逐帧 yaw 步长 p95 ≤ 3°/帧）同值。只压这一档 —— 大幅换向走快速档。
+        /// </summary>
+        public const float AimSmoothDegPerSec = 180f;
+
+        /// <summary>瞄准平滑的**快速档**角速度上限（度/秒）：切目标 / 转身找敌人时不压速。</summary>
+        public const float AimSmoothFastDegPerSec = 240f;
+
+        /// <summary>超过这个夹角就算"换目标"而不是"抖"，走快速档（度）。</summary>
+        public const float AimSmoothFastAngle = 45f;
+
+        /// <summary>让行（侧移 + 后退）的保持时长（秒）。</summary>
+        public const float YieldSeconds = 1.2f;
+
+        /// <summary>同一目标连续判定卡住达到这次数，就把该目标记为"物理走不到"并换下一个目标/守位。</summary>
+        public const int UnreachableGoalStreak = 2;
+
+        /// <summary>被标记为"走不到"的目标点记忆时长（秒）：这段时间内选目标时跳过它。</summary>
+        public const float UnreachableGoalMemorySeconds = 20f;
+
         /// <summary>巡逻点/换路目标必须离当前位置至少这么远（米），否则等于没换目标。
         /// 出处：**本项目新增**（导航实现参数，A 无 bot AI）。</summary>
         public const float MinPatrolDistance = 6f;
@@ -323,10 +467,38 @@ namespace Cs16.Module.Bot
         /// <summary>两次换枪之间的最小间隔（秒）。出处：**本项目新增**（交战实现参数，A 无 bot AI）。</summary>
         public const float WeaponSwitchCooldown = 1.5f;
 
+        /// <summary>
+        /// 换弹时后退的距离（米）：后退点 = 自身沿"远离敌人"方向再走这么远。
+        /// 出处：**本项目新增**（A 无 bot AI；取值 = 一个身位多一点，够脱离对方准星又不会退出战场）。
+        /// </summary>
+        public const float RetreatDistance = 3.5f;
+
         /// <summary>距离 &gt; 偏好距离 × 它时推进；否则站定（远距离蹲下）。
         /// 出处：**本项目新增**（倍数；被乘的"偏好距离"真源 = <c>CsBotProfile.For</c> 三档表，
         /// <c>Module/Match/CsTypes.cs:148</c>）。</summary>
         public const float AdvanceRangeFactor = 1.5f;
+
+        /// <summary>
+        /// 允许扣扳机的最大水平速度（米/秒）：速度没落下来之前一律不开火。
+        ///
+        /// <para>依据 = 子弹散布直接读水平速度（<see cref="Cs16.Module.Combat.Firearm.ComputeSpread"/>
+        /// 的 <c>moveFactor</c> 与档位判据）⇒ 跑动中扣扳机等于把子弹打飞。
+        /// 0.05 ≈ 2 unit/s：模拟的 <c>PM_WalkMove</c> 在水平速度 &lt; 0.0254 m/s 时直接清零
+        /// （<c>Module/Match/CsMovement.cs</c> 的 <c>MinMoveSpeed</c>）⇒ 本阈值等价于"已经站住"。</para>
+        ///
+        /// <para>出处：**本项目新增**（实现参数，A 无 bot AI）。</para>
+        /// </summary>
+        public const float FireStandSpeed = 0.05f;
+
+        /// <summary>
+        /// 持包压点途中遇敌时站定射击的保持时长（秒）：停下打完这一梭 / 这一串点射再继续压。
+        /// 出处：**本项目新增**（实现参数，A 无 bot AI；取值落在"打完一个连发段"的量级）。</summary>
+        public const float EngageShotHoldSeconds = 0.45f;
+
+        /// <summary>
+        /// 站定射击时蹲下的距离门槛（米）：超过它才蹲（压低受弹面），近距离不蹲（换位更快）。
+        /// 出处：**本项目新增**（实现参数，A 无 bot AI）。</summary>
+        public const float EngageCrouchDistance = 20f;
 
         /// <summary>
         /// 开火角度门限 = AimErrorDegrees × 它 + AimGateExtraDegrees。
@@ -353,6 +525,10 @@ namespace Cs16.Module.Bot
         /// <summary>开火角度门限上限（度）。
         /// 出处：**本项目新增**（门限钳制上限，与 <see cref="AimGateErrorScale"/> 同组）。</summary>
         public const float AimGateMaxDegrees = 30f;
+
+        /// <summary>交战开火的俯仰角上限（度）：瞄准方向相对地平线的 |pitch| 超过它即视为未锁定、不开火。
+        /// 出处：**本项目新增**（原版视角上限 89°，交战瞄准不应超过 45° —— 修"AI 朝天开枪"）。</summary>
+        public const float AimPitchLimitDegrees = 45f;
 
         /// <summary>瞄头时的额外误差比例（倍 AimErrorDegrees）。出处：行为口径见规格 §2.4 的 Hard 行
         /// 「精准、会点射/爆头倾向」（<c>策划/策划案/CS1.6单机参考规格.md:118</c>）；
@@ -411,6 +587,46 @@ namespace Cs16.Module.Bot
         /// **1.0 这个具体值本项目新增**。</summary>
         public const float PickupStopRadius = 1.0f;
 
+        /// <summary>
+        /// 非拆弹者的**掩护站位半径**（米）：CT 只派"离 C4 最近的那一个"按住 E，
+        /// 其余人在这个距离外站住、盯住 T 的来路。
+        /// 出处：**本项目新增**（A 无 bot AI；取值 = C4 爆炸致伤半径 <c>CsConst.GrenadeHeRadius</c>(5.5 m)
+        /// 之上留 0.5 m 余量，保证掩护者不在拆包点被同一颗手雷一起带走）。
+        /// </summary>
+        public const float DefuseSupportRadius = 6f;
+
+        /// <summary>拆包被挡时绕行落脚点到 C4 的水平半径（米）：取能绕开箱子/掩体、又不算"远离"的一圈。</summary>
+        public const float DefuseSidestepRadius = 1.1f;
+
+        /// <summary>
+        /// 模拟层转身角速度的**硬上限**（度/秒）。Bot 提交的瞄点再平滑，最终 `a.Yaw` 仍由
+        /// <c>CsMatch</c> 按难度 AimSpeedDegrees 追（Hard 520°/s = 8.7°/帧@60fps）；配合每 0.35s
+        /// 重采样的 ±瞄准误差，就是观战画面抖动的来源。180°/s = 3°/帧，与表现层判据一致。
+        /// </summary>
+        public const float AimMaxDegPerSec = 180f;
+
+        /// <summary>
+        /// 拆包/下包人选重新选举的间隔（秒）：C4 位置固定，选举只在"最近的人死掉/换位"时才变；
+        /// 按间隔重算即可，不必逐帧遍历全队。
+        /// 出处：**本项目新增**（选举实现参数）。
+        /// </summary>
+        public const float DefuseElectInterval = 0.5f;
+
+        /// <summary>
+        /// 守包（C4 已下）时盯住来路的搜索半径（米）：取该半径内**离 C4 最近的** T 侧来路标记点。
+        /// 出处：**本项目新增**（守包注视点实现参数；标记点本身来自 de_dust2 的 <c>CsMarkers.CTDefend*</c>）。
+        /// </summary>
+        public const float GuardWatchRange = 30f;
+
+        /// <summary>
+        /// 守点注视点选路的**最小距离**（米）：T 进攻路线里"落在包点判定球内"的那几个点离守位只有 4~7m，
+        /// 站在旁边时方位随一步移动就摆几十度（守卫会来回甩头），所以不拿它们当注视点；
+        /// 取"包点判定球以外"里离守位最近的那个路点 = 真正的来路。
+        /// <para>出处：**本项目新增**（守点注视点实现参数）；数值 = 2 × <see cref="SiteRadius"/>，
+        /// 后者逐值搬自 <c>Module/Map/ICsMap.cs</c> 的 <c>CsMarkers.BombsiteRadius = 7f</c>。</para>
+        /// </summary>
+        public const float HoldWatchMinDistance = 2f * SiteRadius;
+
         /// <summary>炸弹剩余时间 ≤ 拆包所需 + 它时，优先拆包（Hard 的"拆包果断"）。
         /// **余量秒数本项目新增**。</summary>
         public const float DefuseUrgencyMargin = 2f;
@@ -450,6 +666,16 @@ namespace Cs16.Module.Bot
         /// （<c>CsConst.PlayerRadius</c> = 0.36m 直径 0.72m）：否则"多点分布"退化成一格上叠两个人。</para>
         /// </summary>
         public const float HoldSpotMinSeparation = 3f;
+
+        /// <summary>
+        /// 守位相对包点**标记重心**的最大水平距离（米）：超出的标记点不进守位表。
+        ///
+        /// <para>出处：**本项目新增**（守位表实现参数，A 无 bot AI）。取值理由 = 略小于包点判定半径
+        /// <see cref="SiteRadius"/>（7m）：包点标记可能横跨十几米，只按"离队友最远"挑会把守卫挑到最外侧的
+        /// 标记上、离实际下包位置（A#0）十几米，观感就是"没人在包点里守"。收进重心 6m 内既保证在判定圈内，
+        /// 也保证在下包点附近。</para>
+        /// </summary>
+        public const float HoldSpotCenterRadius = 6f;
 
         /// <summary>
         /// 携带 C4 的 T 走到离**最近的包点标记**多远就停下开下（米）。
@@ -533,9 +759,35 @@ namespace Cs16.Module.Bot
         /// 出处：**本项目新增**（投掷实现参数）。</summary>
         public const float GrenadeAimGateDegrees = 12f;
 
+        /// <summary>开局多少秒内禁止投掷（秒）。开局投掷只会砸在出生点的队友身上。
+        /// 出处：**本项目新增**（投掷时机门槛）。</summary>
+        public const float GrenadeNoThrowSeconds = 9f;
+
+        /// <summary>没有敌人时允许投掷的"进攻准备位"距离（米）：到本轮包点标记 ≤ 它才投
+        /// （更远时雷只能飞出 9.6m，扔不到点上）。出处：**本项目新增**（投掷时机门槛）。</summary>
+        public const float GrenadeApproachRange = 22f;
+
+        /// <summary>投掷物落点 / 投掷锥内的队友安全半径（米）：这个范围内有队友就不投
+        /// （不许把闪光/高爆扔在队友身上）。出处：**本项目新增**（投掷安全门槛）。</summary>
+        public const float GrenadeTeammateSafeRadius = 25f;
+
+        /// <summary>投掷锥半角（度）：队友落在这个锥内且距离 ≤ <see cref="GrenadeTeammateSafeRadius"/> 也算会被打到。</summary>
+        public const float GrenadeTeammateConeDegrees = 30f;
+
+        /// <summary>下包前的敌人闸门（米）：敌人可见、或刚丢视野（记忆期内）且水平距离 ≤ 它 ⇒ 放弃下包先应战。
+        /// 出处：**本项目新增**（bot 下包取舍阈值；A 无 bot AI）。</summary>
+        public const float PlantEnemyAbortRange = 15f;
+
+        /// <summary>下包前敌人闸门的"刚丢视野"记忆时长（秒）。</summary>
+        public const float PlantEnemyMemorySeconds = 3f;
+
+        /// <summary>同层判定容差（米）：下包点标记与自身脚面的高度差超过它就不算同一落脚层。
+        /// 取两倍台阶高，允许标记点在台阶边缘的轻微高度差。</summary>
+        public const float PlantSameFloorHeight = 2f * CsConst.StepUpHeight;
+
         // ==================== 统计 / 日志 ====================
-        /// <summary>命中率统计日志间隔（秒）：验收表 B1~B3 要的就是这条。
-        /// 出处：**本项目新增**（验收表 B1~B3 要求的统计口径 + 日志降频参数）。</summary>
+        /// <summary>命中率统计日志间隔（秒）：按难度分档的命中率要的就是这条。
+        /// 出处：**本项目新增**（分档统计口径 + 日志降频参数）。</summary>
         public const float StatsLogInterval = 30f;
 
         /// <summary>伤害事件归属给"某个 bot 打中"的时间窗（秒）。

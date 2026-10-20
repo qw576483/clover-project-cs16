@@ -101,6 +101,14 @@ namespace Cs16.EditorTools
                 Debug.Log($"{Tag} 烘焙前关闭 Visual 碰撞体 {disabled.Count} 个并已存盘（它们只服务运行时物理，不参与烘焙）");
             }
 
+            // ---- ①(b) 地形高度场的**数据源**：离线几何表（`de_dust2_geo.bin`）的每格可站面 ----
+            //
+            // 为什么不用引擎的物理射线采样（`MapBaker.BuildHeightField`）：本烘焙为了保住服务端位图，
+            // 已经把 `Level/Visual` 的运行时碰撞体**关掉并存盘**了（见类注释），射线采不到地面。
+            // `Dust2Surfaces` 是与场景同源的朝上面光栅化表（`Dust2Builder` / `Dust2WalkSeal` 已按它
+            // 对齐标记点高度），每格给出该格**全部**可站面的格心高度 —— 同一格台上/台下两层都在里面。
+            var surfaceTable = Dust2Surfaces.BuildTable(geo);
+
             try
             {
                 var o = new MapBakeOptions
@@ -128,6 +136,16 @@ namespace Cs16.EditorTools
                     // 客户端用 `Game.Map.GetPoints(名字)` 取 —— 不再有 de_dust2_markers.bytes 旁路。
                     // 取点前必须先确认那道勾（上面的 ⓪），否则引擎只会 Warn 并导出空标记点。
                     MarkerRootName = Dust2Layout.MarkerRoot,
+                    // 地形高度场：随同一份 .bytes 导出（`CloverMapFormat.FlagHeightField` 段），
+                    // 客户端按「格 → 该格全部可站面高度」选层。上限用引擎默认（格式层 MaxSurfacesPerCell）。
+                    BakeHeightField = true,
+                    HeightFieldSource = (ix, iz) =>
+                        SurfaceHeightsAt(surfaceTable, geo.Width, ix, iz),
+                    // 单连通收敛必须落在**导出的位图**上（不只是文件后处理）：高度场只登记可走格，
+                    // 若先导出、再封格，被封的格会带着可站面（违反「有面 ⇒ 可走」）。
+                    // 下面 `ApplyToFiles` 仍会跑同一变换（幂等：已收敛的位图不再翻转）。
+                    WalkableTransform = cells =>
+                        Dust2WalkSeal.Transform(cells, geo.Width, geo.Depth, out _, out _),
                 };
                 o.Save();   // 存下来：面板 / 其它 agent 的 CLI 复用同一份参数
 
@@ -173,7 +191,23 @@ namespace Cs16.EditorTools
             }
         }
 
-        /// <summary>只读自检：两份 .bytes 是否都在、位图阻挡格是否 &gt; 0。</summary>
+        /// <summary>
+        /// 取格 (ix,iz) 的全部可站面高度（米，格心高度）。返回空数组 = 该格没有朝上面。
+        /// <para>数据来自 <see cref="Dust2Surfaces.BuildTable"/>：同一格的台上/台下、箱顶/地面
+        /// 各是一条，顺序即表里的登记顺序（编码端会按 y 升序重排）。</para>
+        /// </summary>
+        private static float[] SurfaceHeightsAt(Dictionary<int, List<Dust2Surfaces.Face>> table,
+                                                int width, int ix, int iz)
+        {
+            if (table == null) return System.Array.Empty<float>();
+            if (!table.TryGetValue(iz * width + ix, out var faces) || faces == null || faces.Count == 0)
+                return System.Array.Empty<float>();
+            var ys = new float[faces.Count];
+            for (var i = 0; i < faces.Count; i++) ys[i] = faces[i].CenterY;
+            return ys;
+        }
+
+        /// <summary>只读自检：两份 .bytes 是否都在、位图阻挡格是否 &gt; 0、高度场段是否在。</summary>
         public static void VerifyOutputs()
         {
             string server = $"{Dust2Layout.ServerMapDir}/{CsConst.MapDust2}.bytes";
@@ -192,6 +226,12 @@ namespace Cs16.EditorTools
                     Debug.Log($"{Tag} 产物 {p}：{bytes.Length} 字节｜{info}");
                     if (info.BlockedCount <= 0)
                         Debug.LogError($"{Tag} {p} 的阻挡格 = 0：位图是「全可走」的空地图（物体没 Collider？）");
+                    if (info.SurfaceCount <= 0)
+                        Debug.LogError($"{Tag} {p} 没有地形高度场段（可站面 = 0）：多层格会退回单次物理射线" +
+                                       "（检查 BakeHeightField / HeightFieldSource 与几何表）");
+                    else if (info.CellsWithSurface < info.WalkableCount / 4)
+                        Debug.LogWarning($"{Tag} {p} 的高度场只覆盖 {info.CellsWithSurface}/{info.WalkableCount} " +
+                                         "个可走格：覆盖偏低，多层格仍会退回物理射线");
                 }
                 else
                 {

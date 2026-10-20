@@ -23,11 +23,11 @@ namespace Cs16.UI
 
         private static readonly string[] Tips =
         {
-            "提示：按 B 打开买枪菜单（仅买枪时间 + 买枪区内有效）",
-            $"提示：炸弹 {CsConst.BombTimer:0} 秒爆炸，拆包要 {CsConst.DefuseTime:0} 秒（带拆弹器 {CsConst.DefuseTimeWithKit:0} 秒）",
-            "提示：Shift 慢走不会发出脚步声",
-            "提示：连续点射比按住扫射准得多",
-            $"提示：回合时间 {CsConst.RoundTime:0} 秒，半场 {CsConst.RoundsPerHalf} 局",
+            "TIP: Press B to open the buy menu (buy time and buy zone only)",
+            $"TIP: The bomb explodes in {CsConst.BombTimer:0}s; defusing takes {CsConst.DefuseTime:0}s ({CsConst.DefuseTimeWithKit:0}s with a kit)",
+            "TIP: Walking (Shift) makes no footstep sound",
+            "TIP: Short bursts are far more accurate than holding the trigger",
+            $"TIP: Rounds last {CsConst.RoundTime:0}s, {CsConst.RoundsPerHalf} rounds per half",
         };
 
         /// <summary>原版背景拼图（12 块 TGA，见 <see cref="CsMenuBackground"/>；原版读条界面用的是同一套图）。</summary>
@@ -62,13 +62,13 @@ namespace Cs16.UI
             _mapName = CsUiStyle.CreateLabel("MapName", root, CsConst.MapDust2, 30, new Vector2(92f, -168f),
                 new Vector2(900f, 44f), TextAnchor.MiddleLeft, CsUiStyle.Accent);
 
-            CsUiStyle.CreateLabel("ProgressLabel", root, "正在加载地图数据…", 22, new Vector2(92f, -890f),
+            CsUiStyle.CreateLabel("ProgressLabel", root, "LOADING MAP DATA...", 22, new Vector2(92f, -890f),
                 new Vector2(900f, 32f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
             _tip = CsUiStyle.CreateLabel("Tip", root, string.Empty, 20, new Vector2(92f, -860f),
                 new Vector2(1500f, 30f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
 
             var track = CsUiStyle.CreateBoxRect("BarTrack", root, new Vector2(90f, -940f),
-                new Vector2(1740f, 26f), CsUiStyle.Field);
+                new Vector2(1740f, 26f), CsUiStyle.SliderTrack);
             var fill = CsUiStyle.CreateFullScreen("BarFill", track.transform, CsUiStyle.Accent, false);
             fill.rectTransform.anchorMin = Vector2.zero;
             fill.rectTransform.anchorMax = Vector2.zero;
@@ -82,6 +82,9 @@ namespace Cs16.UI
 
         public override void OnOpen(object param)
         {
+            // 预制体里存不下动态字体（见 CsUiStyle.ApplyOriginalFonts）⇒ 每次打开都重设一遍。
+            CsUiStyle.ApplyOriginalFonts(transform);
+
             WarnIfNull(_barFill, "进度条填充");
             WarnIfNull(_mapName, "地图名文本");
 

@@ -5,12 +5,13 @@ using Cs16.Module.Combat;
 using Cs16.Module.Match;
 using Cs16.Module.Player;
 using UnityEngine;
+using UnityEngine.Rendering;
 
 namespace Cs16.Module.View
 {
     /// <summary>
     /// 一个 actor（真人/机器人）的**第三人称视图**外壳：位置/朝向跟随 + 蹲下压扁 + 死亡留尸
-    /// + 自身渲染隐藏 + 头顶名牌。
+    /// + 自身渲染隐藏。
     ///
     /// <para><b>层级约定（与 <c>ArtSetup</c> 生成的 player.prefab 一致）</b>：</para>
     /// <code>
@@ -18,10 +19,7 @@ namespace Cs16.Module.View
     ///   └─ Body（承载"整体缩放/贴地"；脚本只碰这一个节点的 localScale/localPosition）
     ///        ├─ Hitbox_LeftLeg / Hitbox_RightLeg / Hitbox_Stomach / Hitbox_Chest / Hitbox_Head
     ///        │    （每个都带 MeshRenderer + CapsuleCollider + CsHitboxProxy）
-    ///   └─ Plate（名牌预制体实例，不缩放，每帧 billboard）
     /// </code>
-    /// <para>把缩放放在 <c>Body</c> 而不是根节点，是为了让名牌不受"蹲下压扁"影响
-    /// （否则蹲下时名字/血条也会被压扁）。</para>
     ///
     /// <para><b>网格为什么按命中区切成 4 份</b>：这样"隐藏本地玩家自己的模型"只要关掉这 4 个
     /// （按 <see cref="CsHitboxProxy"/> 反查子 Renderer）也天然生效，两条路不会互相打架。</para>
@@ -44,7 +42,6 @@ namespace Cs16.Module.View
         private Renderer[] _backpackRenderers = new Renderer[0];
 
         private Transform _body;
-        private Nameplate _plate;
         private bool _isLocal;
         private bool _alive = true;
         private bool _bodyHiddenLogged;
@@ -58,24 +55,48 @@ namespace Cs16.Module.View
         /// 按**当前姿态**逐帧跟随。</summary>
         private float _modelLift;
 
-        /// <summary>模型自带的蒙皮网格（只取 <c>Body</c> 下的，头顶名牌不在其中）—— 取贴地基准用。</summary>
+        /// <summary>模型自带的蒙皮网格（只取 <c>Body</c> 下的）—— 取贴地基准用。</summary>
         private SkinnedMeshRenderer[] _modelMeshes = new SkinnedMeshRenderer[0];
 
         /// <summary>贴地对齐量被上限截断的告警是否已打过（每具视图一次，避免每帧刷屏）。</summary>
         private bool _alignClampWarned;
 
+        /// <summary>下一条贴地对齐日志的时间（1 Hz 限频；见 <see cref="AlignFeetToGround"/>）。</summary>
+        private float _nextFeetLogAt;
+
         private float _crouchScale = 1f;
+
+        // ---- 脚底贴地圆影（见 CsBlobShadow）----
+        /// <summary>本具视图的圆影。Bind 时建一次，池复用时跟着实例走（不销毁重建）。</summary>
+        private CsBlobShadow _blobShadow;
+
+        /// <summary>圆影贴的那层地面的世界 y：着地时逐帧跟 <c>CsActor.Position.y</c>，
+        /// 离地时保持"起跳落点"的高度（影子留在地面、不跟着人飞）。</summary>
+        private float _blobShadowGroundY;
+
+        /// <summary><see cref="_blobShadowGroundY"/> 是否已有有效值（首次 Apply 之前没有）。</summary>
+        private bool _blobShadowGroundReady;
+
+        /// <summary>渲染体"收实时阴影"的纠偏是否已留过痕（每具视图一次）。</summary>
+        private bool _shadowReceiveLogged;
 
         // ---- 骨骼动画（原版序列驱动；见 CsViewTuning 的「骨骼动画」一节）----
         private Animator _animator;
         private IAnimPlayer _anim;
         private bool _animFailedLogged;
 
+        /// <summary>绑定姿态兜底是否已打过一次告警（每具视图只报一次，不刷屏）。</summary>
+        private bool _bindPoseWarned;
+
         /// <summary>本视图的 controller 上是否真有 <see cref="CsAimBlend.ParamYaw"/> /
         /// <see cref="CsAimBlend.ParamPitch"/> 这两个 float 参数。
         /// <para>必须在装配时问一次并缓存：给**没有这个参数**的控制器 <c>SetFloat</c>，
         /// Unity 每帧刷一条 "Parameter 'X' does not exist" 警告（旧资产没有这两个参数）。</para></summary>
         private bool _aimParamsReady;
+
+        /// <summary>上一次打进日志的两个瞄准轴值（−1 = 还没打过；见 <see cref="FeedAimBlend"/>）。</summary>
+        private float _aimYawLogged = -1f;
+        private float _aimPitchLogged = -1f;
 
         /// <summary>下次"恒更新复查"的时间（见 <see cref="EnsureAlwaysAnimateTick"/>）：异步加载的身体网格
         /// 与运行时挂上的武器都可能晚于 <see cref="Bind"/> 出现，所以不能只扫一次。</summary>
@@ -89,6 +110,36 @@ namespace Cs16.Module.View
 
         /// <summary>当前正在播的位移状态（避免每帧重复 CrossFade）。</summary>
         private string _lastState;
+
+        /// <summary>下一条位移状态**不做过渡**、直接切（刚绑定 / 刚复活时状态机里还留着别的片段）。</summary>
+        private bool _instantLoco;
+
+        /// <summary>本帧做过"直接切"：Animator 的积分在 LateUpdate 之前，直接切要显式求值一次，
+        /// 否则这一帧渲染的仍是刚激活时的绑定姿态（整具模型闪一帧 T-pose）。</summary>
+        private bool _poseDirty;
+
+        /// <summary>双手手枪的左右手射击组轮换位（0/1；见 <see cref="CsViewTuning.PlayerShootStates"/>）。
+        /// 其它武器也照样翻，取值无害（它们只有一条射击组）。</summary>
+        private int _shootVariant;
+
+        // ---- 第 2 层：上身 aim 通道（见 DriveUpperChannel，生成器见 AnimSetup.BuildUpperStates）----
+        /// <summary>
+        /// 上身通道的层号。生成器把「upper」层钉在第 1 层（Base Layer 留在 0 层，运行期按 0 层切状态）
+        /// ⇒ 这里与生成器同口径地按**层号**访问；控制器里没有第 2 层时整段不启用。
+        /// </summary>
+        private const int UpperLayer = 1;
+
+        /// <summary>本视图的 controller 上是否真有第 <see cref="UpperLayer"/> 层（装配时问一次，见 <see cref="SetupAnimator"/>）。</summary>
+        private bool _upperLayerReady;
+
+        /// <summary>上身通道当前喂着的 aim 状态名（<c>null</c> = 通道关闭，层权重 0）。</summary>
+        private string _upperState;
+
+        /// <summary>查 layer0 本帧 clip 用的缓冲（见 <see cref="Layer0HasClip"/>；每帧复用，不产生 GC）。</summary>
+        private readonly List<AnimatorClipInfo> _clipBuf = new List<AnimatorClipInfo>(4);
+
+        /// <summary>上身通道的告警去重键（多个视图 / 多个角色共用同一 controller 与同一批状态名，不许逐具刷屏）。</summary>
+        private static readonly HashSet<string> _upperWarned = new HashSet<string>(System.StringComparer.Ordinal);
 
         /// <summary>死亡序列是否已经播过（每局一次）。</summary>
         private bool _deathPlayed;
@@ -138,6 +189,9 @@ namespace Cs16.Module.View
 
         /// <summary>已经报过"没有世界模型"的武器 id（只报一次，避免每帧刷屏）。</summary>
         private readonly HashSet<string> _heldMissingLogged = new HashSet<string>();
+
+        /// <summary>已经报过"没有手部对齐行"的武器 id（只报一次）。</summary>
+        private readonly HashSet<string> _aimTableWarned = new HashSet<string>();
 
         /// <summary>上一帧的权威血量。掉血 = 中了没死的一发（阵亡走 <see cref="PlayDeath"/>），
         /// 用来触发原版受击抖动 <see cref="PlayFlinch"/>。</summary>
@@ -189,6 +243,39 @@ namespace Cs16.Module.View
             else ShowOwnRenderers();
         }
 
+        /// <summary>
+        /// 由 <see cref="ViewModule"/> 每帧写入"这具视图现在是不是本机玩家"（状态边沿才动作）。
+        ///
+        /// <para>为什么不能只在 <see cref="Bind"/> 那一刻判：视图是**按 actor id 建一次**的，而
+        /// "谁是本地玩家"可能晚于视图创建才成立（本地玩家那一帧还没就绪 / 新局与换图时 id 变了）。
+        /// 那一刻判错就会把本地自己的身体一直画在第一人称镜头里。</para>
+        ///
+        /// <para>尸体不在这里管：死亡瞬间的显隐由 <see cref="EnterCorpse"/> 定（本地尸体必须看得见）。</para>
+        /// </summary>
+        public void SetLocal(bool isLocal)
+        {
+            if (_isLocal == isLocal) return;
+            _isLocal = isLocal;
+            if (!_alive) return;
+
+            if (isLocal)
+            {
+                HideOwnRenderers();
+                return;
+            }
+
+            // 仍是观战档位 4 的被观察者（相机在他眼位）⇒ 保持隐藏，别被这次身份变化还回来。
+            if (_spectateEye) return;
+
+            var back = EnableOwnRenderers();
+            if (back > 0)
+            {
+                _bodyHiddenLogged = false;
+                _log.Info("view.local.off",
+                    $"角色视图「{name}」不再是本机玩家：把 {back} 个渲染还回来（换局 / 身份变化）");
+            }
+        }
+
         /// <summary>相机是否在本角色眼位（本地第一人称玩家 / 观战档位 4 的被观察者）。</summary>
         private bool EyeCam => _isLocal || _spectateEye;
 
@@ -199,8 +286,6 @@ namespace Cs16.Module.View
         ///
         /// <para><b>为什么必须有</b>（不清就会静默画出错的东西）：池交回的实例**带着上一世的状态** ——
         /// <list type="number">
-        /// <item>上一世的名牌 <c>Plate</c> 子节点还在 ⇒ 会被 <see cref="Bind"/> 的
-        /// <c>GetComponentsInChildren&lt;Renderer&gt;</c> 快照算进"实测身高"，整具模型的缩放 / 贴地全错；</item>
         /// <item>上一世若是本地玩家，4 个渲染被 <see cref="HideOwnRenderers"/> 关过 ⇒ 新角色**看不见**；</item>
         /// <item>上一世若是尸体，碰撞体被关过、Animator 速度被冻过（<see cref="ReleaseCorpsePose"/> 之外的回滚路径）
         /// ⇒ 射线打不中（"打不死人"）；</item>
@@ -208,22 +293,11 @@ namespace Cs16.Module.View
         /// </list></para>
         ///
         /// <para><b>调用时机</b>：<c>ViewModule.EnsureView</c> 里 <see cref="Bind"/> **之前** ——
-        /// 必须早于 Bind 的快照，否则第 ① 条照样发生。</para>
+        /// 必须早于 Bind 的快照（快照会把残留几何算进"实测身高"）。</para>
         /// </summary>
         public void PrepareForReuse()
         {
-            // ① 上一世的名牌：整棵子节点删掉（名牌本身也是池对象，交给池回收）
-            var plateTf = transform.Find(CsViewTuning.PlateNodeName);
-            if (plateTf != null)
-            {
-                var old = plateTf.gameObject;
-                var pool = Game.Pool;
-                if (pool != null) pool.Despawn(old);
-                else Destroy(old);      // 池不可用（未 Launch）：退回销毁，别把它留在新角色头上
-            }
-            _plate = null;
-
-            // ②③ 渲染与碰撞体还回来 + 动画速度复位（关过的都要开回来）
+            // ① 渲染与碰撞体还回来 + 动画速度复位（关过的都要开回来）
             for (var i = 0; i < _renderers.Length; i++)
             {
                 if (_renderers[i] != null) _renderers[i].enabled = true;
@@ -236,12 +310,16 @@ namespace Cs16.Module.View
 
             // ④ 身份与状态闸复位（Bind 会重新填身份；这里清的是"上一世的账"）
             _isLocal = false;
+            _spectateEye = false;      // 上一世若是观战眼位目标，残留 true 会让复用出的新角色一开始就是隐形的
             _alive = true;
             _bodyHiddenLogged = false;
             _proxiesChecked = false;
             _animFailedLogged = false;
             _overrideState = null;
             _lastState = null;
+            _instantLoco = true;
+            _poseDirty = false;
+            _shootVariant = 0;
             _deathPlayed = false;
             _deathState = null;
             _hideAfterDeath = false;
@@ -265,12 +343,19 @@ namespace Cs16.Module.View
             }
             _anim = null;
             _aimParamsReady = false;
+            _aimYawLogged = -1f;
+            _aimPitchLogged = -1f;
+            _upperLayerReady = false;
+            _upperState = null;
             _fitScale = 1f;
             _modelLift = 0f;
             _modelMeshes = new SkinnedMeshRenderer[0];
             _alignClampWarned = false;
             _crouchScale = 1f;
             _backpackRenderers = new Renderer[0];
+            _blobShadowGroundReady = false;
+            _shadowReceiveLogged = false;
+            if (_blobShadow != null) _blobShadow.ResetForReuse();
             IsShown = false;
         }
 
@@ -282,32 +367,32 @@ namespace Cs16.Module.View
         /// <param name="team">阵营</param>
         /// <param name="isBot">机器人 → 物理层 <c>PhysicsLayers.Bot</c>；真人 → <c>PhysicsLayers.Player</c></param>
         /// <param name="isLocal">本地玩家自己（渲染隐藏、碰撞体保留）</param>
-        /// <remarks>
-        /// **名牌必须在 <see cref="Bind"/> 之后用 <see cref="SetPlate"/> 挂上**：本方法里的
-        /// <c>_renderers</c> 快照会排除名牌，否则名牌那点小几何会把"实测身高"抬高、把缩放算错。
-        /// </remarks>
         public void Bind(long actorId, CsTeam team, bool isBot, bool isLocal)
         {
             ActorId = actorId;
             Team = team;
             _isLocal = isLocal;
+            _instantLoco = true;
 
             _body = transform.Find(CsViewTuning.BodyNodeName);
             if (_body == null)
             {
                 _log.Warn("body.missing",
-                    $"角色视图「{name}」找不到子节点「{CsViewTuning.BodyNodeName}」，退化到直接缩放根节点" +
-                    "（名牌会跟着蹲下一起被压扁）—— 请重新执行 ArtSetup 生成 player.prefab");
+                    $"角色视图「{name}」找不到子节点「{CsViewTuning.BodyNodeName}」，退化到直接缩放根节点 " +
+                    "—— 请重新执行 ArtSetup 生成 player.prefab");
                 _body = transform;
             }
 
             _proxies = GetComponentsInChildren<CsHitboxProxy>(true);
-            _renderers = GetComponentsInChildren<Renderer>(true);
+            _renderers = CollectModelRenderers();
             _colliders = GetComponentsInChildren<Collider>(true);
             _backpackRenderers = CollectBackpackRenderers(_renderers);
-            // 贴地基准只取 Body 下的蒙皮网格：Body 之外的任何几何（头顶名牌）都不该参与。（此刻还没挂名牌，
-            // 但池复用时上一世的名牌由 PrepareForReuse 清掉，两条路一起保证这里量到的只是身体。）
+            // 贴地基准只取 Body 下的蒙皮网格：Body 之外的任何几何都不该参与量测。
             _modelMeshes = _body.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+
+            // 材质缺贴图兜底：部分皮肤材质的 _MainTex 是空的（生成器只找「裸贴图名」PNG，
+            // 而盘上只有带模型前缀的贴图文件）⇒ 这里按材质名回绑一次，修好后后续 Bind 不再触发。
+            EnsureTexturesBound();
 
             var layer = isBot ? PhysicsLayers.Bot : PhysicsLayers.Player;
             for (var i = 0; i < _proxies.Length; i++)
@@ -345,6 +430,17 @@ namespace Cs16.Module.View
             }
 
             Measure();
+
+            // 圆影必须建在 Measure **之后**：它自己也是一块 Renderer，早建会被量进"角色身高"。
+            if (_blobShadow == null) _blobShadow = new CsBlobShadow();
+            _blobShadow.Ensure(transform);
+            _blobShadow.SetVisible(true);
+            if (!_blobShadow.IsCreated)
+            {
+                _log.Warn("shadow.nocreate",
+                    $"角色视图「{name}」的脚底圆影建不出来（程序化贴图生成失败）—— 该角色没有接地阴影");
+            }
+
             SetShown(true);
             if (_isLocal) HideOwnRenderers();
             SetupAnimator();
@@ -379,8 +475,17 @@ namespace Cs16.Module.View
 
             // 瞄准 blend 的两个轴参数只有"出了 9 路 BlendTree 的控制器"才有（见 AnimSetup.BuildController）
             // ⇒ 在这里问一次并缓存，运行期按它决定要不要喂值。
-            _aimParamsReady = HasFloatParameter(_animator, CsAimBlend.ParamYaw)
-                              && HasFloatParameter(_animator, CsAimBlend.ParamPitch);
+            _aimParamsReady = AimParamsAvailable();
+
+            // 第 2 层 = 上身 aim 通道（见 DriveUpperChannel 的说明）。老 controller 只有 1 层 ⇒ 整段不启用。
+            _upperLayerReady = _animator.layerCount > UpperLayer;
+            if (!_upperLayerReady && _upperWarned.Add("layer:" + ctrl.name))
+            {
+                _log.Warn("anim.upper.nolayer",
+                    $"角色视图「{name}」的 controller「{ctrl.name}」只有 {_animator.layerCount} 层，没有第 {UpperLayer} 层" +
+                    "（上身 aim 通道）—— 位移态会露出绑定姿态的手臂（双臂平伸）。" +
+                    "请重跑菜单 Clover/CS16/整理视图与音效资源（会重建带动画层的预制体）");
+            }
 
             var anim = Game.Anim;
             if (anim == null)
@@ -446,7 +551,7 @@ namespace Cs16.Module.View
         /// 其余档（空中 / 蹲 / 走 / 跑）不走这条，与原版的双通道口径（腿走 gait 序列、上身播 aim）
         /// 无关 —— 本工程没有 gait 通道，所以只有**站定**这一档切到瞄准姿势。</para>
         /// </summary>
-        private static string[] LocomotionStates(CsActor actor)
+        private string[] LocomotionStates(CsActor actor)
         {
             var v = actor.Velocity;
             var speed = new Vector2(v.x, v.z).magnitude;
@@ -455,7 +560,22 @@ namespace Cs16.Module.View
             if (actor.IsCrouching)
                 return moving ? CsViewTuning.PStateCrouchRun : CsViewTuning.PStateCrouchIdle;
             if (!moving) return CsViewTuning.PlayerAimStates(actor.ActiveWeapon);
-            return speed > CsViewTuning.AnimRunSpeedThreshold ? CsViewTuning.PStateRun : CsViewTuning.PStateWalk;
+            return IsRunBand(speed) ? CsViewTuning.PStateRun : CsViewTuning.PStateWalk;
+        }
+
+        /// <summary>
+        /// 走 / 跑分档，带迟滞：进跑档要超过「阈值 + 迟滞带」，退回走档要低于「阈值 − 迟滞带」。
+        ///
+        /// <para>速度停在阈值附近来回抖时（被墙 / 箱体钳住的角色：加速与撞墙清零逐帧交替），
+        /// 不带迟滞会每帧重启一次 0.1 s 的 <c>CrossFade</c>；过渡期间 <c>Animator</c> 报不出当前
+        /// clip，渲染退回绑定姿态（双臂平伸）。</para>
+        /// </summary>
+        private bool IsRunBand(float speed)
+        {
+            var threshold = CsViewTuning.AnimRunSpeedThreshold;
+            var band = CsViewTuning.AnimRunSpeedHysteresis;
+            var running = string.Equals(_lastState, CsViewTuning.PStateRun[0], System.StringComparison.Ordinal);
+            return running ? speed > threshold - band : speed > threshold + band;
         }
 
         /// <summary>当前水平速率（米/秒）——位移状态的判据与日志口径。</summary>
@@ -509,22 +629,35 @@ namespace Cs16.Module.View
 
             if (actor.NextFireTime > _preNextFireTime + 0.0001f)
             {
-                var cand = CsViewTuning.PlayerShootStates(actor.ActiveWeapon, actor.IsCrouching);
+                var cand = CsViewTuning.PlayerShootStates(actor.ActiveWeapon, actor.IsCrouching, _shootVariant);
+                _shootVariant ^= 1;
                 var st = ResolveState(cand);
                 if (st != null) { _anim.Play(st, 0f); _overrideState = st; }
-                // 别人的开火要有第三人称枪口表现。本地玩家走第一人称那一套
+                // 别人的开火要有 3D 枪声 + 第三人称枪口表现。本地玩家走第一人称那一套
                 // （CombatModule.HandleLocalShot）—— 这里必须排除，否则同一次开火会出现两处火光。
-                if (!_isLocal) CombatModule.Instance?.FxRemoteShot(this, actor.ActiveWeapon);
+                if (!_isLocal)
+                    CombatModule.Instance?.FxRemoteShot(this, actor.ActiveWeapon, actor.Silenced, actor.EyePosition);
             }
             _preNextFireTime = actor.NextFireTime;
 
             if (_overrideState != null) return;      // 一次性动作播完前不改状态
 
             var want = ResolveState(LocomotionStates(actor));
-            if (want != null && want != _lastState)
+            if (want != null && (want != _lastState || _instantLoco))
             {
                 _lastState = want;
-                _anim.CrossFade(want, CsViewTuning.AnimCrossFade);
+                // 刚绑定 / 刚复活：状态机里还留着上一世（或尸体）的片段，过渡会从那个姿势渐变过来，
+                // 头一帧就是绑定姿态 ⇒ 直接切。
+                if (_instantLoco)
+                {
+                    _instantLoco = false;
+                    _anim.Play(want, 0f);
+                    _poseDirty = true;
+                }
+                else
+                {
+                    _anim.CrossFade(want, CsViewTuning.AnimCrossFade);
+                }
                 // 位移态是逐帧重算的连续量：按时间抽样留一条现场，不每次切换都打。
                 if (CloverEngine.LogThrottle.ShouldLog("view.loco:" + name, 5f))
                 {
@@ -533,6 +666,210 @@ namespace Cs16.Module.View
                         $"蹲={actor.IsCrouching} 离地={!actor.OnGround}）");
                 }
             }
+        }
+
+        /// <summary>
+        /// 位移序列的**播放速率** = 实际水平速度 ÷ 该序列的设计速度。
+        ///
+        /// <para><b>为什么不能固定 1 倍速</b>：原版按**走过的距离**推进步态
+        /// （<c>原版资源/cs16src/regamedll/dlls/player.cpp:9192-9195</c>：
+        /// <c>m_flGaitframe += (m_flGaitMovement / pseqdesc-&gt;linearmovement.x) * pseqdesc-&gt;numframes</c>）
+        /// ⇒ 播放速率 = 实际速度 ÷ 设计速度。固定 1 倍速时，walk 档顶（135 u/s = 3.43 m/s）脚每循环只推
+        /// 1.52 m 而身体走了 3.43 m ⇒ 滑步 1.9 m/s；<c>run</c> 满速 250 u/s 的设计速度正好是 6.35 m/s
+        /// ⇒ 跑满速时速率 = 1，与现状一致。</para>
+        ///
+        /// <para>只改位移态（<see cref="CsViewTuning.LocoDesignSpeed"/> 非 0 的那三类）；一次性动作
+        /// （开火 / 换弹 / 受击 / 倒地）与空中一律 1 倍速，尸体冻结由 <see cref="EnsureCorpseShown"/> 管，
+        /// 这里在 <see cref="_alive"/> 为假时整段不碰。</para>
+        /// </summary>
+        private void ApplyLocoPlaybackRate(CsActor actor)
+        {
+            if (_animator == null || !_alive) return;
+
+            var rate = 1f;
+            if (_overrideState == null)
+            {
+                var design = CsViewTuning.LocoDesignSpeed(_lastState);
+                if (design > 0f) rate = HorizontalSpeed(actor) / design;
+            }
+
+            // 过渡期间强制 1 倍速：Animator.speed 同时缩放状态过渡，速度趋 0 时 0.1s 的 CrossFade
+            // 会冻在 weight 0（walk 第 0 帧双臂就是绑定姿态）⇒ T-pose。
+            if (_animator.IsInTransition(0) || (_upperLayerReady && _animator.IsInTransition(UpperLayer)))
+                rate = 1f;
+
+            // 速度下限：卡地形/被挤住时水平速度为 0，若把 Animator.speed 也设成 0，动画会停在该段第 0 帧，
+            // 首次进入状态时甚至连过渡都不求值 ⇒ 角色回到绑定姿态（双臂展开的 T-pose）。给一个极小下限，
+            // 只影响表现，不影响模拟。
+            if (rate < 0.2f) rate = 0.2f;
+            if (Mathf.Abs(_animator.speed - rate) > 0.0001f) _animator.speed = rate;
+        }
+
+        /// <summary>
+        /// 上身通道：只要有活人身体，就把 layer <see cref="UpperLayer"/>（上身 AvatarMask，生成器
+        /// <c>AnimSetup.BuildUpperStates</c>）的权重钉在 1，并常驻当前武器那条瞄准姿势
+        /// —— 位移态、站定、走跑过渡期都一样，layer0 的选状态逻辑一行不动。
+        ///
+        /// <para><b>为什么必须常驻</b>：原版是双通道 —— 腿走 <c>gaitsequence</c>、上身走 aim 序列
+        /// （<c>原版资源/cs16src/regamedll/dlls/player.cpp:2925-2928</c> 的
+        /// <c>pev-&gt;gaitsequence = LookupActivity(ACT_WALK)</c> 与 <c>:2875-2929</c> 的
+        /// <c>GetAnimDesired("aim", ANIM_CROUCH)</c>）。本工程的位移序列
+        /// （<c>walk</c> / <c>run</c> / <c>crouchrun</c> / <c>jump</c>）是整身一条，其中 <c>walk</c> 的臂是
+        /// 绑定姿态（<c>terror.mdl</c> 帧 0 的 <c>Bip01 L UpperArm</c> 欧拉角 ≈ 0）⇒ 这一层一旦不在，
+        /// 画面就是双臂平伸。layer0 在过渡期（<c>IsInTransition</c>）报不出稳定的当前 clip，
+        /// 走跑分档抖动时更是长期停在过渡里 ⇒ 这层不能按"当前位移态是哪一条"来开关。</para>
+        ///
+        /// <para><b>三条关层的情形</b>（都在 layer0 已经整身播好对应序列之后）：
+        /// ① 死亡 / 尸体（倒地序列整身播）；② 一次性动作（开火 / 换弹 / 受击，见
+        /// <see cref="_overrideState"/>）且 layer0 的过渡已走完 —— 过渡期间仍保持本层，
+        /// 否则过渡头几帧露出的正是上一段（<c>walk</c>）的绑定手臂；③ 第 2 层里没有对应状态
+        /// （老 controller）—— 此时告警并降级。</para>
+        ///
+        /// <para><b>蹲姿走 <c>crouch_aim_*</c></b>：原版蹲姿的上身是 <c>crouch_aim_*</c>
+        /// （<c>GetAnimDesired("aim", ANIM_CROUCH)</c> 在 <c>FL_DUCKING</c> 时取 <c>crouch_</c> 前缀，
+        /// <c>player.cpp:2647</c>），生成器把这两组同样放进了第 2 层
+        /// （<c>AnimSetup.IsUpperBlendSequence</c>）⇒ 蹲下时切到蹲姿瞄准，不关层。</para>
+        /// </summary>
+        private void DriveUpperChannel(CsActor actor)
+        {
+            if (_animator == null || !_upperLayerReady) return;
+
+            // ① 死亡 / 尸体：倒地序列要整身播。
+            if (!_alive)
+            {
+                CloseUpperChannel();
+                return;
+            }
+
+            // ② 一次性动作由 layer0 整身播；但 layer0 还在过渡、或这一帧还报不出任何 clip 时先保持本层 ——
+            //    那时它渲染的仍是上一段（walk 的帧 0 双臂就是绑定姿态），关层会把平伸的手臂露出来。
+            if (_overrideState != null && !_animator.IsInTransition(0) && Layer0HasClip())
+            {
+                CloseUpperChannel();
+                return;
+            }
+
+            var aim = ResolveState(actor.IsCrouching
+                ? CsViewTuning.PlayerCrouchAimStates(actor.ActiveWeapon)
+                : CsViewTuning.PlayerAimStates(actor.ActiveWeapon));
+            if (aim == null)
+            {
+                CloseUpperChannel();
+                return;
+            }
+
+            if (aim != _upperState)
+            {
+                if (!_animator.HasState(UpperLayer, Animator.StringToHash(aim)))
+                {
+                    // 非预期分支：第 2 层里没有这条 aim 状态（老 controller / 状态没建齐）⇒ 别静默地一直没上身。
+                    if (_upperWarned.Add("state:" + name + ":" + aim))
+                    {
+                        _log.Warn("anim.upper.nostate",
+                            $"角色视图「{name}」的第 {UpperLayer} 层里没有状态「{aim}」—— 上身 aim 通道不生效" +
+                            "（该姿势下会露出绑定姿态的手臂）。请重跑菜单 Clover/CS16/整理视图与音效资源");
+                    }
+                    CloseUpperChannel();
+                    return;
+                }
+                var reopen = _upperState == null;
+                _upperState = aim;
+                if (reopen)
+                {
+                    // 层刚打开（复活 / 一次性动作结束）：层里还留着上一次的片段，过渡会从那个姿势渐变过来。
+                    _animator.Play(Animator.StringToHash(aim), UpperLayer, 0f);
+                    _poseDirty = true;
+                }
+                else
+                {
+                    // 固定时长（秒）版本：过渡快慢不随该层片段长度变化。
+                    _animator.CrossFadeInFixedTime(aim, CsViewTuning.AnimCrossFade, UpperLayer);
+                }
+            }
+            if (_animator.GetLayerWeight(UpperLayer) != 1f) _animator.SetLayerWeight(UpperLayer, 1f);
+        }
+
+        /// <summary>layer0 这一帧是否已经报得出 clip（过渡刚起 / 刚 <c>Play</c> 的那一帧报不出来）。</summary>
+        /// <summary>
+        /// 绑定姿态兜底：layer0 一个 clip 都报不出来时，画面上就是绑定姿态（双臂平伸的 T 字）。
+        /// 强制回 idle（直接切 + 本帧求值），并把上身 aim 层打开，保证渲染前一定有姿态。
+        /// </summary>
+        private void EnsureNoBindPose(CsActor actor)
+        {
+            if (_animator == null || _anim == null || !_alive) return;
+
+            var hasClip = Layer0HasClip();
+            // walk 序列的第 0 帧双臂就是绑定姿态：只要 layer0 还在报 walk、而上身 aim 没盖满，
+            // 画面上就会露出平伸的手臂 —— 这一帧也要把上身层顶上去。
+            var walkExposed = hasClip && Layer0ClipIsWalk() &&
+                              _animator.GetLayerWeight(UpperLayer) < 0.999f;
+            if (hasClip && !walkExposed) return;
+
+            if (!hasClip)
+            {
+                var idle = ResolveState(CsViewTuning.PStateIdle);
+                if (idle != null)
+                {
+                    _anim.Play(idle, 0f);
+                    _lastState = idle;
+                    _overrideState = null;
+                    _poseDirty = true;
+                }
+            }
+
+            if (_upperLayerReady)
+            {
+                var aim = ResolveState(actor.IsCrouching
+                    ? CsViewTuning.PlayerCrouchAimStates(actor.ActiveWeapon)
+                    : CsViewTuning.PlayerAimStates(actor.ActiveWeapon));
+                if (aim != null)
+                {
+                    _animator.Play(Animator.StringToHash(aim), UpperLayer, 0f);
+                    _animator.SetLayerWeight(UpperLayer, 1f);
+                    _upperState = aim;
+                    _poseDirty = true;
+                }
+            }
+
+            if (!_bindPoseWarned)
+            {
+                _bindPoseWarned = true;
+                _log.Warn("anim.bindpose.guard",
+                    $"角色视图「{name}」layer0 本帧无 clip（绑定姿态）→ 已强制回 idle 并打开上身瞄准层");
+            }
+        }
+
+        private bool Layer0HasClip()
+        {
+            _clipBuf.Clear();
+            _animator.GetCurrentAnimatorClipInfo(0, _clipBuf);
+            for (var i = 0; i < _clipBuf.Count; i++)
+            {
+                if (_clipBuf[i].clip != null) return true;
+            }
+            return false;
+        }
+
+        /// <summary>layer0 本帧是否在报 walk 序列（它的第 0 帧双臂是绑定姿态，必须由上身层盖住）。</summary>
+        private bool Layer0ClipIsWalk()
+        {
+            _clipBuf.Clear();
+            _animator.GetCurrentAnimatorClipInfo(0, _clipBuf);
+            for (var i = 0; i < _clipBuf.Count; i++)
+            {
+                var c = _clipBuf[i].clip;
+                if (c != null && c.name.IndexOf("walk", System.StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
+        }
+
+        /// <summary>关掉上身通道（层权重 0 + 忘掉当前喂过的状态名）。幂等，每帧调也只做一次写值。</summary>
+        private void CloseUpperChannel()
+        {
+            _upperState = null;
+            if (_animator == null || !_upperLayerReady) return;
+            if (_animator.GetLayerWeight(UpperLayer) != 0f) _animator.SetLayerWeight(UpperLayer, 0f);
         }
 
         /// <summary>
@@ -557,8 +894,50 @@ namespace Cs16.Module.View
             var moving = speed > CsViewTuning.AnimMoveSpeedEpsilon;
             var gaitYaw = moving ? Mathf.Atan2(v.x, v.z) * Mathf.Rad2Deg : actor.Yaw;
 
-            _animator.SetFloat(CsAimBlend.ParamYaw, CsAimBlend.YawAxis(actor.Yaw, gaitYaw, moving));
-            _animator.SetFloat(CsAimBlend.ParamPitch, CsAimBlend.PitchAxis(-actor.Pitch));
+            var yaw = CsAimBlend.YawAxis(actor.Yaw, gaitYaw, moving);
+            var pitch = CsAimBlend.PitchAxis(-actor.Pitch);
+            _animator.SetFloat(CsAimBlend.ParamYaw, yaw);
+            _animator.SetFloat(CsAimBlend.ParamPitch, pitch);
+
+            // 喂值留痕（只在轴值明显变化时打）：BlendTree 停在默认格时画面上是"双手举枪朝天"，
+            // 只能靠这两个值判断是"喂错"还是"没喂"。格心 = 0 / 0.5 / 1。
+            if (Mathf.Abs(yaw - _aimYawLogged) > 0.02f || Mathf.Abs(pitch - _aimPitchLogged) > 0.02f)
+            {
+                _aimYawLogged = yaw;
+                _aimPitchLogged = pitch;
+                _log.Info("anim.aim", $"角色视图「{name}」瞄准轴 AimYaw={yaw:F3}（第 {CsAimBlend.AxisCell(yaw)} 格）" +
+                    $" AimPitch={pitch:F3}（第 {CsAimBlend.AxisCell(pitch)} 格）｜视线 yaw={actor.Yaw:F1}° " +
+                    $"pitch={actor.Pitch:F1}° 移动={moving}");
+            }
+        }
+
+        /// <summary>
+        /// controller 上有没有那两个瞄准轴参数。
+        ///
+        /// <para><b>枚举不到参数表时按"有"处理</b>：<c>Animator.parameters</c> 依赖 Animator 已完成初始化，
+        /// 而本工程的角色 Animator **没有 Avatar**（预制体里 <c>m_Avatar: 0</c>）—— 那种情况下参数表可能是空的。
+        /// 判成"没有"的后果不是少一个特性：BlendTree 会一直停在参数默认值上（默认值已由生成器钉在中格
+        /// 0.5 / 0.5），而站定时 layer0 与走动的第 2 层都在播这条树 ⇒ 姿势停在某一格不动。
+        /// 9 份 player controller 都由生成器写入这两个参数，所以这里宁可按"有"处理并留一条 Info。</para>
+        /// </summary>
+        private bool AimParamsAvailable()
+        {
+            var ps = _animator.parameters;
+            if (ps.Length == 0)
+            {
+                _log.Info("anim.aim.assume",
+                    $"角色视图「{name}」读不到 Animator 参数表（无 Avatar 的 Animator）⇒ 按「有 AimYaw/AimPitch」处理");
+                return true;
+            }
+            var has = HasFloatParameter(_animator, CsAimBlend.ParamYaw)
+                      && HasFloatParameter(_animator, CsAimBlend.ParamPitch);
+            if (!has)
+            {
+                _log.Warn("anim.aim.noparams",
+                    $"角色视图「{name}」的 controller 没有 AimYaw/AimPitch —— 瞄准姿势不会随方向变" +
+                    "（请重跑生成器重建 controller）");
+            }
+            return has;
         }
 
         /// <summary>
@@ -596,11 +975,12 @@ namespace Cs16.Module.View
         /// </summary>
         private void EnsureHeldWeapon(CsActor actor)
         {
-            // 本地玩家存活时整段本体被 HideOwnRenderers 隐藏（Bind 与每帧两处），而运行时挂上来的
-            // 武器不在那一快照里 ⇒ 第一人称会看见自己手上那把第三人称世界模型。原版第一人称只渲染
-            // 视模型（v_*.mdl 挂在 fps 相机下，由 ViewModelRig 负责），第三人称武器模型只属于旁观视角
+            // 相机在眼位（本地第一人称玩家 / 观战档位 4 的被观察者）时整段本体被 HideOwnRenderers 隐藏
+            // （Bind 与每帧两处），而运行时挂上来的武器不在那一快照里 ⇒ 画面里会多出一把第三人称世界枪
+            // 悬在眼前（用户报"观战时出现第三人称枪的视角，多余"）。原版这两条路的第一人称都只渲染
+            // 视模型（v_*.mdl 挂在 fps 相机下，由 ViewModelRig 负责），第三人称武器模型只属于旁观追尾视角
             // 与尸体那一路（EnterCorpse 的 ShowOwnRenderers 把 _alive 翻 false 后才会挂上）。
-            if (_isLocal && _alive) { ReleaseHeldWeapon(); return; }
+            if (EyeCam && _alive) { ReleaseHeldWeapon(); return; }
 
             var weaponId = actor.ActiveWeapon;
             if (string.IsNullOrEmpty(weaponId)) { ReleaseHeldWeapon(); return; }
@@ -641,6 +1021,22 @@ namespace Cs16.Module.View
             }
 
             var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + weaponId;
+
+            // 缓存门：预制体还没落进缓存 / 已确认缺失 ⇒ 不 Spawn（直接 Spawn 会绕开缓存门，
+            // 缺 prefab 的路径每帧打一条 [ObjectPool] Prefab not found Error）。
+            // 未就绪时发起一次异步探测，已确认缺失的只报一次信息（原版手雷本就无世界模型）。
+            var vm = ViewModule.Instance;
+            if (vm == null || !vm.EnsureWorldModelReady(path))
+            {
+                if (_heldMissingLogged.Add(weaponId))
+                {
+                    _log.Info("held.nomodel",
+                        $"角色视图「{name}」的武器「{weaponId}」世界模型 {path} 不可用" +
+                        "（原版手雷本无 w_*.mdl ⇒ 不显示；若该武器原版有则是预制体缺失）");
+                }
+                return;
+            }
+
             var go = pool.Spawn(path, _weaponSocket, "cs16.heldweapon");
             if (go == null)
             {
@@ -712,7 +1108,17 @@ namespace Cs16.Module.View
 
             var align = CsViewTuning.HeldWeaponAlignOf(_heldKey);
             var barrelLocal = align.MuzzleLocalPosition - align.LocalPosition;
-            if (barrelLocal.sqrMagnitude < 1e-8f) return;   // 表里没有该武器 ⇒ 不给朝向（⛔ 不瞎补）
+            if (barrelLocal.sqrMagnitude < 1e-8f)
+            {
+                // 表里没有该武器 ⇒ 不给朝向（⛔ 不瞎补）。留痕：这时枪完全跟着手骨的朝向走，
+                // 任何手臂姿势异常都会把枪指向带歪。
+                if (_aimTableWarned.Add(_heldKey ?? "(null)"))
+                {
+                    _log.Warn("held.noalign",
+                        $"角色视图「{name}」的武器「{_heldKey}」没有手部对齐行 ⇒ 枪口不会朝视线拉正，只跟手骨走");
+                }
+                return;
+            }
 
             // 枪管方向必须取**武器自己当前的朝向**（不是挂点朝向）：本方法每帧都会改
             // `_heldWeapon.transform.rotation`，若拿"挂点 + 静态对齐"那个**未修正**的方向当起点，
@@ -783,7 +1189,8 @@ namespace Cs16.Module.View
         public void FireRemoteMuzzleForTest(string weaponId)
         {
             var id = string.IsNullOrEmpty(weaponId) ? _heldKey : weaponId;
-            CombatModule.Instance?.FxRemoteShot(this, id);
+            // 眼位 = 站姿眼高（测试入口不区分蹲姿）。
+            CombatModule.Instance?.FxRemoteShot(this, id, false, transform.position + Vector3.up * CsConst.EyeHeight);
         }
 
         /// <summary>归还当前挂着的武器模型（换枪 / 死亡 / 池复用前调）。</summary>
@@ -889,6 +1296,34 @@ namespace Cs16.Module.View
                 fixedSmr++;
             }
 
+            // 收实时阴影：场景里那盏 Directional 带软阴影，角色材质是 Standard（受光）⇒
+            // 身体网格必须 receiveShadows = true、lightProbeUsage 不能是 Off（Off 时连探针/环境光都不参与）。
+            // 预制体里本就是这两项的正确值，这里做**运行期兜底**：异步加载进来的网格、池复用实例、
+            // 以及被别的系统改过的实例都回到"能收影子"的状态。
+            var fixedShadow = 0;
+            for (var i = 0; i < smrs.Length; i++)
+            {
+                var smr = smrs[i];
+                if (smr == null) continue;
+                if (!smr.receiveShadows)
+                {
+                    smr.receiveShadows = true;
+                    fixedShadow++;
+                }
+                if (smr.lightProbeUsage == LightProbeUsage.Off)
+                {
+                    smr.lightProbeUsage = LightProbeUsage.BlendProbes;
+                    fixedShadow++;
+                }
+            }
+            if (fixedShadow > 0 && !_shadowReceiveLogged)
+            {
+                _shadowReceiveLogged = true;
+                _log.Warn("shadow.receive.fix",
+                    $"角色视图「{name}」有 {fixedShadow} 处渲染设置不能收实时阴影（receiveShadows / lightProbeUsage），" +
+                    "已按 Standard 受光口径改正 —— 否则角色在光下像一块平面贴纸");
+            }
+
             var anims = GetComponentsInChildren<Animator>(true);
             var fixedAnim = 0;
             for (var i = 0; i < anims.Length; i++)
@@ -920,13 +1355,6 @@ namespace Cs16.Module.View
             if (now < _nextAlwaysAnimateScanAt) return;
             _nextAlwaysAnimateScanAt = now + AlwaysAnimateRescanSeconds;
             EnsureAlwaysAnimate();
-        }
-
-        /// <summary>挂上头顶名牌（**必须在 <see cref="Bind"/> 之后**：名牌的渲染不计入身高实测）。</summary>
-        public void SetPlate(Nameplate plate)
-        {
-            _plate = plate;
-            if (_plate != null) _plate.SetVisible(IsShown);
         }
 
         /// <summary>
@@ -1035,9 +1463,47 @@ namespace Cs16.Module.View
                     $"超出贴地对齐上限 {CsViewTuning.FootAlignLimit:F3}m ⇒ 按上限对齐（包围盒异常？姿态不该走这条？）");
             }
 
+            // 判据：对齐后"模型最低点相对根"的残差应 ≈ 0（≤ 1 mm）。留一条 1 Hz 的日志，
+            // 观战里看到脚离地时先看这个数：残差接近 0 = 姿态本身抬了脚（走路迈步），不是浮空。
+            if (Time.unscaledTime >= _nextFeetLogAt && !float.IsInfinity(minY))
+            {
+                _nextFeetLogAt = Time.unscaledTime + 1f;
+                var residual = rootY - (minY + (clamped - _modelLift));
+                if (Mathf.Abs(residual) > 0.001f || Mathf.Abs(clamped) > 0.005f)
+                {
+                    _log.Info("feet.align." + name,
+                        $"角色视图「{name}」贴地对齐：姿态={_lastState ?? "(无)"} 最低点={minY:F3}m 根={rootY:F3}m " +
+                        $"对齐量={clamped:F3}m（未截断={want:F3}）⇒ 对齐后残差={residual:F4}m");
+                }
+            }
+
             if (Mathf.Abs(clamped - _modelLift) < 0.0001f) return;      // 没变就不写 transform（省一次 dirty）
             _modelLift = clamped;
             _body.localPosition = new Vector3(0f, _modelLift, 0f);
+        }
+
+        /// <summary>
+        /// 脚底圆影：着地时贴脚面、离地时停在**起跳落点**那一层高度上淡出缩小。
+        ///
+        /// <para>不逐帧向下射线：<c>OnGround</c> 为真时 <c>CsActor.Position.y</c> 就是脚面高度
+        /// （脚底对齐见 <see cref="AlignFeetToGround"/>），拿它当影子的 y 与地面严格同高；
+        /// 离地时继续用最后一次着地的 y ⇒ 影子留在地面，不跟着人飞起来。</para>
+        ///
+        /// <para>相机在本角色眼位（第一人称 / 观战档位 4）时整具本体都不画，圆影一起藏。</para>
+        /// </summary>
+        private void ApplyBlobShadow(CsActor actor)
+        {
+            if (_blobShadow == null) return;
+
+            var pos = actor.Position;
+            if (actor.OnGround || !_blobShadowGroundReady)
+            {
+                _blobShadowGroundY = pos.y;
+                _blobShadowGroundReady = true;
+            }
+
+            _blobShadow.SetVisible(!EyeCam);
+            _blobShadow.Tick(pos, _blobShadowGroundY, actor.OnGround, Time.deltaTime);
         }
 
         // ==================================================================
@@ -1045,10 +1511,7 @@ namespace Cs16.Module.View
         // ==================================================================
         /// <summary>把 actor 的权威状态刷到视图上。只在**活着**时改位置/朝向。</summary>
         /// <param name="actor">权威 actor（只读）</param>
-        /// <param name="plateVisible">名牌是否可见（由 ViewModule 按距离/视线/阵营算好）</param>
-        /// <param name="showName">是否显示名字（队友才显示，敌人只显示血条）</param>
-        /// <param name="now">当前时间（供名牌做平滑）</param>
-        public void Apply(CsActor actor, bool plateVisible, bool showName, float now)
+        public void Apply(CsActor actor)
         {
             if (actor == null) return;
 
@@ -1070,6 +1533,7 @@ namespace Cs16.Module.View
                         _hideAfterDeath = false;
                         _overrideState = null;
                         _lastState = null;
+                        _instantLoco = true;
                         _haveAnimSnapshot = false;
                     }
                 }
@@ -1080,8 +1544,14 @@ namespace Cs16.Module.View
 
             if (!_alive)
             {
+                // 尸体留场期间逐帧钉住"上身层关着"：倒地序列是整身的，层开着会让上半身僵在
+                // 上一次的瞄准姿势、腿在倒地。只靠 EnterCorpse 关一次不够 —— 尸体被动画冻结
+                // （Animator.speed = 0）后，任何一次残留的层权重都会被原样冻在画面上。
+                CloseUpperChannel();
                 // 原版死亡即掉枪（DroppedWeapons 系统会生成掉落物）⇒ 手上那把同时消失。
                 ReleaseHeldWeapon();
+                // 尸体不画脚底圆影：倒地姿态的脚不在原点，圆影会留在一块没有脚的黑斑上。
+                if (_blobShadow != null) _blobShadow.SetVisible(false);
                 if (!_deathPlayed)
                 {
                     _deathPlayed = true;
@@ -1098,7 +1568,9 @@ namespace Cs16.Module.View
             // ---- 活着就不许停在"尸体冻结速度"上 ----
             // speed = 0 时状态机不推进：任何一次 CrossFade 都会永远停在中途（画面上就是一具定格在
             // 混合姿态的身体）。尸体冻结（见 EnsureCorpseShown）必须只作用在尸体上。
-            if (_animator != null && _animator.speed <= 0f)
+            // 只有 _corpseFrozen 才代表"尸体冻结没清掉"：位移序列的播放速率是逐帧重算的
+            // （见 ApplyLocoPlaybackRate），它自己会在 0 与设计速度比值之间变化，不能在这里改写。
+            if (_animator != null && _animator.speed <= 0f && _corpseFrozen)
             {
                 _animator.speed = 1f;
                 _log.Info("anim.unfreeze",
@@ -1121,6 +1593,24 @@ namespace Cs16.Module.View
             // ---- 骨骼动画：按权威状态切原版序列 ----
             UpdateAnim(actor);
 
+            // ---- 位移序列的播放速率：按"走过的距离"推进（见 ApplyLocoPlaybackRate）----
+            ApplyLocoPlaybackRate(actor);
+
+            // ---- 上身通道：常驻瞄准姿势（layer0 的腿照旧，见 DriveUpperChannel）----
+            DriveUpperChannel(actor);
+
+            // ---- 绑定姿态兜底：layer0 本帧一个 clip 都报不出来时（状态被抢/过渡空拍），
+            //      渲染的就是绑定姿态（双臂平伸）。强制回 idle 并打开上身 aim，保证画面上永远不是 T 字。
+            EnsureNoBindPose(actor);
+
+            // ---- 本帧做过"直接切"（刚绑定 / 刚复活）⇒ 立刻求值一次姿态 ----
+            // Animator 的积分在 LateUpdate 之前，不求值这一帧渲染的仍是刚激活时的绑定姿态。
+            if (_poseDirty && _animator != null)
+            {
+                _poseDirty = false;
+                _animator.Update(0f);
+            }
+
             // ---- 瞄准 blend：视线相对移动方向的偏角 → Animator 两个轴（多路 BlendTree 的 state 用）----
             FeedAimBlend(actor);
 
@@ -1136,22 +1626,66 @@ namespace Cs16.Module.View
             // ---- 脚底贴地：按**当前姿态**（idle / walk / crouch 各有各的最低点）对齐，见 AlignFeetToGround ----
             if (actor.OnGround) AlignFeetToGround();
 
-            // ---- 相机在本角色眼位（本地第一人称 / 观战档位 4 的被观察者）：本体隐藏渲染、保留碰撞体 ----
-            if (EyeCam) HideOwnRenderers();
+            // ---- 脚底圆影：贴地 / 离地淡出（必须排在贴地对齐之后，用对齐后的脚底高度）----
+            ApplyBlobShadow(actor);
 
-            // ---- 背上的 C4 包：与权威持包状态对齐（必须排在 HideOwnRenderers 之后）----
+            // ---- 模型级显隐：本组件是唯一权威，逐帧把渲染钉到本帧应有的状态（见 ApplyModelVisibility）----
+            ApplyModelVisibility();
+
+            // ---- 背上的 C4 包：与权威持包状态对齐（必须排在模型显隐之后）----
             ApplyBackpack(actor);
+        }
 
-            // ---- 头顶名牌 ----
-            if (_plate != null)
+        /// <summary>
+        /// 模型级显隐的**唯一权威**：每帧把整具模型的 <c>Renderer.enabled</c> 对齐到本帧应有的状态
+        /// （相机在本角色眼位 ⇒ 藏；其余 ⇒ 露），而不是只在某个边沿动作。
+        ///
+        /// <para><b>为什么必须逐帧钉住</b>：相机侧也会为了机位开关同一批渲染（眼位藏本体 / 换目标还原），
+        /// 它的自检与这里的边沿各自为政时，两个写者会在相邻帧互相覆盖 —— 画面上就是模型间歇性闪没。
+        /// 本方法是 <c>LateUpdate</c> 里最后执行的写者，外部开关只影响本帧中间态，渲染前一定回到这里算出的值。</para>
+        ///
+        /// <para><b>不在这里管的两条</b>：整具视图关闭归 <see cref="SetShown"/>（<c>gameObject.activeSelf</c>）；
+        /// 尸体显隐归 <see cref="EnsureCorpseShown"/>（本地/目标的尸体必须看得见）。</para>
+        ///
+        /// <para>幂等且便宜：只写与本帧期望不一致的那几个渲染（已经在目标态的跳过）。</para>
+        /// </summary>
+        private void ApplyModelVisibility()
+        {
+            if (!IsShown || !_alive) return;
+
+            if (EyeCam)
             {
-                _plate.SetVisible(plateVisible);
-                if (plateVisible)
-                {
-                    _plate.Refresh(actor.Name, actor.Health, CsConst.MaxHealth,
-                        TeamColorOf(actor.Team), showName, true);
-                }
+                HideOwnRenderers();
+                return;
             }
+
+            EnableOwnRenderers();
+        }
+
+        /// <summary>
+        /// 取本具**模型**的全部渲染（排除脚底圆影那一块）。
+        ///
+        /// <para>为什么必须排除：圆影是一块 SpriteRenderer，它挂在角色根节点下；池复用后的第二世
+        /// <c>GetComponentsInChildren</c> 会把它一起收进来 —— 而 <see cref="Measure"/> 会拿它的
+        /// 1×1 局部包围盒当角色身高，直接把贴地对齐量算成半米（角色浮空）。
+        /// 圆影自己由 <see cref="ApplyBlobShadow"/> 单独管显隐。</para>
+        /// </summary>
+        private Renderer[] CollectModelRenderers()
+        {
+            var all = GetComponentsInChildren<Renderer>(true);
+            var shadowRoot = _blobShadow != null ? _blobShadow.Root : null;
+            if (shadowRoot == null) return all;
+
+            var kept = new List<Renderer>(all.Length);
+            for (var i = 0; i < all.Length; i++)
+            {
+                var r = all[i];
+                if (r == null) continue;
+                var t = r.transform;
+                if (t == shadowRoot || t.IsChildOf(shadowRoot)) continue;
+                kept.Add(r);
+            }
+            return kept.ToArray();
         }
 
         /// <summary>
@@ -1183,6 +1717,96 @@ namespace Cs16.Module.View
             return picked.ToArray();
         }
 
+        // ==================================================================
+        //  材质缺贴图兜底（"部分人物模型是白色的"）
+        // ==================================================================
+        /// <summary>
+        /// 贴图查找表（贴图文件名小写 → 贴图）：首次用到时从 <c>Resources/Art/Tex</c> 整目录载入，
+        /// 之后全进程复用。null = 还没载过；空表 = 载过但一个贴图都没有。
+        /// </summary>
+        private static Dictionary<string, Texture2D> _texTable;
+
+        /// <summary>已告过"缺贴图"的材质名（静态去重：多具视图共用同一材质，不许逐具刷屏）。</summary>
+        private static readonly HashSet<string> _texWarned = new HashSet<string>(System.StringComparer.Ordinal);
+
+        /// <summary>
+        /// 给"缺 <c>_MainTex</c>"的角色材质按材质名回绑贴图（模型发白的兜底修复）。
+        ///
+        /// <para><b>为什么需要</b>：生成器 <c>ArtSetup.EnsureMaterial</c> 只找裸名
+        /// <c>Art/Tex/{材质名}.png</c>，而盘上导出的 PNG 带模型前缀
+        /// （<c>player_T_arctic_ARTIC_Working1.png</c>）⇒ arctic / guerilla / leet / gsg9 / sas /
+        /// gign / vip 一批皮肤的材质 <c>_MainTex</c> 为空 ⇒ 网格按材质底色渲染成纯白。</para>
+        ///
+        /// <para><b>认法</b>：贴图名**等于**材质名，或以 <c>_{材质名}</c> 结尾（一律忽略大小写 ——
+        /// 导出文件名与材质名大小写不保证一致，如 <c>player_CT_sas_sas_dmbase1</c> vs 材质 <c>SAS_DMBASE1</c>）。
+        /// 同名多份（gsg9 / sas 各有一张 Chrome1）任取其一：都是同一块铬合金贴图。</para>
+        ///
+        /// <para><b>改的是 sharedMaterial</b>（不实例化副本）：同皮肤的所有实例、以及此后从对象池
+        /// 复用出来的实例都直接拿到修好的材质；运行期对材质的修改不落盘，退出播放即还原。</para>
+        /// </summary>
+        private void EnsureTexturesBound()
+        {
+            var bound = 0;
+            for (var i = 0; i < _renderers.Length; i++)
+            {
+                var r = _renderers[i];
+                if (r == null) continue;
+
+                var mats = r.sharedMaterials;
+                for (var j = 0; j < mats.Length; j++)
+                {
+                    var m = mats[j];
+                    if (m == null || m.mainTexture != null) continue;
+
+                    var tex = FindTextureFor(m.name);
+                    if (tex != null)
+                    {
+                        m.mainTexture = tex;
+                        bound++;
+                    }
+                    else if (_texWarned.Add(m.name))
+                    {
+                        _log.Warn("tex.missing",
+                            $"材质「{m.name}」缺贴图，且 Resources/{CsViewTuning.TexArtRoot} 里" +
+                            "没有同名 / 带前缀的贴图 ⇒ 这块网格会显示纯白");
+                    }
+                }
+            }
+
+            if (bound > 0)
+            {
+                _log.Info("tex.bound",
+                    $"已给 {bound} 块材质回绑缺失的贴图（历史生成器漏绑 _MainTex 的运行期兜底）");
+            }
+        }
+
+        /// <summary>按材质名在贴图表里找对应贴图：先精确（忽略大小写），再「任意前缀_材质名」后缀匹配。</summary>
+        private static Texture2D FindTextureFor(string matName)
+        {
+            if (string.IsNullOrEmpty(matName)) return null;
+
+            if (_texTable == null)
+            {
+                _texTable = new Dictionary<string, Texture2D>(128, System.StringComparer.Ordinal);
+                var all = Resources.LoadAll<Texture2D>(CsViewTuning.TexArtRoot);
+                for (var i = 0; i < all.Length; i++)
+                {
+                    if (all[i] == null || string.IsNullOrEmpty(all[i].name)) continue;
+                    _texTable[all[i].name.ToLowerInvariant()] = all[i];
+                }
+            }
+
+            var key = matName.ToLowerInvariant();
+            if (_texTable.TryGetValue(key, out var exact)) return exact;
+
+            var suffix = "_" + key;
+            foreach (var kv in _texTable)
+            {
+                if (kv.Key.EndsWith(suffix, System.StringComparison.Ordinal)) return kv.Value;
+            }
+            return null;
+        }
+
         /// <summary>
         /// 背上的 C4 包与权威持包状态对齐：**只有持 C4 的角色显示它** ——
         /// 下包（<c>PlantComplete</c> 置 <c>HasBomb=false</c>）、掉包、换阵营后立即消失。
@@ -1194,7 +1818,9 @@ namespace Cs16.Module.View
         {
             if (_backpackRenderers.Length == 0) return;
 
-            var show = actor != null && actor.HasBomb && !(_isLocal && _alive);
+            // 相机在本角色眼位（本地第一人称 / 观战档位 4 的被观察者）且人还活着 ⇒ 整具本体是藏起来的，
+            // 背上这块也必须一起藏（否则它会被这一行单独打开，在第一人称画面里露出一块浮空的包）。
+            var show = actor != null && actor.HasBomb && !(EyeCam && _alive);
             for (var i = 0; i < _backpackRenderers.Length; i++)
             {
                 var r = _backpackRenderers[i];
@@ -1209,22 +1835,11 @@ namespace Cs16.Module.View
             transform.SetPositionAndRotation(actor.Position, Quaternion.Euler(0f, actor.Yaw, 0f));
         }
 
-        /// <summary>阵营 → 颜色（名牌文字与血条用）。</summary>
-        public static Color TeamColorOf(CsTeam team)
-        {
-            switch (team)
-            {
-                case CsTeam.T: return CsViewTuning.TeamColorT;
-                case CsTeam.CT: return CsViewTuning.TeamColorCT;
-                default: return CsViewTuning.TeamColorSpec;
-            }
-        }
-
         // ==================================================================
         //  显隐
         // ==================================================================
         /// <summary>
-        /// 显示/隐藏整个视图（含碰撞体与名牌）。死亡 → false，复活 → true。
+        /// 显示/隐藏整个视图（含碰撞体）。死亡 → false，复活 → true。
         ///
         /// <para>自身渲染只在**活着的**本地玩家身上才藏（第一人称相机在他眼位）；尸体必须看得见
         /// —— 尸体留场走的就是本方法，不判 <see cref="_alive"/> 的话每具本地尸体都会被这里藏掉。</para>
@@ -1233,7 +1848,6 @@ namespace Cs16.Module.View
         {
             IsShown = shown;
             if (gameObject.activeSelf != shown) gameObject.SetActive(shown);
-            if (_plate != null) _plate.SetVisible(shown);
             if (shown && EyeCam && _alive) HideOwnRenderers();
         }
 
@@ -1251,6 +1865,9 @@ namespace Cs16.Module.View
         /// </summary>
         private void EnterCorpse()
         {
+            // 上身 aim 层必须关掉：死亡分支在 DriveUpperChannel 之前就 return，层权重会停在最后一帧的 1
+            // ⇒ 倒地序列的上半身被瞄准姿势盖住（尸体上半身僵着、腿在倒地）。
+            CloseUpperChannel();
             var off = DisableColliders();
             // 两种"相机已离开他的眼位"都在这儿还渲染：本地玩家死后转观战；观战档位 4 的目标死后
             // 相机要换人（观战对象只取活人）⇒ 顺手把眼位标记清掉，免得尸体被当成眼位继续藏着。
@@ -1279,7 +1896,7 @@ namespace Cs16.Module.View
         }
 
         /// <summary>
-        /// 尸体留场：**确保可见 + 名牌关掉 + 姿态冻住 + 碰撞体全关**（每具尸体只做一次收尾）。
+        /// 尸体留场：**确保可见 + 姿态冻住 + 碰撞体全关**（每具尸体只做一次收尾）。
         ///
         /// <para><b>为什么要关碰撞体</b>：尸体留场后 GameObject 仍活着，不显式关碰撞体就会被子弹打中
         /// （射线会命中 <c>CsHitboxProxy</c> ⇒ 死人反复"中弹"），又会**挡住活人走路**。</para>
@@ -1290,7 +1907,6 @@ namespace Cs16.Module.View
         private void EnsureCorpseShown()
         {
             if (!IsShown) SetShown(true);
-            if (_plate != null) _plate.SetVisible(false);
 
             if (_corpseFrozen) return;
             _corpseFrozen = true;
@@ -1326,6 +1942,18 @@ namespace Cs16.Module.View
         /// <summary>把本地玩家自己的渲染开回来（阵亡后尸体要看得见；复活时由存活分支再藏回去）。</summary>
         private void ShowOwnRenderers()
         {
+            var back = EnableOwnRenderers();
+            if (back > 0)
+            {
+                _bodyHiddenLogged = false;      // 复活时"第一人称已隐藏"那条日志要能再报一次
+                _log.Info("corpse.local.shown",
+                    $"本地玩家阵亡：把自己模型的 {back} 个渲染开回来 —— 观战相机只跟活人，尸体不该被藏");
+            }
+        }
+
+        /// <summary>把本视图模型上关着的渲染全部开回来，返回本次真的开回来的个数（幂等）。</summary>
+        private int EnableOwnRenderers()
+        {
             var back = 0;
             for (var i = 0; i < _renderers.Length; i++)
             {
@@ -1334,12 +1962,7 @@ namespace Cs16.Module.View
                 r.enabled = true;
                 back++;
             }
-            if (back > 0)
-            {
-                _bodyHiddenLogged = false;      // 复活时"第一人称已隐藏"那条日志要能再报一次
-                _log.Info("corpse.local.shown",
-                    $"本地玩家阵亡：把自己模型的 {back} 个渲染开回来 —— 观战相机只跟活人，尸体不该被藏");
-            }
+            return back;
         }
 
         private void HideOwnRenderers()

@@ -79,6 +79,9 @@ namespace Cs16.Core
         /// <summary>是否有比赛在运行（false 时 HUD 应隐藏）。</summary>
         public static bool Valid;
 
+        /// <summary>比赛模拟是否暂停（暂停站点 / 从暂停进入的 Options）。游戏内热键据此让位给暂停菜单。</summary>
+        public static bool Paused;
+
         // ---- 玩家自身 ----
         public static CsTeam Team;
         public static bool IsAlive;
@@ -108,6 +111,14 @@ namespace Cs16.Core
         public static bool BombPlanted;
         public static float BombTimeLeft;
         public static float UseProgress;      // -1 = 未在操作
+
+        // ---- 局域网客机 ----
+        /// <summary>本局是不是局域网客机（阶段 / 比分由主机快照驱动）。</summary>
+        public static bool ClientMode;
+        /// <summary>客机模式下超过阈值没收到主机快照（HUD 必须显式标"连接中断"）。</summary>
+        public static bool ServerLinkDown;
+        /// <summary>距最后一条主机快照的秒数（&lt;0 = 未连接 / 单机）。</summary>
+        public static float ServerSnapshotAge;
 
         // ---- 买枪 ----
         public static bool InBuyZone;
@@ -157,6 +168,7 @@ namespace Cs16.Core
         public static void Reset()
         {
             Valid = false;
+            Paused = false;
             Team = CsTeam.Spectator;
             IsAlive = false;
             IsSpectating = false;
@@ -180,6 +192,9 @@ namespace Cs16.Core
             BombPlanted = false;
             BombTimeLeft = -1f;
             UseProgress = -1f;
+            ClientMode = false;
+            ServerLinkDown = false;
+            ServerSnapshotAge = -1f;
             InBuyZone = false;
             CanBuyNow = false;
             BotCount = 0;

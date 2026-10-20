@@ -103,6 +103,39 @@ namespace Cs16.Module.Match
             StopLanClientAndViews("MatchModule 销毁");
         }
 
+        /// <summary>
+        /// 客机：快照 → 本机回合状态（阶段 / 回合号 / 比分）+ 链路新鲜度。
+        /// 未连主机 / 还没收到过快照时什么都不写（沿用本机当前状态，由 HUD 的断流提示说明）。
+        /// </summary>
+        private void SyncLanServerState()
+        {
+            if (_match == null || !_match.IsRunning || !_match.IsClientMode) return;
+
+            Cs16.Module.Net.CsLanServerState state;
+            if (Cs16.Module.Net.CsLanClient.TryGetServerState(out state))
+            {
+                _match.ApplyServerRoundState(state.Round, state.ScoreCT, state.ScoreT, state.Phase);
+            }
+
+            // 本地玩家的阵营跟主机走（WELCOME 的 team 给初值，之后跟快照里自己那具）：
+            // 否则 HUD 队伍色 / 雷达 / 出生点会停在"我自己选的阵营"，与主机上的身体不一致。
+            var assignedTeam = Cs16.Module.Net.CsLanClient.AssignedTeam;
+            if (assignedTeam == CsTeam.T || assignedTeam == CsTeam.CT)
+            {
+                var lp = _match.LocalPlayer;
+                if (lp != null && lp.Team != assignedTeam)
+                {
+                    Game.Logger.Info(Tag,
+                        $"客机：主机把我放在 {assignedTeam}（本地原为 {lp.Team}）⇒ 本地玩家跟随主机换边");
+                    _match.ChangeTeam(assignedTeam);
+                }
+            }
+
+            // 链路已关（Stop / 读线程退出）也算断流：客机必须显式提示，不能停在最后一帧状态上装没事。
+            var linkDown = !Cs16.Module.Net.CsLanClient.IsRunning || Cs16.Module.Net.CsLanClient.LinkStale;
+            _match.SetServerLink(linkDown, Cs16.Module.Net.CsLanClient.SecondsSinceLastSnapshot);
+        }
+
         /// <summary>停局域网客户端 + 回收全部远端视图（幂等；两处调用点共用，不各写一套）。</summary>
         private void StopLanClientAndViews(string why)
         {
@@ -122,6 +155,10 @@ namespace Cs16.Module.Match
             //   Time.time 会把可复现性打死）。别在这里改成别的时钟源 —— 换时钟请注入 CsClock。
             CsClock.Drive();
             var dt = CsClock.Delta;
+
+            // 客机：先把主机快照里的回合状态写进本地，再 Tick —— 本帧 HUD 读到的就是主机状态；
+            // 同时报告链路新鲜度（断流时 HUD 标"连接中断"，不静默继续跑旧比分）。
+            SyncLanServerState();
 
             // Tick 内部自己判 IsRunning / IsPaused；未开局时是廉价空转。
             _match?.Tick(dt);
@@ -363,7 +400,12 @@ namespace Cs16.Module.Match
                 Game.Logger.Warn(Tag, $"{Events.BuyWeapon} 收到空武器 id，已忽略");
                 return;
             }
-            Match.TryBuy(weaponId, out _);
+            if (!Match.TryBuy(weaponId, out var reason))
+            {
+                // 界面会先挡掉"必然失败"，走到这里的是竞态（刚死 / 刚出买枪区 / 刚过窗口）
+                Game.Logger.Warn(Tag, $"{Events.BuyWeapon} 未成交：{weaponId}（{reason}）");
+                Game.Event.Emit(Events.GameMessage, $"Buy failed: {reason}");
+            }
         }
 
         /// <summary>

@@ -161,7 +161,7 @@ namespace Cs16.Module.View
             var now = Time.time;
             var dt = _lastApplyAt < 0f ? 0f : now - _lastApplyAt;
             FillShadow(a, dt);
-            _actor.Apply(_shadow, false, false, now);   // 名牌不显示（见类注释第 2 条）
+            _actor.Apply(_shadow);
             _lastApplyAt = now;
         }
 
@@ -278,12 +278,21 @@ namespace Cs16.Module.View
         /// <summary>累计"预制体缺失/池不可用"导致的建视图失败次数（失败必须留痕，不静默）。</summary>
         public static int CreateFailures { get { return _createFailures; } }
 
+        /// <summary>累计"连的是本机自己的网关 ⇒ 快照整组不画"的次数（每帧一次；判据用 &gt;0）。</summary>
+        public static long SelfEndpointSkips { get; private set; }
+
+        /// <summary>累计"快照里自己那具被跳过"的帧数（客机第一人称不重复画自己）。</summary>
+        public static long SelfActorSkips { get; private set; }
+
+        private static bool _selfSkippedLogged;
+
         /// <summary>一行状态（日志 / 探针 / 报告共用）。</summary>
         public static string Describe()
         {
             return "远端视图 在场=" + Views.Count + " 累计新建=" + CreatedTotal +
                    " 累计回收=" + RecycledTotal + " 销毁Collider=" + StrippedCollidersTotal +
-                   " 隐去尸体=" + HiddenDeadTotal + " 建失败=" + _createFailures;
+                   " 隐去尸体=" + HiddenDeadTotal + " 跳过自己端点=" + SelfEndpointSkips +
+                   " 跳过自己=" + SelfActorSkips + " 建失败=" + _createFailures;
         }
 
         /// <summary>
@@ -305,10 +314,44 @@ namespace Cs16.Module.View
                 return 0;
             }
 
+            // 连的是本机自己广播的网关 ⇒ 快照就是本机模拟的副本：场上每一具都已经由本机角色视图画过。
+            // 再画一遍 = 每人两个（自己那份第三人称还看得见，表现成"第一人称里看到自己"）。
+            if (CsLanClient.IsEndpointSelf)
+            {
+                SelfEndpointSkips++;
+                if (Views.Count > 0)
+                {
+                    Game.Logger.Info(Tag,
+                        "连的是本机自己广播的网关 ⇒ 快照整组不画（" + Views.Count +
+                        " 具已回收）：本机每一具角色都已有本地视图，再画一份就是\"每人两个自己\"");
+                    RecycleAll();
+                }
+                return 0;
+            }
+
             Scratch.Clear();
             if (!CsLanClient.TryGetActors(Scratch))
             {
                 return Views.Count;      // 还没收到任何一帧快照：保持现状（⛔ 不把上一帧的人凭空抹掉）
+            }
+
+            // 自己那具由本机第一人称视图负责：快照里同 id 再画一份 = 第一人称里看见自己的第三人称复制品。
+            // 从 Scratch 里摘掉后，既不会新建自己的视图，已经建过的也会在下面的回收段里被收掉。
+            var myId = CsLanClient.MyActorId;
+            if (myId > 0)
+            {
+                for (var i = Scratch.Count - 1; i >= 0; i--)
+                {
+                    if (Scratch[i] == null || Scratch[i].Id != myId) continue;
+                    Scratch.RemoveAt(i);
+                    SelfActorSkips++;
+                    if (!_selfSkippedLogged)
+                    {
+                        _selfSkippedLogged = true;
+                        Game.Logger.Info(Tag,
+                            "快照里的自己（actor=" + myId + "）不画远端视图：本机第一人称视图已经在画这具身体");
+                    }
+                }
             }
 
             // ---- 新建 / 刷新 ----

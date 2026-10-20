@@ -33,6 +33,15 @@ namespace Cs16.EditorTools
             public int WalkableCount, BlockedCount;
             public bool[] Walkable;   // idx = iz * Width + ix
 
+            /// <summary>文件 flags（bit0 位图 / bit1 高度场 / bit2 标记点）。</summary>
+            public int Flags;
+            /// <summary>地形高度场条目数（无该段 = 0）。</summary>
+            public int SurfaceCount;
+            /// <summary>有可站面的格数（疏水：只数出现过的格）。</summary>
+            public int CellsWithSurface;
+            /// <summary>单格最多可站面数（上限见格式层 MaxSurfacesPerCell）。</summary>
+            public int MaxSurfacesPerCell;
+
             public bool WalkableAt(float x, float z)
             {
                 // 与引擎 / 服务端同一口径：负数必须 floor（截断会把图外那格算进来）
@@ -43,8 +52,9 @@ namespace Cs16.EditorTools
             }
 
             public override string ToString()
-                => $"{Name} scene={SceneId} {Width}x{Depth} cell={CellSize:F2} " +
-                   $"可走={WalkableCount} 阻挡={BlockedCount} 碰撞体={ColliderCount} 出生点={SpawnCount}";
+                => $"{Name} scene={SceneId} {Width}x{Depth} cell={CellSize:F2} flags=0x{Flags:X4} " +
+                   $"可走={WalkableCount} 阻挡={BlockedCount} 碰撞体={ColliderCount} 出生点={SpawnCount} " +
+                   $"(可站面={SurfaceCount} 有面格={CellsWithSurface} 单格最多={MaxSurfacesPerCell})";
         }
 
         public static bool TryRead(byte[] data, out Info info, out string error)
@@ -64,6 +74,7 @@ namespace Cs16.EditorTools
 
                     var i = new Info
                     {
+                        Flags = flags,
                         SceneId = br.ReadUInt64(),
                         CellSize = br.ReadSingle(),
                         Origin = new Vector3(br.ReadSingle(), br.ReadSingle(), br.ReadSingle()),
@@ -86,6 +97,40 @@ namespace Cs16.EditorTools
                         i.Walkable[k] = (bits[k >> 3] & (1 << (k & 7))) != 0;
                     for (int k = 0; k < i.Walkable.Length; k++) if (i.Walkable[k]) i.WalkableCount++;
                     i.BlockedCount = i.Walkable.Length - i.WalkableCount;
+
+                    // 碰撞体 / 出生点：本探针不解内容，但必须**跳过**它们才能定位后面的标记点段
+                    //（位置 = 位图之后、按数量 × 定长段整体跳过）。
+                    ms.Seek((long)i.ColliderCount * 24 + (long)i.SpawnCount * 12, SeekOrigin.Current);
+
+                    // 标记点段（flags bit2）：只按布局跳过（名字长度前缀 + UTF-8 名字 + 12 字节坐标）。
+                    if ((flags & 4) != 0)
+                    {
+                        int markers = (int)br.ReadUInt32();
+                        for (int k = 0; k < markers; k++)
+                        {
+                            int mn = (int)br.ReadUInt32();
+                            br.ReadBytes(mn);
+                            br.ReadBytes(12);
+                        }
+                    }
+
+                    // 地形高度场段（flags bit1）：u32 数量 + 每条 (u32 cell_x, u32 cell_z, f32 y)。
+                    if ((flags & 2) != 0)
+                    {
+                        int surfaces = (int)br.ReadUInt32();
+                        i.SurfaceCount = surfaces;
+                        int lastCell = -1, run = 0;
+                        for (int k = 0; k < surfaces; k++)
+                        {
+                            int cx = (int)br.ReadUInt32();
+                            int cz = (int)br.ReadUInt32();
+                            br.ReadSingle();
+                            int cell = cz * i.Width + cx;
+                            if (cell == lastCell) { run++; }
+                            else { lastCell = cell; run = 1; i.CellsWithSurface++; }
+                            if (run > i.MaxSurfacesPerCell) i.MaxSurfacesPerCell = run;
+                        }
+                    }
 
                     info = i;
                     return true;

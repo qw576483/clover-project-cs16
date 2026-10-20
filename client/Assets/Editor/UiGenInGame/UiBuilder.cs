@@ -93,7 +93,8 @@ namespace Cs16.EditorTools
                 // 否则运行期 `Game.Res.LoadAsset<Sprite>` 取不到、雷达只有点没有地图。
                 var radarSprite = EnsureHudIconSprite(ResPaths.RadarOverviewDust2,
                     "python tools/probes/render-overview.py --size 128 " +
-                    "--out client/Assets/Resources/UI/Art/overview_de_dust2.png");
+                    "--out client/Assets/Resources/UI/Art/overview_de_dust2.png",
+                    smooth: true);
                 if (radarSprite == null)
                 {
                     Debug.LogError($"{LogTag} 缺雷达底图 sprite：雷达会只有框和点、没有地图" +
@@ -179,7 +180,11 @@ namespace Cs16.EditorTools
         /// <c>Assets/ThirdParty/Dust2/SOURCES.txt</c>），
         /// 本方法只负责"导入设置 + 取引用" —— 素材缺失时报 Error 而不是造一个占位图。</para>
         /// </summary>
-        private static Sprite EnsureHudIconSprite(string resourcePath, string hint = null)
+        /// <param name="smooth">
+        /// true = 双线性 + mipmap。用于**被缩小绘制**的贴图（雷达底图 1024×768 画进 122 px 的圆盘）：
+        /// 点采样把 8 倍降采样变成一格格的绿块，地形轮廓糊成噪点。24×24 的 HUD 图标按 1:1 绘制，仍走点采样。
+        /// </param>
+        private static Sprite EnsureHudIconSprite(string resourcePath, string hint = null, bool smooth = false)
         {
             var path = HudIconPngPath(resourcePath);
             if (!File.Exists(path))
@@ -200,15 +205,17 @@ namespace Cs16.EditorTools
             var dirty = false;
             if (importer.textureType != TextureImporterType.Sprite) { importer.textureType = TextureImporterType.Sprite; dirty = true; }
             if (importer.spriteImportMode != SpriteImportMode.Single) { importer.spriteImportMode = SpriteImportMode.Single; dirty = true; }
-            if (importer.filterMode != FilterMode.Point) { importer.filterMode = FilterMode.Point; dirty = true; }
-            if (importer.mipmapEnabled) { importer.mipmapEnabled = false; dirty = true; }
+            var wantFilter = smooth ? FilterMode.Bilinear : FilterMode.Point;
+            if (importer.filterMode != wantFilter) { importer.filterMode = wantFilter; dirty = true; }
+            if (importer.mipmapEnabled != smooth) { importer.mipmapEnabled = smooth; dirty = true; }
             if (!importer.alphaIsTransparency) { importer.alphaIsTransparency = true; dirty = true; }
             if (importer.spritePixelsPerUnit != 100f) { importer.spritePixelsPerUnit = 100f; dirty = true; }
 
             if (dirty)
             {
                 importer.SaveAndReimport();
-                Debug.Log($"{LogTag} 已规整导入设置 {path}（Sprite/Single/Point/无 mipmap/alphaIsTransparency）");
+                Debug.Log($"{LogTag} 已规整导入设置 {path}（Sprite/Single/" +
+                          (smooth ? "Bilinear + mipmap" : "Point/无 mipmap") + "/alphaIsTransparency）");
             }
 
             var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(path);

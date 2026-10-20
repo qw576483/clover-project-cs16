@@ -4,7 +4,7 @@ using UnityEngine;
 namespace Cs16.UI
 {
     /// <summary>
-    /// 游戏内"需要点鼠标"的面板打开时的光标管理（买枪菜单 / H 菜单 / 控制台 / 比赛结算）。
+    /// 游戏内"需要点鼠标"的面板打开时的光标管理（买枪菜单 / 开发者菜单 / 控制台 / 比赛结算）。
     ///
     /// <para><b>为什么这件事非得 UI 做</b>：第一人称操作模块（<c>Module/Player</c>）活着的时候会把光标
     /// 锁在屏幕中心，此时 uGUI 的 <c>GraphicRaycaster</c> 只能命中屏幕正中那个点 ——
@@ -52,7 +52,7 @@ namespace Cs16.UI
             Game.Logger?.Info(Tag, $"重新锁定鼠标光标（{who} 关闭，回到游戏内锁定状态）");
         }
 
-        /// <summary>游戏内是否还有"需要鼠标"的面板开着（买枪 / H 菜单 / 控制台 / 比赛结算）。</summary>
+        /// <summary>游戏内是否还有"需要鼠标"的面板开着（买枪 / 开发者菜单 / 控制台 / 比赛结算）。</summary>
         public static bool AnyMenuOpen()
         {
             var ui = Game.UI;

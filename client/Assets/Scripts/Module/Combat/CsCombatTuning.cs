@@ -110,10 +110,27 @@ namespace Cs16.Module.Combat
         // 因此没有可搬运的原版值（逐条不再重复这句话）。
         public const float CrosshairExpandSpeed = 6f;    // 扩张（每秒变化量）
         public const float CrosshairShrinkSpeed = 2.6f;  // 回缩（比扩张慢）
-        public const float CrosshairMoveWeight = 0.8f;   // 移动贡献
-        public const float CrosshairShotWeight = 0.7f;   // 连射贡献
-        public const float CrosshairAirWeight = 0.5f;    // 离地贡献
-        public const int CrosshairFullShots = 12;        // 连射达到该发数即满扩散
+
+        /// <summary>
+        /// 准星满量程（1.0）对应的散布角（度）—— 准星直接由 <see cref="Firearm.ComputeSpread"/> 的度数除以本值得出。
+        ///
+        /// <para>取值 1.5：步枪族的第一发站定散布 0.40~0.45°、跑动射击 4.4°、连射末段 ~10°
+        /// （<see cref="CsWeapons.SpreadFor"/> 的档位比值模型算得）⇒ 1.0 落在"跑动 / 连射"一侧，
+        /// 站定约 0.3、蹲下约 0.15，准星间隙（1920 参考宽下 24~45 px）才有肉眼可辨的收缩与扩张。</para>
+        /// </summary>
+        public const float CrosshairMaxSpreadDegrees = 1.5f;
+
+        /// <summary>
+        /// 蹲姿在准星上的整体收敛系数。
+        ///
+        /// <para>为什么还要这一档：真实散布里只有手枪族 / 狙击族 / 霰弹族带蹲姿档，
+        /// 步枪族的蹲姿系数与站姿同值（<see cref="CsWeapons.SpreadCoefficient"/> 的形态 1）
+        /// ⇒ 只靠换算度数，步枪蹲下时准星一动不动。本系数让蹲姿在准星上始终可见地收一档：
+        /// 取 0.2 后蹲姿扩散量约为站姿的 1/5，准星内间隙在 1920 参考宽下从 30 px 收到 25 px、
+        /// 臂长从 18 px 收到 15 px（再小就落进准星自身的下界 8 units，看不出差别）。</para>
+        /// </summary>
+        public const float CrosshairCrouchScale = 0.2f;
+
         public const float CrosshairZoomScale = 0.15f;   // 开镜时准星几乎不散
 
         // ==================================================================
@@ -544,44 +561,104 @@ namespace Cs16.Module.Combat
         /// <summary>同时存在的血迹贴花上限（与弹痕分开计数，否则扫射会把血迹挤掉）。</summary>
         public const int MaxBloodDecals = 24;
 
+        // ------------------------------------------------------------------
+        //  血雾：TE_BLOODSPRITE（SVC_TEMPENTITY 子类型 115）
+        // ------------------------------------------------------------------
+        //
+        // 消息与参数（`mp.dll`，本机在盘，VA 0x1008f61b–0x1008f6b0）：
+        //   0x1008f61b `push 0x17` = SVC_TEMPENTITY、0x1008f625 `push 0x73` = 115（TE_BLOODSPRITE）
+        //   → coord×3（命中点）→ short sprite1 = [0x101aeddc]（`sprites/bloodspray.spr`）
+        //   → short sprite2 = [0x101aedd8]（`sprites/blood.spr`）→ byte 颜色 → byte size；
+        //   size = clamp(amount / 10, 3, 16)（下界 3 @0x1008f687、上界 0x10 @0x1008f67b、
+        //   `/10` 走魔数 0x66666667 @0x1008f676）。
+        //   `amount` 在写入前先 ×2：`[0x101a1300]` 上的虚调用返回真则 `add esi,esi`（VA 0x1008f609），
+        //   即 `UTIL_BloodDrips` 的 `if (g_pGameRules->IsMultiplayer()) amount *= 2;`
+        //   （ReGameDLL_CS `regamedll/dlls/util.cpp`，CS 服务端恒为多人模式）。
+        //
+        // 引擎侧（`cl_tent.c` 的 R_BloodSprite，GoldSrc 兼容实现）把 size 当**缩放字节**：
+        //   sprite1：1 张动画贴片，scale = rand(size/35, size/25)，帧率 = 帧数×4 ⇒ 10 帧播 0.25 s；
+        //   sprite2：size + rand(1,8) + rand(1,8) 张，scale = rand(size/25, size/15)，
+        //            初速 ±96 unit/s（Z 为 −32..95），生命 rand(1,3) s，慢重力（0.1 × sv_gravity）。
+        // 贴片世界宽 = 载体 bounds（bloodspray 64 / blood 16 world unit）× scale × UnitToMeter。
+
+        /// <summary>主血雾（sprite1 = `bloodspray.spr`，10 帧）的动画寿命 = 10 帧 ÷ 40 fps = 0.25 s。</summary>
+        public const float BloodPuffDuration = 0.25f;
+
+        /// <summary>`bloodspray.spr` 的 bounds（world unit @ scale 1）：载体头 64×64
+        /// （`tools/probes/spr-extract.py --info`：size=64x64 frames=10）。</summary>
+        public const float BloodSpraySpriteUnits = 64f;
+
+        /// <summary>主血雾的 scale 分母区间：scale = rand(size/35, size/25)。分母越小贴片越大。</summary>
+        public const float BloodSprayScaleDivisorMin = 25f;
+        public const float BloodSprayScaleDivisorMax = 35f;
+
+        /// <summary>`size` 的下界 3 / 上界 16 / 每级伤害 10（= clamp(amount/10, 3, 16)，出处见上方块注释）。</summary>
+        public const int BloodSpraySizeMin = 3;
+        public const int BloodSpraySizeMax = 16;
+        public const int BloodAmountPerSize = 10;
+
         /// <summary>
-        /// 血雾贴片存活时长（秒）。出处：**本项目新增**（载体 `valve/sprites/bloodspray.spr` 给的是
-        /// 10 帧像素，**帧时长在引擎**里、载体没给 ⇒ 同枪口火焰时长同一处置）。
+        /// 由**这一发实际打出的伤害量**算血雾的 size 字节：
+        /// ① 多人模式 <c>amount *= 2</c>（CS 恒为多人）、② 夹到 byte 上限 255、③ <c>clamp(amount / 10, 3, 16)</c>。
+        /// <paramref name="amount"/> ≤ 0（伤害量不可达）时取下界。
         /// </summary>
-        public const float BloodPuffDuration = 0.14f;
-
-        /// <summary>血雾贴片的世界尺寸（米）= 0.18（本项目新增；取"命中点上一小团、不遮住对手"）。
-        /// 载体是 64×64 贴图（PPU=100 ⇒ 天生 0.64 世界单位），调用点必须走
-        /// <c>CombatEffects.SpriteScaleForMeters</c> 换成倍率，⛔ 不能直接写米。</summary>
-        public const float BloodPuffSize = 0.18f;
-
-        /// <summary>同一发命中里各张血雾贴片的散开半径（米）= 0.06（本项目新增：让一团血雾有厚度，
-        /// 否则多张贴片完全重合、画面与单张无差别）。</summary>
-        public const float BloodPuffSpread = 0.06f;
+        public static int BloodSpraySizeForAmount(int amount)
+        {
+            var scaled = amount * 2;                 // UTIL_BloodDrips：IsMultiplayer() ⇒ amount *= 2
+            if (scaled > 255) scaled = 255;          // 写进 byte 前的夹取
+            var size = scaled / BloodAmountPerSize;
+            if (size < BloodSpraySizeMin) size = BloodSpraySizeMin;
+            if (size > BloodSpraySizeMax) size = BloodSpraySizeMax;
+            return size;
+        }
 
         /// <summary>
-        /// 一发命中**至少**出几张血雾贴片 = 3。
-        ///
-        /// <para><b>出处 = 原版 CS 1.6 的 `mp.dll`</b>：血迹临时实体的数量字节是
-        /// <c>clamp(amount / 10, 3, 16)</c> —— 下界立即数 <c>3</c> 在 VA <c>0x1008f687</c>、
-        /// 上界立即数 <c>0x10</c>（=16）在 VA <c>0x1008f67b</c>，`/10` 由 <c>0x66666667</c> 魔数除法实现
-        /// （VA <c>0x1008f676</c>）。</para>
-        ///
-        /// <para><b>为什么本工程取的是**下界**</b>：公式的自变量 <c>amount</c> 来自受击者实体上的一个浮点
-        /// 场（`(int)pev->field_0x1e0`，读取点 VA <c>0x100395cf</c>），命中层的伤害值在
-        /// <c>Module/Match</c> 里、不在表现层可达 ⇒ 本层拿不到 `amount`，只能取有出处的下界 3。
-        /// 要按 <c>clamp(damage/10, 3, 16)</c> 分流 ⇒ 需要把伤害透传到 <c>ICsMatch.OnBulletHit</c>
-        /// （跨 Match 层，不在本片写入范围）。缺口登记在 `策划/差异登记.tsv` #74。</para>
+        /// 主血雾贴片的世界宽（米）= 64 × (size ÷ (35 → 25)) × 0.0254。
+        /// <paramref name="t01"/> ∈ [0,1] 在区间内取一个位置（0 = 分母 35 的最小档，1 = 分母 25 的最大档）。
         /// </summary>
-        public const int BloodSprayMinCount = 3;
+        public static float BloodSprayWidthMeters(int size, float t01)
+        {
+            var divisor = BloodSprayScaleDivisorMax +
+                          (BloodSprayScaleDivisorMin - BloodSprayScaleDivisorMax) * Clamp01(t01);
+            return BloodSpraySpriteUnits * (size / divisor) * CsConst.UnitToMeter;
+        }
 
-        /// <summary>一发命中的血雾贴片**上限** = 16（出处见 <see cref="BloodSprayMinCount"/>：
-        /// 立即数 <c>0x10</c> 在 VA <c>0x1008f67b</c>）。本层因拿不到 `amount` 暂不使用，留作口径登记。</summary>
-        public const int BloodSprayMaxCount = 16;
+        /// <summary>`blood.spr`（血滴，sprite2）的 bounds：载体头 16×16 world unit。</summary>
+        public const float BloodDropSpriteUnits = 16f;
 
-        /// <summary>每张血雾贴片对应的"量" = 10（出处见 <see cref="BloodSprayMinCount"/>：`clamp(amount/10,3,16)`）。
-        /// 同样因 `amount` 不可达而暂未参与计算，留作口径登记。</summary>
-        public const int BloodSprayAmountPerSprite = 10;
+        /// <summary>血滴的 scale 分母区间：scale = rand(size/25, size/15)（分母越小贴片越大）。</summary>
+        public const float BloodDropScaleDivisorMin = 15f;
+        public const float BloodDropScaleDivisorMax = 25f;
+
+        /// <summary>血滴贴片的世界宽（米）= 16 × (size ÷ (25 → 15)) × 0.0254；<paramref name="t01"/> 同上。</summary>
+        public static float BloodDropWidthMeters(int size, float t01)
+        {
+            var divisor = BloodDropScaleDivisorMax +
+                          (BloodDropScaleDivisorMin - BloodDropScaleDivisorMax) * Clamp01(t01);
+            return BloodDropSpriteUnits * (size / divisor) * CsConst.UnitToMeter;
+        }
+
+        /// <summary>血滴初速的横向分量：±96 unit/s（X / Y 各取 [−96, 95]）。</summary>
+        public const float BloodDropSpeedUnits = 96f;
+        /// <summary>血滴初速的竖直分量区间：Z 取 [−32, 95] unit/s。</summary>
+        public const float BloodDropUpMinUnits = -32f;
+        public const float BloodDropUpMaxUnits = 95f;
+        /// <summary>血滴生命区间（秒）：rand(1, 3)。</summary>
+        public const float BloodDropLifeMin = 1f;
+        public const float BloodDropLifeMax = 3f;
+        /// <summary>血滴的重力系数：FTENT_SLOWGRAVITY = 0.1 × sv_gravity。</summary>
+        public const float BloodDropGravityScale = 0.1f;
+
+        /// <summary>
+        /// 同时存在的血滴上限（超限复用最旧的一滴）。
+        /// 原版血滴是**普通优先级**临时实体（引擎 <c>MAX_TEMPENTS</c> 满了先挤掉它们，主血雾是
+        /// 高优先级的 <c>CL_TempEntAllocHigh</c>）⇒ 本工程给血滴一个独立上限，满时只回收血滴，
+        /// 不去抢枪口火焰 / 弹痕 / 弹壳的池位。
+        /// </summary>
+        public const int MaxBloodDrops = 96;
+
+        /// <summary>把 0..1 夹住（本文件刻意不 `using UnityEngine` ⇒ 不用 Mathf）。</summary>
+        private static float Clamp01(float v) => v < 0f ? 0f : (v > 1f ? 1f : v);
 
         /// <summary>
         /// 从**命中点**沿弹道方向继续找"能贴血迹的面"的最大距离（米）。
@@ -610,6 +687,21 @@ namespace Cs16.Module.Combat
         public const float ExplosionVisualDuration = 0.28f;
         public const float ExplosionVisualMaxRadius = 1.6f;
         public const float GrenadeVisualRadius = 0.09f;
+
+        /// <summary>C4 爆炸烟柱的烟团数量与存活时长（秒）。</summary>
+        /// <remarks>出处：**本项目新增**（表现层参数；C4 的火光/烟柱形状在原版由 <c>TE_EXPLOSION</c> 的客户端事件脚本决定，载体不在盘）。</remarks>
+        public const int BombSmokePuffs = 5;
+        public const float BombSmokeLifetime = 2.5f;
+
+        /// <summary>
+        /// 闪光弹白屏曲线的两个拐点：0~<see cref="FlashPeakSeconds"/> 保持全白，
+        /// 到 <see cref="FlashMidSeconds"/> 线性降到 <see cref="FlashMidAlpha"/>，之后线性降到 0。
+        /// 总时长仍是 <c>CsConst.GrenadeFlashDuration × 距离系数 × 朝向系数</c>（<c>CsDamage.ApplyFlash</c>）。
+        /// </summary>
+        /// <remarks>出处：**本项目新增**（曲线形状为表现层参数；原版 <c>PlayerBlind</c> 只给总时长，逐帧衰减由客户端 hud 决定）。</remarks>
+        public const float FlashPeakSeconds = 0.15f;
+        public const float FlashMidSeconds = 0.5f;
+        public const float FlashMidAlpha = 0.55f;
 
         /// <summary>单帧最多消费的"待表现射击"条数（与模拟的 MaxPendingShots 同量级）。</summary>
         public const int MaxShotsConsumedPerFrame = 16;

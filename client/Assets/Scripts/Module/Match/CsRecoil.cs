@@ -78,17 +78,20 @@ namespace Cs16.Module.Match
             }
 
             s.Pitch += front;
-            if (s.Pitch > def.KickUpMax) s.Pitch = def.KickUpMax;
+            // 只有取到**正**上限时才夹：原版 `if (punchangle.x < -up_max) = -up_max`
+            // 在 up_max = 0 时会把刚加上去的抬升当场夹回 0（后坐力完全不生效）。
+            // 手枪 / 狙击 / 霰弹的 kickback 只落了 up_base（其余槽为 0）⇒ 这里按"无上限"累加。
+            if (def.KickUpMax > 0f && s.Pitch > def.KickUpMax) s.Pitch = def.KickUpMax;
 
             if (s.Direction >= 0)
             {
                 s.Yaw += side;
-                if (s.Yaw > def.KickLateralMax) s.Yaw = def.KickLateralMax;
+                if (def.KickLateralMax > 0f && s.Yaw > def.KickLateralMax) s.Yaw = def.KickLateralMax;
             }
             else
             {
                 s.Yaw -= side;
-                if (s.Yaw < -def.KickLateralMax) s.Yaw = -def.KickLateralMax;
+                if (def.KickLateralMax > 0f && s.Yaw < -def.KickLateralMax) s.Yaw = -def.KickLateralMax;
             }
 
             // 原版 `if (!RANDOM_LONG(0, direction_change)) m_iDirection = !m_iDirection;`

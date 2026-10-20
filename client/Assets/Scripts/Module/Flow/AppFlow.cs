@@ -74,12 +74,19 @@ namespace Cs16.Module.Flow
         /// <summary>常驻 HUD 的面板名 —— 它开着不算"遮挡"，ESC 仍然归暂停菜单。</summary>
         private readonly string _hudPanelName = typeof(HudPanel).Name;
 
+        /// <summary>信息类面板（不吃输入）：按住 TAB 的记分板、回合结算。它们开着时 ESC 仍然归暂停菜单。</summary>
+        private readonly string _scoreboardPanelName = typeof(ScoreboardPanel).Name;
+        private readonly string _roundEndPanelName = typeof(RoundEndPanel).Name;
+
         private CsMatchConfig _pending;
         private bool _optionsFromPause;
         private bool _stageSceneReady;
         private bool _stageMapReady;
         /// <summary>本局角色预制体是否已在读条期预热完（见 <see cref="OnEnterLoading"/>）。</summary>
         private bool _stageAssetsReady;
+
+        /// <summary>本次读条的超时兜底定时器 id（0 = 没有在跑；进图 / 完成 / 超时时清）。</summary>
+        private long _stageLoadTimer;
         private bool _menuLoadRequested;
 
         /// <summary>本场是否已经在 Stage 站点开过局（用来区分"首次进图"与"从暂停恢复"）。</summary>
@@ -318,6 +325,19 @@ namespace Cs16.Module.Flow
             Game.Logger?.Info(Tag, $"Menu 场景就绪：{SceneNames.Menu}");
             Game.UI.Open<MainMenuPanel>();
             PlayStartupMusicOnce();
+
+            // 主菜单就绪即开始后台预热本局角色预制体：首次 Instantiate 每个 1~4s，压进读条会让
+            // "选完人进游戏"黑屏十几秒。放在菜单期做，玩家看菜单的时间把这份代价付掉。
+            var view = ViewModule.Instance;
+            if (view != null)
+            {
+                view.WarmUpMatchPrefabs(null);
+                Game.Logger?.Info(Tag, "主菜单就绪：已在后台预热本局角色预制体（不阻塞菜单）");
+            }
+            else
+            {
+                Game.Logger?.Warn(Tag, "主菜单就绪：ViewModule 不在场，角色预制体预热推迟到读条期");
+            }
         }
 
         // ═══════════════════════════ 主菜单启动曲（原版 media/gamestartup.mp3）═══════════════════════════
@@ -449,12 +469,16 @@ namespace Cs16.Module.Flow
             // 场景不在 Build Settings / 未生成时引擎会打 Error 且**不会回调 onDone**，
             // 所以必须有超时兜底（否则玩家被永久钉在读条屏）。
             Game.Scene.Load(SceneNames.StageDust2, OnStageLoadProgress, OnStageSceneLoaded);
-            Game.Timer.AfterUnscaled(StageLoadTimeout, OnStageLoadTimeout);
+            // 旧读条超时定时器必须先停：上一次进图留下的定时器会在这一次的 Loading 站点里到点，
+            // 刚开读条 0.x 秒就被判"20s 超时"并踢回主菜单（实测 sceneReady=False）。
+            if (_stageLoadTimer != 0) Game.Timer.Stop(_stageLoadTimer);
+            _stageLoadTimer = Game.Timer.AfterUnscaled(StageLoadTimeout, OnStageLoadTimeout);
         }
 
         /// <summary>读条超时兜底：放弃本次进图，回主菜单并明确告知玩家（不静默、不卡死）。</summary>
         private void OnStageLoadTimeout()
         {
+            _stageLoadTimer = 0;
             if (CurrentState != State.Loading) return;
 
             if (_stageSceneReady && _stageMapReady && !_stageAssetsReady)
@@ -584,6 +608,12 @@ namespace Cs16.Module.Flow
 
             var panel = Game.UI.Get<LoadingPanel>();
             if (panel != null) panel.SetProgress(1f);
+
+            if (_stageLoadTimer != 0)
+            {
+                Game.Timer.Stop(_stageLoadTimer);
+                _stageLoadTimer = 0;
+            }
 
             Game.Fsm.Trigger(Trigger.StageReady);       // → TeamSelect 站点（读条面板随之关闭）
         }
@@ -907,12 +937,17 @@ namespace Cs16.Module.Flow
             _openPanels.Remove(panelName);
         }
 
-        /// <summary>除常驻 HUD 外还有面板开着 = 有遮挡（ESC 归它，不弹暂停菜单）。</summary>
+        /// <summary>
+        /// 除常驻 HUD 与信息类面板（记分板 / 回合结算）外还有面板开着 = 有遮挡
+        /// （ESC 归遮挡面板，不弹暂停菜单）。
+        /// </summary>
         private bool HasBlockingOverlay()
         {
             foreach (var name in _openPanels)
             {
                 if (name == _hudPanelName) continue;
+                if (name == _scoreboardPanelName) continue;
+                if (name == _roundEndPanelName) continue;
                 return true;
             }
             return false;

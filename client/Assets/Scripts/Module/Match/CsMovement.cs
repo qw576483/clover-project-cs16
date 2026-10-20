@@ -39,6 +39,36 @@ namespace Cs16.Module.Match
         /// <summary>空中加速的期望速度上限 = <c>PM_AirAccelerate</c> 里的 <c>30</c> unit/s ⇒ 0.762 m/s（:1127）。</summary>
         private const float AirWishSpeedCap = 30f * 0.0254f;
 
+        /// <summary>连跳速度上限系数 = 原版 <c>BUNNYJUMP_MAX_SPEED_FACTOR 1.2f</c>（<c>pm_shared.c:2045</c>）。
+        /// 起跳瞬间速度超过 <c>本值 × 该武器最大速度</c> 就按下一行的比例缩回。</summary>
+        public const float BunnyJumpMaxSpeedFactor = 1.2f;
+
+        /// <summary>超限时的收敛比例 = 原版 <c>fraction = (maxscaledspeed / spd) * 0.8f</c>（<c>pm_shared.c:2063</c>）
+        /// ⇒ 超得越多、缩得越狠（上限档本身落到 <c>0.96 × maxspeed</c>）。</summary>
+        private const float BunnyJumpOvershootScale = 0.8f;
+
+        /// <summary>
+        /// 连跳**速度上限** = 原版 <c>PM_PreventMegaBunnyJumping</c>（<c>pm_shared.c:2047-2066</c>），
+        /// 在 <c>PM_Jump</c> 里、给竖直速度赋值**之前**调用（<c>:2150</c>）。
+        ///
+        /// <para>原版用**三维**速度模长判超限（<c>Length(velocity)</c>），超限时按
+        /// <c>(maxscaled / spd) × 0.8</c> 缩放整个速度向量；不超限原样返回。
+        /// 缺了它，空中加速（<see cref="AirAccelerate"/>）每次起跳都能净增速度且**没有上界**
+        /// —— 连跳会把水平速度堆到任意值。</para>
+        /// </summary>
+        /// <param name="velocity">起跳瞬间的速度（m/s）。</param>
+        /// <param name="maxSpeed">该角色当前档的最大移动速度（m/s，= <c>pmove-&gt;maxspeed</c>）。</param>
+        public static Vector3 PreventMegaBunnyJumping(Vector3 velocity, float maxSpeed)
+        {
+            var maxScaledSpeed = BunnyJumpMaxSpeedFactor * maxSpeed;
+            if (maxScaledSpeed <= 0f) return velocity;
+
+            var speed = velocity.magnitude;
+            if (speed <= maxScaledSpeed) return velocity;
+
+            return velocity * ((maxScaledSpeed / speed) * BunnyJumpOvershootScale);
+        }
+
         /// <summary>
         /// 把 <paramref name="velocity"/> 推进一帧（<paramref name="dt"/> 秒）。
         ///

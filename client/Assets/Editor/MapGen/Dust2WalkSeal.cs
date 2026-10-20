@@ -198,29 +198,26 @@ namespace Cs16.EditorTools
         /// <para><b>判据</b>：逐格复算 <c>BotNavigator.BuildHeightReach</c> 从出生点集合出发的扩张
         /// （几何 = <c>ThirdParty/Dust2/de_dust2_geo.bin</c> 的可站面），再逐标记点归属。</para>
         /// </summary>
-        public static readonly (string Marker, int FromIx, int FromIz, int ToIx, int ToIz, float ToY)[] HeightIslandMoves =
+        public static readonly (string Marker, int FromIx, int FromIz, int ToIx, int ToIz)[] HeightIslandMoves =
         {
-            ("BuyZone_CT", 81, 93, 78, 96, KeepY),
-            ("BuyZone_CT", 84, 90, 83, 88, KeepY),
+            ("BuyZone_CT", 81, 93, 78, 96),
+            ("BuyZone_CT", 84, 90, 83, 88),
             // 路线点：与原格同一类（落在 2.44 m 台地上，从两组出生点扩张都到不了）。
-            // 目标格 = 同层可达的相邻格（口径见上面的判据），ToY = KeepY 表示只动 x/z。
-            ("Route_CT_Mid", 80, 93, 80, 96, KeepY),
-            ("Route_Patrol", 21, 125, 21, 122, KeepY),
-            ("Route_Patrol", 45, 15, 45, 18, KeepY),
-            ("Route_T_To_A", 80, 91, 83, 88, KeepY),
+            // 目标格 = 同层可达的相邻格（口径见上面的判据）。Y 一律取目标格的可站面。
+            ("Route_CT_Mid", 80, 93, 80, 96),
+            ("Route_Patrol", 21, 125, 21, 122),
+            ("Route_Patrol", 45, 15, 45, 18),
+            ("Route_T_To_A", 80, 91, 83, 88),
             // T 进攻 B 点：原路点摆在 mid 及其北侧，而位图上 mid 与北侧在 z≈12.5 处被一道错位墙切开
             //   （相邻两行的缺口不重叠 ⇒ 引擎对角口径下无路可走），从 mid 到这些点只能绕行 8.6 倍路程
             //   （25.7 m 直线 → 221.6 m 走行），持包机器人因此到不了 B 点。
             //   目标格 = T 出生点 → B 点的最短路（经隧道沿 x≈-36.5 北上），逐段绕行倍数 1.03~1.28。
-            //   ToY 显式给出，因为这四格的地面高度与原格不同（3.251 / 0.0 / 0.813 / 0.813）。
-            ("Route_T_To_B", 62, 54, 32, 26, 3.251f),
-            ("Route_T_To_B", 62, 70, 26, 43, 0.0f),
-            ("Route_T_To_B", 68, 95, 29, 65, 0.813f),
-            ("Route_T_To_B", 52, 103, 22, 87, 0.813f),
+            //   这四格的地面高度与原格不同（3.25 / 0.0 / 0.81 / 0.81），由目标格的可站面给出。
+            ("Route_T_To_B", 62, 54, 32, 26),
+            ("Route_T_To_B", 62, 70, 26, 43),
+            ("Route_T_To_B", 68, 95, 29, 65),
+            ("Route_T_To_B", 52, 103, 22, 87),
         };
-
-        /// <summary><see cref="HeightIslandMoves"/> 的 <c>ToY</c> 哨兵：原样保留标记点当前的 y。</summary>
-        public const float KeepY = float.NaN;
 
         private static readonly int[] NeiDx = { 1, -1, 0, 0, 1, 1, -1, -1 };
         private static readonly int[] NeiDz = { 0, 0, 1, -1, 1, -1, 1, -1 };
@@ -439,7 +436,10 @@ namespace Cs16.EditorTools
             Debug.Log($"{Tag} 标记镜像表已同步：{mirror}（{markerCount} 行）");
         }
 
-        /// <summary>把位图里不在主分量（或不可走）的标记点搬到最近的主分量可走格（只改 x/z，保留 y）。</summary>
+        /// <summary>
+        /// 把位图里不在主分量（或不可走）的标记点搬到最近的主分量可走格，并把 **Y 落到目标格的可站面**
+        /// （<see cref="Dust2Surfaces.TryNearestSurface"/>；几何不可用时保留原 y 并报 Error）。
+        /// </summary>
         private static int SnapMarkers(byte[] bytes, int markerOffset, int markerCount, bool[] walkable,
                                        int width, int depth)
         {
@@ -454,6 +454,12 @@ namespace Cs16.EditorTools
                 Debug.LogError($"{Tag} CellSize={cell} 非法，跳过标记点搬移");
                 return 0;
             }
+
+            // 目标格的可站面表 —— 搬移只解决 x/z，高度必须单独取（见 Dust2Surfaces）。
+            var geo = Dust2GeoData.Load(Dust2Layout.GeoFile);
+            var surfaces = geo != null ? Dust2Surfaces.BuildTable(geo) : null;
+            if (surfaces == null)
+                Debug.LogError($"{Tag} 几何数据缺失 ⇒ 搬移后的标记点 Y 无法落到可站面（保留原 y）");
 
             // 主分量
             Label(walkable, width, depth, out int[] comp, out int[] sizes);
@@ -478,7 +484,7 @@ namespace Cs16.EditorTools
                 int iz = Mathf.FloorToInt((z - oz) / cell);
 
                 // 先查"高度层走不到的格"登记表（这类格在位图上是可走的，下面的主分量判据抓不到它们）
-                if (MoveHeightIslandMarker(bytes, markerName, xyzAt, ix, iz, ox, oz, cell)) { moved++; continue; }
+                if (MoveHeightIslandMarker(bytes, markerName, xyzAt, ix, iz, ox, oz, cell, geo, surfaces)) { moved++; continue; }
 
                 if (In(width, depth, ix, iz) && walkable[iz * width + ix] && comp[iz * width + ix] == main)
                     continue;
@@ -495,12 +501,18 @@ namespace Cs16.EditorTools
                             if (!In(width, depth, nx, nz)) continue;
                             int k = nz * width + nx;
                             if (!walkable[k] || comp[k] != main) continue;
-                            BitConverter.GetBytes(ox + (nx + 0.5f) * cell).CopyTo(bytes, xyzAt);
-                            BitConverter.GetBytes(oz + (nz + 0.5f) * cell).CopyTo(bytes, xyzAt + 8);
+                            float tx = ox + (nx + 0.5f) * cell;
+                            float tz = oz + (nz + 0.5f) * cell;
+                            float ty = y;
+                            if (Dust2Surfaces.TryNearestSurface(geo, surfaces, tx, tz, y, out var sy)) ty = sy;
+                            else Debug.LogError($"{Tag} 标记点 ({x:F1},{z:F1}) 的目标格 ({nx},{nz}) 没有可站面 ⇒ y 保留 {y:F2}");
+                            BitConverter.GetBytes(tx).CopyTo(bytes, xyzAt);
+                            BitConverter.GetBytes(ty).CopyTo(bytes, xyzAt + 4);
+                            BitConverter.GetBytes(tz).CopyTo(bytes, xyzAt + 8);
                             moved++;
                             found = true;
                             Debug.Log($"{Tag} 标记点 ({x:F1},{z:F1}) 不在主分量 ⇒ 搬到格 ({nx},{nz}) 世界 " +
-                                      $"({ox + (nx + 0.5f) * cell:F1},{oz + (nz + 0.5f) * cell:F1})（y={y:F2} 保留）");
+                                      $"({tx:F1},{ty:F3},{tz:F1})（y 取该格可站面）");
                         }
                     }
                 }
@@ -514,10 +526,12 @@ namespace Cs16.EditorTools
 
         /// <summary>
         /// <see cref="HeightIslandMoves"/> 的命中判定与写回：名字与"当前格"都对上才搬。
-        /// 写 x/z = 目标格格心；y 取 <c>ToY</c>（<see cref="KeepY"/> = 保留原值）。
+        /// 写 x/z = 目标格格心；y = 目标格的可站面（<see cref="Dust2Surfaces.TryNearestSurface"/>，
+        /// 取不到时保留原 y 并报 Error）。
         /// </summary>
         private static bool MoveHeightIslandMarker(byte[] bytes, string markerName, int xyzAt,
-                                                   int ix, int iz, float ox, float oz, float cell)
+                                                   int ix, int iz, float ox, float oz, float cell,
+                                                   Dust2GeoData geo, Dictionary<int, List<Dust2Surfaces.Face>> surfaces)
         {
             if (string.IsNullOrEmpty(markerName)) return false;
 
@@ -540,13 +554,14 @@ namespace Cs16.EditorTools
             var m = HeightIslandMoves[bestI];
             float x = ox + (m.ToIx + 0.5f) * cell;
             float z = oz + (m.ToIz + 0.5f) * cell;
-            float y = float.IsNaN(m.ToY) ? BitConverter.ToSingle(bytes, xyzAt + 4) : m.ToY;
+            float y = BitConverter.ToSingle(bytes, xyzAt + 4);
+            if (Dust2Surfaces.TryNearestSurface(geo, surfaces, x, z, y, out var surfaceY)) y = surfaceY;
+            else Debug.LogError($"{Tag} 标记点 {markerName} 的目标格 ({m.ToIx},{m.ToIz}) 没有可站面 ⇒ y 保留 {y:F3}");
             BitConverter.GetBytes(x).CopyTo(bytes, xyzAt);
             BitConverter.GetBytes(y).CopyTo(bytes, xyzAt + 4);
             BitConverter.GetBytes(z).CopyTo(bytes, xyzAt + 8);
             Debug.Log($"{Tag} 标记点 {markerName} 原格 ({ix},{iz})（登记原格 {m.FromIx},{m.FromIz}，差 {bestD} 格）" +
-                      $"走不到 ⇒ 按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{y:F3},{z:F1})" +
-                      (float.IsNaN(m.ToY) ? "（y 保留）" : "（y = 登记值）"));
+                      $"走不到 ⇒ 按登记表搬到格 ({m.ToIx},{m.ToIz}) 世界 ({x:F1},{y:F3},{z:F1})（y 取该格可站面）");
             return true;
         }
 

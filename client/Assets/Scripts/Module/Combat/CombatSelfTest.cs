@@ -26,8 +26,9 @@ namespace Cs16.Module.Combat
     /// }
     /// </code>
     ///
-    /// <para><b>覆盖的断言</b>（对应验收表）：
-    /// ① 散布：移动 &gt; 静止、跳跃 &gt; 静止、蹲下 &lt; 站立、开镜 &lt; 未开镜、连射递增；
+    /// <para><b>覆盖的断言</b>（对应断言）：
+    /// ① 散布：移动 &gt; 静止、跳跃 &gt; 静止、蹲下 &lt; 站立、连射递增；
+    /// 开镜与腰射**相等**（原版 <c>flSpread</c> 没有 fov 分支）；
     /// ② 准星扩散：移动/连射更大；
     /// ③ <b>相机朝向与射线方向一致</b>（欧拉角与 <c>AimDirection</c> 同解）；
     /// ④ 真实 <see cref="CsMatch"/> 快进：**每一发都恰好扣 1 颗弹 + 一条待表现记录**（"射线发数 == 扣弹数"）、
@@ -347,7 +348,10 @@ namespace Cs16.Module.Combat
             Assert(air > stand, $"散布：跳跃({air:F2}) 必须大于静止({stand:F2})");
             Assert(crouch < stand, $"散布：蹲下({crouch:F2}) 必须小于站立({stand:F2})");
             Assert(burst3 > stand && burst10 > burst3, $"散布：连射必须递增（3发={burst3:F2}，10发={burst10:F2}）");
-            Assert(awpScope < awpHip, $"散布：AWP 开镜({awpScope:F2}) 必须小于腰射({awpHip:F2})");
+            // 原版 AWP 的开火散布树里没有 fov 分支（mp.dll 的 AWP 开火函数只按
+            // 速度 > 140 / > 10 / 蹲 / 站分档，开镜只改 fov、移速与射速）⇒ 开镜与腰射**同散布**。
+            Assert(Mathf.Abs(awpScope - awpHip) < 0.001f,
+                $"散布：AWP 开镜({awpScope:F2}) 必须等于腰射({awpHip:F2})——原版 flSpread 没有 fov 分支");
         }
 
         // ==================================================================
@@ -359,22 +363,32 @@ namespace Cs16.Module.Combat
             if (ak == null) { Fail("武器表里找不到 ak47，准星自检无法进行"); return; }
 
             var still = new CrosshairState();
+            var crouched = new CrosshairState();
             var moving = new CrosshairState();
 
             var actor = new CsActor { Id = 1, IsAlive = true, OnGround = true, ActiveWeapon = CsWeapons.Ak47 };
             actor.Velocity = Vector3.zero;
 
-            for (var i = 0; i < 60; i++) still.Tick(FrameDt, actor, ak, false);
+            for (var i = 0; i < 120; i++) still.Tick(FrameDt, actor, ak, false);
 
+            actor.IsCrouching = true;
+            for (var i = 0; i < 120; i++) crouched.Tick(FrameDt, actor, ak, false);
+
+            actor.IsCrouching = false;
             actor.Velocity = new Vector3(CsConst.SpeedRifle, 0f, 0f);
-            actor.ConsecutiveShots = CsCombatTuning.CrosshairFullShots;
-            for (var i = 0; i < 60; i++) moving.Tick(FrameDt, actor, ak, false);
+            actor.ConsecutiveShots = 10;
+            for (var i = 0; i < 120; i++) moving.Tick(FrameDt, actor, ak, false);
 
-            Notes.Add($"准星扩散(0~1)：静止={still.Value:F2} 满速+连射={moving.Value:F2}");
+            Notes.Add($"准星扩散(0~1)：蹲下={crouched.Value:F2}（散布 {crouched.SpreadDegrees:F2}°）" +
+                      $" 站立={still.Value:F2}（散布 {still.SpreadDegrees:F2}°）" +
+                      $" 满速+连射={moving.Value:F2}（散布 {moving.SpreadDegrees:F2}°）");
 
+            Assert(crouched.Value < still.Value,
+                $"准星扩散：蹲下({crouched.Value:F2}) 必须小于站立({still.Value:F2})");
             Assert(still.Value < moving.Value,
                 $"准星扩散：移动+连射({moving.Value:F2}) 必须大于静止({still.Value:F2})");
             Assert(moving.Value > 0.5f, $"准星扩散：满速连射时应明显张开（实测 {moving.Value:F2}）");
+            Assert(still.Value < 0.5f, $"准星扩散：站定时不应顶满（实测 {still.Value:F2}）");
         }
 
         // ==================================================================
@@ -1919,6 +1933,13 @@ namespace Cs16.Module.Combat
 
             public void Unload() { }
             public bool WalkableAt(float x, float z) => true;
+            public bool HasSurfaceHeights => false;
+            public int SurfaceCountAt(int x, int z) => 0;
+            public bool TryGetSurfaceHeights(int x, int z, List<float> heightsOut)
+            {
+                heightsOut?.Clear();
+                return false;
+            }
             public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
                                  float height = CsConst.StandHeight) => true;
             public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
@@ -1932,6 +1953,17 @@ namespace Cs16.Module.Combat
                 normal = Vector3.up;
                 return true;
             }
+            public bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                                 out Vector3 point, out Vector3 normal)
+                => TrySampleGround(pos, out point, out normal, maxDrop);
+            public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
+            {
+                legacy = true;
+                return true;
+            }
+
+            public bool StepFaceStandable(Vector3 pos, float height) => true;
+
             public Vector3 GetSpawnPoint(int index) => index % 2 == 0 ? SpawnT : SpawnCT;
 
             public Vector3[] Points(string marker)

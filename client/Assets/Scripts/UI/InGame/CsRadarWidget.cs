@@ -60,6 +60,11 @@ namespace Cs16.UI
         public RectTransform DotLayer;
         /// <summary>地图底图节点（sprite 到手前 <c>enabled=false</c>：无 sprite 的 Image 会被画成实心白块）。</summary>
         public Image MapImage;
+        /// <summary>绿色圆盘（圆形 sprite + Mask，子节点被裁成圆）。</summary>
+        public Image Field;
+
+        /// <summary>程序化生成的圆形 sprite（预制体里存不住，运行期按需重建）。</summary>
+        [System.NonSerialized] private Sprite _circleSprite;
 
         [System.NonSerialized] private readonly List<Image> _dots = new List<Image>(48);
         [System.NonSerialized] private bool _warned;
@@ -79,16 +84,23 @@ namespace Cs16.UI
                 return;
             }
 
-            var frame = UIFactory.CreatePanel("Radar", parent, CsHudTheme.PanelBgSoft, false);
+            // 原版雷达是**绿色圆盘**（`hud_ingame_full.png` 取样 (0,112,0)），不是方形黑框；
+            // 外框因此不画底色，只留一个 128×128 的定位节点。
+            var frame = UIFactory.CreatePanel("Radar", parent, Color.clear, false);
             CsHudTheme.PlaceTopLeft(frame.rectTransform, CsHudTheme.RadarTopLeftOffset,
                 new Vector2(CsHudTheme.RadarSize, CsHudTheme.RadarSize));
+            frame.raycastTarget = false;
             Root = frame.rectTransform;
 
-            // 内部再收一层：留出边框，画点区域比外框小一圈（外框 128 → 内区 122）
-            var inner = UIFactory.CreatePanel("RadarField", Root, new Color(0.06f, 0.08f, 0.06f, 0.55f), false);
+            // 圆盘 = 程序化生成的圆形 sprite + Mask：底图与雷达点都被裁进这个圆里。
+            var inner = UIFactory.CreatePanel("RadarField", Root, CsHudTheme.RadarDisc, false);
             UIFactory.Stretch(inner.rectTransform);
-            inner.rectTransform.offsetMin = new Vector2(3f, 3f);
-            inner.rectTransform.offsetMax = new Vector2(-3f, -3f);
+            inner.raycastTarget = false;
+            Field = inner;
+            Field.sprite = EnsureCircleSprite();
+            Field.type = Image.Type.Simple;
+            var mask = inner.gameObject.AddComponent<Mask>();
+            mask.showMaskGraphic = true;
 
             // 地图底图（sprite 由 EnsureMapSprite 在运行期取，取不到就保持禁用 + Warn 一次）。
             //
@@ -179,6 +191,37 @@ namespace Cs16.UI
         }
 
         /// <summary>
+        /// 圆形徽标 sprite：128×128、圆内不透明、圆外 alpha 0（抗锯齿边 1 px）。
+        /// 只在内存里生成 —— 预制体保存的是空引用，运行期由 <see cref="Refresh"/> 补回。
+        /// </summary>
+        private Sprite EnsureCircleSprite()
+        {
+            if (_circleSprite != null) return _circleSprite;
+
+            const int size = 128;
+            var tex = new Texture2D(size, size, TextureFormat.RGBA32, false);
+            tex.wrapMode = TextureWrapMode.Clamp;
+            tex.filterMode = FilterMode.Bilinear;
+            var pixels = new Color32[size * size];
+            var r = size * 0.5f - 0.5f;
+            for (var y = 0; y < size; y++)
+            {
+                for (var x = 0; x < size; x++)
+                {
+                    var dx = x - r;
+                    var dy = y - r;
+                    var a = Mathf.Clamp01(r - Mathf.Sqrt(dx * dx + dy * dy) + 0.5f);
+                    pixels[y * size + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(pixels);
+            tex.Apply();
+            _circleSprite = Sprite.Create(tex, new Rect(0f, 0f, size, size), new Vector2(0.5f, 0.5f), 100f);
+            return _circleSprite;
+        }
+
+        /// <summary>
         /// 每帧刷新。
         /// </summary>
         /// <param name="visible">比赛没跑 / HUD 整体隐藏时为 false。</param>
@@ -202,6 +245,9 @@ namespace Cs16.UI
 
             if (Root.gameObject.activeSelf != visible) Root.gameObject.SetActive(visible);
             if (!visible) return;
+
+            // 预制体里存不住程序化 sprite ⇒ 每次显示时补一次（只在为 null 时做）。
+            if (Field != null && Field.sprite == null) Field.sprite = EnsureCircleSprite();
 
             EnsureMapSprite();
 

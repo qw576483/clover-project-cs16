@@ -101,7 +101,7 @@ namespace Cs16.Module.Bot
             switchTo = null;
             _ownerName = self.Name;
 
-            // 验收表 B5 的证据：每回合一次，说明"这一档想买什么"（金额/现有装备都记下来，
+            // 抢购决策的证据：每回合一次，说明"这一档想买什么"（金额/现有装备都记下来，
             //   便于事后核对"为什么他没买"）。所以即使后面全部买失败，这条决策日志也在。
             Game.Logger.Info(Tag,
                 $"{self.Name}({self.Team}) 冻结期买枪决策：tier={tier}（{TierName(tier)}）角色={CsBotRoles.Label(role)}" +
@@ -112,7 +112,7 @@ namespace Cs16.Module.Bot
             {
                 case 0: PlanCheap(match, self); break;
                 case 1: PlanMid(match, self); break;
-                case 2: PlanExpensive(match, self); break;
+                case 2: PlanExpensive(match, self, role); break;
                 default:
                     Game.Logger.Warn(Tag,
                         $"{self.Name} 的 BuyBudgetTier={tier} 不在 0~2 内（CsBotProfile 被改过？）→ 按最便宜档处理");
@@ -159,6 +159,7 @@ namespace Cs16.Module.Bot
             }
 
             var cap = CsBotRoles.PrimaryPriceCap(tier);
+            var currentDef = string.IsNullOrEmpty(current) ? null : CsWeapons.Get(current);
             var reserve = 0f;
             if (self.Armor <= 0)
             {
@@ -181,6 +182,8 @@ namespace Cs16.Module.Bot
                     continue;
                 }
                 if (def.Price > cap) continue;                                  // 超出本档上限
+                if (def.Id == CsWeapons.Awp && !AwpEligible(match, self, role)) continue;   // 一队最多一把 AWP
+                if (currentDef != null && def.Price <= currentDef.Price) continue;          // 不为偏好把好枪换成便宜的
                 if (self.Money < def.Price + reserve) continue;                 // 买完没钱买甲/拆弹器
 
                 Game.Logger.Info(Tag,
@@ -305,7 +308,7 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>tier 2（Hard）：awp（30%）或 ak47(T)/m4a1(CT) + vesthelm + HE 手雷（+ CT 拆弹器）。</summary>
-        private void PlanExpensive(ICsMatch match, CsActor self)
+        private void PlanExpensive(ICsMatch match, CsActor self, CsBotRole role)
         {
             if (string.IsNullOrEmpty(self.PrimaryWeapon))
             {
@@ -313,7 +316,10 @@ namespace Cs16.Module.Bot
                 var awp = CsWeapons.Get(CsWeapons.Awp);
                 // AWP 掷：**玩法**（决定该 bot 的火力档 ⇒ 影响经济与回合结果）。
                 // 走 CsRng 的 BotBuy 流：每回合每 bot 抽一次，序列必须能从本局 seed 重放。
+                // 一队最多一把：掷中也只有当选者能买（见 AwpEligible）。逐人各掷会让一队出现多把 AWP、
+                // 把步枪位挤空。
                 var wantAwp = awp != null && self.Money >= awp.Price &&
+                              AwpEligible(match, self, role) &&
                               CsRng.Stream(CsRngStream.BotBuy).NextFloat() < CsBotConst.AwpChanceTier2;
 
                 if (wantAwp)
@@ -333,6 +339,45 @@ namespace Cs16.Module.Bot
             BuyVest(match, self, tier2: true);
             BuyDefuser(match, self);
             // 高爆 / 闪光 / 烟由角色偏好那条路买（BuyGrenades）—— 本档只负责枪与护甲/拆弹器。
+        }
+
+        /// <summary>
+        /// 本人是否本队的 **AWP 持有人选**：一队最多一把，优先给"侦察"角色（最远交火），
+        /// 同角色里取 Id 最小的；队友已经拿着一把 ⇒ 本人不许再买。
+        ///
+        /// <para>队级选举而不是逐人抽：原版每个 bot 的 <c>WeaponPreference</c> 也受队伍与难度档影响，
+        /// 但一队同时只会有一把 AWP 的位置。本人已持有 AWP 时直接为真（不因队友也拿着而丢枪）。</para>
+        /// </summary>
+        private static bool AwpEligible(ICsMatch match, CsActor self, CsBotRole role)
+        {
+            if (self.PrimaryWeapon == CsWeapons.Awp) return true;
+            if (role == CsBotRole.Breaker) return false;   // 突破手贴脸打，AWP 不给他
+
+            var actors = match.Actors;
+            if (actors == null) return false;
+
+            var bestId = 0L;
+            var bestIsScout = false;
+
+            for (var i = 0; i < actors.Count; i++)
+            {
+                var a = actors[i];
+                if (a == null || !a.IsAlive || a.Team != self.Team || !a.IsBot) continue;
+                if (a.PrimaryWeapon == CsWeapons.Awp) return false;   // 队友已经拿着一把
+
+                var mateRole = CsBotRoles.For(self.Team, CsBotPlans.TeamLocalOrdinal(actors, self.Team, a.Id));
+                if (mateRole == CsBotRole.Breaker) continue;    // 突破手不参与 AWP 选举
+
+                var isScout = mateRole == CsBotRole.Scout;
+                if (bestId == 0L || (isScout && !bestIsScout) ||
+                    (isScout == bestIsScout && a.Id < bestId))
+                {
+                    bestId = a.Id;
+                    bestIsScout = isScout;
+                }
+            }
+
+            return bestId != 0L && bestId == self.Id;
         }
 
         private static string TierName(int tier)

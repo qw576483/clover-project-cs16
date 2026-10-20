@@ -41,17 +41,61 @@ namespace Cs16.EditorTools
         internal const string SkinName = "Skin";
 
         /// <summary>
-        /// **按 9 路 blend 出动画**的序列名前缀：原版站立瞄准参考姿势 <c>ref_aim_*</c>
-        /// （9 路 = 3×3 瞄准方向格；索引 <c>b = pitchIdx*3 + yawIdx</c>）。
-        ///
-        /// <para>其余同样带 9 路数据的序列（<c>ref_shoot_*</c> / <c>crouch_aim_*</c> / <c>crouch_shoot_*</c>）
-        /// 这一版仍只出 blend 0 —— 9 皮肤全序列出齐会把 <c>Art/Anim</c> 撑到 GB 量级，
-        /// 而这一版只要把"瞄准姿势随瞄准方向走"这条链做通。</para>
+        /// **按 9 路 blend 出动画**的序列前缀（9 路 = 3×3 瞄准方向格；索引 <c>b = pitchIdx*3 + yawIdx</c>）：
+        /// <c>ref_aim_*</c>（站姿瞄准）、<c>crouch_aim_*</c>（蹲姿瞄准）。
         /// </summary>
-        internal const string BlendSeqPrefix = "ref_aim_";
+        private static readonly string[] BlendSeqPrefixes = { "ref_aim_", "crouch_aim_" };
+
+        /// <summary>
+        /// **按 9 路出 BlendTree 的射击序列类后缀**：站姿 <c>ref_shoot_&lt;类&gt;</c> 与
+        /// 蹲姿 <c>crouch_shoot_&lt;类&gt;</c> 各一条。类名同 <c>CsViewTuning.PlayerAnimClass</c>。
+        ///
+        /// <para>只覆盖常用的四类：全部 15 类都 9 路化会再写 1 GB 以上的剪辑，而这四类之外
+        /// （霰弹 / 机枪 / 刀 / 手雷 / C4 / 盾）的射击姿势由整身一次性动作表达，差异落在手上而不是上身躯干。</para>
+        /// </summary>
+        private static readonly string[] BlendShootClasses = { "rifle", "onehanded", "mp5", "carbine" };
 
         /// <summary>出 BlendTree 的路数 = 3×3 网格（<see cref="CsAimBlend.GridN"/>）。</summary>
         private const int BlendGridCount = CsAimBlend.GridN * CsAimBlend.GridN;
+
+        /// <summary>失败日志里的阶段名（生成被中断时按它定位是哪一步留下的半套资产）。</summary>
+        private const string StageController = "[阶段:controller]";
+        private const string StageUpper = "[阶段:upper]";
+        private const string StageClip = "[阶段:clip]";
+
+        /// <summary>
+        /// 上身通道所在的层号 —— 运行期 <c>ActorView.DriveUpperChannel</c> 按**层号 1**访问它
+        /// （Base Layer 必须留在 0 层：运行期按 0 层切状态，见 <c>ActorView.ResolveState</c>）。
+        /// </summary>
+        private const int UpperLayerIndex = 1;
+
+        /// <summary>上身层的层名（与运行期 <c>ActorView</c> 的层号口径配套）。</summary>
+        internal const string UpperLayerName = "upper";
+
+        /// <summary>
+        /// 上身层的 AvatarMask 资产路径。9 个皮肤（<c>player_T</c> / <c>player_T_leet</c> / … /
+        /// <c>player_CT_vip</c>）的骨骼层级同名（<c>Body/Skeleton/Bip01/…</c>）⇒ 共用同一份。
+        /// </summary>
+        internal const string UpperMaskPath = AnimDir + "/player_upper.mask";
+
+        /// <summary>
+        /// 上身层覆盖的骨骼**末段名**（14 项）：脊柱链 + 颈/头 + 双臂。⛔ 不含**根**（<c>Bip01</c>）与
+        /// **骨盆**（<c>Bip01 Pelvis</c>）、也不含双腿 —— 它们的位移姿势由 layer0 的
+        /// <c>walk</c> / <c>run</c> / <c>crouchrun</c> / <c>jump</c> 提供。
+        ///
+        /// <para><b>为什么必须分上下半身</b>：原版是双通道 —— 腿走 <c>gaitsequence</c>、上身走 aim 序列
+        /// （<c>原版资源/cs16src/regamedll/dlls/player.cpp:2875-2929</c>）。而 mdl 里只有 <c>walk</c> 序列的臂
+        /// 是绑定姿态（<c>terror.mdl</c> 帧 0 的 <c>Bip01 L UpperArm</c> 欧拉角 ≈ 0，见
+        /// <c>.ai-tmp/test/walk-arm-check.py</c> 的直读结果）⇒ 单通道整身播 <c>walk</c> 就会把绑定臂
+        /// 露出来（双臂平伸）。上路用 aim 序列补上，layer0 一行不动。</para>
+        /// </summary>
+        private static readonly string[] UpperBoneNames =
+        {
+            "Bip01 Spine", "Bip01 Spine1", "Bip01 Spine2", "Bip01 Spine3",
+            "Bip01 Neck", "Bip01 Head",
+            "Bip01 L Clavicle", "Bip01 L UpperArm", "Bip01 L Forearm", "Bip01 L Hand",
+            "Bip01 R Clavicle", "Bip01 R UpperArm", "Bip01 R Forearm", "Bip01 R Hand",
+        };
 
         // ==================================================================
         //  收集贴图用法（决定材质要不要走 cutout）
@@ -678,8 +722,13 @@ namespace Cs16.EditorTools
             for (var i0 = 0; i0 < a.Clips.Count; i0++)
             {
                 if (!UseBlendTree(a.Clips[i0])) continue;
-                controller.AddParameter(CsAimBlend.ParamYaw, AnimatorControllerParameterType.Float);
-                controller.AddParameter(CsAimBlend.ParamPitch, AnimatorControllerParameterType.Float);
+                // 默认值 = 中格（0.5 / 0.5）：BlendTree 在"运行期还没喂值"的那些帧（装配当帧、
+                // 参数表读不到的 Animator）必须落在**正前瞄准**那一格。默认 0 = 索引 0 的角格
+                // （pitch 上 + yaw 一侧）⇒ 站定时会看到"双手举枪朝天"。
+                // 默认值必须随参数一起 Add：AnimatorController.parameters 取回的是副本，
+                // 改数组元素写不回 controller（盘上仍是 0）。
+                AddAimParameter(controller, CsAimBlend.ParamYaw);
+                AddAimParameter(controller, CsAimBlend.ParamPitch);
                 break;
             }
 
@@ -720,17 +769,19 @@ namespace Cs16.EditorTools
                 if (first == null) first = single;
             }
 
-            // 多路序列（瞄准 / 射击，9 路 = 3×3 瞄准方向格）在数据里带全部路数：`BlendSeqPrefix`
-            // 那一组出 9 条 clip + 2D BlendTree（state 名不变），其余只把第一路写成一条 clip。
-            // 没被消费的路显式报一条，免得"数据已导出、画面上却不随瞄准方向变"再被当成数据缺失排查。
+            // 多路序列（瞄准 / 射击，9 路 = 3×3 瞄准方向格）在数据里带全部路数：
+            // <see cref="UseBlendTree"/> 判定的那一组出 9 条 clip + 2D BlendTree（state 名不变），
+            // 其余只把第一路写成一条 clip。没被消费的路显式报一条，免得"数据已导出、
+            // 画面上却不随瞄准方向变"再被当成数据缺失排查。
             if (blended > 0)
                 Debug.Log($"[AnimSetup] {a.Key}：{blended} 条序列带多路 blend（瞄准 / 射击）；其中 " +
-                          $"{blendTrees} 条（{BlendSeqPrefix}*）出了 9 条 clip + 2D BlendTree，" +
-                          "其余只写第一路（blend 0）的轨道");
+                          $"{blendTrees} 条（{string.Join(" / ", BlendSeqPrefixes)}* 与 " +
+                          $"ref_shoot_ / crouch_shoot_ 的 {string.Join(" / ", BlendShootClasses)} 类）" +
+                          "出了 9 条 clip + 2D BlendTree，其余只写第一路（blend 0）的轨道");
 
             if (stateNames.Count == 0)
             {
-                Debug.LogError($"[AnimSetup] {a.Key} 没有任何可用 clip —— controller 不生成");
+                Debug.LogError($"[AnimSetup]{StageController} {a.Key} 没有任何可用 clip —— controller 不生成");
                 return null;
             }
 
@@ -749,20 +800,324 @@ namespace Cs16.EditorTools
             layers[0].stateMachine.defaultState = first;
             controller.layers = layers;
 
+            // 第 2 层「upper」：上身 aim 通道（只角色模型有 —— 视模型是第一人称的两只手，没有上下半身之分）。
+            // 必须排在 layer0 的循环之后：这一层的状态**复用** layer0 刚写好的 .anim 资产，不从零写剪辑。
+            var upperTrees = 0;
+            if (a.Key.StartsWith("player", System.StringComparison.Ordinal))
+                upperTrees = BuildUpperStates(controller, a, paths);
+
+            // 落盘前核一遍树的条数：中途抛异常 / 被打断时磁盘上会留下半套 controller，
+            // 而运行期查状态只按名字，缺树的表现是"姿势不动"而不是报错。
+            var expectedTrees = blendTrees + upperTrees;
+            var actualTrees = CountBlendTreeStates(controller);
+            if (actualTrees != expectedTrees)
+            {
+                Debug.LogError($"[AnimSetup]{StageController} {a.Key} 的 BlendTree 数 {actualTrees} 与预期 " +
+                               $"{expectedTrees} 不符 —— controller 可能只写成了半套（生成是否被中断？）");
+            }
+
             EditorUtility.SetDirty(controller);
             AssetDatabase.SaveAssets();
             return controller;
         }
 
         /// <summary>
-        /// 这条序列是否按 9 路出 clip + BlendTree：名字在 <see cref="BlendSeqPrefix"/> 组里、
+        /// 加一个瞄准轴 float 参数，默认值 = 中格 <see cref="CsAimBlend.CellCentre"/>(1)。
+        /// 默认值只能随参数一起加：<c>AnimatorController.parameters</c> 返回副本，改元素写不回 controller。
+        /// </summary>
+        private static void AddAimParameter(AnimatorController controller, string paramName)
+        {
+            controller.AddParameter(new AnimatorControllerParameter
+            {
+                name = paramName,
+                type = AnimatorControllerParameterType.Float,
+                defaultFloat = CsAimBlend.CellCentre(1),
+            });
+        }
+
+        // ==================================================================
+        //  第 2 层「upper」：上身 aim 通道
+        // ==================================================================
+        /// <summary>
+        /// 建第 2 层并把 <see cref="IsUpperBlendSequence"/> 那两组（<c>ref_aim_*</c> 站姿瞄准 /
+        /// <c>crouch_aim_*</c> 蹲姿瞄准）的**同名状态**补进去：运行期在位移态把层权重开到 1、
+        /// 并 CrossFade 到当前武器那条 aim 状态（见 <c>ActorView.DriveUpperChannel</c>）。
+        /// 站定 / 蹲定 / 一次性动作 / 死亡时该层权重恒 0 ⇒ 那些路径与只有 layer0 时逐字相同。
+        /// </summary>
+        /// <returns>该层建出来的 BlendTree 状态数（用于落盘前的条数核对）。</returns>
+        private static int BuildUpperStates(AnimatorController controller, Cs16AnimAsset a, string[] paths)
+        {
+            var sm = BuildUpperLayer(controller, a, paths);
+            if (sm == null) return 0;
+
+            var trees = 0;
+            var used = new HashSet<string>();
+            for (var c = 0; c < a.Clips.Count; c++)
+            {
+                var clipData = a.Clips[c];
+                if (clipData == null || string.IsNullOrEmpty(clipData.Name)) continue;
+                if (!IsUpperBlendSequence(clipData.Name)) continue;
+                // 同名冲突：与 layer0 同一条规则（保留第一条、丢弃后一条）—— 两层的状态名必须逐条对上。
+                if (!used.Add(clipData.Name)) continue;
+                if (UseBlendTree(clipData))
+                {
+                    if (AddUpperBlendState(controller, a, clipData)) trees++;
+                }
+                else
+                {
+                    AddUpperSingleState(sm, a, clipData.Name);
+                }
+            }
+
+            // 层必须有默认状态（否则该层不评估）。本值只决定"权重被打开、但还没 CrossFade 过"时的姿势；
+            // 运行期每次进位移态都会 CrossFade 到当前武器那条。
+            // 优先取站姿瞄准组：clip 顺序里 crouch_aim_* 在前，而 CreateBlendTreeInController 会把
+            // 第一个状态自动设为默认 ⇒ 必须显式改回站姿那条，否则那种帧会停在蹲姿姿势上。
+            var states = sm.states;
+            AnimatorState def = null;
+            for (var i = 0; i < states.Length; i++)
+            {
+                if (!states[i].state.name.StartsWith("ref_aim_", System.StringComparison.Ordinal)) continue;
+                def = states[i].state;
+                break;
+            }
+            if (def == null && states.Length > 0) def = states[0].state;
+            if (def != null) sm.defaultState = def;
+            return trees;
+        }
+
+        /// <summary>controller 各层里直接作为 state 的 BlendTree 条数（本生成器只建平铺树）。</summary>
+        private static int CountBlendTreeStates(AnimatorController controller)
+        {
+            var n = 0;
+            var layers = controller.layers;
+            for (var l = 0; l < layers.Length; l++)
+            {
+                var sm = layers[l].stateMachine;
+                if (sm == null) continue;
+                var states = sm.states;
+                for (var i = 0; i < states.Length; i++)
+                {
+                    if (states[i].state.motion is BlendTree) n++;
+                }
+            }
+            return n;
+        }
+
+        /// <summary>
+        /// 加第 2 层（<see cref="UpperLayerName"/>）：<c>Override</c> 混合 + <see cref="UpperMaskPath"/> 的
+        /// 上身 mask + 权重 1。层与 mask 都按"已存在就复用"处理（重复执行结果一致）。
+        /// </summary>
+        /// <returns>该层的状态机；建不出来返回 <c>null</c>（该模型退回单通道 = 走起来露绑定臂）。</returns>
+        private static AnimatorStateMachine BuildUpperLayer(AnimatorController controller, Cs16AnimAsset a, string[] paths)
+        {
+            var mask = EnsureUpperMask(a.Key, paths);
+            if (mask == null) return null;
+
+            // AddLayer 没有返回值（加没加上只能回读层表）⇒ 下面按名字在层表里找它。
+            controller.AddLayer(UpperLayerName);
+
+            // AddLayer 的插入位置在 Unity 各版本里没有文档保证 ⇒ 这里显式把「upper」钉在第 1 层
+            //（运行期按层号 1 访问，Base Layer 必须仍是 0 层）。同层表里调换位置不影响层内内容。
+            var layers = controller.layers;
+            var up = -1;
+            for (var i = 0; i < layers.Length; i++)
+            {
+                if (layers[i].name == UpperLayerName) { up = i; break; }
+            }
+            if (up < 0)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key} 加了层「{UpperLayerName}」却在层表里找不到 —— " +
+                               "上身 aim 通道不生效");
+                return null;
+            }
+            if (up != UpperLayerIndex)
+            {
+                if (layers.Length != UpperLayerIndex + 1)
+                {
+                    Debug.LogError($"[AnimSetup]{StageUpper} {a.Key} 的层表异常（共 {layers.Length} 层、" +
+                                   $"「{UpperLayerName}」在第 {up} 层）—— 上身 aim 通道不生效（Base Layer 必须留在 0 层）");
+                    return null;
+                }
+                var tmp = layers[UpperLayerIndex];
+                layers[UpperLayerIndex] = layers[up];
+                layers[up] = tmp;
+                controller.layers = layers;
+                layers = controller.layers;
+                Debug.LogWarning($"[AnimSetup] {a.Key}：层「{UpperLayerName}」被加在第 {up} 层，" +
+                                 $"已调回第 {UpperLayerIndex} 层");
+            }
+
+            var sm = layers[UpperLayerIndex].stateMachine;
+            if (sm == null)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key} 的第 {UpperLayerIndex} 层没有状态机 —— " +
+                               "上身 aim 通道不生效");
+                return null;
+            }
+
+            layers[UpperLayerIndex].blendingMode = AnimatorLayerBlendingMode.Override;
+            layers[UpperLayerIndex].avatarMask = mask;
+            layers[UpperLayerIndex].defaultWeight = 1f;
+            controller.layers = layers;
+            return sm;
+        }
+
+        /// <summary>
+        /// 取 / 建上身层的 AvatarMask：清单 = layer0 同一份骨骼路径里**末段名**命中
+        /// <see cref="UpperBoneNames"/> 的那 14 条（如 <c>Body/Skeleton/Bip01/Bip01 Pelvis/Bip01 Spine</c>）。
+        /// 幂等：已有资产**就地改写**（不重建 ⇒ GUID 不变，controller 的引用不失效）。
+        /// </summary>
+        /// <returns>填好的 mask；一条骨骼都对不上时返回 <c>null</c>。</returns>
+        private static AvatarMask EnsureUpperMask(string key, string[] paths)
+        {
+            var found = new List<string>(UpperBoneNames.Length);
+            for (var i = 0; i < UpperBoneNames.Length; i++)
+            {
+                for (var b = 0; b < paths.Length; b++)
+                {
+                    if (paths[b] == null) continue;
+                    if (Path.GetFileName(paths[b]) != UpperBoneNames[i]) continue;
+                    found.Add(paths[b]);
+                    break;
+                }
+            }
+
+            if (found.Count != UpperBoneNames.Length)
+            {
+                // 非预期分支：骨骼名与清单对不上 ⇒ 该通道的覆盖面与设计不一致（缺口那些部位会露绑定姿态）。
+                Debug.LogError($"[AnimSetup] {key} 的骨骼表里只找到 {found.Count}/{UpperBoneNames.Length} 根上身骨骼" +
+                               $"（清单 {string.Join("/", UpperBoneNames)}）—— 上身通道覆盖不全");
+            }
+            if (found.Count == 0) return null;
+
+            EnsureFolder(AnimDir);
+            var mask = AssetDatabase.LoadAssetAtPath<AvatarMask>(UpperMaskPath);
+            var created = mask == null;
+            if (created) mask = new AvatarMask();
+            mask.transformCount = found.Count;
+            for (var i = 0; i < found.Count; i++)
+            {
+                mask.SetTransformPath(i, found[i]);
+                mask.SetTransformActive(i, true);
+            }
+            if (created) AssetDatabase.CreateAsset(mask, UpperMaskPath);
+            else EditorUtility.SetDirty(mask);
+            AssetDatabase.SaveAssets();
+            return mask;
+        }
+
+        /// <summary>
+        /// 第 2 层里补一条**单剪辑** aim 状态：motion 复用 layer0 已经写好的
+        /// <c>{模型key}_{序列名}.anim</c>（⛔ 不重建剪辑资产）。
+        /// </summary>
+        /// <returns>状态建出来返回 <c>true</c>。</returns>
+        private static bool AddUpperSingleState(AnimatorStateMachine sm, Cs16AnimAsset a, string seqName)
+        {
+            var clipPath = $"{AnimDir}/{a.Key}_{seqName}.anim";
+            var clip = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+            if (clip == null)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key}/{seqName} 的剪辑 {clipPath} 读不到 —— " +
+                               "上身层缺这条状态（该瞄准姿势下位移会露出绑定姿态的手臂）");
+                return false;
+            }
+            var st = sm.AddState(seqName);
+            if (st == null)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key}/{seqName} 的上身层状态建不出来");
+                return false;
+            }
+            st.motion = clip;
+            return true;
+        }
+
+        /// <summary>
+        /// 第 2 层里补一条 **9 路 BlendTree** aim 状态：与 layer0 同名、同两个轴参数
+        /// （<see cref="CsAimBlend.ParamYaw"/> / <see cref="CsAimBlend.ParamPitch"/>），
+        /// 9 路剪辑从盘上复用 layer0 写好的 <c>{模型key}_{序列名}_b{路号}.anim</c>。
+        /// </summary>
+        /// <returns>BlendTree 状态建出来返回 <c>true</c>。</returns>
+        private static bool AddUpperBlendState(AnimatorController controller, Cs16AnimAsset a, Cs16AnimClip clipData)
+        {
+            // 剪辑先读齐、再建树：建树后 any AssetDatabase 操作都可能让 controller 重载、树句柄失效。
+            var clips = new AnimationClip[clipData.NumBlends];
+            var wrote = 0;
+            for (var b = 0; b < clipData.NumBlends; b++)
+            {
+                var clipPath = $"{AnimDir}/{a.Key}_{clipData.Name}_b{b}.anim";
+                clips[b] = AssetDatabase.LoadAssetAtPath<AnimationClip>(clipPath);
+                if (clips[b] == null)
+                {
+                    Debug.LogError($"[AnimSetup]{StageUpper} {a.Key}/{clipData.Name}_b{b} 的剪辑 {clipPath} 读不到 —— " +
+                                   "上身层该方向格缺路（会退化到邻近格）");
+                    continue;
+                }
+                wrote++;
+            }
+
+            var state = controller.CreateBlendTreeInController(clipData.Name, out var tree, UpperLayerIndex);
+            if (state == null || tree == null)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key}/{clipData.Name} 的上身层 BlendTree 创建失败 —— " +
+                               "该瞄准姿势下位移会露出绑定姿态的手臂");
+                return false;
+            }
+            tree.blendType = BlendTreeType.FreeformCartesian2D;
+            tree.blendParameter = CsAimBlend.ParamYaw;
+            tree.blendParameterY = CsAimBlend.ParamPitch;
+
+            for (var b = 0; b < clips.Length; b++)
+            {
+                if (clips[b] == null) continue;
+                tree.AddChild(clips[b], new Vector2(
+                    CsAimBlend.CellCentre(b % CsAimBlend.GridN),
+                    CsAimBlend.CellCentre(b / CsAimBlend.GridN)));
+            }
+
+            if (wrote != BlendGridCount)
+            {
+                Debug.LogError($"[AnimSetup]{StageUpper} {a.Key}/{clipData.Name} 的上身层只写出 {wrote}/{BlendGridCount} 路" +
+                               " —— 缺少的方向格会退化到邻近格");
+            }
+            state.name = clipData.Name;
+            return true;
+        }
+
+        /// <summary>
+        /// 这条序列是否按 9 路出 clip + BlendTree：名字在 <see cref="BlendSeqPrefixes"/> 的组里
+        /// （或 <c>ref_shoot_</c> / <c>crouch_shoot_</c> + <see cref="BlendShootClasses"/> 之一），
         /// 且路数正好等于 3×3 网格（缺一路就不是完整格子，宁可按 1 路出，也不出一个缺角的树）。
         /// </summary>
         private static bool UseBlendTree(Cs16AnimClip clipData)
         {
             return clipData != null
                 && clipData.NumBlends == BlendGridCount
-                && clipData.Name.StartsWith(BlendSeqPrefix, System.StringComparison.Ordinal);
+                && IsBlendSequence(clipData.Name);
+        }
+
+        /// <summary>该序列名是否属于 9 路组（见 <see cref="UseBlendTree"/>）。</summary>
+        private static bool IsBlendSequence(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            for (var i = 0; i < BlendSeqPrefixes.Length; i++)
+            {
+                if (name.StartsWith(BlendSeqPrefixes[i], System.StringComparison.Ordinal)) return true;
+            }
+            for (var i = 0; i < BlendShootClasses.Length; i++)
+            {
+                if (name == "ref_shoot_" + BlendShootClasses[i]) return true;
+                if (name == "crouch_shoot_" + BlendShootClasses[i]) return true;
+            }
+            return false;
+        }
+
+        /// <summary>该序列是否进第 2 层（上身通道）：站姿瞄准组与蹲姿瞄准组。</summary>
+        private static bool IsUpperBlendSequence(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return false;
+            return name.StartsWith("ref_aim_", System.StringComparison.Ordinal)
+                || name.StartsWith("crouch_aim_", System.StringComparison.Ordinal);
         }
 
         /// <summary>
@@ -777,16 +1132,10 @@ namespace Cs16.EditorTools
         private static AnimatorState BuildBlendTreeState(AnimatorController controller, Cs16AnimAsset a,
             Cs16AnimClip clipData, string[] paths)
         {
-            var state = controller.CreateBlendTreeInController(clipData.Name, out var tree);
-            if (state == null || tree == null)
-            {
-                Debug.LogError($"[AnimSetup] {a.Key}/{clipData.Name} 的 BlendTree 创建失败 —— 该序列不会出动画");
-                return null;
-            }
-            tree.blendType = BlendTreeType.FreeformCartesian2D;
-            tree.blendParameter = CsAimBlend.ParamYaw;
-            tree.blendParameterY = CsAimBlend.ParamPitch;
-
+            // 剪辑先全部写好、再建树：CreateBlendTreeInController 返回的是 controller 的子资产，
+            // 建树之后任何 AssetDatabase 删除/导入都可能让宿主 controller 重载 ⇒ 手里的树句柄失效
+            // （MissingReferenceException: BlendTree has been destroyed）。
+            var clips = new AnimationClip[clipData.NumBlends];
             var wrote = 0;
             for (var b = 0; b < clipData.NumBlends; b++)
             {
@@ -794,18 +1143,38 @@ namespace Cs16.EditorTools
                     ? clipData.BlendTracks[b] : null;
                 if (tracks == null) continue;
                 var name = $"{clipData.Name}_b{b}";
-                var clip = BuildClipAsset(a, clipData, tracks, $"{AnimDir}/{a.Key}_{name}.anim", name, paths);
-                if (clip == null) continue;
-                tree.AddChild(clip, new Vector2(
+                clips[b] = BuildClipAsset(a, clipData, tracks, $"{AnimDir}/{a.Key}_{name}.anim", name, paths);
+                if (clips[b] != null) wrote++;
+            }
+
+            // 同一序列的单路资产不再被任何 state / 上层树引用（每格各一条 _b*）⇒ 删掉，
+            // 免得磁盘上留一份永远不会播的旧剪辑。
+            var singlePath = $"{AnimDir}/{a.Key}_{clipData.Name}.anim";
+            if (File.Exists(singlePath)) AssetDatabase.DeleteAsset(singlePath);
+
+            var state = controller.CreateBlendTreeInController(clipData.Name, out var tree);
+            if (state == null || tree == null)
+            {
+                Debug.LogError($"[AnimSetup]{StageController} {a.Key}/{clipData.Name} 的 BlendTree 创建失败" +
+                               " —— 该序列不会出动画");
+                return null;
+            }
+            tree.blendType = BlendTreeType.FreeformCartesian2D;
+            tree.blendParameter = CsAimBlend.ParamYaw;
+            tree.blendParameterY = CsAimBlend.ParamPitch;
+
+            for (var b = 0; b < clips.Length; b++)
+            {
+                if (clips[b] == null) continue;
+                tree.AddChild(clips[b], new Vector2(
                     CsAimBlend.CellCentre(b % CsAimBlend.GridN),
                     CsAimBlend.CellCentre(b / CsAimBlend.GridN)));
-                wrote++;
             }
 
             if (wrote != BlendGridCount)
             {
                 // 非预期分支：格子里缺路 ⇒ 那一片方向的姿势会退化成邻居格（表现是"某几个瞄准角不动"）。
-                Debug.LogError($"[AnimSetup] {a.Key}/{clipData.Name} 只写出 {wrote}/{BlendGridCount} 路" +
+                Debug.LogError($"[AnimSetup]{StageClip} {a.Key}/{clipData.Name} 只写出 {wrote}/{BlendGridCount} 路" +
                                " —— 缺少的方向格会退化到邻近格");
             }
             state.name = clipData.Name;

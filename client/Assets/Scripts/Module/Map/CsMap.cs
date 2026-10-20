@@ -56,6 +56,14 @@ namespace Cs16.Module.Map
         /// </summary>
         private const float BodyProbeDrop = 8f;
 
+        /// <summary>
+        /// <see cref="StepFaceAtBlock"/> 判"抬一步后中心列还占不占"用的**窄半径**（米）。
+        /// 必须远小于 <see cref="CsConst.PlayerRadius"/>（0.36）：全宽胶囊在连续楼梯上会把
+        /// 前方**再上一级**台阶的立板/顶面也扫进来 ⇒ 豁免恒失效 ⇒ 照旧卡死。
+        /// 取 0.08 只问"正下方这根柱子的顶面在不在一步之内"。
+        /// </summary>
+        private const float StepFaceProbeRadius = 0.08f;
+
         // ---- 标记点表 ----
         private Dictionary<string, Vector3[]> _markers;
         private Vector3[] _spawns;
@@ -66,6 +74,13 @@ namespace Cs16.Module.Map
         private readonly HashSet<string> _loggedKeys = new HashSet<string>();
         private int _groundRayMask = -1;
         private bool _groundMaskWarned;
+
+        /// <summary>
+        /// 高度场选层用的复用缓冲：<see cref="TrySampleGround"/> 在贴地路径上每帧调用多次
+        /// （<c>CanStand</c> / <c>IsOnGround</c> / 落点探测），不许每次分配。
+        /// 只在 Unity 主线程使用 —— 本类没有并发调用点。
+        /// </summary>
+        private readonly List<float> _surfaceScratch = new List<float>(8);
 
         // ==================================================================
         //  状态
@@ -248,6 +263,35 @@ namespace Cs16.Module.Map
             return m.WalkableAt(x, z);
         }
 
+        /// <summary>地形高度场是否有可站面数据（<c>.bytes</c> 的 <c>FlagHeightField</c> 段）。</summary>
+        public bool HasSurfaceHeights => Game.Map != null && Game.Map.HasHeightField;
+
+        /// <summary>
+        /// 格 <paramref name="x"/>/<paramref name="z"/>（**格索引**，与 <c>Game.Map</c> 同一口径）的可站面数。
+        /// 未加载 / 无高度场 / 越界 = 0。
+        /// </summary>
+        public int SurfaceCountAt(int x, int z)
+        {
+            var m = Game.Map;
+            return m == null ? 0 : m.SurfaceCountAt(x, z);
+        }
+
+        /// <summary>
+        /// 格 <paramref name="x"/>/<paramref name="z"/> 的全部可站面高度（米，升序）。
+        /// 无面时返回 false 且清空 <paramref name="heightsOut"/>（引擎同一语义）。
+        /// </summary>
+        public bool TryGetSurfaceHeights(int x, int z, List<float> heightsOut)
+        {
+            if (heightsOut == null) throw new ArgumentNullException(nameof(heightsOut));
+            var m = Game.Map;
+            if (m == null)
+            {
+                heightsOut.Clear();
+                return false;
+            }
+            return m.TryGetSurfaceHeights(x, z, heightsOut);
+        }
+
         /// <summary>
         /// <list type="number">
         /// <item><b>位图路径</b>（原判据，走绝大多数帧）：中心 + 8 向位图全可走
@@ -305,7 +349,11 @@ namespace Cs16.Module.Map
                 //   · 纯真空（探不到地面、体积也空）照旧放行 —— 位图外的判定仍归 `HasGroundUnder` 那条救援路径。
                 if (withinStep && !(!hasGround && BodyVolumeBlocked(pos, height))) return true;
             }
-            return BodyHeightClear(pos, radius, height);
+            // 几何支不通过时的台阶豁免：被体积判据命中的若是「迈一步就能上去的台阶面/坡面」
+            // （见 StepFaceAtBlock），这一格可站 —— 否则站在楼梯上（胶囊与上一级立板、
+            // 或站在坡道上与斜面投影）恒被判「站不下」，与深度闸门一起把人钉死在坡前。
+            if (BodyHeightClear(pos, radius, height)) return true;
+            return StepFaceAtBlock(pos, height);
         }
 
         /// <summary>中心 + 8 向（半径 <paramref name="radius"/>）位图全可走（原判据，单独抽出来复用）。</summary>
@@ -455,6 +503,49 @@ namespace Cs16.Module.Map
             }
             return Physics.CheckCapsule(new Vector3(pos.x, lo, pos.z), new Vector3(pos.x, hi, pos.z),
                                         r, GroundMask(), QueryTriggerInteraction.Ignore);
+        }
+
+        /// <summary>
+        /// 「这坨被体积判据命中的几何，是不是**迈一步就能上去的台阶**」——不是墙。
+        ///
+        /// <para><b>为什么必须有它（用户报「又卡在楼梯这块了」的根因）</b>：
+        /// 连续楼梯上，站定/推进点的胶囊（半径 0.36 m）与**上一级立板**天然重叠 ⇒
+        /// 三个用 <see cref="BodyVolumeBlocked"/> 说话的判定点都把台阶面误判成「撞墙」：
+        /// <list type="number">
+        /// <item><see cref="CanStandCore"/> 几何支（站定格被判「站不下」）；</item>
+        /// <item><see cref="TryStepUp"/> 的体积否决（<c>AxisPassable</c> 第二条路也死）；</item>
+        /// <item>抬腿走第二遍的采纳条件 ③（「抬着走」算出了正确落点却被否 ⇒ 整遍作废）。</item>
+        /// </list>
+        /// 两条路全死 ⇒ 本帧零位移 ⇒ 每帧重复 ⇒ 表现为「永久钉死在楼梯/坡前」。
+        /// 共用的错误前提是「胶囊撞到几何 = 撞墙」；对台阶它不成立 —— 被撞的面只要
+        /// **抬腿一步就不再与身体重叠**、且顶面就在这一步高度内可站，它就是台阶。</para>
+        ///
+        /// <para>⚠ 深度闸门（<see cref="ResolveMoveCore"/> 的「压入深度不得增大」）**不豁免**：
+        /// 它把「水平硬顶台阶面」否掉，正是触发「抬起 STEPSIZE 再走一遍」（原版 PM_StepMove
+        /// 口径、采纳时含 y 抬升）的必要前提 —— 豁免它反而会让水平推进在**旧脚高**上通过、
+        /// 跳过抬腿遍 ⇒ 身体水平嵌进立板。本豁免只让上面三处判定点承认台阶。</para>
+        ///
+        /// <para><b>四道闸门（缺一即回到「撞墙」语义，不放穿墙）</b>：
+        /// ① 身体抬起 <see cref="CsConst.StepUpHeight"/> 后**中心列**（窄半径
+        /// <see cref="StepFaceProbeRadius"/>，不是 <see cref="CsConst.PlayerRadius"/>）不再被占 ——
+        /// 中心列仍被占 ⇒ 这坨几何顶面高过一步 = 墙；用窄半径是因为全宽胶囊会把
+        /// **再上一级台阶的立板/邻列**也算成阻挡（连续楼梯上恒命中 ⇒ 豁免失效 = 还卡）；
+        /// ② 该列探得到地面（虚空前 8 m 一律 false）；
+        /// ③ 地面在脚下 ±StepUpHeight 内 —— 不是深坑也不是 0.9 m 台沿；
+        /// ④ 地面法线 ≥ <see cref="CsConst.StepFaceSlopeNormalZ"/> —— 近竖直的面不算台阶；
+        ///    铺装坡的台面（法线 y≈0.45）按台阶口径收（高差已由 ③ 卡在一个台阶内，
+        ///    陡面/墙照旧算撞墙）。</para>
+        /// </summary>
+        private bool StepFaceAtBlock(Vector3 pos, float height)
+        {
+            // ① 中心列窄胶囊（半径 0.08）：只问「正下方这根柱子抬一步还占不占」，
+            //    不扫全宽 —— 全宽会把右侧/前方再上一级台阶的顶面算进来（误杀连续楼梯）。
+            if (BodyVolumeOverlaps(new Vector3(pos.x, pos.y + CsConst.StepUpHeight, pos.z),
+                                   StepFaceProbeRadius, height)) return false;
+            if (!TrySampleGround(pos, out var point, out var normal)) return false;
+            var rise = point.y - pos.y;
+            if (rise < -CsConst.StepUpHeight || rise > CsConst.StepUpHeight) return false;
+            return normal.y >= CsConst.StepFaceSlopeNormalZ;
         }
 
         /// <summary>
@@ -697,17 +788,22 @@ namespace Cs16.Module.Map
                         {
                             // 原版的"再下探 STEPSIZE"在这里 = 对抬腿落点做贴地探测，采纳条件：
                             //   ① 落点地面 ∈ [脚面, 脚面 + StepUpHeight]（不许神抬腿上 0.9 m 台沿）；
-                            //   ② 落点地面可站（法线 y ≥ MaxStandableSlopeNormalZ；原版是下探后
-                            //      `if (trace.plane.normal[2] < 0.7) goto usedown;`，`pm_shared.c:1038`）；
+                            //   ② 落点地面可站，或至少是**台阶面**（法线 y ≥ StepFaceSlopeNormalZ；
+                            //      原版是下探后 `if (trace.plane.normal[2] < 0.7) goto usedown;`，`pm_shared.c:1038`）。
+                            //      B 点石板坡这类铺装坡（法线 y≈0.45 ≈ 63°）表面是逐级 ≤ 一个台阶的台面，
+                            //      一律按 0.7 否决会把抬腿整遍作废 ⇒ 人全钉死在坡脚（"这个坡把人卡住了"）；
+                            //      高差已由 ① 卡死在一个台阶内，陡面/墙照旧上不去；
                             //   ③ 落点体积不被其它实体占。
                             var probe = new Vector3(lifted.x, liftY, lifted.z);
                             if (TrySampleGroundUnderBody(probe, radius,
                                                           CsConst.StepUpHeight + CsConst.GroundCheckDistance,
+                                                          from.y + CsConst.StepUpHeight + 1e-4f,
                                                           out var gp, out var gn)
                                 && gp.y >= from.y - 1e-4f
                                 && gp.y - from.y <= CsConst.StepUpHeight
-                                && gn.y >= CsConst.MaxStandableSlopeNormalZ
-                                && !BodyVolumeBlocked(new Vector3(lifted.x, gp.y, lifted.z), height))
+                                && gn.y >= CsConst.StepFaceSlopeNormalZ
+                                && (!BodyVolumeBlocked(new Vector3(lifted.x, gp.y, lifted.z), height)
+                                    || StepFaceAtBlock(new Vector3(lifted.x, gp.y, lifted.z), height)))
                             {
                                 // 原版把抬腿那一遍的**完整落点**（含竖直）采纳：下探后
                                 // `VectorCopy(pmove->origin, pmove->up)`（`pm_shared.c:1044`），
@@ -743,14 +839,36 @@ namespace Cs16.Module.Map
         /// 与 <see cref="TrySampleGround"/> 逐字一致；⛔ 上界仍由调用方的
         /// "落点地面 ≤ 脚面 + <see cref="CsConst.StepUpHeight"/> + 法线可站 + 体积不被占"三条把着，
         /// 取最高面不会变成"顺着墙爬上去"。</para>
+        ///
+        /// <para><b><paramref name="maxLift"/>：取最高面的**绝对高度上限</b>（超出它的面直接不参与比较；
+        /// 默认 <c>+∞</c> = 不过滤，行为与加参前逐字一致）。没有它时，9 点足迹（0.72 m 见方）在
+        /// **连续楼梯**上必然同时覆盖本级与**再上一级**（踏步进深约 0.29 m）⇒ "取最高面"采到高过一步
+        /// 的那级顶面 ⇒ 调用方 ① 条（<c>gp.y - from.y ≤ StepUpHeight</c>）拒绝 ⇒ 抬腿整遍作废 ⇒ 又卡。
+        /// 传入 <c>from.y + StepUpHeight</c> 后，超一步的邻级面被**过滤**掉，最高面回到本级踏步
+        /// ⇒ 采纳条件按本级判定（过滤等于把 ① 条提前做掉，语义与原条件逐字一致）。</para>
         /// </summary>
         private bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop,
                                                out Vector3 point, out Vector3 normal)
+            => TrySampleGroundUnderBody(pos, radius, maxDrop, float.PositiveInfinity, out point, out normal);
+
+        public bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                              out Vector3 point, out Vector3 normal)
         {
             var found = false;
             point = default;
             normal = Vector3.up;
             float d = radius * DiagonalScale;
+
+            // 向下射线只能看见**起点以下**的面，所以"允许高出 pos 一个 maxLift"必须靠抬起点兑现：
+            // 起点只抬 GroundCheckDistance 时，高出脚面 0.12 m 以上的踏步/台面一律探不到
+            // ⇒ 身体已与它重叠、推进被深度闸门否掉，而"迈一步上台阶"的判定又看不到它 ⇒ 卡死。
+            // maxLift 的语义是"取最高面时的抬升上界"（米，相对 pos），且不超过一个台阶；
+            // ≤ 0 / +∞ 表示不做抬升过滤，起点只抬 GroundCheckDistance。
+            float lift = (maxLift > 0f && !float.IsPositiveInfinity(maxLift))
+                ? Mathf.Min(maxLift, CsConst.StepUpHeight)
+                : 0f;
+            float originLift = lift + CsConst.GroundCheckDistance;
+            float rayLen = maxDrop + originLift;
 
             for (int i = 0; i < 9; i++)
             {
@@ -759,8 +877,12 @@ namespace Cs16.Module.Map
                 else if (i < 5) o = BodySampleOffset[i - 1] * radius;
                 else o = BodySampleOffset[i - 1] * d;
 
-                var p = new Vector3(pos.x + o.x, pos.y, pos.z + o.y);
-                if (!TrySampleGround(p, out var gp, out var gn, maxDrop)) continue;
+                var origin = new Vector3(pos.x + o.x, pos.y + originLift, pos.z + o.y);
+                if (!Physics.Raycast(origin, Vector3.down, out var hit, rayLen,
+                                     GroundMask(), QueryTriggerInteraction.Ignore)) continue;
+                var gp = hit.point;
+                var gn = hit.normal;
+                if (gp.y > pos.y + maxLift) continue;   // 超过抬升上界的面不算（连续楼梯的"再上一级"）
                 if (found && gp.y <= point.y) continue;
                 found = true;
                 point = gp;
@@ -828,8 +950,20 @@ namespace Cs16.Module.Map
         {
             // 陡坡不算地面（原版 PM_WalkMove：下探后 `if (trace.plane.normal[2] < 0.7) goto usedown;`
             // ⇒ 放弃"迈上去"这条路径）。缺了它就会沿陡面走上去（= 用户报的"坡道穿模"）。
+            //
+            // 台阶面豁免（定向规则，防穿墙口径不动）：B 点石板坡这类铺装坡（法线 y≈0.45 ≈ 63°）
+            // 表面是逐级 ≤ 一个台阶的台面，一律按 0.7 否决会把"迈一步上得去的坡沿"也掐死
+            // ⇒ 人在坡前一步都走不动（用户报"这个坡把人卡住了"，实测 stuck=108/108）。
+            // 豁免只在**同时**满足"高差 ∈ [0, 一个台阶]"时成立（下面第二条同款闸门），
+            // 近竖直面（法线 y < StepFaceSlopeNormalZ ≈ 72.5°）与高过一个台阶的台沿照旧否决。
             var hasGround = TrySampleGround(target, out var point, out var normal);
-            if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ) return false;
+            var stepFace =
+                hasGround
+                && normal.y < CsConst.MaxStandableSlopeNormalZ
+                && normal.y >= CsConst.StepFaceSlopeNormalZ
+                && point.y - from.y >= 0f
+                && point.y - from.y <= CsConst.StepUpHeight;
+            if (hasGround && normal.y < CsConst.MaxStandableSlopeNormalZ && !stepFace) return false;
             if (hasGround && point.y - from.y > CsConst.StepUpHeight) return false;
 
             // 位图是**单层 2D**（一格一位、没有高度）：楼梯踏步 / 扶手 / 台沿
@@ -847,7 +981,10 @@ namespace Cs16.Module.Map
             {
                 if (!hasGround) return false;
                 if (point.y - from.y < 0f) return false;
-                if (BodyVolumeBlocked(new Vector3(target.x, point.y, target.z), height)) return false;
+                // 体积被占但占它的是台阶面/坡面（迈一步即让开）⇒ 不算撞墙（见 StepFaceAtBlock）。
+                // 缺这一条时站在楼梯上本方法恒 false ⇒ AxisPassable 两条路都死 ⇒ 卡死在坡前。
+                var blockPos = new Vector3(target.x, point.y, target.z);
+                if (BodyVolumeBlocked(blockPos, height) && !StepFaceAtBlock(blockPos, height)) return false;
             }
 
             var dir = new Vector3(target.x - from.x, 0f, target.z - from.z);
@@ -877,20 +1014,151 @@ namespace Cs16.Module.Map
         /// 那片地面**不算地面**（出处与后果见 <see cref="CsConst.MaxStandableSlopeNormalZ"/>）。
         /// </summary>
         public bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f)
+            => TrySampleGround(pos, maxDrop, CsConst.GroundCheckDistance, out point, out normal);
+
+        /// <summary>
+        /// <see cref="TrySampleGround(Vector3,out Vector3,out Vector3,float)"/> 的完整形态：
+        /// 额外给出**选层上界** <paramref name="maxLift"/>（米，相对 <paramref name="pos"/>.y）。
+        /// </summary>
+        /// <remarks>
+        /// <para><b>落点选层</b>（有 <c>FlagHeightField</c> 段时）：取 <paramref name="pos"/> 所在**格**的全部
+        /// 可站面（<see cref="TryGetSurfaceHeights"/>），在窗口
+        /// <c>[pos.y - maxDrop, pos.y + maxLift]</c> 内选**离 <paramref name="pos"/>.y 最近**的那一面 ——
+        /// 同一格台上/台下两层时，"脚下是哪一层"由查询高度说话，不再由射线"第一个交点"决定。</para>
+        ///
+        /// <para><b>行为保持</b>：射线命中的面**就是**选中的那一层（或离它不足一个台阶）时，直接返回
+        /// 射线结果（单层格因此逐字等于改动前）；单层格在射线落空时仍返回 false（不凭空造地面）。
+        /// 只有"射线落到了**另一层**"（高差 &gt; <see cref="CsConst.StepUpHeight"/>）或"多层格里射线完全
+        /// 落空"时，才在选中层附近补一根短射线取精确高度与法线（补不到时用该格的面高度、法线取 up）。</para>
+        /// </remarks>
+        public bool TrySampleGround(Vector3 pos, float maxDrop, float maxLift,
+                                    out Vector3 point, out Vector3 normal)
         {
-            // 射线起点抬高一丁点（复用引擎的贴地判定距离），免得脚正好贴面时自交/漏检
+            // 1) 现有物理射线（起点抬高复用引擎的贴地判定距离，免得脚正好贴面时自交/漏检）
             var origin = new Vector3(pos.x, pos.y + CsConst.GroundCheckDistance, pos.z);
-            if (Physics.Raycast(origin, Vector3.down, out var hit, maxDrop + CsConst.GroundCheckDistance,
-                                GroundMask(), QueryTriggerInteraction.Ignore))
+            bool rayHit = Physics.Raycast(origin, Vector3.down, out var hit,
+                                          maxDrop + CsConst.GroundCheckDistance,
+                                          GroundMask(), QueryTriggerInteraction.Ignore);
+
+            // 2) 高度场选层：窗口内离 pos.y 最近的那一面
+            int cellCount;
+            if (!TryPickSurfaceLayer(pos, maxDrop, maxLift, out var bestIndex, out var bestY, out cellCount))
+            {
+                // 无高度场 / 该格无面 / 窗口内没有面 ⇒ 完全走原路径
+                if (rayHit) { point = hit.point; normal = hit.normal; return true; }
+                point = default;
+                normal = Vector3.up;
+                return false;
+            }
+
+            // 3) 射线结果优先：命中面就是选中层，或与选中层不足一个台阶 ⇒ 返回射线结果
+            //    （单层格因此**逐字等于改动前**；格内动态道具 / 同一层的斜面也走这条，射线更精确）
+            if (rayHit
+                && (NearestSurfaceIndex(hit.point.y) == bestIndex
+                    || Mathf.Abs(hit.point.y - bestY) <= CsConst.StepUpHeight))
             {
                 point = hit.point;
                 normal = hit.normal;
                 return true;
             }
 
+            // 4) 射线落空且该格只有一面 ⇒ 维持旧语义（不凭空造地面）
+            if (!rayHit && cellCount < 2)
+            {
+                point = default;
+                normal = Vector3.up;
+                return false;
+            }
+
+            // 5) 射线命中了另一层（或完全落空、且是多层格）⇒ 在选中层附近补一根短射线，
+            //    取该层在 (pos.x,pos.z) 的精确高度与法线。探测跨度不超过与相邻层间距的一半，
+            //    不会采到上一层/下一层。
+            if (TryProbeSurfaceNear(pos, bestY, out point, out normal)) return true;
+
+            point = new Vector3(pos.x, bestY, pos.z);
+            normal = Vector3.up;
+            return true;
+        }
+
+        /// <summary>
+        /// 高度场选层：在格（<paramref name="pos"/> 所在格）的全部可站面里，取窗口
+        /// <c>[pos.y - maxDrop, pos.y + maxLift]</c> 内**离 pos.y 最近**的一面。
+        /// 结果留在 <see cref="_surfaceScratch"/>（升序）里，供后续"射线命中是哪一层"比对。
+        /// 返回 false = 无高度场 / 该格无面 / 窗口内无面。
+        /// </summary>
+        private bool TryPickSurfaceLayer(Vector3 pos, float maxDrop, float maxLift,
+                                         out int bestIndex, out float bestY, out int cellCount)
+        {
+            bestIndex = -1;
+            bestY = 0f;
+            cellCount = 0;
+
+            var m = Game.Map;
+            if (m == null || !m.HasHeightField || m.CellSize <= 0f) return false;
+
+            int ix = Mathf.FloorToInt((pos.x - m.Origin.x) / m.CellSize);
+            int iz = Mathf.FloorToInt((pos.z - m.Origin.z) / m.CellSize);
+            if (!m.TryGetSurfaceHeights(ix, iz, _surfaceScratch)) return false;
+            cellCount = _surfaceScratch.Count;
+            if (cellCount == 0) return false;
+
+            float lo = pos.y - maxDrop;
+            float hi = pos.y + maxLift;
+            float bestDist = float.PositiveInfinity;
+            for (var i = 0; i < cellCount; i++)
+            {
+                float y = _surfaceScratch[i];
+                if (y < lo || y > hi) continue;
+                float d = Mathf.Abs(y - pos.y);
+                if (d >= bestDist) continue;
+                bestDist = d;
+                bestIndex = i;
+                bestY = y;
+            }
+            return bestIndex >= 0;
+        }
+
+        /// <summary><see cref="_surfaceScratch"/> 里离 <paramref name="y"/> 最近的那一面的下标。</summary>
+        private int NearestSurfaceIndex(float y)
+        {
+            int best = 0;
+            float bestDist = Mathf.Abs(_surfaceScratch[0] - y);
+            for (var i = 1; i < _surfaceScratch.Count; i++)
+            {
+                float d = Mathf.Abs(_surfaceScratch[i] - y);
+                if (d >= bestDist) continue;
+                bestDist = d;
+                best = i;
+            }
+            return best;
+        }
+
+        /// <summary>
+        /// 在高度 <paramref name="targetY"/> 那一层附近补一根向下短射线（跨度 = 与相邻层间距的
+        /// 45%，不超过 1 m）⇒ 该层在查询点 (x,z) 的精确高度与法线。
+        /// 返回 false = 这一层在该点没有真实几何（调用方用格高度 + up 兜底）。
+        /// </summary>
+        private bool TryProbeSurfaceNear(Vector3 pos, float targetY, out Vector3 point, out Vector3 normal)
+        {
             point = default;
             normal = Vector3.up;
-            return false;
+
+            float gap = float.PositiveInfinity;
+            if (_surfaceScratch.Count >= 2)
+            {
+                int i = NearestSurfaceIndex(targetY);
+                if (i > 0) gap = Mathf.Min(gap, targetY - _surfaceScratch[i - 1]);
+                if (i + 1 < _surfaceScratch.Count) gap = Mathf.Min(gap, _surfaceScratch[i + 1] - targetY);
+            }
+            float span = float.IsPositiveInfinity(gap) ? 1f : Mathf.Clamp(gap * 0.45f, 0.05f, 1f);
+
+            var origin = new Vector3(pos.x, targetY + span, pos.z);
+            if (!Physics.Raycast(origin, Vector3.down, out var hit, span * 2f,
+                                 GroundMask(), QueryTriggerInteraction.Ignore))
+                return false;
+            point = hit.point;
+            normal = hit.normal;
+            return true;
         }
 
         /// <summary>
@@ -1087,6 +1355,13 @@ namespace Cs16.Module.Map
             legacy = LegacyBodyHeightClear(pos, radius, CsConst.StandHeight);
             return BodyHeightClear(pos, radius, CsConst.StandHeight);
         }
+
+        /// <summary>
+        /// 身体能否站在该点（含台阶面豁免）：与 <see cref="ResolveMoveCore"/> 抬腿第二遍的
+        /// 采纳条件 ③（<c>!BodyVolumeBlocked || StepFaceAtBlock</c>）逐字同款。
+        /// </summary>
+        public bool StepFaceStandable(Vector3 pos, float height)
+            => !BodyVolumeBlocked(pos, height) || StepFaceAtBlock(pos, height);
 
         /// <summary>格式化为 Vector3（InvariantCulture —— 与全工程同口径，避免小数点变逗号）。</summary>
         private static string V(Vector3 v) =>

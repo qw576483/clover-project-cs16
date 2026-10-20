@@ -8,8 +8,8 @@ namespace Cs16.UI
     /// <summary>
     /// 游戏内常驻 HUD（规格 H1~H11 + H14 的入口；<c>Layer = Normal</c>，从进图开着到回主菜单）。
     ///
-    /// <para><b>它是谁的"手"</b>：本工程没有"游戏内输入路由模块"，而买枪菜单 / H 菜单 / 记分板 /
-    /// 无线电 / 控制台都必须在图内被键唤出。这些键（B / H / TAB / Z X C / ~）统一由**常驻的 HUD** 轮询，
+    /// <para><b>它是谁的"手"</b>：本工程没有"游戏内输入路由模块"，而买枪菜单 / 记分板 /
+    /// 无线电 / 控制台都必须在图内被键唤出。这些键（B / TAB / Z X C / ~）统一由**常驻的 HUD** 轮询，
     /// 它只负责 <c>Game.UI.Open&lt;T&gt;()</c>，具体面板自己处理自己的按键与关闭 ——
     /// 常驻面板做路由、临时面板管自己，避免"每个面板都去猜别人开没开"。</para>
     ///
@@ -19,7 +19,7 @@ namespace Cs16.UI
     ///
     /// <para><b>键盘归属</b>（谁在什么时候处理哪个键）：</para>
     /// <list type="bullet">
-    /// <item>HUD：B / H / TAB / Z X C / <c>/</c> 或 <c>0</c>（控制台）—— 只在"没有弹窗面板开着"时生效；</item>
+    /// <item>HUD：B / TAB / Z X C / <c>`</c>（控制台，<c>GameKey.BackQuote</c>）—— 只在"没有弹窗面板开着"时生效；</item>
     /// <item>弹窗面板自己：ESC 关闭、数字键选项、再按一次开启键关闭；</item>
     /// <item>ESC 弹暂停菜单：归 <c>Module/Flow/AppFlow</c>（它已有"有遮挡时不弹暂停"的判断）。</item>
     /// </list>
@@ -60,14 +60,19 @@ namespace Cs16.UI
         /// <summary>金钱左边距（原版 282 px × <see cref="HudScale"/>）。</summary>
         private const float MoneyX = 282f * HudScale;
 
-        /// <summary>血量条（本项目新增的显示件）叠在那排之上，不压住数字。</summary>
-        private const float HealthBarY = 56f;
-
-        /// <summary>护甲条（同上）叠在血量条之下、那排之上。</summary>
-        private const float ArmorBarY = 44f;
-
         private const int MessageLines = 3;
         private const float MessageLineHeight = 26f;
+
+        /// <summary>
+        /// 消息栏最下面一行（最新一条）的底边距屏底（px）。
+        /// 下界 = 血甲行上缘（<see cref="HudRowTextY"/> + 40 ≈ 54）与游戏内署名行（底 70、字高 13）
+        /// 的更高者；取 96 让两者都不被挡住。原版实机帧
+        /// <c>原版资源/参照物/hud/hud_ingame_full.png</c>（640×360）里无线电行同样在血甲行上方。
+        /// </summary>
+        private const float MessageBottomInset = 96f;
+
+        /// <summary>消息寿命最后这一段（秒）内线性淡出。</summary>
+        private const float MessageFadeSeconds = 0.9f;
 
         // ─────────── 文本 ───────────
         [SerializeField] private Text _moneyText;
@@ -93,13 +98,15 @@ namespace Cs16.UI
         /// 原版这里没有文字，所以本节点是 Image 而不是 Text。
         /// </summary>
         [SerializeField] private Image _buyZoneIcon;
-        /// <summary>底部左侧 `Time Left: … min. Next Map: …`（原版实机帧 `hud_ingame_1024x768.jpg`）。</summary>
+        /// <summary>底部中央 `Time Left: … min. Next Map: …`（原版实机帧 `hud_ingame_cs_italy.png`）。</summary>
         [SerializeField] private Text _timeLeftText;
+        /// <summary>该行行首的黄色小图标（原版帧里在文字左侧 24 px）。</summary>
+        [SerializeField] private Image _timeLeftIcon;
         [SerializeField] private Text _useLabel;
+        /// <summary>局域网客机断流提示（顶部中央红字）：&gt;2 s 没收到主机快照时显示。</summary>
+        [SerializeField] private Text _connectionText;
 
         // ─────────── 条 / 图 ───────────
-        [SerializeField] private CsHudBar _healthBar;
-        [SerializeField] private CsHudBar _armorBar;
         [SerializeField] private CsHudBar _useBar;
         [SerializeField] private Image _flashOverlay;
         [SerializeField] private RectTransform _hudRoot;
@@ -128,8 +135,12 @@ namespace Cs16.UI
         private readonly CsIngameStats _stats = new CsIngameStats();
         private readonly float[] _messageUntil = new float[MessageLines];
         private readonly string[] _messageCache = new string[MessageLines];
+        private readonly float[] _messageAlpha = new float[MessageLines];
+        private Shadow[] _messageShadows;
 
         private bool _subscribed;
+        /// <summary>记分板是 TAB 按出来的（只有这种来源才在松开时自动关闭）。</summary>
+        private bool _tabOpenedByHold;
         private bool _visible;
         private bool _warnedRefs;
         /// <summary>秒表图标已经向资源模块发过一次请求（避免每次 OnUpdate/OnOpen 重复请求）。</summary>
@@ -187,7 +198,7 @@ namespace Cs16.UI
             _healthIcon = CsHudTheme.CreateBlock("HealthIcon", hud,
                 Vector2.zero, Vector2.zero,
                 new Vector2(HealthIconX, HudRowIconY),
-                new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.HudIconTint);
+                new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.HealthOk);
             _healthIcon.enabled = false;
 
             _healthText = CsHudTheme.CreateText("Health", hud, "100", 36,
@@ -196,13 +207,10 @@ namespace Cs16.UI
                 new Vector2(HealthTextX, HudRowTextY),
                 new Vector2(300f, 40f));
 
-            _healthBar = CsHudTheme.CreateBar("HealthBar", hud, Vector2.zero, Vector2.zero,
-                new Vector2(HealthIconX, HealthBarY), new Vector2(150f, 8f), CsHudTheme.HealthOk);
-
             _armorIcon = CsHudTheme.CreateBlock("ArmorIcon", hud,
                 Vector2.zero, Vector2.zero,
                 new Vector2(ArmorIconX, HudRowIconY),
-                new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.HudIconTint);
+                new Vector2(CsHudTheme.HudIconSizePx, CsHudTheme.HudIconSizePx), CsHudTheme.ArmorColor);
             _armorIcon.enabled = false;
 
             _armorText = CsHudTheme.CreateText("Armor", hud, "100", 26,
@@ -211,15 +219,17 @@ namespace Cs16.UI
                 new Vector2(ArmorTextX, HudRowTextY),
                 new Vector2(260f, 30f));
 
-            _armorBar = CsHudTheme.CreateBar("ArmorBar", hud, Vector2.zero, Vector2.zero,
-                new Vector2(ArmorIconX, ArmorBarY), new Vector2(110f, 6f), CsHudTheme.ArmorColor);
-
             _moneyText = CsHudTheme.CreateText("Money", hud, "$800", 32, TextAnchor.MiddleLeft,
                 CsHudTheme.MoneyNormal);
             CsHudTheme.PlaceBottomLeft(_moneyText.rectTransform, new Vector2(MoneyX, HudRowTextY),
                 new Vector2(320f, 38f));
 
-            // ---- 底部左侧：`Time Left: … min. Next Map: …`（原版实机帧 hud_ingame_1024x768.jpg 实测）----
+            // ---- 底部中央：`⌾ Time Left: … min. Next Map: …`（原版实机帧 hud_ingame_cs_italy.png 实测）----
+            _timeLeftIcon = CsHudTheme.CreateBlock("TimeLeftIcon", hud,
+                Vector2.zero, Vector2.zero,
+                new Vector2(CsHudTheme.TimeLeftIconInsetPx, CsHudTheme.TimeLeftIconBottomInsetPx),
+                new Vector2(CsHudTheme.TimeLeftIconSizePx, CsHudTheme.TimeLeftIconSizePx), CsHudTheme.TextHud);
+            _timeLeftIcon.enabled = false;   // sprite 到手前不画（没有 sprite 的 Image 是实心白块）
             _timeLeftText = CsHudTheme.CreateText("TimeLeft", hud, string.Empty,
                 CsHudTheme.ScoreFontSize, TextAnchor.MiddleLeft, CsHudTheme.TextHud);
             CsHudTheme.PlaceBottomLeft(_timeLeftText.rectTransform,
@@ -265,17 +275,18 @@ namespace Cs16.UI
 
             ApplyScoreBlock();
 
-            // ---- 左上：雷达（H6）+ 消息栏（无线电/系统提示，G13）----
+            // ---- 左上：雷达（H6）----
             _radar = new CsRadarWidget();
             _radar.Build(hud);
 
+            // ---- 左下：消息栏（无线电/系统提示，G13）—— 血甲行上方，最新一条在最下面 ----
             _messageTexts = new Text[MessageLines];
             for (var i = 0; i < _messageTexts.Length; i++)
             {
                 var t = CsHudTheme.CreateText($"Message{i}", hud, string.Empty, 19, TextAnchor.MiddleLeft,
                     CsHudTheme.Message);
-                CsHudTheme.PlaceTopLeft(t.rectTransform,
-                    new Vector2(Margin, -CsHudTheme.RadarSize - 24f - i * MessageLineHeight),
+                CsHudTheme.PlaceBottomLeft(t.rectTransform,
+                    new Vector2(Margin, MessageBottomInset + i * MessageLineHeight),
                     new Vector2(760f, MessageLineHeight));
                 _messageTexts[i] = t;
             }
@@ -299,12 +310,21 @@ namespace Cs16.UI
                 new Vector2(CsHudTheme.BuyZoneIconSizePx, CsHudTheme.BuyZoneIconSizePx), CsHudTheme.HudIconTint);
             _buyZoneIcon.enabled = false;
 
+            // 下包 / 拆包条：准星上方约 1/3 屏高处（原版这条进度条压在画面中上部，
+            // 不贴底 —— 贴底会压住 `Time Left: … min. Next Map: …` 那行）。
             _useBar = CsHudTheme.CreateBar("UseBar", hud, new Vector2(0.5f, 0f), new Vector2(0.5f, 0f),
-                new Vector2(0f, 240f), new Vector2(320f, 16f), CsUiStyle.Accent);
+                new Vector2(0f, 420f), new Vector2(320f, 16f), CsUiStyle.Accent);
             _useLabel = CsHudTheme.CreateText("UseLabel", hud, string.Empty, 20, TextAnchor.MiddleCenter,
                 CsHudTheme.TextHud);
-            CsHudTheme.PlaceBottomCenter(_useLabel.rectTransform, new Vector2(0f, 264f),
+            CsHudTheme.PlaceBottomCenter(_useLabel.rectTransform, new Vector2(0f, 444f),
                 new Vector2(420f, 26f));
+
+            // ---- 客机断流提示（顶部中央；平时隐藏）----
+            _connectionText = CsHudTheme.CreateText("ConnectionLost", hud, string.Empty, 24,
+                TextAnchor.MiddleCenter, CsHudTheme.Danger);
+            CsHudTheme.PlaceTopCenter(_connectionText.rectTransform, new Vector2(0f, -112f),
+                new Vector2(900f, 32f));
+            _connectionText.gameObject.SetActive(false);
 
             // ---- 受伤提示（屏幕四边红 + 方向标记）----
             _damage = new CsDamageIndicatorWidget();
@@ -437,6 +457,14 @@ namespace Cs16.UI
             _stopwatchIcon.sprite = sprite;
             _stopwatchIcon.color = CsHudTheme.StopwatchTint;
             _stopwatchIcon.enabled = true;
+
+            // 同一张表盘图也用在 `Time Left:` 行首（原版那一格就是个小表盘/圆点图标，金色）。
+            if (_timeLeftIcon != null)
+            {
+                _timeLeftIcon.sprite = sprite;
+                _timeLeftIcon.color = CsHudTheme.TextHud;
+                _timeLeftIcon.enabled = true;
+            }
         }
 
         /// <summary>
@@ -574,7 +602,7 @@ namespace Cs16.UI
             _iconHealth = health;
             _iconArmor = armor;
             _iconArmorHelmet = armorHelmet;
-            ApplyHudIcons(CsHudSnapshot.HasHelmet, CsHudSnapshot.Armor > 0);
+            ApplyHudIcons(CsHudSnapshot.HasHelmet);
             Game.Logger?.Info(Tag,
                 $"已绑定 HUD 位图图标 sprite：血量={health.name}({health.rect.width}×{health.rect.height}) " +
                 $"护甲={armor.name} 护甲+头盔={armorHelmet.name}（原版 hud.txt:121/135/137，640hud7.spr）");
@@ -608,12 +636,14 @@ namespace Cs16.UI
         /// <b>sprite 没到手时保持 <c>enabled = false</c></b> —— 没有 sprite 的 uGUI <c>Image</c>
         /// 会被画成一块实心白块（<c>Graphic.OnPopulateMesh</c> 的实心分支），比"暂时没有图标"难看得多。
         /// </summary>
-        private void ApplyHudIcons(bool hasHelmet, bool armorHasValue)
+        private void ApplyHudIcons(bool hasHelmet)
         {
             if (_healthIcon != null && _iconHealth != null)
             {
                 if (_healthIcon.sprite != _iconHealth) _healthIcon.sprite = _iconHealth;
-                _healthIcon.color = CsHudTheme.HudIconTint;
+                // 图标与同一格的血量数字同色（健康白 / 中黄 / 危险红）：精灵本身是灰阶遮罩，
+                // 屏上像素 = 索引 × 着色，着橙色时在沙色地面上与背景同相，几乎读不出来。
+                _healthIcon.color = CsHudTheme.HealthColor(CsHudSnapshot.Health);
                 _healthIcon.enabled = true;
             }
 
@@ -627,7 +657,8 @@ namespace Cs16.UI
                 else
                 {
                     if (_armorIcon.sprite != want) _armorIcon.sprite = want;
-                    _armorIcon.color = armorHasValue ? CsHudTheme.HudIconTint : CsHudTheme.Disabled;
+                    // 护甲图标恒为不透明的护甲浅蓝：0 甲时原版这一格仍是护甲色，压暗会变成一块黑。
+                    _armorIcon.color = CsHudTheme.ArmorColor;
                     _armorIcon.enabled = true;
                 }
             }
@@ -704,6 +735,50 @@ namespace Cs16.UI
                 "—— HudPanel.prefab 里还没有该节点（本片改了布局、尚未重跑生成器）");
         }
 
+        /// <summary>
+        /// 客机断流提示：快照里的 <see cref="CsHudSnapshot.ServerLinkDown"/> 为 true 时显示
+        /// "连接中断 + 已多久没收到快照"，否则隐藏。节点在旧预制体里可能没有 ⇒ 按需补建。
+        /// </summary>
+        private void RefreshConnectionWarning()
+        {
+            if (!CsHudSnapshot.ServerLinkDown)
+            {
+                if (_connectionText != null && _connectionText.gameObject.activeSelf)
+                    _connectionText.gameObject.SetActive(false);
+                return;
+            }
+
+            EnsureConnectionText();
+            if (_connectionText == null) return;
+
+            var age = CsHudSnapshot.ServerSnapshotAge;
+            var text = age >= 0f
+                ? $"Connection lost: no host snapshot for {age:F1}s"
+                : "Connection lost: no host snapshot received";
+            if (_connectionText.text != text) _connectionText.text = text;
+            if (!_connectionText.gameObject.activeSelf) _connectionText.gameObject.SetActive(true);
+        }
+
+        /// <summary>补建断流提示节点（旧预制体没有它；父节点与 <see cref="BuildLayout"/> 一致）。</summary>
+        private void EnsureConnectionText()
+        {
+            if (_connectionText != null) return;
+
+            var parent = _hudRoot != null ? _hudRoot : transform as RectTransform;
+            if (parent == null)
+            {
+                Game.Logger?.Warn(Tag, "HUD 根节点不存在，客机断流提示无法补建");
+                return;
+            }
+
+            _connectionText = CsHudTheme.CreateText("ConnectionLost", parent, string.Empty, 24,
+                TextAnchor.MiddleCenter, CsHudTheme.Danger);
+            CsHudTheme.PlaceTopCenter(_connectionText.rectTransform, new Vector2(0f, -112f),
+                new Vector2(900f, 32f));
+            _connectionText.gameObject.SetActive(false);
+            Game.Logger?.Info(Tag, "补建客机断流提示 ConnectionLost（HudPanel.prefab 里还没有该节点）");
+        }
+
         // ═══════════════════════ 生命周期 ═══════════════════════
 
         public override void OnOpen(object param)
@@ -715,11 +790,16 @@ namespace Cs16.UI
             // 预制体里序列化的是"生成时的旧坐标/旧颜色"，只改 BuildLayout 的话实机看不到（见 ApplyScoreBlock 注释）。
             // 重跑生成器后 BuildLayout 与这里给出同一份值，幂等。
             ApplyScoreBlock();
+            // 消息栏落点同理：预制体里存的是生成时的坐标，每次打开按当前常量重排（幂等）。
+            ApplyMessageLayout();
             // 秒表图标的 sprite：生成器生成预制体时会直接绑进去；老预制体（没重跑生成器）走这里兜底。
             EnsureStopwatchSprite();
             // 买枪区图标同一套：预制体带 sprite 就用预制体的，否则运行期兜底加载。
             EnsureBuyZoneSprite();
             _crosshair?.ApplyColor(CsHudTheme.Crosshair);
+
+            // 游戏内署名贴左下角（主菜单 / 选阵营等流程页仍由常驻件居中）。
+            CsCreditBadge.SetInGame(true);
 
             _selfName = CsPlayerSettingsStore.Load().PlayerName;
 
@@ -763,6 +843,9 @@ namespace Cs16.UI
             }
             _subscribed = false;
 
+            // 离开游戏内 ⇒ 署名回到引擎默认的底部居中。
+            CsCreditBadge.SetInGame(false);
+
             Game.Logger?.Info(Tag, "HUD 已关闭（回合内界面上的临时面板由 AppFlow 的 CloseAll 一并收掉）");
         }
 
@@ -789,6 +872,10 @@ namespace Cs16.UI
                 SetHudVisible(true);
                 RefreshImmediate();
             }
+
+            // 暂停时整组 HUD 让位（暂停面板自己那一层归引擎管：Popup 打开期间 Normal 层整层不画）。
+            var wantHud = !CsHudSnapshot.Paused;
+            if (_hudRoot != null && _hudRoot.gameObject.activeSelf != wantHud) SetHudVisible(wantHud);
 
             RefreshValues();
             RefreshWidgets();
@@ -835,23 +922,14 @@ namespace Cs16.UI
                 _healthText.text = hp.ToString();
                 _healthText.color = CsHudTheme.HealthColor(hp);
             }
-            if (_healthBar != null)
-            {
-                _healthBar.Set(Mathf.Clamp01(hp / (float)CsConst.MaxHealth));
-                _healthBar.SetColor(CsHudTheme.HealthColor(hp));
-            }
             if (_armorText != null)
             {
                 _armorText.text = armor.ToString();
-                _armorText.color = armor > 0 ? CsHudTheme.ArmorColor : CsHudTheme.Disabled;
-            }
-            if (_armorBar != null)
-            {
-                _armorBar.Set(Mathf.Clamp01(armor / (float)CsConst.MaxArmor));
-                _armorBar.SetColor(armor > 0 ? CsHudTheme.ArmorColor : CsHudTheme.Disabled);
+                // 0 甲也要读得出来：原版这一格是"护甲值"，不是禁用态 ⇒ 恒用满不透明的护甲蓝。
+                _armorText.color = CsHudTheme.ArmorColor;
             }
             EnsureHudIconSprites();
-            ApplyHudIcons(CsHudSnapshot.HasHelmet, armor > 0);
+            ApplyHudIcons(CsHudSnapshot.HasHelmet);
 
             // ---- 金钱（H2）：可以买东西时高亮 ----
             if (_moneyText != null)
@@ -875,7 +953,17 @@ namespace Cs16.UI
             // 文案按原版截图逐字对齐（"Counter-Terrorists : 0" / "Terrorists : 0"，见 CsHudTheme 比分块一节）
             if (_scoreCTText != null) _scoreCTText.text = $"Counter-Terrorists : {CsHudSnapshot.ScoreCT}";
             if (_scoreTText != null) _scoreTText.text = $"Terrorists : {CsHudSnapshot.ScoreT}";
-            if (_roundTimeText != null) _roundTimeText.text = CsHudTheme.FormatClock(CsHudSnapshot.PhaseTimeLeft);
+            // 炸弹安放后这一格改显 C4 引信（红色）：回合时间已不再决定胜负
+            // （CsRound.EvaluateWin 在下包后不认超时），玩家要看的是还有多久爆炸。
+            if (_roundTimeText != null)
+            {
+                var bomb = CsHudSnapshot.BombPlanted;
+                _roundTimeText.text = CsHudTheme.FormatClock(
+                    bomb ? CsHudSnapshot.BombTimeLeft : CsHudSnapshot.PhaseTimeLeft);
+                _roundTimeText.color = bomb ? CsHudTheme.Danger : CsHudTheme.TextHud;
+            }
+
+            RefreshConnectionWarning();
 
             // ---- `Map: <地图名>`（F-01；原版在右上角竖分隔线右侧）----
             if (_mapText != null)
@@ -920,8 +1008,8 @@ namespace Cs16.UI
                 //    按阵营判会在"我是 CT、看着 T 下包"时显示成"拆包中…"。
                 if (useVisible)
                     _useLabel.text = CsHudSnapshot.BombPlanted
-                        ? $"拆包中… {using01 * 100f:0}%"
-                        : $"下包中… {using01 * 100f:0}%";
+                        ? $"Defusing... {using01 * 100f:0}%"
+                        : $"Planting... {using01 * 100f:0}%";
             }
 
             // ---- 流光消息栏的过期（按本地时钟算，不依赖快照的 BornTime 时钟）----
@@ -1018,6 +1106,7 @@ namespace Cs16.UI
             _crosshair?.Refresh((alive || specCrosshair) && !CsHudSnapshot.IsZoomed && !overlayOpen,
                 CsHudSnapshot.CrosshairSpread, CsHudSnapshot.HitMarkerTime, CsHudSnapshot.HitMarkerHeadshot);
 
+            // 弹窗（买枪 / 记分板 / 暂停）打开期间引擎把整个 Normal 层关掉 ⇒ 这里不按面板自查隐藏。
             UpdateRadarBounds();
             _radar?.Refresh(true, _minX, _maxX, _minZ, _maxZ, CsHudSnapshot.Radar);
             _killFeed?.Refresh(true, CsHudSnapshot.KillFeed);
@@ -1039,7 +1128,7 @@ namespace Cs16.UI
 
         //    渲染成屏幕上的 `-<数字>` 飘字（Game.UI.FloatText），时长取 CsConst.DamageNumberTime。
         //    它们**并非 A（CS 1.6）的行为** —— 原版 HUD 里没有"伤害数字"这一项（依据：`策划/对照表.md`
-        //    （`hud.txt:179` 的 `d_headshot`）与击杀条，**没有伤害数字**；`策划/验收表.md` B 段我方 HUD
+        //    （`hud.txt:179` 的 `d_headshot`）与击杀条，**没有伤害数字**；B 段我方 HUD
         //    项清单与 `client/资源欠缺清单.md` 的"A 有/我方缺"对账里同样没有它）。
         //    原版硬载体 `cstrike/sprites/hud.txt` 在盘（`原版资源/cs16src/cstrike/cstrike__sprites__hud.txt`），
         //    `原版资源/解包产物/` 在盘但为空（见 `原版资源/清单.md`）⇒ 本条未用 hud.txt 原文做逐行直证；故本条按「本项目新增、
@@ -1116,7 +1205,7 @@ namespace Cs16.UI
         {
             if (string.IsNullOrEmpty(text)) return;
 
-            // 整体上移一行，最新一条放最上面（CS 1.6 的消息栏就是这个方向）
+            // 整体上移一行，最新一条落在最下面（左下角消息栏从下往上堆）
             for (var i = _messageUntil.Length - 1; i > 0; i--)
             {
                 _messageCache[i] = _messageCache[i - 1];
@@ -1135,11 +1224,52 @@ namespace Cs16.UI
             for (var i = 0; i < _messageTexts.Length; i++)
             {
                 var text = _messageTexts[i];
-                if (text == null) continue;
+                if (text == null || i >= _messageUntil.Length || i >= _messageAlpha.Length) continue;
 
                 var alive = i < _messageUntil.Length && _messageUntil[i] > now;
                 var content = alive ? _messageCache[i] : string.Empty;
                 if (text.text != content) text.text = content;
+
+                var alpha = alive ? Mathf.Clamp01((_messageUntil[i] - now) / MessageFadeSeconds) : 0f;
+                if (Mathf.Abs(_messageAlpha[i] - alpha) < 0.01f) continue;
+                _messageAlpha[i] = alpha;
+
+                var color = CsHudTheme.Message;
+                color.a = alpha;
+                text.color = color;
+
+                var shadow = _messageShadows != null ? _messageShadows[i] : null;
+                if (shadow != null)
+                {
+                    var shadowColor = shadow.effectColor;
+                    shadowColor.a = 0.9f * alpha;
+                    shadow.effectColor = shadowColor;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 把消息栏的 3 行重排到左下角（血甲行上方）：索引 0 = 最新，落在最下面一行。
+        /// 预制体里序列化的是生成时的坐标，<see cref="BuildLayout"/> 只在预制体没有子节点时执行，
+        /// 所以每次 <see cref="OnOpen"/> 都要按当前常量再摆一次（幂等）。
+        /// </summary>
+        private void ApplyMessageLayout()
+        {
+            if (_messageTexts == null) return;
+
+            if (_messageShadows == null || _messageShadows.Length != _messageTexts.Length)
+                _messageShadows = new Shadow[_messageTexts.Length];
+
+            for (var i = 0; i < _messageTexts.Length; i++)
+            {
+                var text = _messageTexts[i];
+                if (text == null) continue;
+
+                CsHudTheme.PlaceBottomLeft(text.rectTransform,
+                    new Vector2(Margin, MessageBottomInset + i * MessageLineHeight),
+                    new Vector2(760f, MessageLineHeight));
+
+                if (_messageShadows[i] == null) _messageShadows[i] = text.GetComponent<Shadow>();
             }
         }
 
@@ -1150,61 +1280,101 @@ namespace Cs16.UI
             var input = Game.Input;
             if (input == null)
             {
-                Game.Logger?.Error(Tag, "Game.Input 为空（CloverInput.Init 未调用？），B/H/TAB/无线电/控制台都唤不出来");
+                Game.Logger?.Error(Tag, "Game.Input 为空（CloverInput.Init 未调用？），B/TAB/无线电/控制台都唤不出来");
                 return;
             }
 
             // 比赛结束面板开着时一切都归它（它要玩家做选择）
             if (Game.UI.IsOpen<MatchEndPanel>()) return;
 
-            if (input.GetKeyDown(GameKey.Slash) || input.GetKeyDown(GameKey.Num0))
+            // 暂停时游戏内热键全部让位：面板归 PausePanel / AppFlow 处理。
+            // 记分板是"按住 TAB 看"的信息板，暂停期间留在屏上会一直挂在暂停画面下面。
+            if (CsHudSnapshot.Paused)
             {
-                // GameKey 里没有 BackQuote（`）—— 契约缺口（引擎键盘枚举未提供该键）。
-                // 这里同时接受 `/` 与 `0`：前者是 CS 里的控制台键位习惯，后者在没有 `/` 的键盘上是兜底。
+                if (Game.UI.IsOpen<ScoreboardPanel>())
+                {
+                    Game.UI.Close<ScoreboardPanel>();
+                    _tabOpenedByHold = false;
+                }
+                return;
+            }
+
+            if (input.GetKeyDown(GameKey.BackQuote))
+            {
+                // 控制台开关键 = 原版默认绑定 `toggleconsole` 的 `` ` `` / `~` 键（GameKey.BackQuote）。
                 if (!Game.UI.IsOpen<ConsolePanel>())
                 {
-                    Game.Logger?.Info(Tag, "按键唤出控制台（GameKey.Slash / GameKey.Num0；GameKey 无 BackQuote）");
-                    Game.UI.Open<ConsolePanel>();
+                    Game.Logger?.Info(Tag, "按键唤出控制台（GameKey.BackQuote）");
+                    OpenModal<ConsolePanel>();
                 }
                 return;
             }
 
             // TAB：按住显示记分板（G11）
+            //
+            // `_tabOpenedByHold` 记住"这块板是 TAB 按出来的"。只有这种来源才会在松开 TAB 时被关掉 ——
+            // 否则任何程序化打开（驱动 / 其他面板的跳转）都会被下一帧的"TAB 没按住"立刻关掉，
+            // 表现就是"调了 OpenScoreboard 但截图里没有记分板"。
+            var scoreboardOpen = Game.UI.IsOpen<ScoreboardPanel>();
+            if (!scoreboardOpen) _tabOpenedByHold = false;
             var tabHeld = input.GetKey(GameKey.Tab);
-            if (tabHeld && !Game.UI.IsOpen<ScoreboardPanel>())
+            // 模态菜单开着时不让记分板再叠一层（它画在 Popup 下面，开了也看不见，只会污染 ESC 的判据）
+            if (tabHeld && !scoreboardOpen && !IsBlockingOverlayOpen())
             {
                 Game.UI.Open<ScoreboardPanel>();
+                _tabOpenedByHold = true;
             }
-            else if (!tabHeld && Game.UI.IsOpen<ScoreboardPanel>())
+            else if (!tabHeld && scoreboardOpen && _tabOpenedByHold)
             {
+                Game.Logger?.Info(Tag, "松开 TAB：关闭记分板（这块板是本帧之前由 TAB 按出来的）");
                 Game.UI.Close<ScoreboardPanel>();
+                _tabOpenedByHold = false;
             }
 
-            // 有弹窗类面板开着时，剩下的开面板键归它们（买枪菜单要收 1~8、H 菜单要收按钮）
+            // 有弹窗类面板开着时，剩下的开面板键归它们（买枪菜单要收 1~8）
             if (IsBlockingOverlayOpen()) return;
 
             if (input.GetKeyDown(GameKey.B))
             {
                 Game.Logger?.Info(Tag, "按键唤出买枪菜单（B）");
-                Game.UI.Open<BuyMenuPanel>();
-            }
-            else if (input.GetKeyDown(GameKey.H))
-            {
-                Game.Logger?.Info(Tag, "按键唤出 H 菜单（H）");
-                Game.UI.Open<HMenuPanel>();
+                OpenModal<BuyMenuPanel>();
             }
             else if (input.GetKeyDown(GameKey.Z))
             {
-                Game.UI.Open<RadioMenuPanel>(CsRadioGroup.A);
+                OpenModal<RadioMenuPanel>(CsRadioGroup.A);
             }
             else if (input.GetKeyDown(GameKey.X))
             {
-                Game.UI.Open<RadioMenuPanel>(CsRadioGroup.B);
+                OpenModal<RadioMenuPanel>(CsRadioGroup.B);
             }
             else if (input.GetKeyDown(GameKey.C))
             {
-                Game.UI.Open<RadioMenuPanel>(CsRadioGroup.C);
+                OpenModal<RadioMenuPanel>(CsRadioGroup.C);
             }
+        }
+
+        /// <summary>
+        /// 游戏内**模态**面板的互斥清单：买枪菜单 / H 菜单 / 无线电菜单 / 控制台。
+        /// 打开其中一个之前先关掉另外三个 —— 同时只留一个，避免"两个菜单叠在一起、
+        /// ESC 各关一个"的卡住组合。
+        /// </summary>
+        private static void OpenModal<T>(object param = null) where T : class, IUIPanel
+        {
+            var ui = Game.UI;
+            if (ui == null) return;
+            CloseOtherModals(typeof(T));
+            ui.Open<T>(param);
+        }
+
+        /// <summary>关掉除 <paramref name="keep"/> 之外的模态面板（null = 全关）。</summary>
+        private static void CloseOtherModals(System.Type keep)
+        {
+            var ui = Game.UI;
+            if (ui == null) return;
+            if (keep != typeof(BuyMenuPanel)) ui.Close<BuyMenuPanel>();
+            if (keep != typeof(HMenuPanel)) ui.Close<HMenuPanel>();
+            if (keep != typeof(RadioMenuPanel)) ui.Close<RadioMenuPanel>();
+            if (keep != typeof(ConsolePanel)) ui.Close<ConsolePanel>();
         }
 
         private static bool IsBlockingOverlayOpen()
@@ -1227,10 +1397,7 @@ namespace Cs16.UI
         {
             var ui = Game.UI;
             if (ui == null) return;
-            ui.Close<BuyMenuPanel>();
-            ui.Close<HMenuPanel>();
-            ui.Close<RadioMenuPanel>();
-            ui.Close<ConsolePanel>();
+            CloseOtherModals(null);
             ui.Close<ScoreboardPanel>();
             ui.Close<RoundEndPanel>();
             ui.Close<MatchEndPanel>();
@@ -1248,6 +1415,8 @@ namespace Cs16.UI
         {
             // 回合结算面板只在回合结算期显示（下一回合开始就收）
             Game.UI?.Close<RoundEndPanel>();
+            // 回合重新开始 = 客户端菜单重置：上一回合留着的买枪菜单不跨回合
+            Game.UI?.Close<BuyMenuPanel>();
             _stats.BeginRound();
         }
 
@@ -1255,6 +1424,10 @@ namespace Cs16.UI
         {
             // 比赛已结束就不弹回合结算（MatchEnd 面板的信息量更全，两个一起弹会互相盖）
             if (CsHudSnapshot.Phase == CsRoundPhase.MatchEnd) return;
+
+            // 回合结算期间买枪窗口已关（CsMatch.CanBuyTime 只认 Freeze / Live）⇒ 菜单不再留着
+            Game.UI?.Close<BuyMenuPanel>();
+            Game.UI?.Close<RadioMenuPanel>();
 
             var args = new CsRoundEndArgs
             {

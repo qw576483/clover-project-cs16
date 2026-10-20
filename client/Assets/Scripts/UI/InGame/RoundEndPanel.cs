@@ -36,6 +36,12 @@ namespace Cs16.UI
     /// </summary>
     public class RoundEndPanel : CsPanelBase
     {
+        /// <summary>胜方标题字号（参考分辨率 1920×1080）：原版回合结算帧不在参照物目录内，取 60。</summary>
+        public const int TitleFontSize = 60;
+
+        /// <summary>比分字号：与标题同一判据，取 44。</summary>
+        public const int ScoreFontSize = 44;
+
         [SerializeField] private Text _titleText;
         [SerializeField] private Text _reasonText;
         [SerializeField] private Text _scoreText;
@@ -52,7 +58,7 @@ namespace Cs16.UI
             UIFactory.Stretch(backdrop.rectTransform);
             _backdrop = backdrop;
 
-            _titleText = CsHudTheme.CreateText("Title", root, "Round Over", 60, TextAnchor.MiddleCenter,
+            _titleText = CsHudTheme.CreateText("Title", root, "Round Over", TitleFontSize, TextAnchor.MiddleCenter,
                 CsHudTheme.TextMain);
             CsHudTheme.PlaceCenter(_titleText.rectTransform, new Vector2(0f, 70f), new Vector2(1400f, 78f));
 
@@ -60,8 +66,8 @@ namespace Cs16.UI
                 CsHudTheme.TextDim);
             CsHudTheme.PlaceCenter(_reasonText.rectTransform, new Vector2(0f, 16f), new Vector2(1200f, 40f));
 
-            _scoreText = CsHudTheme.CreateText("Score", root, string.Empty, 44, TextAnchor.MiddleCenter,
-                CsHudTheme.TextHud);
+            _scoreText = CsHudTheme.CreateText("Score", root, string.Empty, ScoreFontSize, TextAnchor.MiddleCenter,
+                CsHudTheme.TextMain);
             CsHudTheme.PlaceCenter(_scoreText.rectTransform, new Vector2(0f, -44f), new Vector2(1200f, 56f));
 
             _roundText = CsHudTheme.CreateText("Round", root, string.Empty, 22, TextAnchor.MiddleCenter,
@@ -127,11 +133,21 @@ namespace Cs16.UI
             if (_titleText != null)
             {
                 _titleText.text = ctWin ? "Counter-Terrorists Win" : "Terrorists Win";
-                _titleText.color = ctWin ? CsHudTheme.TeamCT : CsHudTheme.TeamT;
+                _titleText.fontSize = TitleFontSize;
+                _titleText.color = ctWin ? CsHudTheme.RoundEndWinCT : CsHudTheme.RoundEndWinT;
             }
-            if (_reasonText != null) _reasonText.text = CsHudTheme.ReasonText(args.Reason);
-            if (_scoreText != null) _scoreText.text = $"CT {args.ScoreCT}  :  {args.ScoreT} T";
-            if (_roundText != null) _roundText.text = $"第 {args.RoundNumber} 回合结束";
+            if (_reasonText != null)
+            {
+                _reasonText.text = CsHudTheme.ReasonText(args.Reason);
+                _reasonText.color = CsHudTheme.TextMain;
+            }
+            if (_scoreText != null)
+            {
+                _scoreText.text = $"CT {args.ScoreCT}  :  {args.ScoreT} T";
+                _scoreText.fontSize = ScoreFontSize;
+                _scoreText.color = CsHudTheme.TextMain;
+            }
+            if (_roundText != null) _roundText.text = $"Round {args.RoundNumber} over";
 
             Game.Logger?.Info(Tag,
                 $"回合结算显示：{_titleText?.text}（{args.Reason}）比分 CT {args.ScoreCT} : {args.ScoreT} T（第 {args.RoundNumber} 回合）");

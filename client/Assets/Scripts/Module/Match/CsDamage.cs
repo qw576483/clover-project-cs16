@@ -68,13 +68,6 @@ namespace Cs16.Module.Match
                     $"刀命中音 knife_hit @ {point}（命中 {victim.Name} 的 {box}）");
             }
 
-            // 位置在"确实命中了角色"之后、**任何伤害闸门之前**：原版"出血"与"扣血"是两件事 ——
-            // 友好伤害关闭 / 护甲全吸收时 OnDamaged 不会发，但子弹打在身上的血迹照样在。
-            // 这里只**发事件**，本层不碰特效（表现归 Module/Combat）。
-            var hitDir = shooter != null ? point - shooter.EyePosition : Vector3.zero;
-            if (hitDir.sqrMagnitude < 0.000001f) hitDir = Vector3.down;   // 退化：没有射手（如环境）时按"血往下淌"
-            _m.RaiseBulletHit(victim, point, hitDir.normalized, box == CsHitbox.Head);
-
             // 差异 #68：基础伤害按射手当前的消音 / 连发状态取（取值口径与出处见 CsWeapons.BaseDamage）。
             var dmg = CsWeapons.BaseDamage(def, shooter != null && shooter.Silenced,
                 shooter != null && shooter.BurstMode) * HitboxMultiplier(box);
@@ -82,6 +75,14 @@ namespace Cs16.Module.Match
             // 距离衰减 = 原版 pow(rangeModifier, dist_in_units / 弹种分母)；
             // 弹种 / 射程修正未取到的武器回落到旧的线性衰减（见 CsWeapons.DistanceFalloff）。
             dmg *= CsWeapons.DistanceFalloff(def, shooter != null && shooter.Silenced, dist);
+
+            // 位置在"确实命中了角色"之后、**任何伤害闸门之前**：原版"出血"与"扣血"是两件事 ——
+            // 友好伤害关闭 / 护甲全吸收时 OnDamaged 不会发，但子弹打在身上的血迹照样在。
+            // 带上这一发的伤害量：原版血雾的 size 字节 = clamp(amount/10, 3, 16)。
+            // 这里只**发事件**，本层不碰特效（表现归 Module/Combat）。
+            var hitDir = shooter != null ? point - shooter.EyePosition : Vector3.zero;
+            if (hitDir.sqrMagnitude < 0.000001f) hitDir = Vector3.down;   // 退化：没有射手（如环境）时按"血往下淌"
+            _m.RaiseBulletHit(victim, point, hitDir.normalized, box == CsHitbox.Head, Mathf.RoundToInt(dmg));
 
             ApplyDamage(shooter, victim, def, box, dmg, throughWall);
         }
@@ -161,6 +162,9 @@ namespace Cs16.Module.Match
             {
                 var clip = armorApplies ? CsAudioTuning.HitKevlar : CsAudioTuning.HitFlesh;
                 _sfx.Play(clip);
+                // 受击人声：原版是 pl_pain2..7 随机抽一条，本工程盘上只有 sfx/pain.wav 一支
+                // ⇒ 按 1/4 概率播，避免每枪都同一句。
+                if (CsRng.Stream(CsRngStream.SfxVariant).Next(0, 100) < 25) _sfx.Play(CsAudioTuning.Pain);
                 _m.RateInfo("sfx.hitme",
                     $"本地玩家受击音 {clip}（护甲生效={armorApplies}，伤害 {final}，剩余 HP {Mathf.Max(0, victim.Health)}）");
             }
@@ -403,7 +407,9 @@ namespace Cs16.Module.Match
                 var duration = CsConst.GrenadeFlashDuration * distFactor * angleFactor;
                 if (duration <= 0f) continue;
 
-                a.FlashEndTime = Mathf.Max(a.FlashEndTime, _m.Now + duration);
+                var end = _m.Now + duration;
+                if (end > a.FlashEndTime) a.FlashStartTime = _m.Now;   // 这一次致盲比上次更久 ⇒ 曲线按本次时长走
+                a.FlashEndTime = Mathf.Max(a.FlashEndTime, end);
                 affected++;
 
                 Game.Logger.Info(Tag,

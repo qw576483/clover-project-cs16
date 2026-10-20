@@ -1,3 +1,6 @@
+using System;
+using System.Globalization;
+using System.Net;
 using CloverEngine;
 
 namespace Cs16.Module.Net
@@ -86,6 +89,93 @@ namespace Cs16.Module.Net
             get { return _gatewayPort; }
         }
 
+        /// <summary>本机广播出去的网关端点（<c>host:port</c>）；未启动时为空串。</summary>
+        public static string AdvertisedEndpoint
+        {
+            get
+            {
+                var host = _self != null ? _self.Host : null;
+                if (string.IsNullOrEmpty(host)) return string.Empty;
+                return host + ":" + _gatewayPort.ToString(CultureInfo.InvariantCulture);
+            }
+        }
+
+        /// <summary>
+        /// 这台主机是不是**本机自己开的**：是 ⇒ 列表里那一行就是"我的房间"，点它等于连回自己。
+        ///
+        /// <para>判据（必须同时成立）：应答端在跑、网关口 = 本机广播的网关口、回报的 host 是本机地址
+        /// （回环 / 本机任一 IPv4 / 机器名 / 与广播地址同串）。寻服查询会发到 127.0.0.1 与本网段广播，
+        /// 本机应答端也会答，所以不做这一步时自己的房间一定出现在列表里。</para>
+        /// </summary>
+        public static bool IsSelfHost(LanHostInfo host)
+        {
+            if (host == null) return false;
+            return IsSelfEndpoint(host.Host, host.GatewayPort);
+        }
+
+        /// <summary>同 <see cref="IsSelfHost"/>，输入换成 <c>host:port</c> 两段（连接前判"是不是连回自己"）。</summary>
+        public static bool IsSelfEndpoint(string host, int port)
+        {
+            if (!IsRunning) return false;
+            if (port != _gatewayPort) return false;
+            if (string.IsNullOrEmpty(host)) return false;
+
+            if (string.Equals(host, AdvertisedHost, StringComparison.OrdinalIgnoreCase)) return true;
+            if (string.Equals(host, Environment.MachineName, StringComparison.OrdinalIgnoreCase)) return true;
+
+            IPAddress ip;
+            if (!IPAddress.TryParse(host, out ip)) return false;
+            if (IPAddress.IsLoopback(ip)) return true;
+            return IsLocalIPv4(ip);
+        }
+
+        /// <summary>本机网卡上的 IPv4 地址集（惰性枚举一次；枚举失败只留一条 Warn，不抛）。</summary>
+        private static bool IsLocalIPv4(IPAddress ip)
+        {
+            if (ip == null || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+
+            var cached = _localAddresses;
+            if (cached == null)
+            {
+                cached = ResolveLocalIPv4();
+                _localAddresses = cached;
+            }
+
+            for (var i = 0; i < cached.Length; i++)
+            {
+                if (cached[i] != null && cached[i].Equals(ip)) return true;
+            }
+            return false;
+        }
+
+        private static IPAddress[] ResolveLocalIPv4()
+        {
+            try
+            {
+                var entries = Dns.GetHostEntry(Dns.GetHostName());
+                var list = new System.Collections.Generic.List<IPAddress>();
+                var addresses = entries != null ? entries.AddressList : null;
+                if (addresses != null)
+                {
+                    for (var i = 0; i < addresses.Length; i++)
+                    {
+                        var a = addresses[i];
+                        if (a != null && a.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork) list.Add(a);
+                    }
+                }
+                return list.ToArray();
+            }
+            catch (Exception ex)
+            {
+                // 非预期分支：枚举不到本机地址只影响"自己的房间"识别精度（回环 / 广播地址串仍能命中）。
+                Game.Logger.Warn(Tag, "枚举本机 IPv4 失败（\"自己的房间\"只能靠回环 / 广播地址串识别）：" +
+                    ex.GetType().Name + ": " + ex.Message);
+                return new IPAddress[0];
+            }
+        }
+
+        private static IPAddress[] _localAddresses;
+
         /// <summary>广播出去的裸 UDP 口（0 = 不提供）。</summary>
         public static int UdpPort
         {
@@ -136,12 +226,23 @@ namespace Cs16.Module.Net
             }
 
             _name = string.IsNullOrEmpty(name) ? DefaultName : name;
-            _gatewayPort = gatewayPort;
             _udpPort = udpPort > 0 ? udpPort : 0;
             _players = players < 0 ? 0 : players;
             _maxPlayers = maxPlayers < 0 ? 0 : maxPlayers;
 
             var wasRunning = responder.IsRunning;
+
+            // ---- 顺序：先把"真正在监听的网关口"定下来，再把那个端口广播出去 ----
+            // 反过来的话，默认口被别的进程占着时会广播一个没人接的门（对方看得到、点加入接不上）。
+            string gwErr;
+            if (!CsLanGateway.StartOnFreePort(out var actualPort, gatewayPort, _udpPort, _name, _maxPlayers, out gwErr))
+            {
+                error = "对局网关起不来（广播出去的门必须有人接才叫主机）：" + gwErr;
+                Game.Logger?.Error(Tag, error);
+                return false;
+            }
+            _gatewayPort = actualPort;
+
             var self = LanHostInfo.Create(
                 string.IsNullOrEmpty(gatewayHost) ? string.Empty : gatewayHost,   // 空 = 引擎取本机 IPv4
                 _gatewayPort, _udpPort, null, _name, _players, _maxPlayers, VersionTag, ExtraTag);
@@ -151,6 +252,7 @@ namespace Cs16.Module.Net
                 // 引擎不抛，原因在 LastError（端口被占 / 取不到本机地址 / 端口非法）—— 原样转出去。
                 error = responder.LastError;
                 Game.Logger?.Error(Tag, $"局域网应答端启动失败：{error}");
+                if (!wasRunning) CsLanGateway.Stop();     // 应答端没起来就别留下一个没人发现的监听
                 return false;
             }
 
@@ -159,31 +261,11 @@ namespace Cs16.Module.Net
             if (wasRunning)
             {
                 Game.Logger?.Info(Tag, $"局域网应答端已在跑，仅更新广播参数：{Describe()}");
-
-                // 已在跑但网关没跑（上一次异常路径留下的）：补起，否则广播出去的门没人接。
-                if (!CsLanGateway.IsRunning)
-                {
-                    string gwErr2;
-                    CsLanGateway.Start(out gwErr2, gatewayPort, _name, _maxPlayers);
-                    if (gwErr2 != null) Game.Logger?.Warn(Tag, $"补起对局网关失败：{gwErr2}");
-                }
             }
             else
             {
                 Game.Logger?.Info(Tag,
-                    $"局域网应答端已启动：{Describe()}（端口 {DiscoveryPort}，协议由引擎 LanProtocol 承载）");
-
-                // ---- 差异 #88「能开局」：把广播出去的那个 gateway 端口**真的开起来** ----
-                // 在此之前它只是个**参数** —— 没有任何进程在监听它，所以对方
-                // "在列表里看得到、点加入却接不上"。本行补上那个"答的一半"（见 CsLanGateway）。
-                string gwErr;
-                if (!CsLanGateway.Start(out gwErr, gatewayPort, _name, _maxPlayers))
-                {
-                    // 不把 Start 整个判失败：**被发现**的能力仍然有效（应答端已在跑），
-                    //    两个失败原因必须分开报，别让调用方以为"整个 LAN 主机都没起来"。
-                    Game.Logger?.Warn(Tag,
-                        $"局域网应答端已起来，但对局网关没起来（这台主机暂时**不能被加入**）：{gwErr}");
-                }
+                    $"局域网应答端已启动：{Describe()}（寻服端口 {DiscoveryPort}，协议由引擎 LanProtocol 承载）");
             }
 
             return true;

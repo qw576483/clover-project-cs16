@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Audio;
 using Cs16.Module.Player;
 using UnityEngine;
 
@@ -35,12 +36,34 @@ namespace Cs16.Module.Combat
         private bool _warnedNoSound;
 
         /// <summary>以 2D 方式播放（自己的枪声 / 命中标记）。</summary>
-        public void Play(string clipName) => PlayInternal(clipName, Vector3.zero, false);
+        public void Play(string clipName) => PlayInternal(clipName);
 
-        /// <summary>以 3D 方式在指定位置播放（别人的枪声 / 爆炸）。</summary>
-        public void PlayAt(string clipName, Vector3 position) => PlayInternal(clipName, position, true);
+        /// <summary>以 3D 方式在指定位置播放（别人的枪声 / 弹着）：衰减口径与 <see cref="SfxService"/> 一致
+        /// （<see cref="CsAudioTuning.SpatialMinDistance"/> / <see cref="CsAudioTuning.SpatialMaxDistance"/>）。</summary>
+        public void PlayAt(string clipName, Vector3 position)
+        {
+            if (string.IsNullOrEmpty(clipName)) return;
 
-        private void PlayInternal(string clipName, Vector3 position, bool spatial)
+            var sound = Game.Sound;
+            if (sound == null)
+            {
+                if (!_warnedNoSound)
+                {
+                    _warnedNoSound = true;
+                    _log.Error("audio.nosound", "Game.Sound 为 null（表现域未挂载？），音效不会播放");
+                }
+                return;
+            }
+
+            sound.PlaySFXAt(clipName, position, new SfxAtOptions(
+                CsAudioTuning.SpatialMinDistance,
+                CsAudioTuning.SpatialMaxDistance,
+                AudioRolloffMode.Logarithmic,
+                1f,
+                1f));
+        }
+
+        private void PlayInternal(string clipName)
         {
             if (string.IsNullOrEmpty(clipName)) return;
 
@@ -78,8 +101,7 @@ namespace Cs16.Module.Combat
                 return;
             }
 
-            if (spatial) sound.PlaySFXAt(clipName, position);
-            else sound.PlaySFX(clipName);
+            sound.PlaySFX(clipName);
         }
 
         private void OnProbeDone(string clipName, AudioClip clip)

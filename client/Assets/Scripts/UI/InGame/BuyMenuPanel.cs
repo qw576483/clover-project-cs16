@@ -54,11 +54,17 @@ namespace Cs16.UI
         /// </summary>
         private const float Scale = 1080f / DesignHeight;
 
-        /// <summary>面板自身在设计空间的位置与尺寸（出处 <c>BuyPistols_CT.res:7-10</c> 的 <c>WizardSubPanel</c>）。</summary>
-        private const float PanelX = 50f;
-        private const float PanelY = 10f;
-        private const float PanelWidth = 552f;
-        private const float PanelHeight = 448f;
+        /// <summary>
+        /// 面板 = 原版买枪全屏底（<c>原版资源/参照物/buy/buy_menu_buy_rifles.png</c> 实测
+        /// x 10..630 / y 18..430 @640×480）。640→1920 是 3 倍、480→1080 是 2.25 倍，
+        /// 两个方向不同 ⇒ 位置分别用 <see cref="ScaleX"/> / <see cref="ScaleY"/>。
+        /// </summary>
+        private const float PanelX = 10f;
+        private const float PanelY = 18f;
+        private const float PanelWidth = 620f;
+        private const float PanelHeight = 412f;
+        private const float ScaleX = 1920f / 640f;
+        private const float ScaleY = 1080f / 480f;
 
         /// <summary>标题框（出处 <c>MainBuyMenu.res:20-24</c> / <c>BuyPistols_CT.res:20-24</c>：<c>xpos 76 ypos 22 wide 500 tall 48</c>）。</summary>
         private const float TitleX = 76f;
@@ -75,7 +81,7 @@ namespace Cs16.UI
         /// <summary>列表行（分类行与武器行同一个栅格）：<c>xpos 76 wide 148 tall 20</c>，出处 <c>MainBuyMenu.res:58-61</c>。</summary>
         private const float RowX = 76f;
         private const float RowWidth = 148f;
-        private const float RowHeight = 20f;
+        private const float RowHeight = 30f;
 
         /// <summary>第一行的 <c>ypos</c>（出处 <c>MainBuyMenu.res:59</c> 的 <c>pistols ypos 116</c>）。</summary>
         private const float RowFirstY = 116f;
@@ -87,16 +93,22 @@ namespace Cs16.UI
         private const int ItemSlots = 8;
 
         /// <summary>关闭行 <c>ypos</c>（出处 <c>MainBuyMenu.res:220</c> / <c>BuyPistols_CT.res:164</c>：<c>CancelButton ypos 380</c>）。</summary>
-        private const float CancelY = 380f;
+        private const float CancelY = 372f;
 
-        /// <summary>右侧武器信息块左上角（出处 <c>BuyPistols_CT.res:43-46</c>：<c>ItemInfo xpos 244 ypos 116</c>）。</summary>
+        /// <summary>右侧武器信息块左上角（出处 <c>BuyPistols_CT.res:43-46</c>：<c>ItemInfo xpos 244 ypos 116</c>）。
+        /// 原版声明的 <c>wide 400</c> 从 x=244 起会越过面板右缘（552），这里取到面板右缘为止的可用宽。</summary>
         private const float InfoX = 244f;
-        private const float InfoY = 116f;
+        private const float InfoY = 180f;
 
-        /// <summary>信息块宽度 = 图标画布的原生宽 <b>256</b>（<c>gfx/vgui/*.tga</c> 的 TGA 头，逐张都是 256 宽）。
-        /// 原版 <c>ItemInfo</c> 声明的是 <c>wide 400 tall 380</c> + <c>autoResize 3</c>（缩到内容）
-        /// ⇒ 真正的框尺寸由代码往里面塞的东西决定，取图标原生宽是与载体唯一对得上的那一档。</summary>
-        private const float InfoWidth = 256f;
+        /// <summary>信息块宽度 = 面板右缘 552 − 左边 244 − 右留白 12。</summary>
+        private const float InfoWidth = 200f;
+
+        /// <summary>信息块标题行高 / 列表行距 / 列表行数（原版一页最多 8 条）。</summary>
+        private const float InfoTitleHeight = 26f;
+        private const float InfoRowPitch = 24f;
+        private const int InfoListRows = 8;
+        private const float InfoNameColumn = 110f;
+        private const float InfoPriceColumn = 90f;
 
         /// <summary>竖向分隔线（出处 <c>MainBuyMenu.res:279-282</c>：<c>Divider1 xpos 236 ypos 116 wide 2 tall 284</c>）。</summary>
         private const float DividerX = 236f;
@@ -104,17 +116,17 @@ namespace Cs16.UI
         private const float DividerWidth = 2f;
         private const float DividerHeight = 284f;
 
-        /// <summary>原版分类页里 Autobuy 按钮的框（出处 <c>MainBuyMenu.res:239-242</c>：<c>xpos 249 ypos 116 wide 160 tall 20</c>）。
-        /// 本工程没有 autobuy / rebuy（无对应事件）⇒ 该槽位放金钱读数。</summary>
-        private const float MoneyX = 249f;
-        private const float MoneyY = 116f;
-        private const float MoneyWidth = 160f;
+        /// <summary>金钱读数：放在标题行右端（面板顶部的空白区），不与 ItemInfo 列表挤在一起。
+        /// 原版这里没有金钱行，Autobuy / Rebuy 两个按钮本工程没有对应事件。</summary>
+        private const float MoneyX = 400f;
+        private const float MoneyY = 74f;
+        private const float MoneyWidth = 176f;
 
         /// <summary>字号 = 原版 <c>clientscheme.res</c> 在 <c>yres 1024 1199</c> 段的绝对值（标题走 <c>Title</c> 族）。
         /// 出处：<c>cstrike__resource__ClientScheme.res:389-396</c>（<c>Title</c> Verdana Bold tall 18）、
         /// <c>:300-307</c>（<c>DefaultSmall</c> tall 20）。</summary>
-        private const int TitleFontSize = 18;
-        private const int BodyFontSize = 20;
+        private const int TitleFontSize = 40;
+        private const int BodyFontSize = 26;
 
         /// <summary>行内名称 / 价格两侧的留白（原版由 <c>BuyMouseOverPanelButton</c> 在 <c>client.dll</c> 里画，
         /// <c>.res</c> 只给了整行 148×20 ⇒ 行内左右分配是本项目取值）。</summary>
@@ -131,8 +143,12 @@ namespace Cs16.UI
         /// </summary>
         private struct Category
         {
+            /// <summary>数字键编号（原版标签里的 <c>&amp;N</c>）。</summary>
             public string Key;
+            /// <summary>分类行文案（原版英文串去掉 <c>&amp;N</c> 前缀，如 <c>PISTOLS</c>）。</summary>
             public string Label;
+            /// <summary>子页标题（原版 <c>#Cstrike_*Label</c> 逐字，如 <c>BUY PISTOLS (SECONDARY WEAPON)</c>）。</summary>
+            public string Page;
             public float Y;
             public string[] OrderCT;
             public string[] OrderTER;
@@ -141,10 +157,11 @@ namespace Cs16.UI
             /// <summary>弹药页对应哪个槽位（见 <see cref="CsAmmoBuy"/>）；非弹药页为 0。</summary>
             public int AmmoSlot;
 
-            public Category(string key, string label, float y, string[] orderCT, string[] orderTER)
+            public Category(string key, string label, string page, float y, string[] orderCT, string[] orderTER)
             {
                 Key = key;
                 Label = label;
+                Page = page;
                 Y = y;
                 OrderCT = orderCT;
                 OrderTER = orderTER;
@@ -152,10 +169,11 @@ namespace Cs16.UI
                 AmmoSlot = 0;
             }
 
-            public Category(string key, string label, float y, int ammoSlot)
+            public Category(string key, string label, string page, float y, int ammoSlot)
             {
                 Key = key;
                 Label = label;
+                Page = page;
                 Y = y;
                 OrderCT = null;
                 OrderTER = null;
@@ -182,8 +200,8 @@ namespace Cs16.UI
 
         private static readonly ExtraItem[] Extras =
         {
-            new ExtraItem { Id = ExtraNightVisionId, Name = "夜视仪", Price = 1250, IconFile = "nightvision" },
-            new ExtraItem { Id = ExtraShieldId, Name = "战术盾", Price = 2200, IconFile = "shield" },
+            new ExtraItem { Id = ExtraNightVisionId, Name = "Night Vision", Price = 1250, IconFile = "nightvision" },
+            new ExtraItem { Id = ExtraShieldId, Name = "Tactical Shield", Price = 2200, IconFile = "shield" },
         };
 
         /// <summary>当前页的一行：武器行走 <see cref="CsWeapons"/>，原版装备页的夜视仪 / 战术盾走 <see cref="Extras"/>，
@@ -227,30 +245,30 @@ namespace Cs16.UI
         {
             // 原版手枪页：CT 页列 Glock18/USP45/P228/DesertEagle/FiveSeven、TER 页把最后一项换成 Elites
             // （BuyPistols_CT.res / BuyPistols_TER.res 的 labelText 序列）
-            new Category("1", "手枪", 116f,
+            new Category("1", "PISTOLS", "BUY PISTOLS (SECONDARY WEAPON)", 116f,
                 new[] { CsWeapons.Glock18, CsWeapons.Usp, CsWeapons.P228, CsWeapons.Deagle, CsWeapons.FiveSeven },
                 new[] { CsWeapons.Glock18, CsWeapons.Usp, CsWeapons.P228, CsWeapons.Deagle, CsWeapons.Elite }),
-            new Category("2", "霰弹", 148f,
+            new Category("2", "SHOTGUNS", "BUY SHOTGUNS (PRIMARY WEAPON)", 148f,
                 new[] { CsWeapons.M3, CsWeapons.Xm1014 },
                 new[] { CsWeapons.M3, CsWeapons.Xm1014 }),
             // 原版冲锋枪页：CT 页 Tmp/MP5/UMP45/P90、TER 页把 Tmp 换成 MAC10
-            new Category("3", "冲锋枪", 180f,
+            new Category("3", "SMG", "BUY SUBMACHINE GUNS (PRIMARY WEAPON)", 180f,
                 new[] { CsWeapons.Tmp, CsWeapons.Mp5, CsWeapons.Ump45, CsWeapons.P90 },
                 new[] { CsWeapons.Mac10, CsWeapons.Mp5, CsWeapons.Ump45, CsWeapons.P90 }),
             // 原版 RIFLES 页本身就列着 Scout / AWP / SG550 / G3SG1（BuyRifles_CT.res:78-142）
             // ⇒ 狙击枪并进步枪页，与载体一致（两阵营的 6 条各自成序）
-            new Category("4", "步枪", 212f,
+            new Category("4", "RIFLES", "BUY RIFLES (PRIMARY WEAPON)", 212f,
                 new[] { CsWeapons.Famas, CsWeapons.Scout, CsWeapons.M4A1, CsWeapons.Aug, CsWeapons.Sg550, CsWeapons.Awp },
                 new[] { CsWeapons.Galil, CsWeapons.Ak47, CsWeapons.Scout, CsWeapons.Sg552, CsWeapons.Awp, CsWeapons.G3sg1 }),
-            new Category("5", "机枪", 244f,
+            new Category("5", "MACHINE GUNS", "BUY MACHINE GUNS (PRIMARY WEAPON)", 244f,
                 new[] { CsWeapons.M249 },
                 new[] { CsWeapons.M249 }),
             // 原版的 PRIMARY / SECONDARY AMMO 两页（`Command primammo / secammo`）：给当前主 / 副武器补一份备弹
-            new Category("6", "主武器弹药", 276f, CsAmmoBuy.PrimarySlot),
-            new Category("7", "副武器弹药", 308f, CsAmmoBuy.SecondarySlot),
+            new Category("6", "PRIMARY AMMO", "BUY PRIMARY AMMO", 276f, CsAmmoBuy.PrimarySlot),
+            new Category("7", "SECONDARY AMMO", "BUY SECONDARY AMMO", 308f, CsAmmoBuy.SecondarySlot),
             // 原版装备页：护甲 / 拆弹器 / 三种手雷 + 夜视仪 +（仅 CT）战术盾
             // （BuyEquipment_CT.res:75-186 / BuyEquipment_TER.res:75-152 的 labelText 序列）
-            new Category("8", "装备", 340f,
+            new Category("8", "EQUIPMENT", "BUY EQUIPMENT", 340f,
                 new[]
                 {
                     CsWeapons.Vest, CsWeapons.VestHelm, CsWeapons.Flashbang, CsWeapons.HeGrenade,
@@ -352,14 +370,22 @@ namespace Cs16.UI
         [SerializeField] private Text _moneyText;
         [SerializeField] private Text _warnText;
         [SerializeField] private Image _infoIcon;
+        /// <summary>ItemInfo 标题（分类页 = 分类名，武器页 = 武器名）。</summary>
         [SerializeField] private Text _infoName;
         [SerializeField] private Text _infoPrice;
+        /// <summary>分类页的武器清单：名称列 / 价格列（逐行一对）。</summary>
+        [SerializeField] private Text[] _infoNames;
+        [SerializeField] private Text[] _infoPrices;
+        /// <summary>分类页底部的说明 / 武器页的属性行。</summary>
+        [SerializeField] private Text _infoSummary;
 
         // ─────────── 运行期 ───────────
         private readonly List<RowData> _items = new List<RowData>(ItemSlots);
         private readonly List<Row> _rows = new List<Row>(ItemSlots);
         private readonly Dictionary<string, Sprite> _iconCache = new Dictionary<string, Sprite>();
         private int _category;
+        /// <summary>分类页上鼠标所指的分类（ItemInfo 显示它的武器清单，该行常驻 SelectionBG 底色）。</summary>
+        private int _hoverCategory;
         private bool _itemPage;
         private bool _warnedRefs;
 
@@ -375,48 +401,64 @@ namespace Cs16.UI
 
         /// <summary>设计坐标 → 画布像素（以面板左上角为原点；<c>PlaceTopLeft</c> 的 y 向下为负）。</summary>
         private static Vector2 Px(float designX, float designY) =>
-            new Vector2((designX - PanelX) * Scale, -(designY - PanelY) * Scale);
+            new Vector2((designX - PanelX) * ScaleX, -(designY - PanelY) * ScaleY);
 
         private static Vector2 Size(float designW, float designH) =>
-            new Vector2(designW * Scale, designH * Scale);
+            new Vector2(designW * ScaleX, designH * ScaleY);
 
         public override void BuildLayout(RectTransform root)
         {
             var backdrop = UIFactory.CreatePanel("Backdrop", root, new Color(0f, 0f, 0f, 0.5f), true);
             UIFactory.Stretch(backdrop.rectTransform);
 
-            var box = UIFactory.CreatePanel("Dialog", root, CsUiStyle.Box, true);
-            CsHudTheme.PlaceCenter(box.rectTransform, Vector2.zero, Size(PanelWidth, PanelHeight));
+            // 面板底不透明：买枪菜单开在回合结算之上时，结算文字不许透过来。
+            var box = UIFactory.CreatePanel("Dialog", root, DialogBg, true);
+            // 近全屏：左上角锚定，设计坐标 (10,18) → 屏幕 (30,40.5)，尺寸 620×412 设计。
+            box.rectTransform.anchorMin = new Vector2(0f, 1f);
+            box.rectTransform.anchorMax = new Vector2(0f, 1f);
+            box.rectTransform.pivot = new Vector2(0f, 1f);
+            box.rectTransform.anchoredPosition = new Vector2(PanelX * ScaleX, -PanelY * ScaleY);
+            box.rectTransform.sizeDelta = Size(PanelWidth, PanelHeight);
             _panel = box.rectTransform;
 
-            _titleText = CsHudTheme.CreateText("Title", _panel, "BUY MENU", TitleFontSize, TextAnchor.MiddleLeft,
+            // 标题左侧的阵营徽标（原版那个橙色/蓝色小人；本工程没有该位图资源，
+            // 用阵营色方块 + 阵营字母代替，形状/位置对齐原版标题行）。
+            var badge = UIFactory.CreatePanel("TeamBadge", _panel, CsHudTheme.TeamColor(CsHudSnapshot.Team), false);
+            CsHudTheme.PlaceTopLeft(badge.rectTransform, Px(TitleX - 26f, TitleY + 6f), Size(18f, 18f));
+            var badgeLabel = CsHudTheme.CreateText("TeamBadgeText", badge.rectTransform,
+                CsHudSnapshot.Team == CsTeam.T ? "T" : "CT", 16, TextAnchor.MiddleCenter, Color.black);
+            CsHudTheme.PlaceCenter(badgeLabel.rectTransform, Vector2.zero, new Vector2(54f, 40f));
+
+            _titleText = CsHudTheme.CreateText("Title", _panel, "Buy Menu", TitleFontSize, TextAnchor.MiddleLeft,
                 CsHudTheme.TextMain);
             CsHudTheme.PlaceTopLeft(_titleText.rectTransform, Px(TitleX, TitleY), Size(TitleWidth, TitleHeight));
 
-            _hintText = CsHudTheme.CreateText("Hint", _panel, "按分类选购", BodyFontSize, TextAnchor.MiddleLeft,
-                CsHudTheme.TextMain);
+            // 右侧快捷项（原版右列最上面两行：A AUTO-BUY / R RE-BUY PREVIOUS）。
+            // 本工程没有对应事件，画成列表行（不是按钮），避免出现点了没反应的黑条按钮。
+            CreateShortcutRow("A  AUTO-BUY", 116f);
+            CreateShortcutRow("R  RE-BUY PREVIOUS", 148f);
+
+            _hintText = CsHudTheme.CreateText("Hint", _panel, "SHOP BY CATEGORY", BodyFontSize, TextAnchor.MiddleLeft,
+                CsHudTheme.TextDim);
             CsHudTheme.PlaceTopLeft(_hintText.rectTransform, Px(HintX, HintY), Size(HintWidth, HintHeight));
 
             _categoryButtons = new Button[Categories.Length];
             for (var i = 0; i < Categories.Length; i++)
             {
                 var index = i;
-                var button = CsHudTheme.CreateButton($"Cat{i}", _panel,
-                    CategoryLabel(Categories[i]), new Vector2(0f, 1f), new Vector2(0f, 1f),
-                    Px(RowX, Categories[i].Y), Size(RowWidth, RowHeight),
-                    () => OpenCategory(index));
-                SetRowLabel(button, CategoryLabel(Categories[i]));
+                var button = CreateListRow($"Cat{i}", _panel, Px(RowX, Categories[i].Y),
+                    Size(RowWidth, RowHeight), CategoryLabel(Categories[i]), () => OpenCategory(index));
+                BindCategoryHover(button, index);
                 _categoryButtons[i] = button;
             }
 
-            _cancelButton = CsHudTheme.CreateButton("Cat_Cancel", _panel, "关闭", new Vector2(0f, 1f),
-                new Vector2(0f, 1f), Px(RowX, CancelY), Size(RowWidth, RowHeight), Close);
-            SetRowLabel(_cancelButton, "0 关闭");
+            _cancelButton = CreateListRow("Cat_Cancel", _panel, Px(RowX, CancelY),
+                Size(RowWidth, RowHeight), "0 CANCEL", Close);
 
             _divider = CsHudTheme.CreateBlock("Divider", _panel, new Vector2(0f, 1f), new Vector2(0f, 1f),
-                Px(DividerX, DividerY), Size(DividerWidth, DividerHeight), CsHudTheme.TextDim);
+                Px(DividerX, DividerY), Size(DividerWidth, DividerHeight), CsHudTheme.ScoreDivider);
 
-            _moneyText = CsHudTheme.CreateText("Money", _panel, "$0", BodyFontSize, TextAnchor.MiddleLeft,
+            _moneyText = CsHudTheme.CreateText("Money", _panel, "$0", BodyFontSize, TextAnchor.MiddleRight,
                 CsHudTheme.MoneyCanBuy);
             CsHudTheme.PlaceTopLeft(_moneyText.rectTransform, Px(MoneyX, MoneyY), Size(MoneyWidth, RowHeight));
 
@@ -426,26 +468,111 @@ namespace Cs16.UI
             _itemRoot = items;
 
             var info = UIFactory.CreateNode("ItemInfo", _panel);
-            CsHudTheme.PlaceTopLeft(info, Px(InfoX, InfoY), Size(InfoWidth, PanelHeight - (InfoY - PanelY)));
+            CsHudTheme.PlaceTopLeft(info, Px(InfoX, InfoY),
+                Size(InfoWidth, PanelHeight - (InfoY - PanelY)));
 
-            _infoIcon = UIFactory.CreatePanel("Icon", info, Color.white, false);
-            CsHudTheme.PlaceTopLeft(_infoIcon.rectTransform, Vector2.zero, Size(InfoWidth, 64f));
-
-            // 名称 / 价格贴在图标下方（图标高度随武器不同，落地位置在 ApplyIcon 里按实际高度摆）
+            // 标题行：左 = 分类 / 武器名，右 = 单价。
             _infoName = CsHudTheme.CreateText("InfoName", info, string.Empty, BodyFontSize, TextAnchor.MiddleLeft,
                 CsHudTheme.TextMain);
-            CsHudTheme.PlaceTopLeft(_infoName.rectTransform, new Vector2(0f, -64f * Scale - 8f),
-                Size(InfoWidth, 24f * Scale));
+            CsHudTheme.PlaceTopLeft(_infoName.rectTransform, Vector2.zero,
+                Size(InfoNameColumn, InfoTitleHeight));
 
-            _infoPrice = CsHudTheme.CreateText("InfoPrice", info, string.Empty, BodyFontSize, TextAnchor.MiddleLeft,
+            _infoPrice = CsHudTheme.CreateText("InfoPrice", info, string.Empty, BodyFontSize, TextAnchor.MiddleRight,
                 CsHudTheme.MoneyNormal);
-            CsHudTheme.PlaceTopLeft(_infoPrice.rectTransform, new Vector2(0f, -64f * Scale - 38f),
-                Size(InfoWidth, 24f * Scale));
+            CsHudTheme.PlaceTopLeft(_infoPrice.rectTransform, Vector2.zero,
+                Size(InfoWidth, InfoTitleHeight));
 
-            _warnText = CsHudTheme.CreateText("Warn", _panel, string.Empty, BodyFontSize, TextAnchor.MiddleLeft,
+            // 分类页的武器清单：名称列 + 价格列（行距 = InfoRowPitch）。
+            _infoNames = new Text[InfoListRows];
+            _infoPrices = new Text[InfoListRows];
+            for (var i = 0; i < InfoListRows; i++)
+            {
+                var y = -(InfoTitleHeight + i * InfoRowPitch) * Scale;
+                var name = CsHudTheme.CreateText($"InfoName{i}", info, string.Empty, 18,
+                    TextAnchor.MiddleLeft, CsHudTheme.TextMain);
+                CsHudTheme.PlaceTopLeft(name.rectTransform, new Vector2(0f, y),
+                    Size(InfoNameColumn, InfoRowPitch));
+                _infoNames[i] = name;
+
+                var price = CsHudTheme.CreateText($"InfoPrice{i}", info, string.Empty, 18,
+                    TextAnchor.MiddleRight, CsHudTheme.MoneyNormal);
+                CsHudTheme.PlaceTopLeft(price.rectTransform, new Vector2(InfoNameColumn * ScaleX, y),
+                    Size(InfoPriceColumn, InfoRowPitch));
+                _infoPrices[i] = price;
+            }
+
+            // 武器页的图标（分类页隐藏；尺寸在 ApplyIcon 里按原版画布宽高比给）。
+            _infoIcon = UIFactory.CreatePanel("Icon", info, Color.white, false);
+            CsHudTheme.PlaceTopLeft(_infoIcon.rectTransform,
+                new Vector2(0f, -InfoTitleHeight * Scale), Size(InfoWidth, 64f));
+            _infoIcon.enabled = false;
+
+            _infoSummary = CsHudTheme.CreateText("InfoSummary", info, string.Empty, 16,
+                TextAnchor.UpperLeft, CsHudTheme.TextDim);
+            CsHudTheme.PlaceTopLeft(_infoSummary.rectTransform,
+                new Vector2(0f, -(InfoTitleHeight + InfoListRows * InfoRowPitch + 8f) * Scale),
+                Size(InfoWidth, 64f));
+
+            // 提示单独一行、压在面板底边内侧：CANCEL 占 372..402 设计，提示从 416 起（留 32 px 间距）。
+            _warnText = CsHudTheme.CreateText("Warn", _panel, string.Empty, 18, TextAnchor.MiddleLeft,
                 CsHudTheme.Danger);
-            CsHudTheme.PlaceBottomLeft(_warnText.rectTransform, new Vector2(26f * Scale, 24f * Scale),
-                Size(PanelWidth - 52f, 24f));
+            CsHudTheme.PlaceTopLeft(_warnText.rectTransform, Px(RowX, 416f), Size(420f, 12f));
+        }
+
+        /// <summary>面板底：原版 VGUI 的 <c>WindowBG "0 0 0 200"</c> 去掉透明度的实色（遮挡下层面板）。</summary>
+        /// <summary>原版买枪底：近全屏的半透明黑（3D 画面仍透出来），不是不透明卡片。</summary>
+        private static readonly Color DialogBg = new Color32(0x06, 0x06, 0x06, 0x8C);
+
+        /// <summary>
+        /// 原版 VGUI <c>MouseOverPanelButton</c> 的形态：**常态无底色**（<c>ControlBG "0 0 0 0"</c>）、
+        /// 悬停 / 按下 = <c>SelectionBG "255 176 0 100"</c>（ClientScheme.res:43）、文字 = <c>ControlText</c>。
+        /// </summary>
+        private static Button CreateListRow(string name, RectTransform parent, Vector2 pos, Vector2 size,
+            string label, System.Action onClick)
+        {
+            var bg = UIFactory.CreatePanel(name, parent, Color.white, true);
+            CsHudTheme.PlaceTopLeft(bg.rectTransform, pos, size);
+
+            var button = bg.gameObject.AddComponent<Button>();
+            button.targetGraphic = bg;
+            button.transition = Selectable.Transition.ColorTint;
+            var colors = button.colors;
+            colors.normalColor = Color.clear;        // 常态：无底色
+            colors.highlightedColor = CsUiStyle.AccentDim;
+            colors.pressedColor = CsUiStyle.AccentDim;
+            colors.selectedColor = Color.clear;
+            colors.disabledColor = Color.clear;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0f;
+            button.colors = colors;
+            if (onClick != null) button.onClick.AddListener(() => onClick());
+
+            var text = CsHudTheme.CreateText("Label", bg.rectTransform, label, BodyFontSize,
+                TextAnchor.MiddleLeft, CsHudTheme.TextHud);
+            text.raycastTarget = false;
+            CsHudTheme.PlaceTopLeft(text.rectTransform, new Vector2(RowInnerPad * ScaleX, 0f),
+                new Vector2(size.x - RowInnerPad * 2f * ScaleX, size.y));
+            return button;
+        }
+
+        /// <summary>右侧快捷项（A AUTO-BUY / R RE-BUY PREVIOUS）：只画成列表行，不带点击。</summary>
+        private void CreateShortcutRow(string label, float designY)
+        {
+            var text = CsHudTheme.CreateText($"Shortcut{designY:0}", _panel, label, BodyFontSize,
+                TextAnchor.MiddleLeft, CsHudTheme.TextHud);
+            CsHudTheme.PlaceTopLeft(text.rectTransform, Px(InfoX, designY), Size(160f, RowHeight));
+        }
+
+        /// <summary>悬停分类行 ⇒ ItemInfo 换成该分类的武器清单（原版主买枪页的行为）。</summary>
+        private void BindCategoryHover(Button button, int index)
+        {
+            if (button == null) return;
+            var trigger = button.GetComponent<EventTrigger>();
+            if (trigger == null) trigger = button.gameObject.AddComponent<EventTrigger>();
+            trigger.triggers.Clear();
+            var entry = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            entry.callback.AddListener(_ => ShowCategoryInfo(index));
+            trigger.triggers.Add(entry);
         }
 
         /// <summary>分类行的文案 = 原版标签的编号 + 本工程的分类名（编号取自 <c>cstrike_english.txt</c> 的 <c>&amp;N</c>）。</summary>
@@ -574,19 +701,18 @@ namespace Cs16.UI
             SetCategoryRowsActive(!_itemPage);
             _hintText.gameObject.SetActive(!_itemPage);
             _divider.gameObject.SetActive(!_itemPage);
-            _moneyText.gameObject.SetActive(!_itemPage);
-            SetInfoVisible(_itemPage);
 
             if (!_itemPage)
             {
-                _titleText.text = "BUY MENU";
+                _titleText.text = "Buy Menu";
                 _titleText.color = CsHudTheme.TextMain;
                 HideRows();
+                ShowCategoryInfo(Mathf.Clamp(_category, 0, Categories.Length - 1));
                 return;
             }
 
             var category = Categories[Mathf.Clamp(_category, 0, Categories.Length - 1)];
-            _titleText.text = category.Label;
+            _titleText.text = category.Page;
             _titleText.color = CsHudTheme.TextMain;
 
             var team = CsHudSnapshot.Team;
@@ -666,7 +792,7 @@ namespace Cs16.UI
         /// </summary>
         private RowData BuildAmmoRow(Category category)
         {
-            var slotName = category.AmmoSlot == CsAmmoBuy.PrimarySlot ? "主武器" : "副武器";
+            var slotName = category.AmmoSlot == CsAmmoBuy.PrimarySlot ? "primary" : "secondary";
             var weaponId = category.AmmoSlot == CsAmmoBuy.PrimarySlot
                 ? CsHudSnapshot.PrimaryWeaponId
                 : CsHudSnapshot.SecondaryWeaponId;
@@ -677,7 +803,7 @@ namespace Cs16.UI
             if (string.IsNullOrEmpty(weaponId))
             {
                 Game.Logger?.Info(Tag, $"买弹药分类「{category.Label}」：{slotName}槽里没有武器，买不了");
-                HudPanel.Notify($"{slotName}槽没有武器，无法补充弹药");
+                HudPanel.Notify($"No weapon in the {slotName} slot; cannot buy ammo.");
                 return null;
             }
 
@@ -693,7 +819,7 @@ namespace Cs16.UI
             {
                 Game.Logger?.Warn(Tag,
                     $"买弹药分类「{category.Label}」：{def.DisplayName} 在原版弹药表里没有价格/每份量，不给买");
-                HudPanel.Notify($"{def.DisplayName} 不能补充弹药");
+                HudPanel.Notify($"{def.DisplayName}: no ammo price available.");
                 return null;
             }
 
@@ -739,11 +865,123 @@ namespace Cs16.UI
             }
         }
 
-        private void SetInfoVisible(bool visible)
+        /// <summary>
+        /// 分类页的 ItemInfo：标题 = 分类名，正文 = 该分类在当前阵营下的武器清单（名称 + 价格），
+        /// 底部一行 = 列表里第一条的简介。原版主买枪页悬停分类时就是这份内容。
+        /// </summary>
+        private void ShowCategoryInfo(int index)
         {
-            if (_infoIcon != null) _infoIcon.gameObject.SetActive(visible);
-            if (_infoName != null) _infoName.gameObject.SetActive(visible);
-            if (_infoPrice != null) _infoPrice.gameObject.SetActive(visible);
+            if (index < 0 || index >= Categories.Length) return;
+            if (_itemPage) return;   // 武器页由 ShowRowInfo 管
+
+            var category = Categories[index];
+            _hoverCategory = index;
+            SetInfoParts(icon: false, list: true, summary: true);
+            if (_infoName != null) _infoName.text = CategoryLabel(category);
+            if (_infoPrice != null) _infoPrice.text = string.Empty;
+            if (_infoIcon != null) _infoIcon.enabled = false;
+
+            var order = CsHudSnapshot.Team == CsTeam.T ? category.OrderTER : category.OrderCT;
+            var shown = 0;
+            RowData first = null;
+
+            for (var i = 0; i < InfoListRows; i++)
+            {
+                var has = order != null && i < order.Length;
+                var id = has ? order[i] : null;
+                var row = has ? RowOf(id) : null;
+
+                if (_infoNames[i] != null)
+                {
+                    _infoNames[i].gameObject.SetActive(has && row != null);
+                    if (row != null) _infoNames[i].text = row.Name;
+                }
+                if (_infoPrices[i] != null)
+                {
+                    _infoPrices[i].gameObject.SetActive(has && row != null);
+                    if (row != null) _infoPrices[i].text = PriceText(row.Price);
+                }
+
+                if (row != null)
+                {
+                    shown++;
+                    if (first == null) first = row;
+                }
+            }
+
+            if (_infoSummary != null)
+            {
+                _infoSummary.text = category.IsAmmo
+                    ? AmmoSummary(category)
+                    : (first != null ? SummaryOf(first) : string.Empty);
+            }
+
+            SetCategoryHighlight(index);
+            Game.Logger?.Info(Tag,
+                $"买枪 ItemInfo：{CategoryLabel(category)} 列出 {shown} 条（阵营 {CsHudSnapshot.Team}）");
+        }
+
+        /// <summary>武器页的 ItemInfo：标题 / 价格 / 原版图标 / 属性行。</summary>
+        private void ShowRowInfo(string itemId)
+        {
+            var item = FindItem(itemId);
+            if (item == null) return;
+
+            SetInfoParts(icon: true, list: false, summary: true);
+            if (_infoName != null) _infoName.text = item.Name;
+            if (_infoPrice != null) _infoPrice.text = PriceText(item.Price);
+            if (_infoSummary != null) _infoSummary.text = SummaryOf(item);
+            LoadIcon(item);
+        }
+
+        /// <summary>ItemInfo 三个区的显隐（图标 / 清单 / 简介），分类页与武器页各取所需。</summary>
+        private void SetInfoParts(bool icon, bool list, bool summary)
+        {
+            if (_infoIcon != null) _infoIcon.gameObject.SetActive(icon);
+            if (_infoName != null) _infoName.gameObject.SetActive(true);
+            if (_infoPrice != null) _infoPrice.gameObject.SetActive(true);
+            if (_infoSummary != null) _infoSummary.gameObject.SetActive(summary);
+            if (_infoNames == null) return;
+            for (var i = 0; i < _infoNames.Length; i++)
+            {
+                if (_infoNames[i] != null) _infoNames[i].gameObject.SetActive(list);
+                if (_infoPrices != null && i < _infoPrices.Length && _infoPrices[i] != null)
+                    _infoPrices[i].gameObject.SetActive(list);
+            }
+        }
+
+        /// <summary>按原版页面的 id 序列取一条（武器表 / 装备兜底表），没有则 null。</summary>
+        private static RowData RowOf(string id)
+        {
+            var def = CsWeapons.Get(id);
+            if (def != null)
+            {
+                return new RowData { Id = def.Id, Name = def.DisplayName, Price = def.Price, Def = def };
+            }
+            var extra = FindExtra(id);
+            return extra == null
+                ? null
+                : new RowData { Id = extra.Id, Name = extra.Name, Price = extra.Price, IconFile = extra.IconFile, IsExtra = true };
+        }
+
+        /// <summary>一条武器的简介：单价 + 伤害 + 弹匣/备弹 + 射速（全部取自 <see cref="CsWeaponDef"/>）。</summary>
+        private static string SummaryOf(RowData item)
+        {
+            var def = item.Def;
+            if (def == null) return item.IsExtra ? "Not implemented in this build." : string.Empty;
+            return $"Damage {def.Damage} · Mag {def.Magazine}/{def.ReserveAmmo} · {def.Rpm} RPM";
+        }
+
+        /// <summary>弹药页的说明：当前槽位的枪 + 一份备弹的价格 / 数量。</summary>
+        private static string AmmoSummary(Category category)
+        {
+            var slotName = category.AmmoSlot == CsAmmoBuy.PrimarySlot ? "Primary" : "Secondary";
+            var id = category.AmmoSlot == CsAmmoBuy.PrimarySlot
+                ? CsHudSnapshot.PrimaryWeaponId
+                : CsHudSnapshot.SecondaryWeaponId;
+            if (string.IsNullOrEmpty(id)) return $"{slotName} slot is empty.";
+            var def = CsWeapons.Get(id);
+            return def == null ? string.Empty : $"{def.DisplayName} · {CsAmmoBuy.Box(id)} rounds per purchase";
         }
 
         private Row CreateRow(int index)
@@ -751,19 +989,21 @@ namespace Cs16.UI
             var pos = new Vector2(0f, -index * RowPitch * Scale);
             var size = Size(RowWidth, RowHeight);
 
-            var bg = UIFactory.CreatePanel($"Item{index}", _itemRoot, CsUiStyle.Field, true);
+            // 原版武器行：常态无底色，悬停橙（同分类行）。
+            var bg = UIFactory.CreatePanel($"Item{index}", _itemRoot, Color.white, true);
             CsHudTheme.PlaceTopLeft(bg.rectTransform, pos, size);
             var button = bg.gameObject.AddComponent<Button>();
             button.targetGraphic = bg;
+            button.transition = Selectable.Transition.ColorTint;
 
             var colors = button.colors;
-            colors.normalColor = CsUiStyle.Field;
+            colors.normalColor = Color.clear;
             colors.highlightedColor = CsUiStyle.AccentDim;
-            colors.pressedColor = CsUiStyle.Accent;
-            colors.selectedColor = CsUiStyle.Field;
-            colors.disabledColor = new Color(0.18f, 0.18f, 0.18f, 1f);
+            colors.pressedColor = CsUiStyle.AccentDim;
+            colors.selectedColor = Color.clear;
+            colors.disabledColor = Color.clear;
             colors.colorMultiplier = 1f;
-            colors.fadeDuration = 0.05f;
+            colors.fadeDuration = 0f;
             button.colors = colors;
 
             var name = CsHudTheme.CreateText("Name", bg.rectTransform, "-", BodyFontSize, TextAnchor.MiddleLeft,
@@ -775,22 +1015,10 @@ namespace Cs16.UI
             var price = CsHudTheme.CreateText("Price", bg.rectTransform, "-", BodyFontSize, TextAnchor.MiddleRight,
                 CsHudTheme.MoneyNormal);
             CsHudTheme.PlaceTopRight(price.rectTransform, new Vector2(-RowInnerPad * Scale, 0f),
-                new Vector2(60f * Scale, size.y));
+                new Vector2(70f * Scale, size.y));
             price.raycastTarget = false;
 
             return new Row { Button = button, Name = name, Price = price, Bg = bg };
-        }
-
-        /// <summary>列表行按钮的文案与排版：原版这些行都是 <c>textAlignment west</c>（左对齐）、
-        /// 字号走 1080p 段的 20（<see cref="CsHudTheme.CreateButton"/> 默认给的是 22）。</summary>
-        private static void SetRowLabel(Button button, string label)
-        {
-            if (button == null) return;
-            var text = button.GetComponentInChildren<Text>();
-            if (text == null) return;
-            text.text = label;
-            text.fontSize = BodyFontSize;
-            text.alignment = TextAnchor.MiddleLeft;
         }
 
         /// <summary>鼠标进入武器行 ⇒ 右侧信息块换成该武器的原版图标与价格（原版的行为，见 ItemInfo 的出处）。</summary>
@@ -850,10 +1078,11 @@ namespace Cs16.UI
 
             if (_warnText != null)
             {
-                if (!inZone) _warnText.text = "必须在买枪区内（Buy Zone）才能购买";
-                else if (!canBuyNow) _warnText.text = "现在不是买枪时间（只能在每回合开局的买枪时间内购买）";
-                else if (CsHudSnapshot.Team != CsTeam.T && CsHudSnapshot.Team != CsTeam.CT)
-                    _warnText.text = "观察者不能购买武器";
+                if (CsHudSnapshot.Team != CsTeam.T && CsHudSnapshot.Team != CsTeam.CT)
+                    _warnText.text = "Spectators cannot buy weapons.";
+                else if (!CsHudSnapshot.IsAlive) _warnText.text = "You are dead and cannot buy.";
+                else if (!inZone) _warnText.text = "You must be in a buy zone to purchase.";
+                else if (!canBuyNow) _warnText.text = "Buying is only allowed during the buy time at round start.";
                 else _warnText.text = string.Empty;
             }
 
@@ -864,17 +1093,20 @@ namespace Cs16.UI
                 if (row?.Button == null) continue;
 
                 var item = _items[i];
-                var affordable = money >= item.Price && (!item.IsAmmo || item.Reserve < item.ReserveMax);
-                if (row.Button.interactable != affordable) row.Button.interactable = affordable;
+                var canAfford = money >= item.Price;
+                var sellable = canAfford && (!item.IsAmmo || item.Reserve < item.ReserveMax);
+                if (row.Button.interactable != sellable) row.Button.interactable = sellable;
+                // 买不起 = 价格红字；备弹已满这种"不给卖"只是变灰（钱是够的）
                 if (row.Price != null)
-                    row.Price.color = affordable ? CsHudTheme.MoneyNormal : CsHudTheme.Disabled;
+                    row.Price.color = canAfford ? CsHudTheme.MoneyNormal : CsHudTheme.Danger;
                 if (row.Name != null)
-                    row.Name.color = affordable ? CsHudTheme.TextMain : CsHudTheme.Disabled;
+                    row.Name.color = sellable ? CsHudTheme.TextMain : CsHudTheme.Disabled;
             }
 
             RefreshCategoryHighlight();
         }
 
+        /// <summary>当前分类行：常态底色 = 选中态（<c>SelectionBG</c>）或完全透明，悬停仍是橙。</summary>
         private void RefreshCategoryHighlight()
         {
             if (_categoryButtons == null) return;
@@ -883,13 +1115,28 @@ namespace Cs16.UI
                 var button = _categoryButtons[i];
                 if (button == null) continue;
 
-                var selected = i == _category && _itemPage;
+                var selected = i == (_itemPage ? _category : _hoverCategory);
                 var colors = button.colors;
-                colors.normalColor = selected ? CsUiStyle.AccentDim : CsUiStyle.Field;
+                colors.normalColor = selected ? CsUiStyle.AccentDim : Color.clear;
                 colors.selectedColor = colors.normalColor;
-                colors.highlightedColor = CsUiStyle.Accent;
+                colors.highlightedColor = CsUiStyle.AccentDim;
                 colors.pressedColor = CsUiStyle.AccentDim;
                 colors.colorMultiplier = 1f;
+                button.colors = colors;
+            }
+        }
+
+        /// <summary>分类页的当前行 = 悬停那一条（分类页没有"已打开的子页"，选中态跟着鼠标走）。</summary>
+        private void SetCategoryHighlight(int index)
+        {
+            if (_categoryButtons == null) return;
+            for (var i = 0; i < _categoryButtons.Length; i++)
+            {
+                var button = _categoryButtons[i];
+                if (button == null) continue;
+                var colors = button.colors;
+                colors.normalColor = i == index ? CsUiStyle.AccentDim : Color.clear;
+                colors.selectedColor = colors.normalColor;
                 button.colors = colors;
             }
         }
@@ -914,15 +1161,12 @@ namespace Cs16.UI
             return null;
         }
 
-        /// <summary>把某一行的原版图标 / 名称 / 价格放进右侧信息块（找不到该行则只清空文本）。</summary>
-        private void ShowRowInfo(string itemId)
+        /// <summary>武器页：取当前条目的原版图标并贴到 ItemInfo（取不到就只留名称 / 价格 / 属性行）。</summary>
+        private void LoadIcon(RowData item)
         {
-            var item = FindItem(itemId);
-            if (_infoName != null) _infoName.text = item != null ? item.Name : string.Empty;
-            if (_infoPrice != null) _infoPrice.text = item != null ? PriceText(item.Price) : string.Empty;
-            if (_infoIcon == null) return;
+            if (_infoIcon == null || item == null) return;
 
-            var key = item == null ? null : IconKey(item);
+            var key = IconKey(item);
             if (key == null)
             {
                 _infoIcon.enabled = false;
@@ -959,15 +1203,8 @@ namespace Cs16.UI
             if (_infoIcon == null || sprite == null) return;
             _infoIcon.sprite = sprite;
             _infoIcon.enabled = true;
-
-            var width = sprite.rect.width * Scale;
-            var height = sprite.rect.height * Scale;
-            _infoIcon.rectTransform.sizeDelta = new Vector2(width, height);
-
-            if (_infoName != null)
-                _infoName.rectTransform.anchoredPosition = new Vector2(0f, -height - 8f);
-            if (_infoPrice != null)
-                _infoPrice.rectTransform.anchoredPosition = new Vector2(0f, -height - 38f);
+            _infoIcon.rectTransform.sizeDelta = new Vector2(
+                sprite.rect.width * Scale, sprite.rect.height * Scale);
         }
 
         private static string IconKey(RowData item)
@@ -982,7 +1219,7 @@ namespace Cs16.UI
             if (item == null)
             {
                 Game.Logger?.Error(Tag, $"买枪菜单点了一个不在当前页的 id：{weaponId}（界面与数据不同步）");
-                HudPanel.Notify($"未知条目：{weaponId}");
+                HudPanel.Notify($"Unknown item: {weaponId}");
                 return;
             }
 
@@ -997,7 +1234,7 @@ namespace Cs16.UI
             if (item.IsExtra)
             {
                 Game.Logger?.Info(Tag, $"拒绝购买 {item.Name}：本工程没有这件装备（原版装备页列了它）");
-                HudPanel.Notify($"本工程未实现「{item.Name}」（原版装备页有此条目）");
+                HudPanel.Notify($"{item.Name} is not implemented (listed on the original equipment page).");
                 return;
             }
 
@@ -1014,34 +1251,41 @@ namespace Cs16.UI
             {
                 Game.Logger?.Info(Tag,
                     $"拒绝购买 {def.DisplayName}：阵营限制 {def.TeamLimit}，本地阵营 {CsHudSnapshot.Team}");
-                HudPanel.Notify($"不能购买：{def.DisplayName} 只属于{TeamLimitText(def.TeamLimit)}");
+                HudPanel.Notify($"Cannot buy {def.DisplayName}: {TeamLimitText(def.TeamLimit)} only.");
                 return;
             }
 
             // 先在本地把"必然失败"的情况挡住：比赛模块对这些失败只打 Warn 日志、不推消息栏事件，
             // 不挡的话玩家点下去会毫无反馈（点了没反应是最糟的交互）。
+            if (!CsHudSnapshot.IsAlive)
+            {
+                Game.Logger?.Info(Tag, $"拒绝购买 {def.DisplayName}：本地玩家已死亡（观战中）");
+                HudPanel.Notify("You are dead and cannot buy.");
+                return;
+            }
             if (!CsHudSnapshot.InBuyZone)
             {
                 Game.Logger?.Info(Tag, $"拒绝购买 {def.DisplayName}：不在买枪区");
-                HudPanel.Notify("不能购买：必须在买枪区内");
+                HudPanel.Notify("You must be in a buy zone.");
                 return;
             }
             if (!CsHudSnapshot.CanBuyNow)
             {
                 Game.Logger?.Info(Tag, $"拒绝购买 {def.DisplayName}：不在买枪时间");
-                HudPanel.Notify("不能购买：不在买枪时间内");
+                HudPanel.Notify("Not in buy time.");
                 return;
             }
             if (CsHudSnapshot.Money < def.Price)
             {
                 Game.Logger?.Info(Tag, $"拒绝购买 {def.DisplayName}：金钱不足（${CsHudSnapshot.Money} < ${def.Price}）");
-                HudPanel.Notify($"金钱不足：{def.DisplayName} 需要 ${def.Price}");
+                HudPanel.Notify($"Not enough money: {def.DisplayName} costs ${def.Price}");
                 return;
             }
 
             Game.Logger?.Info(Tag, $"买枪请求：{def.DisplayName}（{def.Id}）${def.Price}，由比赛模块判定是否成交");
             Game.Event.Emit(Events.BuyWeapon, def.Id);
-            HudPanel.Notify($"购买 {def.DisplayName}（${def.Price}）");
+            HudPanel.Notify($"Bought {def.DisplayName} (${def.Price})");
+            Close();
         }
 
         /// <summary>
@@ -1051,39 +1295,46 @@ namespace Cs16.UI
         /// </summary>
         private void TryBuyAmmo(RowData item)
         {
-            var slotName = item.AmmoSlot == CsAmmoBuy.PrimarySlot ? "主武器" : "副武器";
+            var slotName = item.AmmoSlot == CsAmmoBuy.PrimarySlot ? "primary" : "secondary";
             var reserve = LiveReserve(item.AmmoSlot);
 
             if (reserve >= item.ReserveMax)
             {
                 Game.Logger?.Info(Tag, $"拒绝补充 {slotName} 弹药：{item.Name} 备弹已满（{reserve}/{item.ReserveMax}）");
-                HudPanel.Notify($"{slotName}备弹已满（{reserve}/{item.ReserveMax}），没有可买的空间");
+                HudPanel.Notify($"{slotName} ammo is full ({reserve}/{item.ReserveMax}).");
+                return;
+            }
+            if (!CsHudSnapshot.IsAlive)
+            {
+                Game.Logger?.Info(Tag, $"拒绝补充 {slotName} 弹药：本地玩家已死亡（观战中）");
+                HudPanel.Notify("You are dead and cannot buy.");
                 return;
             }
             if (!CsHudSnapshot.InBuyZone)
             {
                 Game.Logger?.Info(Tag, $"拒绝补充 {slotName} 弹药：不在买枪区");
-                HudPanel.Notify("不能补充弹药：必须在买枪区内");
+                HudPanel.Notify("You must be in a buy zone.");
                 return;
             }
             if (!CsHudSnapshot.CanBuyNow)
             {
                 Game.Logger?.Info(Tag, $"拒绝补充 {slotName} 弹药：不在买枪时间");
-                HudPanel.Notify("不能补充弹药：不在买枪时间内");
+                HudPanel.Notify("Not in buy time.");
                 return;
             }
             if (CsHudSnapshot.Money < item.Price)
             {
                 Game.Logger?.Info(Tag,
                     $"拒绝补充 {slotName} 弹药：金钱不足（${CsHudSnapshot.Money} < ${item.Price}）");
-                HudPanel.Notify($"金钱不足：{item.Name} 需要 ${item.Price}");
+                HudPanel.Notify($"Not enough money: {item.Name} costs ${item.Price}");
                 return;
             }
 
             Game.Logger?.Info(Tag,
                 $"买弹药请求：{slotName}（{item.Id}）一份 ${item.Price}，由比赛模块判定是否成交");
             Game.Event.Emit(Events.BuyAmmo, item.AmmoSlot);
-            HudPanel.Notify($"补充 {item.Name}（${item.Price}）");
+            HudPanel.Notify($"Bought {item.Name} (${item.Price})");
+            Close();
         }
 
         /// <summary>武器表的阵营限制是否包含这个阵营（<see cref="CsTeamLimit.Any"/> 一律允许）。</summary>
@@ -1097,14 +1348,14 @@ namespace Cs16.UI
             }
         }
 
-        /// <summary>阵营限制的中文说法（提示语用）。</summary>
+        /// <summary>阵营限制的说法（提示语用）。</summary>
         private static string TeamLimitText(CsTeamLimit limit)
         {
             switch (limit)
             {
-                case CsTeamLimit.TerroristOnly: return "恐怖分子阵营";
-                case CsTeamLimit.CounterTerroristOnly: return "反恐精英阵营";
-                default: return "任意阵营";
+                case CsTeamLimit.TerroristOnly: return "Terrorist team";
+                case CsTeamLimit.CounterTerroristOnly: return "Counter-Terrorist team";
+                default: return "Any team";
             }
         }
     }

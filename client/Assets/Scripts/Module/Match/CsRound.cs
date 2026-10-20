@@ -24,6 +24,12 @@ namespace Cs16.Module.Match
         private bool _halfSwapped;
 
         /// <summary>
+        /// 客机模式：阶段与比分由主机快照驱动（<see cref="ApplyServerState"/>）。
+        /// 为 true 时本机阶段机只走显示计时，不做任何阶段跃迁。
+        /// </summary>
+        private bool _clientMode;
+
+        /// <summary>
         /// 买枪期剩余秒数。它与 <see cref="_phaseTimer"/> 是**两个独立的计时器**（原版行为）：
         /// 回合开始同时启动，冻结期（<c>mp_freezetime</c> 4 s）结束不结束买枪期 ——
         /// 买枪期是 <c>mp_buytime</c> <b>15 s</b>（出处 <c>server.cfg:42</c>）。判定见 <see cref="BuyTimeLeft"/>。
@@ -50,6 +56,13 @@ namespace Cs16.Module.Match
         public int RoundNumber => _roundNumber;
         public int ScoreT => _scoreT;
         public int ScoreCT => _scoreCT;
+
+        /// <summary>客机模式开关（由 <see cref="CsMatch.SetClientMode"/> 写入）。</summary>
+        internal bool ClientMode
+        {
+            get => _clientMode;
+            set => _clientMode = value;
+        }
 
         /// <summary>半场是否已经交换过（由 CsMatch 在换边时置位，防止重复交换）。</summary>
         public bool HalfSwapped
@@ -81,6 +94,53 @@ namespace Cs16.Module.Match
             _halfSwapped = false;
             _buyTimer = 0f;
             _buyExpiredLogged = false;
+        }
+
+        /// <summary>
+        /// 客机：把主机快照里的回合状态写进本地（阶段 / 回合号 / 比分）。
+        /// <para>只改状态与显示计时，不触发 <see cref="CsMatch.OnRoundEnded"/> 之类的本地结算 ——
+        /// 客机的比分只能来自主机，本地算出来的分数会与主机打架。</para>
+        /// </summary>
+        internal void ApplyServerState(int roundNumber, int scoreT, int scoreCT, CsRoundPhase phase)
+        {
+            if (roundNumber < 0) roundNumber = 0;
+            if (scoreT < 0) scoreT = 0;
+            if (scoreCT < 0) scoreCT = 0;
+
+            var roundChanged = _roundNumber != roundNumber;
+            var phaseChanged = _phase != phase;
+            var scoreChanged = _scoreT != scoreT || _scoreCT != scoreCT;
+
+            _roundNumber = roundNumber;
+            _scoreT = scoreT;
+            _scoreCT = scoreCT;
+
+            if (phaseChanged || roundChanged)
+            {
+                _phase = phase;
+                switch (phase)
+                {
+                    case CsRoundPhase.Freeze:
+                        _phaseTimer = FreezeSeconds();
+                        break;
+                    case CsRoundPhase.Live:
+                        _phaseTimer = LiveSeconds();
+                        break;
+                    case CsRoundPhase.RoundEnd:
+                        _phaseTimer = CsConst.RoundEndTime;
+                        break;
+                    default:
+                        _phaseTimer = 0f;
+                        break;
+                }
+            }
+
+            if (roundChanged || phaseChanged || scoreChanged)
+            {
+                Game.Logger.Info(Tag,
+                    $"主机回合状态：第 {_roundNumber} 回合 {_phase} 比分 CT {_scoreCT} : {_scoreT} T" +
+                    $"（客机不本地结算，阶段与比分只跟快照）");
+            }
         }
 
         /// <summary>开一场比赛：比分归零，进入第 1 回合的 Freeze。</summary>
@@ -128,6 +188,14 @@ namespace Cs16.Module.Match
         /// </summary>
         private void BeginBuyWindow()
         {
+            // 客机：买枪与金钱都归主机，本地不开买枪窗口（也不打"买枪期开始/结束"这类假日志）。
+            if (_clientMode)
+            {
+                _buyTimer = 0f;
+                _buyExpiredLogged = true;
+                return;
+            }
+
             _buyTimer = CsConst.BuyTime;
             _buyExpiredLogged = false;
             Game.Logger.Info(Tag,
@@ -179,6 +247,18 @@ namespace Cs16.Module.Match
             // 买枪期与阶段机**并行**推进：它跨 Freeze→Live，不能挂在任一阶段的 case 里
             TickBuyWindow(dt);
 
+            // 客机：阶段由主机快照写入（ApplyServerState），本地只把显示计时往下走，
+            // 不做 Freeze→Live / RoundEnd→下一回合 这类跃迁（那些是主机的决定）。
+            if (_clientMode)
+            {
+                if (_phase == CsRoundPhase.Freeze || _phase == CsRoundPhase.Live)
+                {
+                    _phaseTimer -= dt;
+                    if (_phaseTimer < 0f) _phaseTimer = 0f;
+                }
+                return;
+            }
+
             switch (_phase)
             {
                 case CsRoundPhase.Freeze:
@@ -227,6 +307,7 @@ namespace Cs16.Module.Match
         /// <summary>全歼 / 超时判定。炸弹已下包时只认「CT 全灭」与「爆炸 / 拆包」。</summary>
         public void EvaluateWin(float now)
         {
+            if (_clientMode) return;      // 客机：回合是否结束由主机的 phase 决定
             if (_phase != CsRoundPhase.Live) return;
 
             var bombPlanted = _m.Bomb.Planted;
@@ -277,6 +358,14 @@ namespace Cs16.Module.Match
         // ==================================================================
         public void EndRound(CsTeam winner, CsRoundEndReason reason)
         {
+            // 客机：比分只能来自主机。本地任何一条结算路径（炸弹 / 强制结束）都不许改分数。
+            if (_clientMode)
+            {
+                _m.RateWarn("round.end.clientmode",
+                    $"客机模式忽略本地回合结算（{winner}/{reason}）：比分只跟主机快照");
+                return;
+            }
+
             if (_phase != CsRoundPhase.Live && _phase != CsRoundPhase.Freeze)
             {
                 _m.RateWarn("round.end.invalid", $"EndRound({winner}/{reason}) 在 {_phase} 阶段被调用，已忽略");

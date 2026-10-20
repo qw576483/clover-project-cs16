@@ -84,8 +84,10 @@ namespace Cs16.UI
                 return;
             }
 
+            // 起点在右上角比分 / 计时 / Map 行之下（见 CsHudTheme 的 Score* / Map* 常量），
+            // 否则第一条击杀信息会压在比分行上。
             var root = UIFactory.CreateNode("KillFeed", parent);
-            CsHudTheme.PlaceTopRight(root, new Vector2(-24f, -14f), new Vector2(RowWidth, RowHeight));
+            CsHudTheme.PlaceTopRight(root, new Vector2(-24f, -130f), new Vector2(RowWidth, RowHeight));
             Root = root;
         }
 

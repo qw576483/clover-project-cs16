@@ -5,12 +5,18 @@ using UnityEngine;
 namespace Cs16.Module.Combat
 {
     /// <summary>
-    /// 原版 <c>func_breakable</c> 箱体（de_dust2 的 10 个木箱）的**运行时可破坏**行为。
+    /// 原版 <c>func_breakable</c> 箱体的**运行时可破坏**行为（只用于"会被伤害打碎"的箱体）。
     ///
     /// <para><b>原版语义</b>：<c>CBreakable::TakeDamage</c> 扣 <c>pev->health</c>，≤ 0 就走
-    /// <c>CBreakable::Die()</c> —— 关掉刷体（<c>UTIL_Remove</c>）+ 发 <c>TE_BREAKMODEL</c> 碎块。
-    /// de_dust2 这 10 个箱体的 <c>health</c> 键全是 1 ⇒ **一发即碎**（`ThirdParty/Dust2/breakables.tsv`，
-    /// 表由 `tools/probes/dust2_breakables.py` 逐条解析 BSP 得到）。</para>
+    /// <c>CBreakable::Die()</c> —— 关掉刷体（<c>UTIL_Remove</c>）+ 发 <c>TE_BREAKMODEL</c> 碎块。</para>
+    ///
+    /// <para><b>de_dust2 的 10 个箱子不走这条路径</b>：它们的 <c>spawnflags</c> 全是 1
+    /// （= <c>SF_BREAK_TRIGGER_ONLY</c>，HLSDK <c>dlls/util.h:441</c>）⇒ <c>CBreakable::Spawn</c>
+    /// 把 <c>pev->takedamage</c> 置为 <c>DAMAGE_NO</c> 并 <c>SetTouch(NULL)</c>
+    /// （<c>dlls/func_break.cpp:148-151</c> / <c>:168-169</c>）：子弹 / 手雷 / 撞击都不会让它碎，
+    /// 只有 trigger 触发才会碎。⇒ 地图生成器不生成它们（<c>Dust2Breakables</c> 的
+    /// <c>BreakableByDamage</c> 判否），箱面留在合并静态网格里、保留原版贴图与 MeshCollider。
+    /// <c>health 1</c> 只在 <c>takedamage = DAMAGE_YES</c> 时才有意义，不能单凭它推出"一发即碎"。</para>
     ///
     /// <para><b>碎块用什么</b>：原版 <c>gibmodel</c> 是 <c>models/mil_crategibs.mdl</c>
     /// （载体在 <c>原版资源/cs16src/valve/models/valve__models__mil_crategibs.mdl</c>：一台军用木箱里的

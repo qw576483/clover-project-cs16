@@ -1,5 +1,24 @@
+using Cs16.Core;
+
 namespace Cs16.Module.Net
 {
+    /// <summary>
+    /// 主机快照里的**回合状态**（<c>round / scoreT / scoreCT / phase</c>，逐字对应
+    /// <see cref="CsLanGateway"/> 的 <c>BuildSnapshot</c>）。客机把它写进本机比赛状态，
+    /// 让 HUD 的回合 / 比分跟主机，而不是本机自己算。
+    /// </summary>
+    public struct CsLanServerState
+    {
+        /// <summary>主机权威的回合号（从 1 起，0 = 还没开局）。</summary>
+        public int Round;
+        /// <summary>主机权威的 T 方比分。</summary>
+        public int ScoreT;
+        /// <summary>主机权威的 CT 方比分。</summary>
+        public int ScoreCT;
+        /// <summary>主机权威的回合阶段（线字段 <c>phase</c> = <see cref="CsRoundPhase"/> 的名字）。</summary>
+        public CsRoundPhase Phase;
+    }
+
     /// <summary>
     /// **对端角色的只读快照**（本项目新增，差异 #88「能开局」第②段）。
     ///
@@ -17,7 +36,7 @@ namespace Cs16.Module.Net
     ///
     /// <para><b>字段出处（逐字）</b>：<c>client/Assets/Scripts/Module/Net/CsLanGateway.cs</c>
     /// 的 <c>BuildSnapshot</c> 里 <c>actors[i]</c> 拼的就是这些键 ——
-    /// <c>id / name / team / x / y / z / yaw / hp / alive / w</c>；
+    /// <c>id / name / team / x / y / z / yaw / hp / alive / bot / w</c>；
     /// 其中 <c>x/y/z</c> 是三位小数、<c>yaw</c> 一位小数（<c>team</c> / <c>w</c> 是字符串）。
     /// 两端必须同值：改这里等于改线格式。</para>
     /// </summary>
@@ -43,6 +62,9 @@ namespace Cs16.Module.Net
 
         /// <summary>是否存活（主机权威的 <c>CsActor.IsAlive</c>）；false = 这具是尸体。</summary>
         public bool Alive;
+
+        /// <summary>主机侧是不是机器人（<c>CsActor.IsBot</c>，线字段 <c>bot</c>）。机器人不可能是"我自己"。</summary>
+        public bool Bot;
 
         /// <summary>当前手持武器 id（主机权威的 <c>CsActor.ActiveWeapon</c>）。</summary>
         public string Weapon;

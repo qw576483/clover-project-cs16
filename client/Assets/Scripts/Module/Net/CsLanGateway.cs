@@ -25,7 +25,8 @@ namespace Cs16.Module.Net
     /// <item>客户端 → 主机（每 0.05 s）：<c>CS16-LAN-INPUT/1|{{"id":&lt;actorId&gt;,"Move":{{"x":…,"y":…}},"Jump":…,"Crouch":…,"Walk":…,"Fire":…,"Zoom":…,"Attack2":…,"Yaw":…,"Pitch":…}}</c>
     /// —— 键名**逐字** = <c>CsInputState</c> 的成员名（<c>Move</c> 是 <c>{{x,y}}</c>），
     /// 多一个 <c>id</c> 指明这是谁的输入。</item>
-    /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{"proto":1,"map":…,"host":…,"round":…,"phase":…,"players":…,"maxPlayers":…}}</c></item>
+    /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{"proto":1,"name":…,"host":…,"maxPlayers":…,"snapHz":…,"actorId":…,"playerName":…,"team":…}}</c>
+    /// —— <c>actorId</c> 是主机为这个客户端建出的身体，客机收到它就不必再靠同名从快照里认领自己。</item>
     /// <item>主机 → 客户端（每 <see cref="SnapInterval"/> 秒）：<c>CS16-LAN-SNAP/1|{{…"actors":[…]}}</c></item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{}}</c></item>
     /// </list>
@@ -42,8 +43,9 @@ namespace Cs16.Module.Net
     /// <item>线程都是 <c>IsBackground = true</c> ⇒ 不拦编辑器关闭。</item>
     /// </list></para>
     ///
-    /// <para><b>本类到哪一步为止</b>：能连上 / 能握手 / 能拿到开局信息 / 能持续收到世界快照（主机权威）/
-    /// 能收到客户端的 <c>CS16-LAN-INPUT/1</c> 并**应用到主机模拟**（远端 actor 由对端的输入驱动）。
+    /// <para><b>本类到哪一步为止</b>：能连上 / 能握手 / 能在主机模拟里为加入者建出身体（WELCOME 回 <c>actorId</c>）/
+    /// 能持续收到世界快照（主机权威）/ 能收到客户端的 <c>CS16-LAN-INPUT/1</c> 并**应用到主机模拟**
+    /// （远端 actor 由对端的输入驱动；断开时移除该身体）。
     /// <c>Module/View/CsLanRemoteView</c> 把 <c>actors[]</c> 画成场上的远端角色。</para>
     ///
     /// <para><b>远端输入的线程/时机</b>：解析在**客户端会话线程**上做，只把结果写进待转交表；
@@ -85,6 +87,16 @@ namespace Cs16.Module.Net
             public Thread Thread;
             public string Endpoint = "-";
             public string Name = "-";
+            /// <summary>JOIN 里带来的原始名字（重名时建身体时会被加后缀；重建时仍按这个原名请求）。</summary>
+            public string RequestedName = "-";
+            /// <summary>主机侧身体的实际名字（可能带 <c>#2</c> 后缀）。</summary>
+            public string AssignedName = "-";
+            /// <summary>这个 peer 在主机模拟里的 actorId；0 = 还没有身体。</summary>
+            public volatile int ActorId;
+            /// <summary>JOIN 已入待建队列（主线程建身体）—— 挡住同一连接重复 JOIN。</summary>
+            public bool JoinQueued;
+            /// <summary>最近一次收到字节的时刻（<see cref="Environment.TickCount"/>），用于对端静默超时。</summary>
+            public int LastRecvAt;
             public volatile bool Welcomed;
             public volatile bool Closed;
             public readonly Queue<string> Out = new Queue<string>();
@@ -93,6 +105,35 @@ namespace Cs16.Module.Net
             public long Received;
             public long BadLines;
         }
+
+        /// <summary>一条待主线程处理的 JOIN（身体只能在主线程建：模拟只有一个写入者）。</summary>
+        private sealed class PendingJoin
+        {
+            public Peer Peer;
+            public string Name;
+        }
+
+        /// <summary>
+        /// 待主线程落地的远端身体创建 / 移除。
+        /// <para>JOIN 与断线发生在客户端会话线程上，而 <see cref="ICsMatch"/> 只允许主线程写 ⇒
+        /// 两边都只入队，由 <see cref="Pump"/> 在每帧开头统一处理。</para>
+        /// </summary>
+        private static readonly List<PendingJoin> PendingJoins = new List<PendingJoin>();
+        private static readonly object JoinLock = new object();
+        private static readonly List<int> PendingRemovals = new List<int>();
+        private static readonly object RemoveLock = new object();
+
+        /// <summary>主线程逐帧复查 peer → 身体的临时表（复用，不在每帧路径上分配）。</summary>
+        private static readonly List<Peer> _peerScratch = new List<Peer>(MaxClients);
+
+        /// <summary>最近一次 <see cref="Pump"/> 拿到的模拟（供 <see cref="Stop"/> 在主线程上收尾远端身体）。</summary>
+        private static ICsMatch _match;
+
+        /// <summary>
+        /// 已握手但超过这么久没收到任何字节 ⇒ 视为静默断开（TCP 半开不会给出 read=0）。
+        /// 客户端在认出自己之前不发 INPUT，所以这个值必须明显大于"加入 → 收到第一帧快照"的时间。
+        /// </summary>
+        private const int PeerIdleTimeoutMs = 30000;
 
         private static TcpListener _listener;
         private static Thread _acceptThread;
@@ -114,6 +155,12 @@ namespace Cs16.Module.Net
         private static long _rejected;
         private static long _inputBadFields;
         private static long _appliedInputs;
+        private static long _rejectedOwnBodyInputs;
+        private static long _rejectedForeignBodyInputs;
+        private static long _rejectedStaleBodyInputs;
+        private static long _inputsBeforeBody;
+        private static long _remotePlayersAdded;
+        private static long _remotePlayersRemoved;
 
         /// <summary>一条待转交的远端输入（客户端会话线程写、主线程取走）。</summary>
         private sealed class PendingInput
@@ -191,6 +238,47 @@ namespace Cs16.Module.Net
         /// <summary>已经转交给模拟的远端输入次数（&gt;0 且 actor 的坐标在动 = 这条链真的通了）。</summary>
         public static long AppliedInputs { get { return Interlocked.Read(ref _appliedInputs); } }
 
+        /// <summary>
+        /// 被拒绝的远端输入条数：目标是**主机自己的玩家**（<c>LocalPlayer</c>）。
+        /// <para>主机自己的身体只由本机输入驱动 —— 两个驾驶员会让它来回抢。客户端按玩家名认身体
+        /// （WELCOME 没有"你的 actor id"字段），两台机器用同名（默认都叫 Player）时会误认到主机玩家。</para>
+        /// </summary>
+        public static long RejectedOwnBodyInputs { get { return Interlocked.Read(ref _rejectedOwnBodyInputs); } }
+
+        /// <summary>
+        /// 被拒绝的远端输入条数：发送者尝试驱动**不属于自己的** actor（一台 peer 只能驱动自己那具身体）。
+        /// </summary>
+        public static long RejectedForeignBodyInputs { get { return Interlocked.Read(ref _rejectedForeignBodyInputs); } }
+
+        /// <summary>身体还没建好就收到 INPUT 的条数（客机过早开始发输入）。</summary>
+        public static long InputsBeforeBody { get { return Interlocked.Read(ref _inputsBeforeBody); } }
+
+        /// <summary>
+        /// 被丢弃的"旧局残留 actorId"输入条数：换局后客机还没拿到新 actorId 时，
+        /// 旧 id 可能落到机器人身上 —— 这些输入绝不能驱动机器人。
+        /// </summary>
+        public static long RejectedStaleBodyInputs { get { return Interlocked.Read(ref _rejectedStaleBodyInputs); } }
+
+        /// <summary>累计建出的远端玩家身体数。</summary>
+        public static long RemotePlayersAdded { get { return Interlocked.Read(ref _remotePlayersAdded); } }
+
+        /// <summary>累计移除的远端玩家身体数。</summary>
+        public static long RemotePlayersRemoved { get { return Interlocked.Read(ref _remotePlayersRemoved); } }
+
+        /// <summary>当前已建出身体、在快照里的远端玩家数。</summary>
+        public static int RemotePlayerCount
+        {
+            get
+            {
+                var n = 0;
+                lock (PeersLock)
+                {
+                    for (var i = 0; i < Peers.Count; i++) if (Peers[i].ActorId > 0) n++;
+                }
+                return n;
+            }
+        }
+
         /// <summary>已握手完成的客户端数。</summary>
         public static int WelcomedCount
         {
@@ -218,6 +306,10 @@ namespace Cs16.Module.Net
             return "对局网关 port=" + _port + " 连接=" + Connections + " 已握手=" + WelcomedCount +
                    "/" + ConnectionCount + " 收到 JOIN=" + Joins + " 收到 INPUT=" + Inputs +
                    " 已转交模拟=" + AppliedInputs + " INPUT字段非法=" + InputBadFields +
+                   " 远端玩家=" + RemotePlayerCount + "（累计建/删=" + RemotePlayersAdded + "/" + RemotePlayersRemoved + "）" +
+                   " 拒绝别人身体=" + RejectedForeignBodyInputs + " 旧局残留=" + RejectedStaleBodyInputs +
+                   " 早于身体=" + InputsBeforeBody +
+                   " 拒绝驱动主机自己=" + RejectedOwnBodyInputs +
                    " 推出快照=" + Snapshots + " 非法行=" + Malformed + " 拒绝=" + Rejected;
         }
 
@@ -290,7 +382,15 @@ namespace Cs16.Module.Net
             Interlocked.Exchange(ref _rejected, 0);
             Interlocked.Exchange(ref _inputBadFields, 0);
             Interlocked.Exchange(ref _appliedInputs, 0);
+            Interlocked.Exchange(ref _rejectedOwnBodyInputs, 0);
+            Interlocked.Exchange(ref _rejectedForeignBodyInputs, 0);
+            Interlocked.Exchange(ref _rejectedStaleBodyInputs, 0);
+            Interlocked.Exchange(ref _inputsBeforeBody, 0);
+            Interlocked.Exchange(ref _remotePlayersAdded, 0);
+            Interlocked.Exchange(ref _remotePlayersRemoved, 0);
             lock (InputLock) PendingInputs.Clear();
+            lock (JoinLock) PendingJoins.Clear();
+            lock (RemoveLock) PendingRemovals.Clear();
 
             _running = true;
             _acceptThread = new Thread(AcceptLoop);
@@ -303,6 +403,57 @@ namespace Cs16.Module.Net
                 "，此后每 " + SnapInterval.ToString("F1", System.Globalization.CultureInfo.InvariantCulture) +
                 "s 一条 " + SnapMagic + "）");
             return true;
+        }
+
+        /// <summary>首选端口被别的进程占着时，最多向后顺延几个端口再放弃。</summary>
+        public const int PortFallbackTries = 8;
+
+        /// <summary>
+        /// 开网关并返回**真正在监听**的端口：<paramref name="preferredPort"/> 起、逐个 +1 试，
+        /// 跳过 <paramref name="reservedUdpPort"/>（同一台主机上裸 UDP 口不与应用口重合）。
+        ///
+        /// <para>为什么需要顺延：本机 8002 常被别的进程（另一个工程的服务端 / 上一次没退干净的实例）
+        /// 占着，而 <see cref="Start"/> 会明确拒绝与别人共存 ⇒ 主机直接起不来。广播出去的必须是
+        /// 实际监听的那个端口，所以由本方法返回、由 <see cref="CsLanHost"/> 拿它去广播。</para>
+        /// </summary>
+        public static bool StartOnFreePort(out int actualPort, int preferredPort, int reservedUdpPort,
+            string hostName, int maxPlayers, out string error)
+        {
+            error = null;
+            actualPort = 0;
+            if (_running)
+            {
+                actualPort = _port;
+                return true;
+            }
+
+            var first = (preferredPort > 0 && preferredPort <= 65535) ? preferredPort : CsLanHost.DefaultGatewayPort;
+            for (var i = 0; i <= PortFallbackTries; i++)
+            {
+                var candidate = first + i;
+                if (candidate > 65535) break;
+                if (reservedUdpPort > 0 && candidate == reservedUdpPort) continue;
+
+                string err;
+                if (!Start(out err, candidate, hostName, maxPlayers))
+                {
+                    error = err;
+                    if (i == 0) Game.Logger?.Warn(Tag, "网关口 " + candidate + " 起不来 ⇒ 试相邻端口：" + err);
+                    continue;
+                }
+
+                actualPort = candidate;
+                if (candidate != first)
+                {
+                    Game.Logger?.Warn(Tag,
+                        "网关口 " + first + " 被别的进程占着 ⇒ 已改用 " + candidate +
+                        "（广播出去的是这个口，加入方会自动用它）");
+                }
+                return true;
+            }
+
+            if (error == null) error = "网关口从 " + first + " 起到 " + (first + PortFallbackTries) + " 全部不可用";
+            return false;
         }
 
         /// <summary>关网关（幂等）。后台线程在 ≤ 一个轮询周期内退出，不 Join（可能从主线程调用）。</summary>
@@ -332,6 +483,12 @@ namespace Cs16.Module.Net
             }
             for (var i = 0; i < peers.Count; i++) ClosePeer(peers[i]);
 
+            // Stop() 之后 Pump 不再跑 ⇒ 待移除的远端身体必须在这里落地（本方法由主线程调）。
+            DrainPendingRemovals(_match);
+            lock (JoinLock) PendingJoins.Clear();
+            lock (RemoveLock) PendingRemovals.Clear();
+            _match = null;
+
             if (wasRunning)
             {
                 Game.Logger?.Info(Tag, "对局网关已停止：" + Describe());
@@ -347,6 +504,9 @@ namespace Cs16.Module.Net
         public static void Pump(ICsMatch match, float dt)
         {
             if (!_running) return;
+
+            // 先落地远端玩家的建 / 删（网络线程只入队，模拟只有一个写入者 = 主线程）。
+            ProcessPendingPlayers(match);
 
             _accum += dt;
             if (_accum < SnapInterval) return;
@@ -372,6 +532,103 @@ namespace Cs16.Module.Net
         }
 
         /// <summary>
+        /// **主线程**：把客户端会话线程排队的"外部玩家建身体 / 移除身体"落到模拟上，建好后回 WELCOME。
+        /// <para>顺序：先移除（腾出人数名额）→ 再重建整场重开后丢失的身体 → 最后处理新加入。</para>
+        /// <para>整个方法只在主线程跑（由 <see cref="Pump"/> 每帧开头调），模拟的其他写入点也都在主线程。</para>
+        /// </summary>
+        private static void ProcessPendingPlayers(ICsMatch match)
+        {
+            _match = match;
+            if (match == null) return;
+
+            DrainPendingRemovals(match);
+            if (!match.IsRunning) return;
+
+            // 整场重开（CsMatch.Start）会清空全部 actor ⇒ 已登记的远端身体不见了，按原名字重建。
+            lock (PeersLock)
+            {
+                _peerScratch.Clear();
+                if (Peers.Count > 0) _peerScratch.AddRange(Peers);
+            }
+            for (var i = 0; i < _peerScratch.Count; i++)
+            {
+                var p = _peerScratch[i];
+                if (p.Closed || p.ActorId <= 0) continue;
+
+                var body = match.Find(p.ActorId);
+                if (body != null && !body.IsBot &&
+                    string.Equals(body.Name, p.AssignedName, StringComparison.Ordinal)) continue;
+
+                Game.Logger.Warn(Tag,
+                    "客户端 " + p.Endpoint + " 的身体 actor=" + p.ActorId + " 不在当前比赛里（整场重开？）" +
+                    "⇒ 按原名字 \"" + p.RequestedName + "\" 重建");
+                p.ActorId = 0;
+                lock (JoinLock) PendingJoins.Add(new PendingJoin { Peer = p, Name = p.RequestedName });
+            }
+
+            List<PendingJoin> joins;
+            lock (JoinLock)
+            {
+                if (PendingJoins.Count == 0) return;
+                joins = new List<PendingJoin>(PendingJoins);
+                PendingJoins.Clear();
+            }
+
+            for (var i = 0; i < joins.Count; i++)
+            {
+                var p = joins[i].Peer;
+                if (p == null || p.Closed) continue;
+                if (p.ActorId > 0) continue;                 // 已经有身体：不建第二具
+
+                // 阵营：优先 CT，满了再 T（AddRemotePlayer 自带满员检查）。
+                var id = match.AddRemotePlayer(joins[i].Name, CsTeam.CT);
+                if (id <= 0) id = match.AddRemotePlayer(joins[i].Name, CsTeam.T);
+                if (id <= 0)
+                {
+                    Interlocked.Increment(ref _rejected);
+                    Game.Logger.Warn(Tag,
+                        "客户端 " + p.Endpoint + " 加入失败：CT / T 两队都满员 ⇒ 回 " + ByeMagic);
+                    Enqueue(p, ByeMagic + "|{\"reason\":\"full\"}");
+                    continue;
+                }
+
+                var actor = match.Find(id);
+                p.ActorId = id;
+                p.AssignedName = actor != null ? actor.Name : joins[i].Name;
+                p.Name = p.AssignedName;
+                p.JoinQueued = false;
+                var team = actor != null ? actor.Team : CsTeam.CT;
+
+                Interlocked.Increment(ref _remotePlayersAdded);
+                Enqueue(p, BuildWelcome(p, id, team));
+                p.Welcomed = true;
+                Game.Logger.Info(Tag,
+                    "客户端入局：" + p.Endpoint + " name=\"" + p.AssignedName + "\" ⇒ actor=" + id +
+                    "（" + team + "），已回 " + WelcomeMagic + "（含 actorId）");
+            }
+        }
+
+        /// <summary>主线程：落地排队中的远端身体移除（断开 / 超时 / 网关停止）。</summary>
+        private static void DrainPendingRemovals(ICsMatch match)
+        {
+            if (match == null || !match.IsRunning) return;
+
+            List<int> removals;
+            lock (RemoveLock)
+            {
+                if (PendingRemovals.Count == 0) return;
+                removals = new List<int>(PendingRemovals);
+                PendingRemovals.Clear();
+            }
+
+            for (var i = 0; i < removals.Count; i++)
+            {
+                match.RemoveRemotePlayer(removals[i]);
+                Interlocked.Increment(ref _remotePlayersRemoved);
+            }
+        }
+
+        /// <summary>
         /// **主线程**：把客户端会话线程收到的 <see cref="InputMagic"/> 交给模拟（每帧最多一次，
         /// 由 <see cref="Pump"/> 在出快照之前调）。
         ///
@@ -391,8 +648,38 @@ namespace Cs16.Module.Net
                 PendingInputs.Clear();
             }
 
+            var local = match.LocalPlayer;
             for (var i = 0; i < batch.Count; i++)
             {
+                // 主机自己的玩家不接受远端输入：它是主机本机输入的驾驶员，再来一个就是两个驾驶抢一具身体。
+                if (local != null && batch[i].ActorId == local.Id)
+                {
+                    var rejected = Interlocked.Increment(ref _rejectedOwnBodyInputs);
+                    if (rejected == 1 || rejected % 200 == 0)
+                    {
+                        Game.Logger.Warn(Tag,
+                            "丢弃一条远端 " + InputMagic + "：目标是主机自己的玩家（actor=" + batch[i].ActorId +
+                            "，来自 " + batch[i].From + "，累计丢弃 " + rejected +
+                            " 条）——客户端把同名的主机玩家误认成了自己的腿（WELCOME 不携带 actor id）");
+                    }
+                    continue;
+                }
+
+                // 只驱动"真人身体"：换局后残留的旧 actorId 可能落在机器人身上，绝不能让它代替 bot 行动。
+                var body = match.Find(batch[i].ActorId);
+                if (body == null || body.IsBot)
+                {
+                    var stale = Interlocked.Increment(ref _rejectedStaleBodyInputs);
+                    if (stale <= 3)
+                    {
+                        Game.Logger.Warn(Tag,
+                            "丢弃一条远端 " + InputMagic + "：actor=" + batch[i].ActorId +
+                            "（来自 " + batch[i].From + "）在当前比赛里不是真人身体（换局后还没拿到新 actorId），" +
+                            "累计丢弃 " + stale + " 条");
+                    }
+                    continue;
+                }
+
                 match.SetRemoteInput(batch[i].ActorId, batch[i].Input);
                 Interlocked.Increment(ref _appliedInputs);
             }
@@ -513,6 +800,7 @@ namespace Cs16.Module.Net
                 var peer = new Peer();
                 peer.Tcp = tcp;
                 peer.Stream = tcp.GetStream();
+                peer.LastRecvAt = Environment.TickCount;
                 try { peer.Endpoint = tcp.Client.RemoteEndPoint != null ? tcp.Client.RemoteEndPoint.ToString() : "-"; }
                 catch (Exception ex)
                 {
@@ -569,6 +857,7 @@ namespace Cs16.Module.Net
                         if (n <= 0) break;                       // 对端关了
                         var ch = (char)one[0];
                         c.Received++;
+                        c.LastRecvAt = Environment.TickCount;
                         if (ch == '\n')
                         {
                             var s = line.ToString();
@@ -588,7 +877,18 @@ namespace Cs16.Module.Net
                         did = true;
                     }
 
-                    if (!did) Thread.Sleep(PollSleepMs);
+                    if (!did)
+                    {
+                        // TCP 半开不会给出 read=0 ⇒ 靠"多久没有任何字节"判超时，并在 finally 里收敛身体。
+                        if (unchecked(Environment.TickCount - c.LastRecvAt) > PeerIdleTimeoutMs)
+                        {
+                            Game.Logger.Warn(Tag,
+                                "客户端 " + c.Endpoint + " 超过 " + (PeerIdleTimeoutMs / 1000) +
+                                "s 没有任何字节 ⇒ 视为超时断开（收字节=" + c.Received + " 出报文=" + c.Sent + "）");
+                            break;
+                        }
+                        Thread.Sleep(PollSleepMs);
+                    }
                 }
             }
             catch (Exception ex)
@@ -622,12 +922,22 @@ namespace Cs16.Module.Net
 
             if (magic == JoinMagic)
             {
-                c.Name = ReadString(json, "name", "-");
-                c.Welcomed = true;
+                if (c.Welcomed || c.JoinQueued)
+                {
+                    Game.Logger?.Warn(Tag,
+                        "重复 " + JoinMagic + "（" + c.Endpoint + "，name=\"" + c.Name + "\"）⇒ 忽略，不建第二具身体");
+                    return;
+                }
+
+                // 建身体必须走主线程（模拟只有一个写入者）⇒ 这里只登记，Pump 里建完再回 WELCOME。
+                c.RequestedName = ReadString(json, "name", "-");
+                c.Name = c.RequestedName;
+                c.JoinQueued = true;
                 Interlocked.Increment(ref _joins);
-                Enqueue(c, BuildWelcome());
+                lock (JoinLock) PendingJoins.Add(new PendingJoin { Peer = c, Name = c.RequestedName });
                 Game.Logger?.Info(Tag,
-                    "客户端加入：" + c.Endpoint + " name=\"" + c.Name + "\" ⇒ 已回 " + WelcomeMagic);
+                    "客户端加入请求：" + c.Endpoint + " name=\"" + c.RequestedName +
+                    "\" ⇒ 等主线程建身体后回 " + WelcomeMagic + "（含 actorId）");
                 return;
             }
 
@@ -645,6 +955,31 @@ namespace Cs16.Module.Net
                         Game.Logger.Warn(Tag,
                             "收到 " + InputMagic + " 但字段解不出来（第 " + bad + " 条）：" + Truncate(json, 200) +
                             "；键名必须与 CsInputState 的成员逐字一致，且 id / Move / Yaw / Pitch 与 6 个布尔键都要在");
+                    }
+                    return;
+                }
+
+                // 一台客机只能驱动自己的那具身体：还没身体 / 指向别人的 actor 一律丢弃。
+                var owner = c.ActorId;
+                if (owner <= 0)
+                {
+                    var early = Interlocked.Increment(ref _inputsBeforeBody);
+                    if (early <= 3)
+                    {
+                        Game.Logger.Warn(Tag,
+                            "收到 " + InputMagic + " 但该连接还没有身体（actor=" + actorId + "，来自 " + c.Endpoint +
+                            "）⇒ 丢弃（第 " + early + " 条；客机应在收到 WELCOME 的 actorId 之后再发输入）");
+                    }
+                    return;
+                }
+                if (actorId != owner)
+                {
+                    var foreign = Interlocked.Increment(ref _rejectedForeignBodyInputs);
+                    if (foreign <= 3 || foreign % 200 == 0)
+                    {
+                        Game.Logger.Warn(Tag,
+                            "丢弃一条远端 " + InputMagic + "：actor=" + actorId + " 不属于这台客机（它的身体是 actor=" +
+                            owner + "，来自 " + c.Endpoint + "，累计丢弃 " + foreign + " 条）");
                     }
                     return;
                 }
@@ -677,7 +1012,11 @@ namespace Cs16.Module.Net
 
         // ---------------------------------------------------------------- 组报文
 
-        private static string BuildWelcome()
+        /// <summary>
+        /// 回给客机的开局信息。后三个字段是**追加**的（<c>actorId</c> / <c>playerName</c> / <c>team</c>）：
+        /// 客机拿到 <c>actorId</c> 就不必再靠"同名"从快照里认领自己。
+        /// </summary>
+        private static string BuildWelcome(Peer c, int actorId, CsTeam team)
         {
             var inv = System.Globalization.CultureInfo.InvariantCulture;
             var sb = new StringBuilder(256);
@@ -687,6 +1026,9 @@ namespace Cs16.Module.Net
             sb.Append(",\"host\":\"").Append(Escape(AdvertisedEndpoint())).Append('"');
             sb.Append(",\"maxPlayers\":").Append(_maxPlayers);
             sb.Append(",\"snapHz\":").Append((1f / SnapInterval).ToString("F1", inv));
+            sb.Append(",\"actorId\":").Append(actorId);
+            sb.Append(",\"playerName\":\"").Append(Escape(c != null ? c.AssignedName : "-")).Append('"');
+            sb.Append(",\"team\":\"").Append(team.ToString()).Append('"');
             sb.Append('}');
             return sb.ToString();
         }
@@ -939,8 +1281,18 @@ namespace Cs16.Module.Net
             if (!already)
             {
                 lock (PeersLock) Peers.Remove(c);
+
+                // 断开 / 超时：这具身体要摘掉。会话线程不能碰模拟 ⇒ 由主线程 Pump 落地。
+                var actorId = c.ActorId;
+                if (actorId > 0)
+                {
+                    c.ActorId = 0;
+                    lock (RemoveLock) PendingRemovals.Add(actorId);
+                }
+
                 Game.Logger?.Info(Tag, "客户端断开：" + c.Endpoint + " name=\"" + c.Name +
-                    "\" 收字节=" + c.Received + " 出报文=" + c.Sent + "（非法行 " + c.BadLines + "）");
+                    "\" actor=" + (actorId > 0 ? actorId.ToString() : "-") +
+                    " 收字节=" + c.Received + " 出报文=" + c.Sent + "（非法行 " + c.BadLines + "）");
             }
         }
     }

@@ -38,9 +38,6 @@ namespace Cs16.Core
     /// </summary>
     public enum CsRngStream
     {
-        /// <summary>复活时的随机朝向（`CsMatch.RespawnActor`）。玩法：出生姿态。</summary>
-        SpawnYaw = 1,
-
         /// <summary>每回合 C4 交给哪个 T（`CsMatch.GiveBombToRandomT`）。玩法：开局资源分配。</summary>
         BombCarrier = 2,
 

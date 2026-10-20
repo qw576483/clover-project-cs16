@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Text;
 using System.Threading;
 using CloverEngine;
+using Cs16.Core;
 using Cs16.Module.Match;
 
 namespace Cs16.Module.Net
@@ -24,8 +25,10 @@ namespace Cs16.Module.Net
     /// <list type="bullet">
     /// <item>客户端 → 主机：<c>CS16-LAN-JOIN/1|{{"name":"…","proto":1}}</c></item>
     /// <item>客户端 → 主机（每 <see cref="InputSendIntervalMs"/> ms）：<c>CS16-LAN-INPUT/1|{{"id":…,"Move":{{"x":…,"y":…}},"Jump":…, …}}</c>
-    /// —— 键名逐字 = <c>CsInputState</c> 的成员名，<c>id</c> = **主机快照里与我同名的那具身体**。</item>
-    /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{…}}</c></item>
+    /// —— 键名逐字 = <c>CsInputState</c> 的成员名，<c>id</c> = **WELCOME 里主机分配给我的那具身体**
+    /// （老主机没带 <c>actorId</c> 时才退回"快照里与我同名的那具"）。</item>
+    /// <item>主机 → 客户端：<c>CS16-LAN-WELCOME/1|{{"proto":1,…,"actorId":…,"playerName":…,"team":…}}</c>
+    /// —— <c>actorId</c> 是我在主机模拟里的身体，收到就开始按它发 INPUT。</item>
     /// <item>主机 → 客户端（每 0.1 s）：<c>CS16-LAN-SNAP/1|{{…"actors":[{{…}}]}}</c></item>
     /// <item>任一方可发：<c>CS16-LAN-BYE/1|{{…}}</c></item>
     /// </list>
@@ -62,6 +65,18 @@ namespace Cs16.Module.Net
         /// <summary>连接主机的等待上限（毫秒）—— 主机刚起/ARP 未就绪时给一点余地，但不无限等。</summary>
         public const int ConnectTimeoutMs = 5000;
 
+        /// <summary>
+        /// 等 <c>CS16-LAN-WELCOME/1</c> 的上限（毫秒）：TCP 连上但主机不回握手（对端不是本协议的主机）
+        /// ⇒ 判失败并收尾，界面不会永远停在 "Connecting..."。
+        /// </summary>
+        public const int JoinTimeoutMs = 10000;
+
+        /// <summary>
+        /// 握手完成后等**第一条快照**的上限（毫秒）：主机对局网关在跑、但主机没在比赛里
+        /// （<see cref="CsLanGateway.Pump"/> 只在 <c>match.IsRunning</c> 时出快照）⇒ 判失败并给出原因。
+        /// </summary>
+        public const int FirstSnapshotTimeoutMs = 15000;
+
         /// <summary>读 socket 的轮询超时（毫秒）：有它才能"停下"（否则 <c>Read</c> 会一直阻塞）。</summary>
         private const int ReadTimeoutMs = 250;
 
@@ -95,14 +110,35 @@ namespace Cs16.Module.Net
         /// <summary>有没有人喂过输入（没人喂 ⇒ 不发 INPUT，⛔ 不凭空发一条"站着不动"的意图）。</summary>
         private static bool _haveLocalInput;
 
-        /// <summary>本机在**主机快照**里对应的 actor id（按玩家名认出）；&lt;=0 = 还没认出来。</summary>
+        /// <summary>本机在**主机快照**里对应的 actor id；&lt;=0 = 还没认出来。</summary>
         private static volatile int _myActorId = -1;
+
+        /// <summary>
+        /// 主机在 <c>WELCOME</c> 里分配给我的 actorId；0 = 老主机没带这个字段（退回按玩家名识别）。
+        /// <para>有它之后身份就是**权威的**：快照里同名的那具可能是别人的（两台机器都叫 Player 时就是主机玩家）。</para>
+        /// </summary>
+        private static volatile int _assignedActorId;
+
+        /// <summary>主机给这具身体的实际名字（重名时会加 <c>#2</c> 后缀）；只用于日志。</summary>
+        private static volatile string _assignedPlayerName;
+
+        /// <summary>
+        /// 主机把我放在哪个阵营：WELCOME 的 <c>team</c> 给初值，此后每条快照里自己那具的 team 覆盖它
+        /// （半场换边后本地要跟着换，否则 HUD 队伍色 / 雷达一直是旧的）。
+        /// </summary>
+        private static volatile int _selfTeamRaw = (int)CsTeam.Spectator;
 
         /// <summary>"快照里找不到与我同名的 actor"已留痕（只报一次，⛔ 不刷屏）。</summary>
         private static volatile bool _myActorMissingLogged;
 
         /// <summary>上次发 INPUT 的时刻（<see cref="Environment.TickCount"/>，毫秒）。</summary>
         private static int _lastInputSentAt;
+
+        /// <summary>本次 <see cref="Start"/> 的时刻（等 WELCOME 的计时起点，毫秒）。</summary>
+        private static int _startedAt;
+
+        /// <summary>收到 WELCOME 的时刻（等第一条快照的计时起点，毫秒）；0 = 还没握手。</summary>
+        private static int _joinedAt;
 
         /// <summary>发 INPUT 的间隔（毫秒）⇒ 20 Hz；与主机 10 Hz 的快照频率错开，主机每次取到的是最新意图。</summary>
         public const int InputSendIntervalMs = 50;
@@ -116,6 +152,18 @@ namespace Cs16.Module.Net
 
         /// <summary>最新一帧的远端角色（读线程写、主线程读 ⇒ 一切访问都在 <see cref="LatestLock"/> 下）。</summary>
         private static CsLanRemoteActor[] _latest = new CsLanRemoteActor[0];
+
+        /// <summary>最新一帧快照里的回合状态（与 <see cref="_latest"/> 同锁）。</summary>
+        private static CsLanServerState _serverState;
+
+        /// <summary>最后一条快照的到达时刻（<see cref="Environment.TickCount"/>，毫秒）；0 = 还没收到。</summary>
+        private static volatile int _lastSnapshotAt;
+
+        /// <summary>
+        /// 快照断流的判定阈值（毫秒）：超过这么久没有新快照 ⇒ <see cref="LinkStale"/> 为 true，
+        /// HUD 标"连接中断"，不静默继续跑旧比分。
+        /// </summary>
+        public const int LinkTimeoutMs = 2000;
 
         private static readonly object LatestLock = new object();
         private static readonly object StreamLock = new object();
@@ -196,6 +244,86 @@ namespace Cs16.Module.Net
         /// <summary>本机在主机快照里认出的自己（&lt;=0 = 还没认出来，此时不发 INPUT）。</summary>
         public static int MyActorId { get { return _myActorId; } }
 
+        /// <summary>
+        /// 主机把我放在哪个阵营（WELCOME 的 <c>team</c>，之后跟快照里自己那具走）。
+        /// <see cref="CsTeam.Spectator"/> = 主机没给 / 还没认出来。
+        /// </summary>
+        public static CsTeam AssignedTeam
+        {
+            get
+            {
+                var v = _selfTeamRaw;
+                return v == (int)CsTeam.T || v == (int)CsTeam.CT ? (CsTeam)v : CsTeam.Spectator;
+            }
+        }
+
+        /// <summary>
+        /// 本机是不是"跟着主机状态跑"的一方（已握手 = 客机）。
+        /// 进图前用它决定 <see cref="Cs16.Core.CsMatchConfig.ClientMode"/>。
+        /// </summary>
+        public static bool ServerDriven { get { return _running && _joined; } }
+
+        /// <summary>距最后一条快照的毫秒数（没收到过 / 未握手 = -1）。</summary>
+        public static int MillisecondsSinceLastSnapshot
+        {
+            get
+            {
+                if (!_joined) return -1;
+                var last = _lastSnapshotAt;
+                if (last == 0) return -1;
+                return unchecked(Environment.TickCount - last);
+            }
+        }
+
+        /// <summary>距最后一条快照的秒数（没收到过 = -1）。</summary>
+        public static float SecondsSinceLastSnapshot
+        {
+            get
+            {
+                var ms = MillisecondsSinceLastSnapshot;
+                return ms < 0 ? -1f : ms / 1000f;
+            }
+        }
+
+        /// <summary>
+        /// 客机链路是否已经断流（&gt; <see cref="LinkTimeoutMs"/> 没有新快照）。
+        /// 握手后还没收到第一条快照也按断流算 —— 界面不能一直显示"已连接"。
+        /// </summary>
+        public static bool LinkStale
+        {
+            get
+            {
+                if (!_running || !_joined) return false;
+                var ms = MillisecondsSinceLastSnapshot;
+                return ms < 0 || ms > LinkTimeoutMs;
+            }
+        }
+
+        /// <summary>
+        /// 主机快照里的回合状态（<c>round / scoreT / scoreCT / phase</c>）。
+        /// 返回 false = 还没收到过快照（此时不要拿它覆盖本机状态）。
+        /// </summary>
+        public static bool TryGetServerState(out CsLanServerState state)
+        {
+            lock (LatestLock)
+            {
+                state = _serverState;
+            }
+            return Interlocked.Read(ref _snapshots) > 0;
+        }
+
+        /// <summary>
+        /// 当前连的是不是**本机自己广播出去的网关**（= 收到的快照就是本机模拟的副本）。
+        ///
+        /// <para>这种连接下快照里每一具都已经被本机的角色视图画过一遍，远端视图再画就是"每人两个"
+        /// —— 自己那份第三人称还看得见，表现成"第一人称里看到自己"。判据用端点：主机广播的
+        /// 就是本机网卡 / 回环 + 本机网关端口（<see cref="CsLanHost.IsSelfEndpoint"/>）。</para>
+        /// </summary>
+        public static bool IsEndpointSelf
+        {
+            get { return _running && CsLanHost.IsSelfEndpoint(_host, _port); }
+        }
+
         /// <summary>最新一帧里的远端角色数（还没收到任何快照时为 0）。</summary>
         public static int RemoteActorCount
         {
@@ -209,10 +337,13 @@ namespace Cs16.Module.Net
             {
                 return "局域网客户端未启动" + (string.IsNullOrEmpty(_lastError) ? "" : "（上次失败：" + _lastError + "）");
             }
+            var age = SecondsSinceLastSnapshot;
             return "局域网客户端 endpoint=" + _endpoint + " 状态=" + _phase +
                    " 收到WELCOME=" + Welcomes + " 快照=" + Snapshots + " 非法行=" + Malformed +
                    " 远端角色=" + RemoteActorCount + " 我的actor=" + (_myActorId > 0 ? _myActorId.ToString() : "-") +
-                   " 已发INPUT=" + InputsSent;
+                   " 已发INPUT=" + InputsSent +
+                   " 快照龄=" + (age < 0f ? "-" : age.ToString("F2", CultureInfo.InvariantCulture) + "s") +
+                   " 断流=" + (LinkStale ? "是" : "否");
         }
 
         // ---------------------------------------------------------------- 启停
@@ -240,6 +371,16 @@ namespace Cs16.Module.Net
                 return false;
             }
 
+            // 连回自己 = 两个客户端抢同一具身体（快照里"与我同名"的是本机玩家自己）⇒ 直接拒绝。
+            if (CsLanHost.IsSelfEndpoint(host, port))
+            {
+                error = "拒绝连回本机自己：" + host + ":" + port.ToString(CultureInfo.InvariantCulture) +
+                        " 就是本机 CsLanHost 正在广播的网关口（本机既当主机又当客机会看到自己的角色）";
+                _lastError = error;
+                Game.Logger.Error(Tag, error);
+                return false;
+            }
+
             if (_running)
             {
                 if (host == _host && port == _port)
@@ -261,14 +402,24 @@ namespace Cs16.Module.Net
             _remoteClosed = false;
             _phase = "连接中";
             _myActorId = -1;
+            _assignedActorId = 0;
+            _assignedPlayerName = null;
+            _selfTeamRaw = (int)CsTeam.Spectator;
             _myActorMissingLogged = false;
             _lastInputSentAt = 0;
+            _lastSnapshotAt = 0;
+            _startedAt = Environment.TickCount;
+            _joinedAt = 0;
             Interlocked.Exchange(ref _welcomes, 0);
             Interlocked.Exchange(ref _snapshots, 0);
             Interlocked.Exchange(ref _malformed, 0);
             Interlocked.Exchange(ref _inputsSent, 0);
             lock (OutLock) OutQueue.Clear();
-            lock (LatestLock) { _latest = new CsLanRemoteActor[0]; }
+            lock (LatestLock)
+            {
+                _latest = new CsLanRemoteActor[0];
+                _serverState = default(CsLanServerState);
+            }
 
             _running = true;
             try
@@ -353,6 +504,11 @@ namespace Cs16.Module.Net
 
             _phase = "未启动";
             _myActorId = -1;
+            _assignedActorId = 0;
+            _assignedPlayerName = null;
+            _selfTeamRaw = (int)CsTeam.Spectator;
+            _lastSnapshotAt = 0;
+            lock (LatestLock) { _serverState = default(CsLanServerState); }
             lock (OutLock) OutQueue.Clear();
             ReportDroppedLogs();
             if (wasRunning)
@@ -569,6 +725,25 @@ namespace Cs16.Module.Net
                     // 先把手上的输入发出去：主线程只入队，写 socket 的只有这一个线程。
                     DrainOut(stream);
 
+                    // 两个有界等待：连上却迟迟不握手 / 握了手却一条快照都没有 ⇒ 判失败并收尾，
+                    // 否则界面会永远停在 "Connecting..."，而日志里只有"已连上"看不出卡在哪。
+                    var nowMs = Environment.TickCount;
+                    if (!_joined && unchecked(nowMs - _startedAt) > JoinTimeoutMs)
+                    {
+                        Fail("连上主机 " + _endpoint + " 后 " + JoinTimeoutMs + " ms 内没收到 " +
+                             CsLanGateway.WelcomeMagic + "（对方不是本协议的主机？对局网关已被占用？）⇒ 放弃本次加入");
+                        break;
+                    }
+
+                    if (_joined && Interlocked.Read(ref _snapshots) == 0 &&
+                        unchecked(nowMs - _joinedAt) > FirstSnapshotTimeoutMs)
+                    {
+                        Fail("已握手但 " + FirstSnapshotTimeoutMs + " ms 内没收到任何 " + CsLanGateway.SnapMagic +
+                             "：主机没在比赛里（对局网关只在主机 match.IsRunning 时出快照）" +
+                             "⇒ 先在主机上 New Game 开局，再从这台机器加入");
+                        break;
+                    }
+
                     int n;
                     try
                     {
@@ -615,8 +790,12 @@ namespace Cs16.Module.Net
 
                 if (_running && _remoteClosed)
                 {
-                    _phase = "主机已断开";
-                    PostLog(false, "主机发了 " + CsLanGateway.ByeMagic + "：对端主动断开，客户端收尾");
+                    if (string.IsNullOrEmpty(_lastError))
+                    {
+                        _phase = "主机已断开";
+                        PostLog(false, "主机发了 " + CsLanGateway.ByeMagic + "：对端主动断开，客户端收尾");
+                    }
+                    // 失败路径（协议不符 / 超时 / 链路断）已经由 Fail 写过 _phase 与原因，不覆盖。
                 }
             }
             catch (SocketException ex)
@@ -683,18 +862,62 @@ namespace Cs16.Module.Net
 
             if (magic == CsLanGateway.WelcomeMagic)
             {
+                var proto = ReadProto(json);
+                if (proto != 0 && proto != CsLanGateway.ProtocolVersion)
+                {
+                    Fail("协议版本不一致：主机 proto=" + proto + "，本端 " + CsLanGateway.ProtocolVersion +
+                         " ⇒ 不加入（两端必须是同一份线格式）");
+                    _remoteClosed = true;      // 让读循环在本次收包后收尾
+                    return;
+                }
+
                 Interlocked.Increment(ref _welcomes);
                 _welcomePayload = json;
                 _joined = true;
+                _joinedAt = Environment.TickCount;
+                _lastSnapshotAt = _joinedAt;      // 断流判定从握手算起（握手后一直没快照也算断流）
                 _phase = "已握手，收快照中";
-                PostLog(false, "收到 " + CsLanGateway.WelcomeMagic + "：" + Truncate(json, 200));
+
+                // WELCOME 可选带 "actorId"：主机若直接告诉我"你的身体是哪个 id"就用它，
+                // 不带（老主机）由 RecognizeSelf 按玩家名回落识别。
+                var welcomeActor = ReadActorId(json);
+                if (welcomeActor > 0)
+                {
+                    var previous = _assignedActorId;
+                    _assignedActorId = welcomeActor;
+                    _myActorId = welcomeActor;
+                    _myActorMissingLogged = false;
+
+                    var bodyName = ReadStringField(json, "playerName");
+                    _assignedPlayerName = string.IsNullOrEmpty(bodyName) ? _playerName : bodyName;
+
+                    if (previous > 0 && previous != welcomeActor)
+                    {
+                        PostLog(false, "主机换了一具身体给我：actor " + previous + " → " + welcomeActor +
+                            "（整场重开后重建）；输入从新 id 继续发");
+                    }
+                    if (!string.Equals(_assignedPlayerName, _playerName, StringComparison.Ordinal))
+                    {
+                        PostLog(false, "主机给这具身体改名为 \"" + _assignedPlayerName + "\"（重名规避）：输入按 actor=" +
+                            welcomeActor + " 发，不按名字发");
+                    }
+
+                    var welcomeTeam = ParseTeamName(ReadStringField(json, "team"));
+                    if (welcomeTeam != CsTeam.Spectator) _selfTeamRaw = (int)welcomeTeam;
+                    PostLog(false, "主机把我放在 " + (welcomeTeam == CsTeam.Spectator ? "未指定阵营" : welcomeTeam.ToString()) +
+                        "（WELCOME team" + (welcomeTeam == CsTeam.Spectator ? " 缺失" : "") + "）");
+                }
+
+                PostLog(false, "收到 " + CsLanGateway.WelcomeMagic + "：" + Truncate(json, 200) +
+                    (welcomeActor > 0 ? "（主机指定 actor=" + welcomeActor + "）" : "（未带 actorId，按玩家名识别自己）"));
                 return;
             }
 
             if (magic == CsLanGateway.SnapMagic)
             {
                 CsLanRemoteActor[] frame;
-                if (!TryParseSnapshot(json, out frame))
+                CsLanServerState state;
+                if (!TryParseSnapshot(json, out frame, out state))
                 {
                     Interlocked.Increment(ref _malformed);
                     if (Malformed <= 3)
@@ -704,13 +927,32 @@ namespace Cs16.Module.Net
                     return;
                 }
 
-                lock (LatestLock) { _latest = frame; }
+                lock (LatestLock)
+                {
+                    _latest = frame;
+                    _serverState = state;
+                }
+                _lastSnapshotAt = Environment.TickCount;
                 RecognizeSelf(frame, Interlocked.Increment(ref _snapshots));
+                UpdateSelfTeam(frame);
                 return;
             }
 
             if (magic == CsLanGateway.ByeMagic)
             {
+                var reason = ReadStringField(json, "reason");
+                if (!_joined)
+                {
+                    // 未握手就被 BYE = 主机拒绝加入（满员走这条：无 actorId、回 {"reason":"full"}）。
+                    _lastError = ByeReasonText(reason);
+                    _phase = "被主机拒绝";
+                    PostLog(true, "主机拒绝加入：" + _lastError + "（" + Truncate(json, 120) + "）");
+                }
+                else
+                {
+                    PostLog(false, "主机发了 " + CsLanGateway.ByeMagic + "（reason=\"" + Truncate(reason, 48) +
+                        "\"）：对端主动断开，客户端收尾");
+                }
                 _remoteClosed = true;
                 return;
             }
@@ -731,16 +973,36 @@ namespace Cs16.Module.Net
         }
 
         /// <summary>
-        /// **读线程**：在最新一帧快照里按玩家名认出"我在这台主机上的身体"（<see cref="_myActorId"/>）。
+        /// **读线程**：确定"我在这台主机上的身体"（<see cref="_myActorId"/>）。
         ///
-        /// <para>为什么按名字认：WELCOME 里没有"你的 actor id"这个字段（线格式定死，⛔ 不自己加），
-        /// 而 JOIN 时已经把玩家名给了主机 ⇒ 快照里与我同名的那个 actor 就是我这具身体。</para>
+        /// <para><b>两条来源</b>：① 主机在 <c>WELCOME</c> 里给了 <c>actorId</c> ⇒ **权威**，只用它
+        /// （快照里同名的那具可能是别人的：两台机器都叫 Player 时就是主机玩家，认成自己会让主机拒收
+        /// 我的输入）；② 老主机没给 <c>actorId</c> ⇒ 退回按 JOIN 时的玩家名识别。</para>
         ///
-        /// <para>认不出来时留痕一次（否则"主机上我不动"没有任何线索）：主机得先按这个名字建出我的
-        /// actor，认出来了才开始发 <see cref="CsLanGateway.InputMagic"/>。</para>
+        /// <para>权威 id 暂时不在快照里（回合间隙 / 主机正在重建身体）时**只等**，不改用名字认 ——
+        /// 名字认错一次就会把输入发给别人的身体，之后再也纠正不回来。</para>
         /// </summary>
         private static void RecognizeSelf(CsLanRemoteActor[] frame, long snapshotIndex)
         {
+            var assigned = _assignedActorId;
+            if (assigned > 0)
+            {
+                for (var i = 0; i < frame.Length; i++)
+                {
+                    if (frame[i] != null && frame[i].Id == assigned) return;
+                }
+
+                if (!_myActorMissingLogged && snapshotIndex >= 3)
+                {
+                    _myActorMissingLogged = true;
+                    PostLog(true,
+                        "主机分配给我的身体 actor=" + assigned + " 暂不在快照里（已收到 " + snapshotIndex +
+                        " 帧、" + frame.Length + " 个角色）⇒ 本地输入暂停，等主机把它放回快照" +
+                        "（不会改用同名识别：同名的那具可能是别人）");
+                }
+                return;
+            }
+
             var mine = _myActorId;
             if (mine > 0)
             {
@@ -748,7 +1010,7 @@ namespace Cs16.Module.Net
                 {
                     if (frame[i] != null && frame[i].Id == mine) return;   // 还在，身份不变
                 }
-                // 换局 / 重生后快照里换了 id ⇒ 重新认一次
+                // 老主机（没给 actorId）：换局 / 重生后快照里换了 id ⇒ 重新认一次
                 _myActorId = -1;
                 _myActorMissingLogged = false;
             }
@@ -757,14 +1019,16 @@ namespace Cs16.Module.Net
             {
                 var a = frame[i];
                 if (a == null) continue;
+                // 机器人不可能是"我这具身体"：主机上的 bot 名字是固定的 bot 名，同名只可能是巧合，
+                // 认成自己就会把本机输入喂给一台 bot。
+                if (a.Bot) continue;
                 if (!string.Equals(a.Name, _playerName, StringComparison.Ordinal)) continue;
 
                 _myActorId = a.Id;
                 _myActorMissingLogged = false;
                 PostLog(false,
-                    "已在主机快照里认出自己：playerName=\"" + _playerName + "\" ⇒ actor=" + a.Id +
-                    "（此后每 " + InputSendIntervalMs + " ms 发一行 " + CsLanGateway.InputMagic +
-                    "，主机按这个 id 应用到模拟）");
+                    "老主机没给 actorId：已在快照里按名字认出自己 playerName=\"" + _playerName + "\" ⇒ actor=" + a.Id +
+                    "（此后每 " + InputSendIntervalMs + " ms 发一行 " + CsLanGateway.InputMagic + "）");
                 return;
             }
 
@@ -784,9 +1048,10 @@ namespace Cs16.Module.Net
         /// 走引擎自己的 <c>MiniJson</c>（<c>Runtime/Core/Json.cs</c>）—— 不手写 JSON 解析器：
         /// 手写的转义/数字/嵌套处理是"看起来能跑、边界一碰就错"的典型。
         /// </summary>
-        private static bool TryParseSnapshot(string json, out CsLanRemoteActor[] frame)
+        private static bool TryParseSnapshot(string json, out CsLanRemoteActor[] frame, out CsLanServerState state)
         {
             frame = null;
+            state = default(CsLanServerState);
             if (string.IsNullOrEmpty(json)) return false;
 
             object rootObj;
@@ -807,6 +1072,11 @@ namespace Cs16.Module.Net
             var arr = arrObj as IList<object>;
             if (arr == null) return false;
 
+            state.Round = (int)Num(root, "round", 0f);
+            state.ScoreT = (int)Num(root, "scoreT", 0f);
+            state.ScoreCT = (int)Num(root, "scoreCT", 0f);
+            state.Phase = ParsePhase(Str(root, "phase"));
+
             var list = new List<CsLanRemoteActor>(arr.Count);
             for (var i = 0; i < arr.Count; i++)
             {
@@ -823,6 +1093,7 @@ namespace Cs16.Module.Net
                     Yaw = Num(d, "yaw", 0f),
                     Hp = (int)Num(d, "hp", 0f),
                     Alive = Bool(d, "alive"),
+                    Bot = Bool(d, "bot"),
                     Weapon = Str(d, "w"),
                 };
                 list.Add(a);
@@ -830,6 +1101,113 @@ namespace Cs16.Module.Net
 
             frame = list.ToArray();
             return true;
+        }
+
+        /// <summary>
+        /// WELCOME 里可选的 <c>actorId</c>（主机直接指定"你的身体是哪个 id"）。
+        /// 缺字段 / 解析失败返回 0 = 老主机没这个字段，交给 <see cref="RecognizeSelf"/> 按玩家名识别。
+        /// </summary>
+        private static int ReadActorId(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return 0;
+            try
+            {
+                var root = MiniJson.Parse(json) as IDictionary<string, object>;
+                return root == null ? 0 : (int)Num(root, "actorId", 0f);
+            }
+            catch (FormatException)
+            {
+                return 0;
+            }
+        }
+
+        /// <summary>取 WELCOME 里的字符串字段（缺字段 / 解析失败返回空串）。</summary>
+        private static string ReadStringField(string json, string key)
+        {
+            if (string.IsNullOrEmpty(json)) return string.Empty;
+            try
+            {
+                var root = MiniJson.Parse(json) as IDictionary<string, object>;
+                return root == null ? string.Empty : Str(root, key);
+            }
+            catch (FormatException)
+            {
+                return string.Empty;
+            }
+        }
+
+        /// <summary>
+        /// 读线程：快照里自己那具的阵营 → <see cref="AssignedTeam"/>（半场换边后本地跟着换）。
+        /// 自己不在这一帧里就保持上一次的值。
+        /// </summary>
+        private static void UpdateSelfTeam(CsLanRemoteActor[] frame)
+        {
+            var mine = _myActorId;
+            if (mine <= 0 || frame == null) return;
+            for (var i = 0; i < frame.Length; i++)
+            {
+                if (frame[i] == null || frame[i].Id != mine) continue;
+                var team = ParseTeamName(frame[i].Team);
+                if (team != CsTeam.Spectator) _selfTeamRaw = (int)team;
+                return;
+            }
+        }
+
+        /// <summary>线上的阵营串 → 枚举（认不出 = Spectator，不猜）。</summary>
+        private static CsTeam ParseTeamName(string text)
+        {
+            if (text == "T") return CsTeam.T;
+            if (text == "CT") return CsTeam.CT;
+            return CsTeam.Spectator;
+        }
+
+        /// <summary>BYE 的 <c>reason</c> → 给玩家看的原因（状态行 / Toast 共用）。</summary>
+        private static string ByeReasonText(string reason)
+        {
+            if (reason == "full") return "主机已满员（未分配 actorId，加入被拒绝）——请等有人退出后重试";
+            if (string.IsNullOrEmpty(reason)) return "主机拒绝了本次加入（未说明原因）";
+            return "主机拒绝了本次加入（reason=" + reason + "）";
+        }
+
+        /// <summary>快照 <c>phase</c> 串 → 枚举（线格式 = <see cref="CsRoundPhase"/> 的名字）。</summary>
+        private static CsRoundPhase ParsePhase(string text)
+        {
+            switch (text)
+            {
+                case "Freeze": return CsRoundPhase.Freeze;
+                case "Live": return CsRoundPhase.Live;
+                case "RoundEnd": return CsRoundPhase.RoundEnd;
+                case "MatchEnd": return CsRoundPhase.MatchEnd;
+                case "None":
+                case "":
+                    return CsRoundPhase.None;
+                default:
+                    if (!_unknownPhaseLogged)
+                    {
+                        _unknownPhaseLogged = true;
+                        PostLog(true, "快照里的 phase 认不出来：\"" + Truncate(text, 32) + "\"（期望 " +
+                            "None / Freeze / Live / RoundEnd / MatchEnd）⇒ 按 None 处理（本条只报一次）");
+                    }
+                    return CsRoundPhase.None;
+            }
+        }
+
+        /// <summary>"phase 串不认识"只报一次（读线程独占，不加锁）。</summary>
+        private static bool _unknownPhaseLogged;
+
+        /// <summary>WELCOME 里的 <c>proto</c>（缺字段 / 解析失败返回 0 = 老主机没报版本，按同版本处理）。</summary>
+        private static int ReadProto(string json)
+        {
+            if (string.IsNullOrEmpty(json)) return 0;
+            try
+            {
+                var root = MiniJson.Parse(json) as IDictionary<string, object>;
+                return root == null ? 0 : (int)Num(root, "proto", 0f);
+            }
+            catch (FormatException)
+            {
+                return 0;
+            }
         }
 
         private static float Num(IDictionary<string, object> d, string key, float fallback)

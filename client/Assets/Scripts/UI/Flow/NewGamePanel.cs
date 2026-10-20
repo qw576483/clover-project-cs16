@@ -95,10 +95,10 @@ namespace Cs16.UI
                 new Vector2(1000f, 68f), TextAnchor.MiddleLeft, CsUiStyle.Text);
             CsUiStyle.CreateBoxRect("TitleBar", root, new Vector2(92f, -142f), new Vector2(520f, 4f), CsUiStyle.Accent);
 
-            CsUiStyle.CreateLabel("MapSection", root, "地图 / MAPS", 22, new Vector2(92f, -178f),
+            CsUiStyle.CreateLabel("MapSection", root, "MAPS", 22, new Vector2(92f, -178f),
                 new Vector2(600f, 32f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
             CsUiStyle.CreateBoxRect("MapListBox", root, new Vector2(MapListX, MapListY),
-                new Vector2(MapListWidth, MapListHeight), CsUiStyle.Box);
+                new Vector2(MapListWidth, MapListHeight), CsUiStyle.ListBg);
 
             var listNode = UIFactory.CreateNode("MapRows", root);
             CsUiStyle.AnchoredTopLeft(listNode, new Vector2(MapListX + 20f, MapListY - 20f),
@@ -109,41 +109,41 @@ namespace Cs16.UI
                 new Vector2(92f, MapListY - MapListHeight - 12f), new Vector2(700f, 30f),
                 TextAnchor.MiddleLeft, CsUiStyle.TextDim);
 
-            CsUiStyle.CreateLabel("GameSection", root, "游戏设置 / GAME SETTINGS", 22,
+            CsUiStyle.CreateLabel("GameSection", root, "GAME SETTINGS", 22,
                 new Vector2(SelectorX, -178f), new Vector2(700f, 32f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
 
             var y = SelectorTopY;
-            _bots = CsUiStyle.CreateSelector("Sel_Bots", root, "机器人（每队）", new Vector2(SelectorX, y),
+            _bots = CsUiStyle.CreateSelector("Sel_Bots", root, "Bots per team", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
             y -= SelectorStep;
-            _difficulty = CsUiStyle.CreateSelector("Sel_Difficulty", root, "机器人难度", new Vector2(SelectorX, y),
+            _difficulty = CsUiStyle.CreateSelector("Sel_Difficulty", root, "Bot difficulty", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
             y -= SelectorStep;
-            _rounds = CsUiStyle.CreateSelector("Sel_Rounds", root, "回合数（每半场）", new Vector2(SelectorX, y),
+            _rounds = CsUiStyle.CreateSelector("Sel_Rounds", root, "Rounds per half", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
             y -= SelectorStep;
-            _money = CsUiStyle.CreateSelector("Sel_Money", root, "起始金钱", new Vector2(SelectorX, y),
+            _money = CsUiStyle.CreateSelector("Sel_Money", root, "Start money", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
             y -= SelectorStep;
-            _roundTime = CsUiStyle.CreateSelector("Sel_RoundTime", root, "回合时间", new Vector2(SelectorX, y),
+            _roundTime = CsUiStyle.CreateSelector("Sel_RoundTime", root, "Round time", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
             y -= SelectorStep;
-            _friendlyFire = CsUiStyle.CreateSelector("Sel_FriendlyFire", root, "友军伤害", new Vector2(SelectorX, y),
+            _friendlyFire = CsUiStyle.CreateSelector("Sel_FriendlyFire", root, "Friendly fire", new Vector2(SelectorX, y),
                 SelectorLabelWidth, SelectorArrowWidth, SelectorValueWidth, null, null);
 
-            CsUiStyle.CreateLabel("NameLabel", root, "玩家名", 22, new Vector2(SelectorX, -608f),
+            CsUiStyle.CreateLabel("NameLabel", root, "Player name", 22, new Vector2(SelectorX, -608f),
                 new Vector2(SelectorLabelWidth, CsUiStyle.RowHeight), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
             _nameInput = CsUiStyle.CreateInputField("Input_PlayerName", root,
                 new Vector2(SelectorX + SelectorLabelWidth, -608f), new Vector2(320f, CsUiStyle.RowHeight),
                 "Player", CsPlayerSettingsStore.MaxNameLength);
 
             _startButton = CsUiStyle.CreateButton("Btn_Start", root, "Start", new Vector2(SelectorX, -690f),
-                new Vector2(240f, 58f), null, accent: true);
+                new Vector2(240f, 58f), null);
             _backButton = CsUiStyle.CreateButton("Btn_Back", root, "Back", new Vector2(SelectorX + 260f, -690f),
                 new Vector2(200f, 58f), null);
 
             CsUiStyle.CreateLabel("BottomHint", root,
-                "Start 之后会读条加载 de_dust2，然后在图内选阵营。", 18,
+                "Start loads de_dust2, then you pick a team in the map.", 18,
                 new Vector2(60f, -1035f), new Vector2(1200f, 30f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
         }
 
@@ -171,6 +171,10 @@ namespace Cs16.UI
             }
 
             RefreshLabels();
+
+            // 预制体里存不下动态字体（见 CsUiStyle.ApplyOriginalFonts）⇒ 每次打开都重设一遍；
+            // 放在建完地图行之后，运行期新建的文本也一起换成原版字体。
+            CsUiStyle.ApplyOriginalFonts(transform);
         }
 
         public override void OnClose()
@@ -275,7 +279,7 @@ namespace Cs16.UI
             }
 
             if (_mapHint != null)
-                _mapHint.text = $"{Maps.Length} 张地图可选（本工程首张图 = {CsConst.MapDust2}）";
+                _mapHint.text = $"{Maps.Length} map available ({CsConst.MapDust2}).";
 
             Game.Logger.Info(Tag, $"New Game 地图列表: {string.Join(", ", Maps)}，当前选中 {Maps[_mapIndex]}");
         }
@@ -301,9 +305,9 @@ namespace Cs16.UI
 
                 var selected = i == _mapIndex;
                 var colors = button.colors;
-                colors.normalColor = selected ? CsUiStyle.AccentDim : CsUiStyle.Field;
+                colors.normalColor = selected ? CsUiStyle.AccentDim : CsUiStyle.ButtonBg;
                 colors.selectedColor = colors.normalColor;
-                colors.highlightedColor = CsUiStyle.Accent;
+                colors.highlightedColor = CsUiStyle.AccentDim;
                 colors.pressedColor = CsUiStyle.AccentDim;
                 colors.colorMultiplier = 1f;
                 button.colors = colors;

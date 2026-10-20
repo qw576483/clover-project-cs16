@@ -174,6 +174,13 @@ namespace Cs16.Module.Match
             public void Unload() { }
 
             public bool WalkableAt(float x, float z) => true;
+            public bool HasSurfaceHeights => false;
+            public int SurfaceCountAt(int x, int z) => 0;
+            public bool TryGetSurfaceHeights(int x, int z, System.Collections.Generic.List<float> heightsOut)
+            {
+                heightsOut?.Clear();
+                return false;
+            }
             public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
                                  float height = CsConst.StandHeight) => true;
             public Vector3 ResolveMove(Vector3 from, Vector3 to, float radius = CsConst.PlayerRadius,
@@ -186,6 +193,17 @@ namespace Cs16.Module.Match
                 normal = Vector3.up;
                 return true;
             }
+            public bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                                 out Vector3 point, out Vector3 normal)
+                => TrySampleGround(pos, out point, out normal, maxDrop);
+
+            public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
+            {
+                legacy = true;
+                return true;
+            }
+
+            public bool StepFaceStandable(Vector3 pos, float height) => true;
 
             public Vector3 GetSpawnPoint(int index) => Spawn;
             public int SpawnPointCount => 1;

@@ -45,6 +45,8 @@ namespace Cs16.Module.Combat
         private readonly List<bool> _drainedShotSilenced = new List<bool>(CsCombatTuning.MaxShotsConsumedPerFrame);
 
         private ICsMatch _match;
+        /// <summary>同一份模拟的 <see cref="CsMatch"/> 视图：投掷 / C4 爆炸这两条世界特效事件只在这里。</summary>
+        private CsMatch _sim;
         private FirstPersonCamera _view;
 
         /// <summary>
@@ -108,18 +110,62 @@ namespace Cs16.Module.Combat
             // 机器人的子弹也要出血（原版里谁打中谁都会出血），而且只有模拟知道"确实命中了角色"。
             if (_match != null) _match.OnBulletHit += OnBulletHit;
 
+            // 投掷物 / C4 爆炸：同上，只有模拟知道"谁在什么时候扔了什么"。
+            _sim = _match as CsMatch;
+            if (_sim != null)
+            {
+                _sim.OnGrenadeThrown += OnGrenadeThrown;
+                _sim.OnBombExploded += OnBombExploded;
+            }
+            else
+            {
+                _log.Warn("match.notsim", "比赛模拟不是 CsMatch 实例：投掷物与 C4 爆炸的世界特效不会生成");
+            }
+
             _log.Always("战斗模块就绪（射线由本模块负责，伤害结算归比赛模拟）");
         }
 
         /// <summary>
         /// <see cref="ICsMatch.OnBulletHit"/> 的处理：一枪打在角色身上 → 命中点血雾 + 后面的面上贴血迹。
         /// </summary>
-        private void OnBulletHit(CsActor victim, Vector3 point, Vector3 direction, bool headshot)
+        private void OnBulletHit(CsActor victim, Vector3 point, Vector3 direction, bool headshot, int amount)
         {
-            var placed = _fx.BloodImpact(point, direction, headshot);
+            _fx.BloodSpray(point, direction, headshot, amount);
+            var placed = _fx.BloodDecal(point, direction, headshot);
             var who = victim != null ? victim.Name : "?";
             _log.Info("hit.blood",
-                $"命中 {who}（爆头={headshot}）于 {point} → 血迹贴花 {(placed ? "已贴" : "未贴（后面没有面）")}");
+                $"命中 {who}（爆头={headshot} 伤害量={amount}）于 {point} → " +
+                $"血迹贴花 {(placed ? "已贴" : "未贴（后面没有面）")}");
+        }
+
+        /// <summary>
+        /// <see cref="CsMatch.OnGrenadeThrown"/> 的处理：任何角色（本地 / 机器人 / 远端）的每一次投掷
+        /// 都由这里生成飞行体。本地玩家的投掷也走这条事件（投掷不进射击队列），因此不存在重复播放。
+        /// </summary>
+        private void OnGrenadeThrown(CsActor thrower, string weaponId, Vector3 origin, Vector3 direction)
+        {
+            var def = CsWeapons.Get(weaponId);
+            if (def == null)
+            {
+                _log.Warn("nade.throw.nodef",
+                    $"投掷事件给出了未知武器 id「{weaponId}」，本次不显示飞行体（伤害仍由模拟结算）");
+                return;
+            }
+
+            _nades.ThrowVisual(origin, direction, def);
+            _log.Info("nade.throw.visual",
+                $"{thrower?.Name ?? "?"} 投出 {def.DisplayName}：出生点 {origin}，方向 {direction} → 飞行体");
+        }
+
+        /// <summary>
+        /// <see cref="CsMatch.OnBombExploded"/> 的处理：C4 爆炸 → 火光球 + 烟柱。
+        /// 可见半径取模拟的爆炸伤害半径（<see cref="CsMatchConst.BombExplosionRadius"/>）。
+        /// </summary>
+        private void OnBombExploded(Vector3 position)
+        {
+            _fx.BombBlast(position, CsMatchConst.BombExplosionRadius);
+            _log.Info("bomb.blast.fx",
+                $"C4 爆炸特效 @ {position}，半径 {CsMatchConst.BombExplosionRadius:F1}m");
         }
 
         /// <summary>玩家设置：空仓自动换弹。</summary>
@@ -209,6 +255,12 @@ namespace Cs16.Module.Combat
         {
             if (Instance == this) Instance = null;
             if (_match != null) _match.OnBulletHit -= OnBulletHit;
+            if (_sim != null)
+            {
+                _sim.OnGrenadeThrown -= OnGrenadeThrown;
+                _sim.OnBombExploded -= OnBombExploded;
+                _sim = null;
+            }
             _nades.Dispose();
             _fx.Dispose();
         }
@@ -228,6 +280,15 @@ namespace Cs16.Module.Combat
             var local = match != null ? match.LocalPlayer : null;
             var input = Game.Input;
 
+            // 「这一帧本地到底打没打」的基线：必须**早于任何早退**取（死亡 / 无输入也要取），
+            // 否则早退帧的基线停在 0，而 `NextFireTime` 早已 > 0 ⇒ 会把别人的射击记录误认成自己的。
+            if (local != null)
+            {
+                _preWeapon = local.ActiveWeapon;
+                _preNextFireTime = local.NextFireTime;
+                _preBurstAutoShots = local.BurstAutoShots;   // 差异 #68：连发续发的帧间差分
+            }
+
             // ---- E：下包 / 拆包（按住式）----
             // **必须在"死亡/面板打开"的早退之前下发**：模拟侧的 SetUseHeld 是"按住状态"，
             // 只在活着时才下发会让状态粘住 —— 表现就是"死前按住 E → 复活瞬间站在包点自动下包"。
@@ -238,11 +299,6 @@ namespace Cs16.Module.Combat
 
             if (local == null || !local.IsAlive) return;
             if (input == null) return;
-
-            // 必须早于模拟 Tick：这是"这一发到底是不是我打的"的判据（见类注释）。
-            _preWeapon = local.ActiveWeapon;
-            _preNextFireTime = local.NextFireTime;
-            _preBurstAutoShots = local.BurstAutoShots;   // 差异 #68：连发续发的帧间差分
 
             // ---- 维护「上一把武器」：手持武器一变，就把变之前那一把记下来（供 Q = lastinv）----
             if (_lastSeenWeapon != null && _lastSeenWeapon != local.ActiveWeapon)
@@ -286,14 +342,20 @@ namespace Cs16.Module.Combat
             }
 
             // ---- 换弹 / 空仓自动换弹 ----
+            // 原版空仓自动换弹只在**没有按住攻击键**时发起（`原版资源/hlsdk/dlls/weapons.cpp:713-753`：
+            // 那个分支的入口条件是 `!(button & (IN_ATTACK | IN_ATTACK2))`）；按住左键时只干火。
             var reloadRequested = inputAllowed && input.GetKeyDown(GameKey.R);
             if (reloadRequested) match.RequestReload();
-            else if (_autoReload && inputAllowed && def != null && def.Magazine > 0)
+            else if (_autoReload && inputAllowed && def != null && def.Magazine > 0 &&
+                     !input.GetMouseButton(0))
             {
                 var ammo = local.GetAmmo(def.Id);
-                if (ammo.inMag <= 0 && ammo.reserve > 0 && CsClock.Now >= local.ReloadEndTime)
+                if (ammo.inMag <= 0 && ammo.reserve > 0 &&
+                    CsClock.Now >= local.ReloadEndTime && CsClock.Now >= local.SwitchEndTime &&
+                    CsClock.Now >= local.NextFireTime)
                 {
                     match.RequestReload();
+                    _log.Info("reload.auto", $"弹匣空、已松开左键 ⇒ 自动换弹 {def.DisplayName}（原版 ItemPostFrame）");
                 }
             }
 
@@ -358,7 +420,7 @@ namespace Cs16.Module.Combat
 
                 // M：换阵营（原版 chooseteam）。
                 // 原版 chooseteam 是**打开阵营菜单**；本工程局内没有"再开一次 TeamMenu"的流程入口，
-                //    因此等价为"直接换到另一边"并如实写日志 —— 差异登记见 策划/差异登记.tsv / 验收表「允许的差异」。
+                //    因此等价为"直接换到另一边"并如实写日志 —— 见 策划/差异登记.tsv。
                 if (input.GetKeyDown(GameKey.M))
                 {
                     var other = local.Team == CsTeam.T ? CsTeam.CT : CsTeam.T;
@@ -471,7 +533,24 @@ namespace Cs16.Module.Combat
             var left = local.FlashEndTime - CsClock.Now;
             if (left <= 0f) return 0f;
 
-            return Mathf.Clamp01(left / CsConst.GrenadeFlashDuration);
+            // 本次致盲的总时长 = FlashEndTime − FlashStartTime（4s × 距离系数 × 朝向系数，见 CsDamage.ApplyFlash）。
+            var span = local.FlashEndTime - local.FlashStartTime;
+            if (span <= 0f) span = CsConst.GrenadeFlashDuration;
+            var elapsed = Mathf.Clamp(span - left, 0f, span);
+
+            // 两段曲线：瞬间全白 → 快速降到中亮 → 缓慢消退。
+            var peakEnd = Mathf.Min(CsCombatTuning.FlashPeakSeconds, span);
+            if (elapsed <= peakEnd) return 1f;
+
+            var midEnd = Mathf.Min(CsCombatTuning.FlashMidSeconds, span);
+            if (elapsed <= midEnd)
+            {
+                var midT = (elapsed - peakEnd) / Mathf.Max(0.0001f, midEnd - peakEnd);
+                return Mathf.Lerp(1f, CsCombatTuning.FlashMidAlpha, midT);
+            }
+
+            var tail = Mathf.Max(0.0001f, span - midEnd);
+            return Mathf.Lerp(CsCombatTuning.FlashMidAlpha, 0f, (elapsed - midEnd) / tail);
         }
 
         // ==================================================================
@@ -503,7 +582,7 @@ namespace Cs16.Module.Combat
         /// <param name="drained">本帧按顺序取走的记录（已包含我与机器人的）。</param>
         /// <param name="localFired">本帧是否确认打出了"我的那一发"。</param>
         /// <param name="preWeapon">开火**之前**手持的武器 id（手雷投出后手持会变，所以必须用开火前的）。</param>
-        /// <param name="otherCount">输出：属于别人的记录条数（放枪声用）。</param>
+        /// <param name="otherCount">输出：属于别人的记录条数（日志口径）。</param>
         /// <returns>属于我的那一发的武器 id；没有则 null。</returns>
         public static string PickMyShot(IReadOnlyList<string> drained,
             bool localFired, string preWeapon, out int otherCount)
@@ -531,12 +610,23 @@ namespace Cs16.Module.Combat
         {
             if (match == null) return;
 
-            // ① 本帧模拟是否真的打出了"我的那一发"？（判据见 IsLocalShot）
-            //   差异 #68：连发的续发不由输入触发（松手后模拟继续补发）⇒ 用模拟的补发计数差分认领，
-            //   否则续发只会"扣弹 + 播枪声"，打出伤害的那条射线永远不会发。
-            var localFired = local != null &&
-                (IsLocalShot(_fireRequested, _preNextFireTime, local.NextFireTime) ||
-                 local.BurstAutoShots > _preBurstAutoShots);
+            // ① 本帧模拟是否真的打出了"我的那一发"？
+            //    主判据 = 模拟把**本地角色**的 NextFireTime 往后推了（扣弹与限速在模拟的同一条分支里完成
+            //    ⇒ 推进即"这一发确实打出去了"）。不以 `_fireRequested` 为必要条件：输入采样与模拟之间
+            //    可能差一帧（CanFire 那一刻 now < NextFireTime、模拟执行时已放行），只看请求会把这一发
+            //    当成"别人的射击" ⇒ 不做射线 ⇒ 伤害 / 命中标记 / 命中音 / 血雾整条丢失。
+            //    差异 #68：连发的续发不由输入触发（松手后模拟继续补发）⇒ 再用补发计数差分兜一次。
+            var simFired = local != null && local.NextFireTime > _preNextFireTime + 0.0001f;
+            var burstContinued = local != null && local.BurstAutoShots > _preBurstAutoShots;
+            var localFired = simFired || burstContinued;
+
+            if (simFired && !burstContinued && !_fireRequested)
+            {
+                // 可核对：输入侧没置位、模拟却推进了射速时间 ⇒ 走的就是上面那条竞态。
+                _log.Info("shot.local.recapture",
+                    $"模拟推进了 NextFireTime（{_preNextFireTime:F3}→{local.NextFireTime:F3}）" +
+                    $"而输入侧未请求开火 ⇒ 仍按「我的一发」认领（开火前武器 {_preWeapon ?? "null"}）");
+            }
 
             // ② 把本帧的记录全部取走（模拟会警告"没人消费"），再挑出属于我的那一条。
             _drainedShots.Clear();
@@ -556,8 +646,9 @@ namespace Cs16.Module.Combat
 
             var mineWeapon = PickMyShot(_drainedShots, localFired, _preWeapon, out var otherCount);
 
-            // 别人的射击（机器人）：只放枪声（2D），**绝不**从我的眼睛里射线。
-            // 本模块是这条队列的唯一消费者，因此"所有人（含 bot）的枪声"都由这里放。
+            // 别人的射击（机器人 / 远端玩家）：本模块只消费队列、**绝不**从我的眼睛里射线。
+            // 射击记录不带射手（ICsMatch.ConsumeShotFired 只有武器 id），远端枪声由 ActorView
+            // 的开火边沿按射手位置 3D 播放（FxRemoteShot），这里只留一条降频日志。
             var claimed = false;
             var otherDetail = "";
             for (var i = 0; i < consumed; i++)
@@ -570,14 +661,10 @@ namespace Cs16.Module.Combat
                 }
 
                 var otherDef = CsWeapons.Get(id);
-                // 远端开火采样按**这一发实际的消音状态**选 —— 原版把这一位随射击事件发给所有客户端
-                // （wpn_m4a1.cpp:200-201 的 PLAYBACK_EVENT_FULL 末组实参），见 ICsMatch.ConsumeShotFired。
                 if (otherDef != null)
                 {
-                    var sample = CsWeapons.FireSound(otherDef, _drainedShotSilenced[i]);
-                    _audio.Play(sample);
                     otherDetail += (otherDetail.Length > 0 ? ", " : "") +
-                        id + (_drainedShotSilenced[i] ? "(消音)" : "(未消音)") + "→" + sample;
+                        id + (_drainedShotSilenced[i] ? "(消音)" : "(未消音)");
                 }
             }
 
@@ -585,7 +672,7 @@ namespace Cs16.Module.Combat
             {
                 // 高频路径 → 降频（用于排查"机器人的射击有没有被误当成我的"）。
                 _log.Info("shot.others",
-                    $"本帧另有 {otherCount} 条他人射击记录（只放枪声，不做射线）：{otherDetail}");
+                    $"本帧另有 {otherCount} 条他人射击记录（不做射线；枪声由视图侧按射手位置播放）：{otherDetail}");
             }
 
             if (mineWeapon != null)
@@ -606,34 +693,46 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// 别的角色开火时的**世界空间**枪口表现（枪口火焰）：落点 = 射手的枪口节点
-        /// （<c>ActorView.TryGetMuzzle</c>；位置逐武器来自原版 <c>models/p_*.mdl</c> 的枪口骨）。
+        /// 别的角色开火时的**世界空间**表现：3D 枪声（位置 = 射手枪口，枪口未挂上时退回眼位）
+        /// + 枪械的第三人称枪口火焰（<c>ActorView.TryGetMuzzle</c>；位置逐武器来自原版
+        /// <c>models/p_*.mdl</c> 的枪口骨）。
         ///
         /// <para><b>为什么由视图侧驱动</b>：射击记录只带武器 id、不带射手
         /// （<see cref="ICsMatch.ConsumeShotFired"/>），这里拿不到"这一发是谁打的"；
         /// 而 <c>ActorView</c> 侧本来就有逐 actor 的权威开火信号（<c>CsActor.NextFireTime</c> 前推，
-        /// 它也是那里播 <c>ref_shoot_*</c> 的判据）。</para>
+        /// 它也是那里播 <c>ref_shoot_*</c> 的判据）。刀 / 手雷的开火边沿同一条，因此它们的
+        /// 声音也在这里发（原版这三类都有各自的开火采样）。</para>
         ///
-        /// <para><b>与本地玩家不重叠</b>：本地那一发走 <see cref="HandleLocalShot"/> 的第一人称路径；
+        /// <para><b>与本地玩家不重叠</b>：本地那一发走 <see cref="HandleLocalShot"/> 的第一人称 2D 路径；
         /// <c>ActorView</c> 对自己（<c>IsLocal</c>）不调本方法。</para>
         /// </summary>
-        internal void FxRemoteShot(ActorView shooter, string weaponId)
+        internal void FxRemoteShot(ActorView shooter, string weaponId, bool silenced, Vector3 eye)
         {
             if (shooter == null || string.IsNullOrEmpty(weaponId)) return;
             var def = CsWeapons.Get(weaponId);
             if (def == null) return;
-            // 原版只有"开枪"才有枪口火焰：刀 / 手雷 / C4 都没有。
+
+            var hasMuzzle = shooter.TryGetMuzzle(out var pos, out _);
+            if (!hasMuzzle) pos = eye;
+
+            // 远端开火采样按**这一发实际的消音状态**选 —— 原版把这一位随射击事件发给所有客户端
+            // （wpn_m4a1.cpp:200-201 的 PLAYBACK_EVENT_FULL 末组实参），见 ICsMatch.ConsumeShotFired。
+            var sample = CsWeapons.FireSound(def, silenced);
+            _audio.PlayAt(sample, pos);
+            _log.Info("shot.remote",
+                $"角色视图「{shooter.name}」开火：武器 {weaponId}{(silenced ? "(消音)" : "")}" +
+                $" → 3D 音效 {sample} @ {(hasMuzzle ? "枪口" : "眼位")} {pos}");
+
+            // 原版只有枪械才有枪口火焰：刀 / 手雷 / C4 都没有。
             if (def.Class == CsWeaponClass.Knife || def.Class == CsWeaponClass.Grenade ||
                 def.Class == CsWeaponClass.Bomb) return;
 
-            if (!shooter.TryGetMuzzle(out var pos, out _))
+            if (!hasMuzzle)
             {
                 _log.Warn("shot.remote.nomuzzle",
                     $"角色视图「{shooter.name}」开火时还没有枪口节点（武器模型尚未挂上），本发没有火光");
                 return;
             }
-            _log.Info("shot.remote.flash",
-                $"角色视图「{shooter.name}」开火：武器 {weaponId} 枪口世界坐标 {pos} → 第三人称枪口火焰");
             _fx.MuzzleFlashWorld(pos, weaponId);
         }
 
@@ -651,11 +750,13 @@ namespace Cs16.Module.Combat
             _audio.Play(CsWeapons.FireSound(def, local.Silenced));
 
             // ---- 枪口火焰 / 投掷视觉 ----
-            if (def.Class == CsWeaponClass.Grenade)
-            {
-                _nades.ThrowVisual(eye, aim, def);
-            }
-            else if (def.Class != CsWeaponClass.Knife && def.Class != CsWeaponClass.Bomb)
+            // 弹道起点 = 枪口（下面按武器算；非枪械时退回眼睛）。⛔ 不要从眼睛起画：
+            // 弹道是 2.2 cm 见方的世界空间细杆，从眼位出发时最近一段的截面投到屏幕上可达几百像素
+            // （0.05 m 处 ≈ 420 px），整根看起来是一根从眼前伸出去的粗棒。
+            // 投掷物的飞行体由模拟的 OnGrenadeThrown 统一生成（见 OnGrenadeThrown），这里只留枪械的枪口表现。
+            var tracerFrom = eye;
+            if (def.Class != CsWeaponClass.Knife && def.Class != CsWeaponClass.Bomb &&
+                def.Class != CsWeaponClass.Grenade)
             {
                 // 落点按**相机局部系**给（CsCombatTuning 的三个偏移，从视模型实测包围盒反推）
                 // ⇒ 这里传相机旋转而不是 aim：world-up 叉乘算 right 在俯仰 ±90° 会退化。
@@ -671,6 +772,13 @@ namespace Cs16.Module.Combat
                 // 抛壳：逐武器一种原版壳模型（霰弹枪那条载体取不到 ⇒ 不抛，见 CsShellModels.KindFor）。
                 // 第 4 个实参 = 原版初速里那一项 pev->velocity（跑动中开枪时壳跟着人走）。
                 _fx.ShellEject(eye, viewRotation, weaponId, local.Velocity);
+
+                // 弹道起点取**枪口**（与枪口火焰同一组逐武器偏移；轴向用 MuzzleAxial，
+                // 不带火焰那 1.5 cm 余量 —— 弹道本来就该从枪管口出来）。
+                tracerFrom = eye + viewRotation * new Vector3(
+                    CsCombatTuning.MuzzleLateral(weaponId),
+                    CsCombatTuning.MuzzleVertical(weaponId),
+                    CsCombatTuning.MuzzleAxial(weaponId));
             }
 
             // ---- 刀 / 手雷 / C4：模拟内部已直接结算，这里绝不再射线 ----
@@ -697,15 +805,21 @@ namespace Cs16.Module.Combat
                 Origin = eye,
                 Direction = aim,
                 Spread = spread,
-                Range = def.Range,
+                Range = CsWeapons.ShotRange(def),
                 Pellets = def.Pellets,
             };
 
             _firearm.Fire(request);
 
-            // ---- 弹道表现 ----
+            // ---- 弹道表现（每颗弹丸一条；起点 = 枪口，见上面的 tracerFrom）----
+            // 贴脸命中时落点比枪口还近 ⇒ 退回眼睛起画，否则会画出一条从枪口往回指的短棒。
             var ends = _firearm.TracerEnds;
-            for (var i = 0; i < ends.Count; i++) _fx.Tracer(eye, ends[i]);
+            var muzzleAhead = Vector3.Dot(tracerFrom - eye, aim);
+            for (var i = 0; i < ends.Count; i++)
+            {
+                var from = Vector3.Dot(ends[i] - eye, aim) > muzzleAhead ? tracerFrom : eye;
+                _fx.Tracer(from, ends[i]);
+            }
 
             // ---- 弹痕 + 火星（打在墙上的那些弹丸；打在人身上的不留痕）----
             var impactPoints = _firearm.ImpactPoints;
@@ -716,16 +830,23 @@ namespace Cs16.Module.Combat
                 // 弹痕族由 CsCombatTuning.SurfaceDecals 按它查表（原版 client.dll 的 [surf+0x8C]/[surf+0x68]），
                 // 弹着音分类由 CsAudioTuning.ClassifyImpact 按它分流。
                 var matName = i < impactMaterials.Count ? impactMaterials[i] : null;
-                _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i], matName);
 
-                // 打得碎的世界几何（原版 func_breakable 木箱）：按原版扣血，health 1 ⇒ 一发即碎。
+                // 打得碎的世界几何：只有**会被伤害打碎**的 func_breakable 才带 CsBreakable
+                // （spawnflags 不含 SF_BREAK_TRIGGER_ONLY ⇒ 原版 takedamage = DAMAGE_YES）。
+                // de_dust2 的木箱 spawnflags 全是 1（trigger-only）⇒ 没有 CsBreakable 组件，
+                // 子弹只留弹痕 / 弹着音，箱子不碎。
                 // 命中方向取"眼睛 → 落点"，就是这一发自己的弹道方向（原版 g_vecAttackDir 的来源）。
                 var impacts = _firearm.ImpactColliders;
                 var breakable = i < impacts.Count ? CsBreakable.Find(impacts[i]) : null;
+                var damage = CsWeapons.BaseDamage(def, local.Silenced, local.BurstMode);
+                // 这一发就把箱子打碎 ⇒ 不贴弹痕：碎掉后箱体整组渲染被关（CsBreakable.Break），
+                // 贴上去的弹痕会留在空气里 25 s。
+                var willBreak = breakable != null && !breakable.Broken && breakable.Health <= damage;
+                _fx.BulletImpact(impactPoints[i], _firearm.ImpactNormals[i], matName, !willBreak);
+
                 if (breakable != null)
                 {
-                    breakable.ApplyBulletDamage(CsWeapons.BaseDamage(def, local.Silenced, local.BurstMode),
-                        (impactPoints[i] - eye).normalized, impactPoints[i]);
+                    breakable.ApplyBulletDamage(damage, (impactPoints[i] - eye).normalized, impactPoints[i]);
                 }
 
                 // 弹着音的分族 = 原版口径（CsAudioTuning.ClassifyImpact）：
@@ -755,29 +876,41 @@ namespace Cs16.Module.Combat
             for (var i = 0; i < hits.Count; i++)
             {
                 var hit = hits[i];
+                // ReportHit 会扣血、可能当场把人打死 ⇒「打中的是不是一个活着的敌人」必须在结算前取，
+                // 否则致命那一发的命中标记/命中音会被误判掉（结算后 victim.IsAlive 已是 false）。
+                var victim = match.Find(hit.VictimId);
+                var aliveBefore = victim != null && victim.IsAlive;
                 match.ReportHit(hit);
-                OnLocalHit(hit, def, match);
+                OnLocalHit(hit, def, match, aliveBefore);
             }
 
             if (hits.Count == 0)
             {
                 // 未命中是高频路径（扫射时几乎每发都不中）→ 降频。
                 _log.Info("shot.miss",
-                    $"{def.DisplayName} 未命中（spread={spread:F2}° 弹丸={def.Pellets} 射程={def.Range:F0}m）");
+                    $"{def.DisplayName} 未命中（spread={spread:F2}° 弹丸={def.Pellets} 射程={CsWeapons.ShotRange(def):F0}m）");
             }
         }
 
-        private void OnLocalHit(in CsHitInfo hit, CsWeaponDef def, ICsMatch match)
+        /// <param name="aliveBefore">这一发结算**之前**受击者还活着（= 这一发确实打在一个活人身上）。
+        /// 结算后才判会漏掉致命那一发：扣完血 IsAlive 已经是 false。</param>
+        private void OnLocalHit(in CsHitInfo hit, CsWeaponDef def, ICsMatch match, bool aliveBefore)
         {
             var headshot = hit.Hitbox == CsHitbox.Head;
 
-            CsHudSnapshot.HitMarkerTime = CsConst.HitMarkerTime;
-            CsHudSnapshot.HitMarkerHeadshot = headshot;
-
-            _audio.Play(headshot ? CsCombatTuning.HitMarkerHeadshotSfx : CsCombatTuning.HitMarkerSfx);
-
             var victim = match.Find(hit.VictimId);
             var victimName = victim != null ? victim.Name : $"actor {hit.VictimId}";
+
+            // 命中标记（X 形 + 命中音）只给"打中活着的敌人"：打中队友时友伤关闭根本不掉血，
+            // 再跳一下标记会让玩家误判成打中了对手；打已经死了的目标也不会扣血。
+            var local = match.LocalPlayer;
+            if (aliveBefore && local != null && victim != null && victim.Team != local.Team)
+            {
+                CsHudSnapshot.HitMarkerTime = CsConst.HitMarkerTime;
+                CsHudSnapshot.HitMarkerHeadshot = headshot;
+
+                _audio.Play(headshot ? CsCombatTuning.HitMarkerHeadshotSfx : CsCombatTuning.HitMarkerSfx);
+            }
 
             _log.Always($"Hit：{def.DisplayName} 命中 {victimName} 的 {hit.Hitbox}" +
                         $"（{hit.Distance:F1}m{(hit.ThroughWall ? "，穿墙" : string.Empty)}{(headshot ? "，爆头" : string.Empty)}）");

@@ -56,8 +56,8 @@ namespace Cs16.UI
         /// <summary>深色字（压在强调色底上时用）。</summary>
         public static readonly Color TextDark = new Color32(0x1B, 0x1B, 0x1B, 0xFF);
 
-        /// <summary>一行控件的标准高度。</summary>
-        public const float RowHeight = 44f;
+        /// <summary>一行控件的标准高度 = 原版 `.res` 的 `tall 20` × <see cref="ResScale"/>。</summary>
+        public const float RowHeight = 20f * ResScale;
 
         /// <summary>滑块手柄宽度。</summary>
         public const float HandleWidth = 14f;
@@ -136,34 +136,46 @@ namespace Cs16.UI
             return UIFactory.CreateLabel(name, parent, content, fontSize, pos, size, anchor, color ?? Text);
         }
 
-        /// <summary>左上角定位的按钮（带 CS 1.6 风格的悬停橙色高亮）。</summary>
+        /// <summary>
+        /// 左上角定位的按钮，原版 VGUI `Button` 形态：
+        /// 常态底 = `ButtonBG "0 0 0 64"`（`ClientScheme.res:39`，半透明黑，不是实心长条），
+        /// 悬停 / 按下底 = `SelectionBG "255 176 0 100"`（`:43`，armed 底色），
+        /// 文字 = `ControlText "255 176 0 255"`（`:29`）居中。
+        /// </summary>
         public static Button CreateButton(string name, Transform parent, string label, Vector2 pos, Vector2 size,
-            Action onClick, bool accent = false)
+            Action onClick)
         {
-            var img = UIFactory.CreateButton(name, parent, label, size, Vector2.zero,
-                accent ? Accent : Field, onClick);
+            // 底板给白：uGUI 的 ColorTint 是**乘**在 Graphic.color 上，底板若是半透明黑，
+            // 任何悬停色乘上去都还是黑 ⇒ 悬停看不见（原版语义是 armed 时**换底色**）。
+            var img = UIFactory.CreateButton(name, parent, label, size, Vector2.zero, Color.white, onClick);
             AnchoredTopLeft(img.rectTransform, pos, size);
 
             var btn = img.GetComponent<Button>();
             if (btn != null)
             {
                 var colors = btn.colors;
-                colors.normalColor = accent ? Accent : Field;
-                colors.highlightedColor = accent ? Accent : Accent;
+                colors.normalColor = ButtonBg;
+                colors.highlightedColor = AccentDim;
                 colors.pressedColor = AccentDim;
-                colors.selectedColor = accent ? Accent : Field;
-                colors.disabledColor = new Color(0.25f, 0.25f, 0.25f, 1f);
+                colors.selectedColor = ButtonBg;
+                colors.disabledColor = ControlDarkBg;
                 colors.colorMultiplier = 1f;
-                colors.fadeDuration = 0.08f;
+                colors.fadeDuration = 0f;
                 btn.colors = colors;
+            }
+            else
+            {
+                Game.Logger?.Warn("UI", $"按钮 {name} 没有 Button 组件，悬停配色不生效");
             }
 
             var labelText = img.GetComponentInChildren<Text>();
             if (labelText != null)
             {
-                labelText.fontSize = 24;
-                // 强调按钮（New Game / Start）用深色字，对比度更高，也更接近 CS 1.6 的高亮项
-                labelText.color = accent ? TextDark : Text;
+                labelText.font = OriginalFont;
+                labelText.fontSize = OriginalFontSize;
+                labelText.color = Text;
+                labelText.alignment = TextAnchor.MiddleCenter;
+                labelText.horizontalOverflow = HorizontalWrapMode.Overflow;
             }
 
             return btn;
@@ -259,29 +271,35 @@ namespace Cs16.UI
 
         // ═══════════════ CS 取值 → 引擎 Style（本类里唯一的"打包"处）═══════════════
 
-        /// <summary>非强调按钮（选择行箭头 / 开关行值按钮）的 CS 配色：常态 = 输入框底，悬停 = 强调橙。</summary>
+        /// <summary>
+        /// 选择行箭头 / 开关行值按钮的配色：常态 = 原版 `ButtonBG "0 0 0 64"`，
+        /// 悬停 / 按下 = `SelectionBG "255 176 0 100"`（`ClientScheme.res:39,43`）。
+        /// </summary>
         private static WidgetButtonStyle NonAccentButton => new WidgetButtonStyle
         {
-            Background = Field,
-            Highlighted = Accent,
+            Background = ButtonBg,
+            Highlighted = AccentDim,
             Pressed = AccentDim,
-            Disabled = new Color(0.25f, 0.25f, 0.25f, 1f),
-            FadeDuration = 0.08f,
+            Disabled = ControlDarkBg,
+            FadeDuration = 0f,
             TextColor = Text,
-            TextFontSize = 24,
+            TextFontSize = OriginalFontSize,
         };
 
-        /// <summary>输入框的 CS 配色与字号（底色 = Field，光标 / 选区 = 强调橙）。</summary>
+        /// <summary>
+        /// 输入框：底色 = 原版 `WindowBG "0 0 0 200"`（文字编辑框的底色，`ClientScheme.res:41`），
+        /// 文字 / 光标 / 选区 = `ControlText` / `SelectionBG`（`:29,43`）。
+        /// </summary>
         private static WidgetInputFieldStyle InputFieldStyle => new WidgetInputFieldStyle
         {
-            Background = Field,
+            Background = WindowBg,
             Colors = new ColorBlock
             {
-                normalColor = Field,
-                highlightedColor = Field,
-                pressedColor = Field,
-                selectedColor = Field,
-                disabledColor = new Color(0.3f, 0.3f, 0.3f, 1f),
+                normalColor = Color.white,
+                highlightedColor = Color.white,
+                pressedColor = Color.white,
+                selectedColor = Color.white,
+                disabledColor = Color.white,
                 colorMultiplier = 1f,
                 fadeDuration = 0f,
             },
@@ -333,6 +351,8 @@ namespace Cs16.UI
         public static readonly Color ButtonBg = new Color32(0x00, 0x00, 0x00, 0x40);
         /// <summary>文本编辑 / 面板底的深色 = 原版 `WindowBG "0 0 0 200"`（scheme:41）。</summary>
         public static readonly Color WindowBg = new Color32(0x00, 0x00, 0x00, 0xC8);
+        /// <summary>整屏菜单底 = 原版 `Menu/BgColor "0 0 0 227"`（scheme:48）。</summary>
+        public static readonly Color MenuBg = new Color32(0x00, 0x00, 0x00, 0xE3);
         /// <summary>更暗的底（滚动条底一类）= 原版 `ControlDarkBG "0 0 0 128"`（scheme:40）。</summary>
         public static readonly Color ControlDarkBg = new Color32(0x00, 0x00, 0x00, 0x80);
         /// <summary>列表 / 记分板底 = 原版 `ListBG "0 0 0 128"`（scheme:45）。</summary>
@@ -345,6 +365,11 @@ namespace Cs16.UI
         public static readonly Color BorderDark = new Color32(0xBC, 0x70, 0x00, 0x80);
         /// <summary>勾选框亮边 = 原版 `CheckButtonBorder2` → `BorderBright "188 112 0 128"`（scheme:76）。</summary>
         public static readonly Color BorderBright = new Color32(0xBC, 0x70, 0x00, 0x80);
+        /// <summary>
+        /// 控件外框线 = 实机帧里那条实心琥珀线（`BorderBright` 的 RGB、去掉 50% 透明）：
+        /// 半透明的 128 压在亮地图上几乎看不见（实机帧 `class_select_team_panel.png` 的框是看得清的一条线）。
+        /// </summary>
+        public static readonly Color BorderLine = new Color32(0xBC, 0x70, 0x00, 0xFF);
         /// <summary>勾选态的勾 = 原版 `CheckButtonCheck` → `BrightControlText "255 176 0 255"`（scheme:30/179）。</summary>
         public static readonly Color CheckMark = new Color32(0xFF, 0xB0, 0x00, 0xFF);
         /// <summary>纯说明文字（`.res` 里 `dulltext 1` 的那些）= 原版 `LabelDimText "255 176 0 164"`（scheme:28）。</summary>
@@ -368,6 +393,16 @@ namespace Cs16.UI
         /// <summary>标题字号 = 原版 `Fonts → Title`「Verdana Bold, tall 18, weight 500」（scheme:389-403）。</summary>
         public const int OriginalTitleFontSize = 18;
 
+        /// <summary>
+        /// 流程面板的大标题字号。原版 `Fonts` 里的 `Title`（18）远小于实机帧里的标题
+        /// （`原版资源/参照物/class/class_select_team_panel.png`：640×360 下标题字高 ≈16 px
+        /// ≈ 1080p 的 48 px，标题:正文 ≈ 2.5:1）⇒ 以实机帧为准。
+        /// </summary>
+        public const int MenuTitleFontSize = 48;
+
+        /// <summary>原版控件边框宽度（实机帧里是 1 px @360p，换算到 1080p ≈ 3 px；取 2 px 保持清晰不糊）。</summary>
+        public const float BorderWidth = 2f;
+
         private static Font _originalFont;
         private static bool _fontResolved;
         private static bool _fontWarned;
@@ -378,7 +413,7 @@ namespace Cs16.UI
         /// <para>
         /// 用 <see cref="Font.CreateDynamicFontFromOSFont(string[], int)"/> 并带上 CJK 回退族 ——
         /// 原版 menu 全英文、没有中文，而本工程的面板里有中文（如"（本项目新增）"），
-        /// 只给 Verdana 会让中文变成方框。CJK 回退族是**本项目新增**（登记在验收表「允许的差异」）。
+        /// 只给 Verdana 会让中文变成方框。CJK 回退族是**本项目新增**（登记在 `策划/差异登记.tsv`）。
         /// </para>
         /// <para>取不到时回退引擎内置字体并只 <c>Warn</c> 一次（不许静默变成另一种字体）。</para>
         /// </summary>
@@ -449,7 +484,7 @@ namespace Cs16.UI
             if (text == null) return;
             text.font = OriginalFont;
             text.fontStyle = FontStyle.Bold;
-            text.fontSize = OriginalTitleFontSize;
+            text.fontSize = MenuTitleFontSize;
         }
 
         /// <summary>
@@ -512,69 +547,132 @@ namespace Cs16.UI
             return btn;
         }
 
-        // ═══════════════ 原版主菜单项（GameMenu）的取值与控件 ═══════════════
-        //
-        // 出处一律 = `原版资源/cs16src/cs16game/app/platform/resource/trackerscheme.res` 的
-        // `InGameDesktop` 块（:164-173）。这几个键就是 CS 1.6 自己的 GameUI
-        // （`原版资源/cs16src/cs16game/app/cstrike/cl_dlls/gameui.dll`）在读的那几个：
-        // `MenuItemHeight` @0x1002bf13、`MenuColor` @0x1002c087、`ArmedMenuColor` @0x1002c112、
-        // `DepressedMenuColor` @0x1002c147、`GameMenuInset` @0x1002cedf、
-        // `Resource/GameMenu.res` @0x1002c4aa —— 即"解析 gamemenu.res 的那个菜单"用的就是这几个键。
+        /// <summary>
+        /// 带 1 px 边框的原版按钮（实机帧 `class_select_team_panel.png` 的队伍行 / 兵种行就是这个形态）：
+        /// 常态 = 透明底 + `<see cref="BorderBright"/>` 边框 + `ControlText` 橙字；
+        /// 悬停 / 按下 = `SelectionBG "255 176 0 100"` 填充（文字改黑由调用方在悬停事件里做）。
+        ///
+        /// <para><b><paramref name="inset"/> = 0</b>：文字左缘与边框左缘齐平 —— 实机帧
+        /// <c>class_select_team_panel.png</c> 里 <c>1 TERRORIST FORCES</c> 的首字紧贴框线，
+        /// 没有 VGUI 菜单那种 6 px 内缩。</para>
+        /// </summary>
+        public static Button CreateBorderedButton(string name, Transform parent, string label, Vector2 pos,
+            Vector2 size, Action onClick, float inset = 0f)
+        {
+            // 底板给白（ColorTint 乘在 Graphic.color 上，底板若是半透明黑，悬停色乘完还是黑）。
+            var bg = CreateBoxRect(name, parent, pos, size, Color.white, true);
+            CreateBorderEdges(bg.rectTransform, size, BorderWidth, BorderLine);
 
-        /// <summary>菜单项常态文字色 = 原版 `InGameDesktop/MenuColor "200 200 200 255"`（trackerscheme.res:166）。</summary>
-        public static readonly Color MenuItemText = new Color32(0xC8, 0xC8, 0xC8, 0xFF);
+            var btn = bg.gameObject.AddComponent<Button>();
+            btn.targetGraphic = bg;
+            btn.transition = Selectable.Transition.ColorTint;
+            var colors = btn.colors;
+            colors.normalColor = Color.clear;
+            colors.highlightedColor = AccentDim;
+            colors.pressedColor = AccentDim;
+            colors.selectedColor = Color.clear;
+            colors.disabledColor = Color.clear;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0f;
+            btn.colors = colors;
+            if (onClick != null) btn.onClick.AddListener(() => onClick());
 
-        /// <summary>菜单项悬停（armed）文字色 = 原版 `InGameDesktop/ArmedMenuColor "255 255 255 255"`（trackerscheme.res:167）。</summary>
-        public static readonly Color MenuItemArmedText = new Color32(0xFF, 0xFF, 0xFF, 0xFF);
+            var text = UIFactory.CreateText("Label", bg.transform, label, OriginalFontSize,
+                TextAnchor.MiddleLeft, Text, false);
+            if (text != null)
+            {
+                AnchoredTopLeft(text.rectTransform, new Vector2(inset, 0f),
+                    new Vector2(size.x - inset * 2f, size.y));
+                text.font = OriginalFont;
+                text.horizontalOverflow = HorizontalWrapMode.Overflow;
+                text.verticalOverflow = VerticalWrapMode.Overflow;
+            }
+            else
+            {
+                Game.Logger?.Warn("UI", $"边框按钮 {name} 没有文字子节点，按钮文案不会显示");
+            }
 
-        /// <summary>菜单项按下文字色 = 原版 `InGameDesktop/DepressedMenuColor "192 186 80 255"`（trackerscheme.res:168）。</summary>
-        public static readonly Color MenuItemPressedText = new Color32(0xC0, 0xBA, 0x50, 0xFF);
+            return btn;
+        }
 
         /// <summary>
-        /// 原版形态的菜单项：**只有文字**（原版 `cstrike/resource/gamemenu.res` 的项只有 `label` + `command`，
-        /// 没有 `image`）⇒ 不画底图；常态 / 悬停 / 按下三个文字色全出自 `trackerscheme.res:166-168`。
-        ///
-        /// <para>
-        /// 悬停反馈用 uGUI 的 <see cref="Selectable.Transition.ColorTint"/> 直接作用在**文字**上
-        /// （<c>targetGraphic</c> 指向 <see cref="Text"/>）⇒ 不需要自定义组件。因此 <c>Text.color</c>
-        /// 必须是**白**（最终上屏色 = 文字色 × 状态色），点击区 = 文字自身的矩形（<paramref name="size"/>）。
-        /// </para>
+        /// 把 <see cref="CreateBorderedButton"/> 的文字重新贴到边框左缘（与 <c>inset = 0</c> 同一口径）。
+        /// 预制体里存的是**生成时**的文字位置，旧预制体还带着内缩 ⇒ 面板打开时重贴一次（幂等）。
+        /// </summary>
+        public static void ApplyBorderedButtonTextInset(Button button)
+        {
+            if (button == null || !(button.transform is RectTransform rt)) return;
+            var text = button.GetComponentInChildren<Text>(true);
+            if (text == null) return;
+            AnchoredTopLeft(text.rectTransform, Vector2.zero, rt.sizeDelta);
+        }
+
+        /// <summary>给一个矩形节点加四条边（`thickness` 粗），坐标相对 <paramref name="parent"/> 的左上角。</summary>
+        public static void CreateBorderEdges(RectTransform parent, Vector2 size, float thickness, Color color)
+        {
+            if (parent == null) return;
+            var t = Mathf.Min(thickness, Mathf.Min(size.x, size.y) * 0.5f);
+            CreateBoxRect("Border_T", parent, new Vector2(0f, 0f), new Vector2(size.x, t), color, false);
+            CreateBoxRect("Border_B", parent, new Vector2(0f, -(size.y - t)), new Vector2(size.x, t), color, false);
+            CreateBoxRect("Border_L", parent, new Vector2(0f, -t), new Vector2(t, size.y - 2f * t), color, false);
+            CreateBoxRect("Border_R", parent, new Vector2(size.x - t, -t), new Vector2(t, size.y - 2f * t),
+                color, false);
+        }
+
+        // ═══════════════ 原版菜单项（VGUI `Menu`）═══════════════
+        //
+        // 取值出处 = `原版资源/cs16src/cstrike/cstrike__resource__ClientScheme.res` 的 `Menu` 块（:125-133）：
+        // `BgColor` = ControlBG（全透明）、`ArmedBgColor` = SelectionBG、"255 176 0 100"、
+        // `FgColor` / `ArmedFgColor` = DimBaseText / BrightBaseText（都是 "255 176 0 255"）、`TextInset` = 6。
+        // 原版 `cstrike/resource/GameMenu.res` 的项只有 `label` + `command`（没有 `image`）⇒ 不画底图。
+
+        /// <summary>
+        /// 原版形态的菜单项：常态**无底无边**、只有橙色文字；悬停时整条换成 `SelectionBG` 橙条。
+        /// 点击区 = <paramref name="size"/>（不含内缩的整行），文字左对齐并按 <see cref="MenuTextInset"/> 内缩。
         /// </summary>
         public static Button CreateMenuItem(string name, Transform parent, string label, Vector2 pos,
-            Vector2 size, Action onClick)
+            Vector2 size, Action onClick, float textInset = MenuTextInset)
         {
-            // 文字色必须是**原版正文橙**（ControlText 255 176 0，clientscheme.res:24-33）：
-            // 下面的 Button.colors 只是**再乘一层 tint**（常态 MenuItemText = 200/255，trackerscheme.res:166）
-            // ⇒ 最终显示 = 橙 × 200/255。若这里给白，tint 乘完就成了"灰白字"，与原版不符（实测踩过）。
-            var text = UIFactory.CreateText(name, parent, label, OriginalFontSize,
-                TextAnchor.MiddleLeft, Text, true);
+            // 点击区 / 悬停底色放在容器上（原版 Menu 的 `BgColor` = ControlBG 全透明、
+            // `ArmedBgColor` = SelectionBG "255 176 0 100"，ClientScheme.res:125-133）。
+            // 容器底色给白，ColorTint 才是"换底色"而不是"在底色上提亮"（道理同 CreateOriginalButton）。
+            var background = CreateBoxRect(name, parent, pos, size, Color.white, true);
+            var btn = background.gameObject.AddComponent<Button>();
+            btn.targetGraphic = background;
+            btn.transition = Selectable.Transition.ColorTint;
+            var colors = btn.colors;
+            colors.normalColor = ControlBg;        // 原版 `Menu/BgColor` = ControlBG（全透明）
+            colors.highlightedColor = AccentDim;   // 悬停 = SelectionBG 橙
+            colors.pressedColor = AccentDim;
+            colors.selectedColor = ControlBg;
+            colors.disabledColor = ControlBg;
+            colors.colorMultiplier = 1f;
+            colors.fadeDuration = 0f;              // 原版 VGUI 没有淡入淡出
+            btn.colors = colors;
+
+            // 文字色 = 原版 `Menu/FgColor` → `DimBaseText "255 176 0 255"`（ClientScheme.res:127/27），
+            // 左对齐 + `TextInset 6` 内缩（`:132`）。
+            var text = UIFactory.CreateText("Label", background.transform, label, OriginalFontSize,
+                TextAnchor.MiddleLeft, Text, false);
             if (text == null)
             {
                 Game.Logger?.Warn("UI", $"菜单项 {name} 的 Text 建不出来，该项不会显示");
-                return null;
+                return btn;
             }
 
-            AnchoredTopLeft(text.rectTransform, pos, size);
+            AnchoredTopLeft(text.rectTransform, new Vector2(textInset, 0f),
+                new Vector2(size.x - textInset, size.y));
             text.font = OriginalFont;
             text.alignment = TextAnchor.MiddleLeft;
             text.horizontalOverflow = HorizontalWrapMode.Overflow;
             text.verticalOverflow = VerticalWrapMode.Overflow;
 
-            var btn = text.gameObject.AddComponent<Button>();
-            btn.targetGraphic = text;
-            btn.transition = Selectable.Transition.ColorTint;
-            var colors = btn.colors;
-            colors.normalColor = MenuItemText;
-            colors.highlightedColor = MenuItemArmedText;
-            colors.pressedColor = MenuItemPressedText;
-            colors.selectedColor = MenuItemText;
-            colors.disabledColor = DisabledText;
-            colors.colorMultiplier = 1f;
-            colors.fadeDuration = 0f;      // 原版 VGUI 没有淡入淡出
-            btn.colors = colors;
             if (onClick != null) btn.onClick.AddListener(() => onClick());
             return btn;
         }
+
+        /// <summary>菜单项文字左内缩 = 原版 `Menu/TextInset "6"`（ClientScheme.res:132）× <see cref="ResScale"/>。</summary>
+        public const float MenuTextInset = 6f * ResScale;
 
         /// <summary>
         /// 原版形态的"贴图按钮"：**常态 / 悬停两张 sprite**（原版 `game_menu.tga` /

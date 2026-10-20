@@ -90,15 +90,18 @@ namespace Cs16.UI
             var backdrop = UIFactory.CreatePanel("Backdrop", root, new Color(0f, 0f, 0f, 0.35f), false);
             UIFactory.Stretch(backdrop.rectTransform);
 
-            var box = UIFactory.CreatePanel("Dialog", root, CsUiStyle.Box, false);
-            CsHudTheme.PlaceCenter(box.rectTransform, Vector2.zero, new Vector2(BoxWidth, BoxHeight));
+            // 外框中心：原版 x[42..596] / y[47..307] @640×360 ⇒ 中心 y=177×3=531 @1080，
+            // 画布中心 540 ⇒ 往下 9 px。
+            // 原版记分板是半透明底板（后面的地图仍透出来），不是不透明白黑块。
+            var box = UIFactory.CreatePanel("Dialog", root, new Color(0f, 0f, 0f, 200f / 255f), false);
+            CsHudTheme.PlaceCenter(box.rectTransform, new Vector2(0f, -9f), new Vector2(BoxWidth, BoxHeight));
             var boxRt = box.rectTransform;
 
             _titleText = CsHudTheme.CreateText("Title", boxRt, "SCOREBOARD", 30, TextAnchor.MiddleLeft,
                 CsHudTheme.TextMain);
             CsHudTheme.PlaceTopLeft(_titleText.rectTransform, new Vector2(24f, -16f), new Vector2(700f, 40f));
 
-            _roundText = CsHudTheme.CreateText("Round", boxRt, "第 1 回合", 22, TextAnchor.MiddleRight,
+            _roundText = CsHudTheme.CreateText("Round", boxRt, "Round 1", 22, TextAnchor.MiddleRight,
                 CsHudTheme.TextDim);
             CsHudTheme.PlaceTopRight(_roundText.rectTransform, new Vector2(-24f, -16f), new Vector2(420f, 40f));
 
@@ -107,7 +110,7 @@ namespace Cs16.UI
             CsHudTheme.PlaceTopCenter(_scoreText.rectTransform, new Vector2(0f, -64f), new Vector2(600f, 44f));
 
             // 表头：每列单独一个 Text，x 偏移与数据行完全一致（比例字体下用空格对齐是假的）
-            var headers = new[] { "玩家名", "HP", "Money", "Score", "Deaths", "Latency" };
+            var headers = new[] { "Name", "HP", "Money", "Score", "Deaths", "Latency" };
             var xs = new[] { ColName, ColHp, ColMoney, ColScore, ColDeaths, ColPing };
             var widths = new[] { ColNameWidth, ColNumWidth, ColNumWidth, ColNumWidth, ColNumWidth, ColNumWidth };
             var anchors = new[]
@@ -139,6 +142,11 @@ namespace Cs16.UI
 
         public override void OnOpen(object param)
         {
+            // 打开/关闭各留一条日志：驱动里 `OpenScoreboard` 之后如果截图没有面板，
+            // 这两行能区分"没进 Open"和"进了又被关掉"。
+            Game.Logger?.Info(Tag,
+                $"记分板打开 layer={Layer} active={gameObject.activeInHierarchy} sibling={transform.GetSiblingIndex()}");
+
             if (!_warnedRefs)
             {
                 _warnedRefs = true;
@@ -146,6 +154,11 @@ namespace Cs16.UI
                     Game.Logger?.Error(Tag, "ScoreboardPanel 引用缺失（预制体未由 UiBuilder 生成或已被改动），记分板可能空白");
             }
             Refresh();
+        }
+
+        public override void OnClose()
+        {
+            Game.Logger?.Info(Tag, "记分板关闭（调用方见上一条 打开/关闭 日志的时间顺序）");
         }
 
         public override void OnUpdate(float dt)
@@ -187,14 +200,14 @@ namespace Cs16.UI
             }
 
             if (_scoreText != null) _scoreText.text = $"CT {CsHudSnapshot.ScoreCT}  :  {CsHudSnapshot.ScoreT} T";
-            if (_roundText != null) _roundText.text = $"第 {CsHudSnapshot.RoundNumber} 回合　·　{TABHint()}";
+            if (_roundText != null) _roundText.text = $"Round {CsHudSnapshot.RoundNumber}  ·  {TABHint()}";
             if (_titleText != null) _titleText.color = CsHudTheme.TeamColor(CsHudSnapshot.Team);
 
             if (_footerText != null)
             {
                 _footerText.text = _rows.Count == 0
-                    ? "本场还没有花名册（比赛未开始或已结束）。"
-                    : "统计口径：与比赛模块同源的花名册（含机器人与阵亡者）；延迟在单机版为自己 0、机器人 BOT。";
+                    ? "No roster yet (match not started or already ended)."
+                    : "Roster source: match module (includes bots and dead players). Latency is 0 for the local player, BOT for bots.";
             }
 
             LayoutRows();
@@ -202,7 +215,7 @@ namespace Cs16.UI
 
         private bool _noHudWarned;
 
-        private static string TABHint() => "松开 TAB 关闭";
+        private static string TABHint() => "Release TAB to close";
 
         /// <summary>把快照花名册搬成界面行（自己那行永远排本队第一）。</summary>
         private void BuildRowsFromRoster(List<CsScoreRosterItem> roster)
@@ -310,9 +323,9 @@ namespace Cs16.UI
         {
             switch (team)
             {
-                case CsTeam.CT: return "Counter-Terrorists（CT）";
-                case CsTeam.T: return "Terrorists（T）";
-                default: return "Spectators（观察者）";
+                case CsTeam.CT: return "Counter-Terrorists";
+                case CsTeam.T: return "Terrorists";
+                default: return "Spectators";
             }
         }
 
@@ -322,8 +335,9 @@ namespace Cs16.UI
             var nameColor = dead ? CsHudTheme.Disabled : CsHudTheme.TeamColor(row.Team);
             if (row.IsSelf)
             {
-                ui.Name.text = $"{row.Name}（你）";
-                ui.Name.color = dead ? CsHudTheme.Disabled : CsHudTheme.TextMain;
+                ui.Name.text = $"{row.Name} (you)";
+                // 自己那行是黄底 ⇒ 行内文字一律深色（黄底黑字，与买枪选中行同款口径）。
+                ui.Name.color = CsUiStyle.TextDark;
             }
             else
             {
@@ -331,19 +345,24 @@ namespace Cs16.UI
                 ui.Name.color = nameColor;
             }
 
-            var valueColor = dead ? CsHudTheme.Disabled : CsHudTheme.TextHud;
+            // 自己那行整行深色字（黄底上黄字看不见），其余行按存活/死亡取色。
+            var valueColor = row.IsSelf ? CsUiStyle.TextDark
+                : dead ? CsHudTheme.Disabled : CsHudTheme.TextHud;
 
             // HP：活的显示右对齐血量数字；死的把数字收起来，只留原版那个左对齐的 Dead
             var showHp = row.Alive && row.Health != CsScoreRow.UnknownHealth;
             if (ui.Hp.gameObject.activeSelf != showHp) ui.Hp.gameObject.SetActive(showHp);
             if (showHp) ui.Hp.text = row.Health.ToString();
+            ui.Hp.color = row.IsSelf ? CsUiStyle.TextDark : CsHudTheme.TextHud;
 
             var showDead = !row.Alive;
             if (ui.HpDead.gameObject.activeSelf != showDead) ui.HpDead.gameObject.SetActive(showDead);
             if (showDead) ui.HpDead.text = "Dead";
+            ui.HpDead.color = row.IsSelf ? CsUiStyle.TextDark : CsHudTheme.Disabled;
 
             ui.Money.text = row.Money == CsScoreRow.UnknownMoney ? "—" : $"${row.Money}";
-            ui.Money.color = row.Money == CsScoreRow.UnknownMoney ? CsHudTheme.Disabled : CsHudTheme.MoneyNormal;
+            ui.Money.color = row.IsSelf ? CsUiStyle.TextDark
+                : row.Money == CsScoreRow.UnknownMoney ? CsHudTheme.Disabled : CsHudTheme.MoneyNormal;
             ui.Score.text = row.Kills.ToString();
             ui.Score.color = valueColor;
             ui.Deaths.text = row.Deaths.ToString();
@@ -352,7 +371,7 @@ namespace Cs16.UI
             // 单机版：只有本地玩家走"本机回环"（0），机器人不是网络实体 → 不编 ping，照原版显示 BOT
             var bot = row.IsBot || row.Latency == CsScoreRow.UnknownLatency;
             ui.Ping.text = bot ? "BOT" : row.Latency.ToString();
-            ui.Ping.color = CsHudTheme.TextDim;
+            ui.Ping.color = row.IsSelf ? CsUiStyle.TextDark : CsHudTheme.TextDim;
 
             // 自己那行高亮（规格：自己那行高亮）
             if (ui.Bg != null)

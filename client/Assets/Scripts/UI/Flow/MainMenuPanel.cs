@@ -32,19 +32,36 @@ namespace Cs16.UI
         //
         // 设计空间 → 画布的换算比 = CsUiStyle.ResScale（2.25；640×480 → 1920×1080，理由见那里）。
 
-        /// <summary>菜单项高 = 原版 `InGameDesktop/MenuItemHeight "28"`（trackerscheme.res:171）× ResScale。</summary>
-        private const float ItemHeight = 28f * CsUiStyle.ResScale;
+        /// <summary>
+        /// 菜单项高 = 36 设计像素 × <see cref="CsUiStyle.ResScale"/> = 81。
+        /// 原版主菜单实机帧不在参照物目录内，按 28 号字留出上下余量后取 36（项高 &gt; 字高，行与行不贴）。
+        /// </summary>
+        private const float ItemHeight = 36f * CsUiStyle.ResScale;
 
-        /// <summary>菜单项步进 = 项高：原版各项**紧邻**排列，无额外间隙（间隙值无载体，不编）。
+        /// <summary>菜单项步进 = 项高（项与项等距）。
         /// <para>符号：<see cref="CsUiStyle.AnchoredTopLeft"/> 的口径是「以左上角为原点、**y 为负 = 向下**」
         /// ⇒ 往下排必须**逐步减少** y，所以步进取负。</para></summary>
         private const float ItemStep = -ItemHeight;
 
-        /// <summary>菜单项宽 = 原版贴图 `game_menu.tga` 的画布宽 207（唯一宽度载体）× ResScale。</summary>
-        private const float ItemWidth = 207f * CsUiStyle.ResScale;
+        /// <summary>菜单项宽 = 屏幕宽的 1/3（1920 / 3 = 640）：悬停条是整行宽的橙条。</summary>
+        private const float ItemWidth = 640f;
+
+        /// <summary>
+        /// 菜单项字号 = 28。原版 640×480 菜单字高约 12 px，按 ×2.25 折算到 1080 约 27；
+        /// 取 28 后文字墨迹约 20 px 高，与原版主菜单的字体量级一致。
+        /// </summary>
+        private const int ItemFontSize = 28;
 
         /// <summary>菜单左上 inset = 原版 `InGameDesktop/GameMenuInset "32"`（trackerscheme.res:172）× ResScale。</summary>
         private const float Inset = 32f * CsUiStyle.ResScale;
+
+        /// <summary>
+        /// 菜单项文字的左内缩 = 0：字标贴图 <c>game_menu.tga</c> 的墨迹从画布 x=1 起
+        /// （207×32 的画布，墨迹 bbox x 1..205），按 <see cref="LogoWidth"/> 拉到 465 px 后
+        /// 落在屏幕 x≈74；菜单项若保留 VGUI `Menu/TextInset 6`（=13.5 px），文字墨迹会落在 x≈88，
+        /// 比字标右移约 14 px。实机帧里项的左缘与字标左缘齐平。
+        /// </summary>
+        private const float ItemTextInset = 0f;
 
         /// <summary>顶部字标宽 = 原版 `game_menu.tga` 画布宽 207 × ResScale。</summary>
         private const float LogoWidth = 207f * CsUiStyle.ResScale;
@@ -115,16 +132,16 @@ namespace Cs16.UI
             //（BuildLayout 里挂的运行时监听器不进预制体，见 CsPanelBase.Bind）
             var y = FirstItemY;
             _newGameButton = CsUiStyle.CreateMenuItem("Btn_NewGame", root, "New Game",
-                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
+                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null, ItemTextInset);
             y += ItemStep;
             _findServersButton = CsUiStyle.CreateMenuItem("Btn_FindServers", root, "Find Servers",
-                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
+                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null, ItemTextInset);
             y += ItemStep;
             _optionsButton = CsUiStyle.CreateMenuItem("Btn_Options", root, "Options",
-                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
+                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null, ItemTextInset);
             y += ItemStep;
             _quitButton = CsUiStyle.CreateMenuItem("Btn_Quit", root, "Quit",
-                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null);
+                new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight), null, ItemTextInset);
 
             // 引擎署名（逐字 `by clover-engine`）不建在这里：它由常驻件 CsCreditBadge 画在面板之上，
             // 各面板各建一行会漏页（新增面板没人记得补）、且面板一关那一行就没了。
@@ -137,6 +154,9 @@ namespace Cs16.UI
             // 见 CsUiStyle.ApplyOriginalFonts 的注释（同款做法见 TeamSelectPanel / OptionsPanel）。
             CsUiStyle.ApplyOriginalFonts(transform);
 
+            // 预制体里存的是生成时的几何（20 号字 / 63 高 / 465 宽）；每次打开按当前常量重排并改字号。
+            ApplyMenuGeometry();
+
             Bind(_newGameButton, () => Game.Event.Emit(Events.StartNewGame), "New Game");
             Bind(_findServersButton, () => Game.Event.Emit(Events.OpenServerList), "Find Servers");
             Bind(_optionsButton, () => Game.Event.Emit(Events.OpenOptions), "Options");
@@ -148,6 +168,38 @@ namespace Cs16.UI
             // 背景拼图的 sprite 同理：生成期已绑好就什么都不做，缺哪块才补哪块（逐块报出文件名）。
             if (_background != null) _background.EnsureSprites();
             else WarnLogoOnce("原版背景拼图组件缺失（预制体未由 FlowSetup 生成？），本界面只有纯色底");
+        }
+
+        /// <summary>
+        /// 把 4 个菜单项按当前常量重新摆一遍：位置（行距）、尺寸（悬停条整行宽）、文字字号。
+        /// <see cref="BuildLayout"/> 只在预制体没有子节点时执行，所以运行期必须再调一次（幂等）。
+        /// </summary>
+        private void ApplyMenuGeometry()
+        {
+            var y = FirstItemY;
+            ApplyMenuItemGeometry(_newGameButton, y);
+            y += ItemStep;
+            ApplyMenuItemGeometry(_findServersButton, y);
+            y += ItemStep;
+            ApplyMenuItemGeometry(_optionsButton, y);
+            y += ItemStep;
+            ApplyMenuItemGeometry(_quitButton, y);
+        }
+
+        private static void ApplyMenuItemGeometry(Button button, float y)
+        {
+            if (button == null) return;
+
+            if (button.transform is RectTransform rt)
+                CsUiStyle.AnchoredTopLeft(rt, new Vector2(Inset, y), new Vector2(ItemWidth, ItemHeight));
+
+            var text = button.GetComponentInChildren<Text>(true);
+            if (text == null) return;
+
+            CsUiStyle.AnchoredTopLeft(text.rectTransform,
+                new Vector2(ItemTextInset, 0f),
+                new Vector2(ItemWidth - ItemTextInset, ItemHeight));
+            text.fontSize = ItemFontSize;
         }
 
         /// <summary>运行期兜底取字标：预制体里已经绑好就什么都不做；只在缺的时候请求一次。</summary>

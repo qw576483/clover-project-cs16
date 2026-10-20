@@ -35,6 +35,12 @@ namespace Cs16.UI
         private const float BoxWidth = 620f;
         private const float RowHeight = 32f;
 
+        /// <summary>面板左上角 x = 参考分辨率宽的 20%（1920 × 0.20 = 384）。</summary>
+        private const float BoxLeftPx = 1920f * 0.20f;
+
+        /// <summary>面板左上角 y = 参考分辨率高的 22%（1080 × 0.22 = 237.6），从屏幕顶部往下量。</summary>
+        private const float BoxTopPx = 1080f * 0.22f;
+
         /// <summary>原版三组里最大的一组 = radio3 的九条；行控件按它建数，短组留空行。</summary>
         private const int MaxEntries = 9;
 
@@ -46,7 +52,7 @@ namespace Cs16.UI
 
         private const float BoxHeight = HeaderHeight + MaxEntries * RowHeight + HintBand;
 
-        private static readonly string[] GroupTitles = { "RADIO A（Z）", "RADIO B（X）", "RADIO C（C）" };
+        private static readonly string[] GroupTitles = { "RADIO A (Z)", "RADIO B (X)", "RADIO C (C)" };
         private static readonly GameKey[] GroupKeys = { GameKey.Z, GameKey.X, GameKey.C };
 
         private static readonly GameKey[] NumberKeys =
@@ -69,7 +75,8 @@ namespace Cs16.UI
         {
             // 无线电菜单是小面板，不铺全屏遮罩（CS 1.6 也是直接压在画面上）
             var box = UIFactory.CreatePanel("Dialog", root, new Color(0f, 0f, 0f, 0.72f), true);
-            CsHudTheme.PlaceBottomCenter(box.rectTransform, new Vector2(0f, 40f), new Vector2(BoxWidth, BoxHeight));
+            CsHudTheme.PlaceTopLeft(box.rectTransform, new Vector2(BoxLeftPx, -BoxTopPx),
+                new Vector2(BoxWidth, BoxHeight));
             var boxRt = box.rectTransform;
 
             _titleText = CsHudTheme.CreateText("Title", boxRt, GroupTitles[0], 24, TextAnchor.MiddleLeft,
@@ -110,6 +117,7 @@ namespace Cs16.UI
                 _group = CsRadioGroup.A;
             }
 
+            ApplyPosition();
             RefreshLabels();
             Game.Logger?.Info(Tag, $"无线电菜单已打开：{GroupTitles[(int)_group]}（{_entries.Count} 条）");
         }
@@ -151,6 +159,21 @@ namespace Cs16.UI
             }
         }
 
+        /// <summary>
+        /// 把面板按当前常量摆到屏幕中上偏左（左上角 = 20% 宽 / 22% 高）。
+        /// 预制体序列化的是旧的底部居中坐标，<see cref="BuildLayout"/> 在实例化后不会重跑，所以打开时补一次。
+        /// </summary>
+        private void ApplyPosition()
+        {
+            if (!(transform.Find("Dialog") is RectTransform box))
+            {
+                Game.Logger?.Warn(Tag, "无线电菜单的 Dialog 节点缺失，位置沿用预制体坐标");
+                return;
+            }
+
+            CsHudTheme.PlaceTopLeft(box, new Vector2(BoxLeftPx, -BoxTopPx), new Vector2(BoxWidth, BoxHeight));
+        }
+
         /// <summary>菜单数字键 → 原版 <c>radio1</c>/<c>radio2</c>/<c>radio3</c> 三组之一。</summary>
         private static CsRadioSet SetOf(CsRadioGroup group)
         {
@@ -182,7 +205,7 @@ namespace Cs16.UI
             }
 
             if (_hintText != null)
-                _hintText.text = $"1~{_entries.Count} 选择　·　松开开关键（Z/X/C）或 ESC 收起";
+                _hintText.text = $"1~{_entries.Count} select · release Z/X/C or press ESC to close";
         }
 
         private void Send(int index)
@@ -200,7 +223,7 @@ namespace Cs16.UI
 
             // HUD 消息栏同时会收到比赛模块回推的 GameMessage；这里再补一条本地回执，
             // 保证"HUD 不在也能看到自己发了什么"
-            HudPanel.Notify($"无线电：{text}");
+            HudPanel.Notify($"Radio: {text}");
             Close();
         }
 

@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using Cs16.Core;
 using UnityEngine;
 
@@ -25,6 +26,28 @@ namespace Cs16.Module.Map
 
         /// <summary>该点是否可站立（引擎空间事实；未加载时返回 true —— 与引擎语义一致）。</summary>
         bool WalkableAt(float x, float z);
+
+        /// <summary>
+        /// 地形高度场是否有**可站面**数据（<c>.bytes</c> 的 <c>FlagHeightField</c> 段）。
+        /// <para>没有该段（旧产物 / 未开烘焙选项）时，下面两个查询恒返回"无面"，
+        /// 贴地取样退回物理射线。</para>
+        /// </summary>
+        bool HasSurfaceHeights { get; }
+
+        /// <summary>
+        /// 格 <c>(x,z)</c> 的可站面数量（**格索引**，不是世界坐标；世界 → 格 =
+        /// <c>floor((world - Game.Map.Origin) / CellSize)</c>）。
+        /// <para>同一格台上/台下两层各算一条 —— 这是"该站哪一层"的唯一数据来源。
+        /// 未加载 / 无高度场 / 越界 / 无面 = 0。</para>
+        /// </summary>
+        int SurfaceCountAt(int x, int z);
+
+        /// <summary>
+        /// 格 <c>(x,z)</c> 的**全部**可站面高度（米，升序）追加进 <paramref name="heightsOut"/>。
+        /// <para>参数口径与 <see cref="SurfaceCountAt"/> 相同（格索引）。无面时返回 false 且
+        /// **清空** <paramref name="heightsOut"/>（不留上一次的残留）。</para>
+        /// </summary>
+        bool TryGetSurfaceHeights(int x, int z, List<float> heightsOut);
 
         /// <summary>以给定半径判断是否站得下（中心 + 8 向采样）。
         /// <paramref name="height"/> = 碰撞盒高度（站立 <see cref="CsConst.StandHeight"/> / 蹲姿
@@ -61,6 +84,31 @@ namespace Cs16.Module.Map
         /// <param name="normal">命中面的世界法线（已归一化）。</param>
         /// <param name="maxDrop">向下最大探测距离（米）。</param>
         bool TrySampleGround(Vector3 pos, out Vector3 point, out Vector3 normal, float maxDrop = 8f);
+
+        /// <summary>
+        /// 身体足迹覆盖范围内的地面（中心 + 8 向 9 点，取**最高**的那一面），与
+        /// <see cref="ResolveMove"/> 抬腿第二遍的探地同一口径。原版判贴地用 <c>PM_PlayerTrace</c>
+        /// （玩家 hull 宽），不是中心零宽射线 —— 站在两级踏面之间时，中心射线只看得到脚下那一级，
+        /// 足迹看得到身体压住的那一级，两者口径必须一致，否则落点会逐帧在两级之间来回跳。
+        /// </summary>
+        /// <param name="maxLift">取最高面时允许高出 <paramref name="pos"/> 的上限（米）：超出的面不参与比较
+        /// （连续楼梯上足迹必然同时压到"再上一级"，不过滤就会采到高过一步的那级）。</param>
+        bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                      out Vector3 point, out Vector3 normal);
+
+        /// <summary>
+        /// 身高带是否放得下（自 <paramref name="pos"/> 脚面起算的站立身高带 + <paramref name="radius"/> 半径，
+        /// 同一套防穿墙几何校验）。测试入口：台阶/坡沿贴地爬升豁免、BotUnstuck 脱困判定用。
+        /// </summary>
+        bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy);
+
+        /// <summary>
+        /// 身体能否站在该点（**含台阶面豁免**）：体积不被占，或被占但它是"迈一步就让开"的
+        /// 台阶面/坡面台面（与 <c>ResolveMove</c> 抬腿第二遍的采纳条件 ③ 同款）。
+        /// 用途：坡面/台阶上的贴地爬升判定 —— 全宽胶囊在 63° 坡面天然与坡体重叠，
+        /// 纯体积判据会把"站在坡面"误杀成"撞墙"。
+        /// </summary>
+        bool StepFaceStandable(Vector3 pos, float height);
 
         /// <summary>出生点（索引循环取用；由烘焙时名为 Spawn* 的对象导出）。</summary>
         Vector3 GetSpawnPoint(int index);

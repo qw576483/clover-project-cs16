@@ -47,14 +47,14 @@ namespace Cs16.UI
                 CsHudTheme.TextDim);
             CsHudTheme.PlaceCenter(_detailText.rectTransform, new Vector2(0f, -8f), new Vector2(820f, 30f));
 
-            _rematchButton = CsHudTheme.CreateButton("Btn_Rematch", boxRt, "再来一局", new Vector2(0.5f, 0.5f),
+            _rematchButton = CsHudTheme.CreateButton("Btn_Rematch", boxRt, "Rematch", new Vector2(0.5f, 0.5f),
                 new Vector2(0.5f, 0.5f), new Vector2(-190f, -110f), new Vector2(340f, 58f), null);
-            _backToMainButton = CsHudTheme.CreateButton("Btn_BackToMain", boxRt, "回主菜单",
+            _backToMainButton = CsHudTheme.CreateButton("Btn_BackToMain", boxRt, "Back to Main Menu",
                 new Vector2(0.5f, 0.5f), new Vector2(0.5f, 0.5f), new Vector2(190f, -110f),
                 new Vector2(340f, 58f), null, accent: true);
 
             var hint = CsHudTheme.CreateText("Hint", boxRt,
-                "回主菜单会清掉本场比分；再来一局用当前配置（地图 / bot 数 / 难度）重开",
+                "Back to Main Menu clears this match's score; Rematch replays with the current setup (map / bots / difficulty).",
                 18, TextAnchor.MiddleCenter, CsHudTheme.TextDim);
             CsHudTheme.PlaceCenter(hint.rectTransform, new Vector2(0f, -170f), new Vector2(820f, 28f));
         }
@@ -83,14 +83,14 @@ namespace Cs16.UI
                 else
                 {
                     _titleText.text = ct > t ? "Counter-Terrorists Win!" : "Terrorists Win!";
-                    _titleText.color = ct > t ? CsHudTheme.TeamCT : CsHudTheme.TeamT;
+                    _titleText.color = ct > t ? CsHudTheme.RoundEndWinCT : CsHudTheme.RoundEndWinT;
                 }
             }
 
             if (_scoreText != null) _scoreText.text = $"CT {ct}  :  {t} T";
             if (_detailText != null)
             {
-                _detailText.text = $"共 {CsHudSnapshot.RoundNumber} 回合　本场比分已按回合结算";
+                _detailText.text = $"{CsHudSnapshot.RoundNumber} rounds played · score settled per round";
             }
 
             Game.Logger?.Info(Tag, $"比赛结束画面：{_titleText?.text} 最终比分 CT {ct} : {t} T");

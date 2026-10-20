@@ -32,7 +32,21 @@ namespace Cs16.UI
         /// <summary>本件画的层的排序值：引擎 <c>[UI]</c> 是 0，取 1 即压在其上。</summary>
         private const int SortingOrder = 1;
 
+        /// <summary>署名行文本框宽（一行短文本，只需包住它）。</summary>
+        private const float LabelWidth = 600f;
+
+        /// <summary>流程页（主菜单 / 选阵营 / 设置…）的署名位置：底部居中。</summary>
+        private const float MenuBottomOffset = 56f;
+
+        /// <summary>游戏内署名位置：左下角，贴边小字，避开视野中央与 HUD 血量行。</summary>
+        private const float InGameLeftInset = 10f;
+        private const float InGameBottomOffset = 70f;
+        private const int InGameFontSize = 13;
+
         private static GameObject _root;
+        private static Text _label;
+        private static Color _menuColor;
+        private static int _menuFontSize;
 
         /// <summary>建常驻署名（幂等：已建则直接复用，重复调用不会出第二行）。</summary>
         public static void Ensure()
@@ -52,12 +66,16 @@ namespace Cs16.UI
             scaler.referenceResolution = CloverPresentation.ReferenceResolution;
             scaler.matchWidthOrHeight = CloverPresentation.MatchWidthOrHeight;
 
-            var label = CsUiStyle.CreateCreditLabel(_root.transform);
+            var label = CsUiStyle.CreateCreditLabel(_root.transform, 22, MenuBottomOffset);
             if (label == null)
             {
                 Game.Logger?.Error(Tag, "引擎署名常驻件建不出文本节点（CreateCreditLabel 返回 null）");
                 return;
             }
+
+            _label = label;
+            _menuColor = label.color;
+            _menuFontSize = label.fontSize;
 
             Game.Logger?.Info(Tag,
                 $"引擎署名常驻件已建：sortingOrder={canvas.sortingOrder} " +
@@ -65,6 +83,39 @@ namespace Cs16.UI
                 $"match={scaler.matchWidthOrHeight} 文案='{label.text}' " +
                 $"底距={label.rectTransform.anchoredPosition.y:F1} 字号={label.fontSize} " +
                 $"raycast={label.raycastTarget}");
+        }
+
+        /// <summary>
+        /// 切换署名的落点：<paramref name="inGame"/> = true 时贴屏幕左下角（小字、低对比），
+        /// false 时回到流程页的底部居中。幂等，可在每次面板打开 / 关闭时调用。
+        /// </summary>
+        public static void SetInGame(bool inGame)
+        {
+            if (_label == null)
+            {
+                // 常驻件还没建（Bootstrap 尚未跑）：记录意图由调用方在建好后再调一次。
+                Game.Logger?.Warn(Tag, $"引擎署名常驻件尚未建立，忽略 SetInGame({inGame})");
+                return;
+            }
+
+            if (inGame)
+            {
+                _label.fontSize = InGameFontSize;
+                _label.alignment = TextAnchor.MiddleLeft;
+                _label.color = new Color(_menuColor.r, _menuColor.g, _menuColor.b, 0.55f);
+                CsUiStyle.AnchoredBottom(_label.rectTransform,
+                    new Vector2(InGameLeftInset, InGameBottomOffset),
+                    new Vector2(LabelWidth, InGameFontSize + 7f), TextAnchor.LowerLeft);
+            }
+            else
+            {
+                _label.fontSize = _menuFontSize;
+                _label.alignment = TextAnchor.MiddleCenter;
+                _label.color = _menuColor;
+                CsUiStyle.AnchoredBottom(_label.rectTransform,
+                    new Vector2(0f, MenuBottomOffset),
+                    new Vector2(LabelWidth, _menuFontSize + 10f), TextAnchor.LowerCenter);
+            }
         }
     }
 }

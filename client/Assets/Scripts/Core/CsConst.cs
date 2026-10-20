@@ -270,7 +270,18 @@ namespace Cs16.Core
         /// （见 <see cref="SpeedWalkMultiplier"/> 的读取点），服务端再取小 —— 见 <c>CsInventory.MovementSpeed</c>。</para>
         /// </summary>
         public const float ClForwardSpeed = 400f * UnitToMeter;
-        public const float SpeedCrouchMultiplier = 0.34f;
+
+        /// <summary>
+        /// 蹲姿移动倍率 = 原版 <c>PM_Duck</c> 对**命令分量**的缩放值 <b>0.333</b>：
+        /// <c>pmove-&gt;cmd.forwardmove *= 0.333; sidemove *= 0.333; upmove *= 0.333;</c>
+        /// 出处 = <c>原版资源/hlsdk/pm_shared/pm_shared.c:1700-1704</c>。
+        ///
+        /// <para><b>作用顺序</b>：<c>PM_PlayerMove</c> 先调 <c>PM_CheckParamters</c>（<c>:2447</c>，
+        /// 那里把命令分量按 <c>pmove-&gt;maxspeed</c> 钳一次，<c>:2355-2364</c>），再调 <c>PM_Duck</c>
+        /// （<c>:2492</c>）⇒ 蹲速 = <b>0.333 × 当前武器最大速度</b>（逐武器不同），不是固定 133 u/s。
+        /// 消费点 = <c>CsInventory.MovementSpeed</c>。</para>
+        /// </summary>
+        public const float SpeedCrouchMultiplier = 0.333f;
         /// <summary>
         /// 跳跃初速度：<c>sqrt(2 * 800 * 45.0)</c> = <b>268.328 units/s</b> ⇒ ×0.0254 = <b>6.82 m/s</b>。
         /// 出处 <c>原版资源/cs16src/hlsdk/halflife-master/pm_shared/pm_shared.c:2596</c>（同一算式亦见 <c>:2601</c>；
@@ -370,6 +381,22 @@ namespace Cs16.Core
         /// camera 陷进地形里 —— 用户报的"坡道会穿模"就是这个。</para>
         /// </summary>
         public const float MaxStandableSlopeNormalZ = 0.7f;
+
+        /// <summary>
+        /// **"台阶面"豁免的法线下界 = 0.3**（对应坡度 <b>acos(0.3) ≈ 72.5°</b>）：比
+        /// <see cref="MaxStandableSlopeNormalZ"/>（0.7 / 45.6°）更陡、但还没到竖直（法线 y=0）的面 ——
+        /// 典型是 B 点这类**石板铺装坡**：法线 y ≈ 0.45（≈63°），表面是逐级 ≤ 一个
+        /// <see cref="StepUpHeight"/> 的石板台面。
+        ///
+        /// <para><b>为什么需要它</b>：<see cref="MaxStandableSlopeNormalZ"/> 一票否决"沿陡坡迈上去"是对的
+        /// （防穿模，见那条常量的注释），但它把"装得进一个台阶高度"的坡面台面也一起否了 ⇒ 玩家/bot
+        /// 全部钉死在坡脚（用户报"这个坡都把人卡住了"）。豁免口径只在**同时**满足"高差 ≤ StepUpHeight、
+        /// 抬上去后身高带放得下、平面分量没贴到竖直"时才成立 —— 陡坡依旧上不去、墙依旧进不去，
+        /// 只承认"迈一步就上得去的台面"。</para>
+        ///
+        /// <para>下界 0.3 ≈ 72.5°：低于它的面几乎贴竖直（墙/立板），不给豁免。</para>
+        /// </summary>
+        public const float StepFaceSlopeNormalZ = 0.3f;
 
         // ---- 相机 ----
 
@@ -483,6 +510,17 @@ namespace Cs16.Core
         public const float ChaseWallOffset = 0.1016f;
 
         /// <summary>
+        /// 机位自身的安全圈半径（米）：机位以这个半径做球重叠检测，避免**相机中心**虽然不在
+        /// "眼位→机位"那条射线上、却贴进侧墙里（观战进角落时的"左右各一大块贴脸墙"）。
+        ///
+        /// <para>取值 = 相机近裁面矩形的外接球半径：near = 0.05 m、水平 FOV 90° ⇒ 近裁面
+        /// 半宽 0.05 / 半高 0.05×9/16 = 0.0281 ⇒ 到角点 √(0.05² + 0.025² + 0.0141²) ≈ 0.0577 m，
+        /// 取 <b>0.06</b> 让整个近裁面都落在安全圈内。这是**本项目新增**的防御量（原版只有
+        /// <c>view.cpp:899-960</c> 的一条一维射线），不是原版常量。</para>
+        /// </summary>
+        public const float ChaseCameraRadius = 0.06f;
+
+        /// <summary>
         /// 距离收敛速率：每帧朝理想距离移 <b>1/4</b>（<c>cam_snapto 0</c> 时的平滑分支）· 出处
         /// <c>HLSDK/cl_dll/in_camera.cpp:386-389</c>：
         /// <c>camAngles[2] += (cam_idealdist - camAngles[2]) / 4.0</c>。
@@ -558,6 +596,14 @@ namespace Cs16.Core
 
         /// <inheritdoc cref="SwitchTimePrimary"/>
         public const float SwitchTimeKnife = 0.2f;
+
+        /// <summary>
+        /// 手雷投出后的下一次可投掷间隔（秒）= 原版 <c>m_flNextPrimaryAttack = GetNextAttackDelay(0.5)</c>。
+        /// 出处：<c>原版资源/cs16src/regamedll/dlls/wpn_shared/wpn_hegrenade.cpp:210</c>、
+        /// <c>wpn_flashbang.cpp:208</c>、<c>wpn_smokegrenade.cpp:211</c>（三族同值；投出最后一颗时
+        /// 同一行把它与 idle 一起推到 +0.5，见各自 <c>:219</c> / <c>:217</c> / <c>:220</c>）。
+        /// </summary>
+        public const float GrenadeNextAttack = 0.5f;
 
         /// <summary>刀的攻击距离（米）· 消费点 = <c>CsInventory.FireKnife</c> 的射线长度。
         /// 出处：**未取到** —— <c>CKnife</c> 没有 <c>FireBullets3</c> 调用点

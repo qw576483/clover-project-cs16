@@ -70,6 +70,10 @@ namespace Cs16.Module.Bot
                 if (n.Team == selfTeam) continue;
                 if (n.Team != CsTeam.T && n.Team != CsTeam.CT) continue;
 
+                // 楼层过滤：同一条竖线上的上下层不算"听得见"（原版 cs_bot_listen.cpp:53 的
+                // oneStoreyHeight = 120 单位 ≈ 3.0 m）。水平距离才参与远近比较。
+                if (UnityEngine.Mathf.Abs(n.Position.y - listener.y) > CsBotConst.NoiseMaxFloorDelta) continue;
+
                 var d = n.Position - listener;
                 d.y = 0f;
                 var sq = d.sqrMagnitude;
@@ -221,7 +225,7 @@ namespace Cs16.Module.Bot
     }
 
     /// <summary>
-    /// 把"某 actor 受到伤害"归属到**某个机器人**身上（验收表 B1~B3 的命中率分母/分子）。
+    /// 把"某 actor 受到伤害"归属到**某个机器人**身上（命中率的分母/分子）。
     ///
     /// <para><b>为什么需要归属</b>：<c>ICsMatch.OnDamaged</c> 的回调签名是
     /// <c>(victim, damage, headshot, lethal)</c> —— **没有攻击者**（契约如此，我不改）。所以用两条

@@ -6,7 +6,11 @@ using UnityEngine.UI;
 namespace Cs16.UI
 {
     /// <summary>
-    /// H 菜单（规格 G12，**用户点名的菜单**）：机器人管理 / 比赛控制 / 换阵营 / 换图 / 关闭。
+    /// 开发者菜单：机器人管理 / 比赛控制 / 换阵营 / 换图 / 关闭。
+    ///
+    /// <para><b>没有默认键位</b>：原版 CS 1.6 没有这类面板，所以 H 键不再唤出它；
+    /// 只能从控制台命令 <c>cs16_menu</c> 打开。面板标题与节点名沿用 <c>HMenu</c>（标识不变）。
+    /// 功能等价的控制台命令 <c>bot_add</c> / <c>bot_kick</c> / <c>bot_difficulty</c> / <c>spec_*</c> 已存在。</para>
     ///
     /// <para><b>它是纯"发令台"</b>：所有动作都只 <c>Game.Event.Emit(...)</c>，
     /// 由比赛模块（<c>MatchModule</c> 已接好线）真正执行。UI 不碰任何业务对象。</para>
@@ -54,19 +58,19 @@ namespace Cs16.UI
 
         /// <summary>顶部提示行文案：数量 / 难度由快照实时给出，这一行只说明这一页怎么看操作结果。</summary>
         private const string HintText =
-            "机器人数量 / 当前难度实时显示在本页回显处；操作结果见控制台（/ 键）的 [Match] 日志";
+            "Bot count / difficulty are shown live below; results are logged in the console (~) under [Match]";
 
         private int _mapIndex;
-        private string _lastBotAction = "（还没有操作）";
+        private string _lastBotAction = "(no action yet)";
         private bool _warnedRefs;
 
         /// <summary>
-        /// H 菜单「机器人」一行的显示文案：<c>机器人：{N} 个　难度：{Easy/Normal/Hard}</c>。
+        /// 开发者菜单「机器人」一行的显示文案：<c>机器人：{N} 个　难度：{Easy/Normal/Hard}</c>。
         /// 纯函数：只把两个数值映射成文案。
         /// </summary>
         public static string FormatBotEcho(int botCount, CsBotDifficulty difficulty)
         {
-            return $"机器人：{botCount} 个　难度：{difficulty}";
+            return $"BOTS: {botCount}   DIFFICULTY: {difficulty}";
         }
 
         public override UILayer Layer => UILayer.Popup;
@@ -80,7 +84,7 @@ namespace Cs16.UI
             CsHudTheme.PlaceCenter(box.rectTransform, Vector2.zero, new Vector2(DialogWidth, DialogHeight));
             var boxRt = box.rectTransform;
 
-            var title = CsHudTheme.CreateText("Title", boxRt, "H MENU", 36, TextAnchor.MiddleLeft,
+            var title = CsHudTheme.CreateText("Title", boxRt, "CS16 MENU", 36, TextAnchor.MiddleLeft,
                 CsHudTheme.TextMain);
             CsHudTheme.PlaceTopLeft(title.rectTransform, new Vector2(28f, -16f), new Vector2(600f, 46f));
 
@@ -89,9 +93,9 @@ namespace Cs16.UI
             CsHudTheme.PlaceTopLeft(warn.rectTransform, new Vector2(28f, -60f), new Vector2(900f, 26f));
 
             // ─────────── 机器人 ───────────
-            SectionHeader(boxRt, "机器人 / BOTS", -100f);
+            SectionHeader(boxRt, "BOTS", -100f);
 
-            var addLabel = CsHudTheme.CreateText("AddLabel", boxRt, "添加机器人", 22, TextAnchor.MiddleLeft,
+            var addLabel = CsHudTheme.CreateText("AddLabel", boxRt, "Add bot", 22, TextAnchor.MiddleLeft,
                 CsHudTheme.TextHud);
             CsHudTheme.PlaceTopLeft(addLabel.rectTransform, new Vector2(28f, -140f), new Vector2(200f, BtnH));
 
@@ -102,25 +106,25 @@ namespace Cs16.UI
             _addHardButton = CsHudTheme.CreateButton("Btn_AddHard", boxRt, "Hard", new Vector2(0f, 1f),
                 new Vector2(0f, 1f), new Vector2(220f + (Small + 8f) * 2f, -140f), new Vector2(Small, BtnH), null);
 
-            _kickBotButton = CsHudTheme.CreateButton("Btn_KickBot", boxRt, "踢出机器人", new Vector2(0f, 1f),
+            _kickBotButton = CsHudTheme.CreateButton("Btn_KickBot", boxRt, "Kick bot", new Vector2(0f, 1f),
                 new Vector2(0f, 1f), new Vector2(28f, -196f), new Vector2(BtnW, BtnH), null);
 
-            _botEchoText = CsHudTheme.CreateText("BotEcho", boxRt, "最近操作：（还没有操作）", 20,
+            _botEchoText = CsHudTheme.CreateText("BotEcho", boxRt, "Last action: (none)", 20,
                 TextAnchor.MiddleLeft, CsHudTheme.TextDim);
             CsHudTheme.PlaceTopLeft(_botEchoText.rectTransform, new Vector2(244f, -196f),
                 new Vector2(700f, BtnH));
 
             // ─────────── 比赛 ───────────
-            SectionHeader(boxRt, "比赛 / MATCH", -256f);
+            SectionHeader(boxRt, "MATCH", -256f);
 
-            _restartRoundButton = CsHudTheme.CreateButton("Btn_RestartRound", boxRt, "重开本回合",
+            _restartRoundButton = CsHudTheme.CreateButton("Btn_RestartRound", boxRt, "Restart round",
                 new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(28f, -296f), new Vector2(BtnW, BtnH), null);
-            _restartMatchButton = CsHudTheme.CreateButton("Btn_RestartMatch", boxRt, "重开比赛",
+            _restartMatchButton = CsHudTheme.CreateButton("Btn_RestartMatch", boxRt, "Restart match",
                 new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(240f, -296f), new Vector2(BtnW, BtnH), null);
-            _togglePauseButton = CsHudTheme.CreateButton("Btn_TogglePause", boxRt, "暂停 / 继续",
+            _togglePauseButton = CsHudTheme.CreateButton("Btn_TogglePause", boxRt, "Pause / Resume",
                 new Vector2(0f, 1f), new Vector2(0f, 1f), new Vector2(452f, -296f), new Vector2(BtnW, BtnH), null);
 
-            var teamLabel = CsHudTheme.CreateText("TeamLabel", boxRt, "换阵营", 22, TextAnchor.MiddleLeft,
+            var teamLabel = CsHudTheme.CreateText("TeamLabel", boxRt, "Team", 22, TextAnchor.MiddleLeft,
                 CsHudTheme.TextHud);
             CsHudTheme.PlaceTopLeft(teamLabel.rectTransform, new Vector2(28f, -352f), new Vector2(160f, BtnH));
 
@@ -128,10 +132,10 @@ namespace Cs16.UI
                 new Vector2(0f, 1f), new Vector2(180f, -352f), new Vector2(Small, BtnH), null);
             _teamTButton = CsHudTheme.CreateButton("Btn_TeamT", boxRt, "T", new Vector2(0f, 1f),
                 new Vector2(0f, 1f), new Vector2(180f + Small + 8f, -352f), new Vector2(Small, BtnH), null);
-            _teamSpecButton = CsHudTheme.CreateButton("Btn_TeamSpec", boxRt, "观察者", new Vector2(0f, 1f),
+            _teamSpecButton = CsHudTheme.CreateButton("Btn_TeamSpec", boxRt, "Spec", new Vector2(0f, 1f),
                 new Vector2(0f, 1f), new Vector2(180f + (Small + 8f) * 2f, -352f), new Vector2(Small, BtnH), null);
 
-            var mapLabel = CsHudTheme.CreateText("MapLabel", boxRt, "换地图", 22, TextAnchor.MiddleLeft,
+            var mapLabel = CsHudTheme.CreateText("MapLabel", boxRt, "Map", 22, TextAnchor.MiddleLeft,
                 CsHudTheme.TextHud);
             CsHudTheme.PlaceTopLeft(mapLabel.rectTransform, new Vector2(28f, -408f), new Vector2(160f, BtnH));
 
@@ -145,7 +149,7 @@ namespace Cs16.UI
                 new Vector2(0f, 1f), new Vector2(480f, -408f), new Vector2(44f, BtnH), null);
 
             var mapHint = CsHudTheme.CreateText("MapHint", boxRt,
-                $"本工程只有 {CsConst.MapDust2} 一张图；换图请回主菜单 → New Game（局内换图需要重载 {SceneNames.StageDust2} 场景）",
+                $"{CsConst.MapDust2} is the only map; use Main Menu -> New Game to change maps (switching reloads {SceneNames.StageDust2}).",
                 18, TextAnchor.MiddleLeft, CsHudTheme.TextDim);
             CsHudTheme.PlaceTopLeft(mapHint.rectTransform, new Vector2(28f, -456f), new Vector2(900f, 26f));
 
@@ -197,7 +201,7 @@ namespace Cs16.UI
             RefreshMapValue();
             RefreshHint();
             RefreshEcho();
-            Game.Logger?.Info(Tag, "H 菜单已打开（机器人 / 比赛 / 换阵营 / 换图）");
+            Game.Logger?.Info(Tag, "开发者菜单已打开（机器人 / 比赛 / 换阵营 / 换图）");
         }
 
         public override void OnClose()
@@ -210,7 +214,7 @@ namespace Cs16.UI
             var input = Game.Input;
             if (input == null) return;
 
-            if (input.GetKeyDown(GameKey.H) || input.GetKeyDown(GameKey.Escape))
+            if (input.GetKeyDown(GameKey.Escape))
             {
                 Close();
                 return;
@@ -221,7 +225,7 @@ namespace Cs16.UI
 
         private void Close()
         {
-            Game.Logger?.Info(Tag, "H 菜单关闭");
+            Game.Logger?.Info(Tag, "开发者菜单关闭");
             Game.UI.Close<HMenuPanel>();
         }
 
@@ -229,23 +233,23 @@ namespace Cs16.UI
 
         private void AddBot(CsBotDifficulty difficulty)
         {
-            _lastBotAction = $"添加机器人（{difficulty}）";
-            SetStatus($"{_lastBotAction} —— 已发送（加到人少的一队，由比赛模块判定成败）");
+            _lastBotAction = $"Add bot ({difficulty})";
+            SetStatus($"{_lastBotAction} - sent (joins the smaller team; match module decides)");
 
-            Game.Logger?.Info(Tag, $"H 菜单：添加机器人（{difficulty}），发 {Events.AddBot}");
+            Game.Logger?.Info(Tag, $"开发者菜单：添加机器人（{difficulty}），发 {Events.AddBot}");
             Game.Event.Emit(Events.AddBot, difficulty);
-            HudPanel.Notify($"已发送：添加机器人（{difficulty}）");
+            HudPanel.Notify($"Sent: add bot ({difficulty})");
             RefreshEcho();
         }
 
         private void KickBot()
         {
-            _lastBotAction = "踢出机器人";
-            SetStatus($"{_lastBotAction} —— 已发送（踢出最后加入的那个，由比赛模块判定成败）");
+            _lastBotAction = "Kick bot";
+            SetStatus($"{_lastBotAction} - sent (kicks the last bot joined; match module decides)");
 
-            Game.Logger?.Info(Tag, $"H 菜单：踢出机器人，发 {Events.KickBot}");
+            Game.Logger?.Info(Tag, $"开发者菜单：踢出机器人，发 {Events.KickBot}");
             Game.Event.Emit(Events.KickBot);
-            HudPanel.Notify("已发送：踢出机器人");
+            HudPanel.Notify("Sent: kick bot");
             RefreshEcho();
         }
 
@@ -253,41 +257,43 @@ namespace Cs16.UI
 
         private void Emit(string eventName, string what)
         {
-            SetStatus($"{what} —— 已发送（{eventName}）");
-            Game.Logger?.Info(Tag, $"H 菜单：{what}（发 {eventName}）");
+            SetStatus($"{what} - sent ({eventName})");
+            Game.Logger?.Info(Tag, $"开发者菜单：{what}（发 {eventName}）");
             Game.Event.Emit(eventName);
-            HudPanel.Notify($"已发送：{what}");
+            HudPanel.Notify($"Sent: {what}");
         }
 
+        /// <summary>
+        /// 暂停走 Flow 的暂停菜单：本面板先收起，再发 <see cref="Events.RequestPause"/>
+        /// ⇒ 画面进 Pause 站点、比赛暂停，玩家在暂停菜单里点 Resume 恢复。
+        /// </summary>
         private void OnTogglePause()
         {
-            // 这是"比赛模拟暂停"，不是 ESC 游戏菜单 —— CS 里两者也是分开的（mp_pause vs 菜单）
-            SetStatus("暂停 / 继续 —— 已发送（冻结/恢复比赛模拟；ESC 才是游戏菜单）");
-            Game.Logger?.Info(Tag, $"H 菜单：暂停/继续比赛模拟（发 {Events.TogglePause}）");
-            Game.Event.Emit(Events.TogglePause);
-            HudPanel.Notify("已发送：暂停/继续比赛");
+            Game.Logger?.Info(Tag, $"开发者菜单：暂停比赛（收起本面板并发 {Events.RequestPause}）");
+            Game.UI.Close<HMenuPanel>();
+            Game.Event.Emit(Events.RequestPause);
         }
 
         private void ChangeTeam(CsTeam team)
         {
-            SetStatus($"换阵营 → {team} —— 已发送");
-            Game.Logger?.Info(Tag, $"H 菜单：换阵营 → {team}（发 {Events.ChangeTeam}）");
+            SetStatus($"Change team -> {team} - sent");
+            Game.Logger?.Info(Tag, $"开发者菜单：换阵营 → {team}（发 {Events.ChangeTeam}）");
             Game.Event.Emit(Events.ChangeTeam, team);
-            HudPanel.Notify($"已发送：换阵营（{team}）");
+            HudPanel.Notify($"Sent: change team ({team})");
         }
 
         private void CycleMap(int delta)
         {
             if (Maps.Length <= 1)
             {
-                SetStatus($"只有 {Maps[0]} 一张图：换图请回主菜单 → New Game（局内换图需要重载场景）");
-                HudPanel.Notify($"本工程只有 {Maps[0]}，换图请回主菜单");
+                SetStatus($"{Maps[0]} is the only map: use Main Menu -> New Game to change maps.");
+                HudPanel.Notify($"{Maps[0]} is the only map; change it from the main menu.");
                 return;
             }
 
             _mapIndex = (_mapIndex + delta + Maps.Length) % Maps.Length;
             RefreshMapValue();
-            SetStatus($"已选择地图 {Maps[_mapIndex]}（发 {Events.SwitchMap}）");
+            SetStatus($"Selected map {Maps[_mapIndex]} (sending {Events.SwitchMap})");
             Game.Event.Emit(Events.SwitchMap, Maps[_mapIndex]);
         }
 
@@ -305,7 +311,7 @@ namespace Cs16.UI
 
         /// <summary>
         /// 把顶部提示行写成 <see cref="HintText"/>（预制体里可能带着生成当时的副本）。
-        /// 节点缺失不影响 H 菜单的其它功能，只留一条日志。
+        /// 节点缺失不影响 开发者菜单的其它功能，只留一条日志。
         /// </summary>
         private void RefreshHint()
         {
@@ -313,7 +319,7 @@ namespace Cs16.UI
             var hint = node != null ? node.GetComponent<Text>() : null;
             if (hint == null)
             {
-                Game.Logger?.Warn(Tag, $"H 菜单提示行 {HintPath} 未找到，顶部文案沿用预制体里的副本");
+                Game.Logger?.Warn(Tag, $"开发者菜单提示行 {HintPath} 未找到，顶部文案沿用预制体里的副本");
                 return;
             }
             hint.text = HintText;
@@ -339,7 +345,7 @@ namespace Cs16.UI
                 else if (dot.Team == CsTeam.CT) ct++;
             }
 
-            _aliveText.text = $"本帧雷达可见的其他存活者：T={t} / CT={ct}（不含自己；快照不提供队伍总人数）";
+            _aliveText.text = $"Others visible on radar this frame: T={t} / CT={ct} (excludes you; the snapshot has no team totals)";
         }
     }
 }

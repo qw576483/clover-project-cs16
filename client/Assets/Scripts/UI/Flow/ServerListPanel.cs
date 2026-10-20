@@ -15,19 +15,18 @@ namespace Cs16.UI
     /// <item><b>问的一端</b>：引擎 <c>Game.LanBrowser</c>（扫描 / 收应答 / 出列表）；</item>
     /// <item><b>答的一端</b>：由本工程 <see cref="Cs16.Module.Net.CsLanHost"/> 应答
     /// （引擎里只有测试用的回环应答器），并给了面板上一个 <c>Host LAN Game</c> 开关；</item>
-    /// <item><b>点主机</b>：走 <c>CloverNet.Init(host.Address, host.UdpAddress)</c>
-    /// （非阻塞，连接结果由网络模块回调反馈），并留一条 Info 日志 + 面板状态行，不留"点了没反应"。</item>
+    /// <item><b>点主机</b>：起本工程的 <see cref="CsLanClient"/>（<c>CS16-LAN-JOIN/1</c> →
+    /// <c>CS16-LAN-WELCOME/1</c> → 持续收 <c>CS16-LAN-SNAP/1</c>）；握手成功才发出
+    /// <c>Events.LaunchMatch</c> 进图，失败 / 超时把原因写到状态行，不留"点了没反应"。</item>
+    /// <item><b>自己的房</b>：本机应答端也会应答本机发出的寻服查询 ⇒ 列表里按
+    /// <see cref="CsLanHost.IsSelfHost"/> 剔除自己那一条；点它也会被拒绝（连回自己会看到自己的角色）。</item>
     /// </list>
     /// </para>
     ///
-    /// <para>点主机时除了 <c>CloverNet.Init</c>，**另外**起本工程自己的 <see cref="CsLanClient"/> ——
-    /// 它消费主机推来的 <c>CS16-LAN-SNAP/1</c> 世界快照，由 <c>Module/View/CsLanRemoteView</c>
-    /// 把远端角色画到场上（"收到数据 ≠ 看得见人"那一半）。启动失败会 <c>Game.Logger.Error</c>
-    /// 留痕并把原因写到状态行。</para>
-    ///
-    /// <para><b>当前边界</b>：本机自己的走位 / 开枪还没有经 <c>CS16-LAN-INPUT/1</c> 交给主机 ——
-    /// **远端输入还没驱动主机模拟**；远端角色在本机**只到"看得见"这一层**
-    /// （不参与碰撞 / 命中 / 音频，见 <c>CsLanRemoteView</c> 的类注释）。</para>
+    /// <para>远端角色由 <c>Module/View/CsLanRemoteView</c> 按快照画到场上（"收到数据 ≠ 看得见人"那一半），
+    /// 本机走位经 <c>CS16-LAN-INPUT/1</c> 发给主机。<b>当前边界</b>：远端角色在本机**只到"看得见"这一层**
+    /// （不参与碰撞 / 命中 / 音频，见 <c>CsLanRemoteView</c> 的类注释），主机侧不会为加入者新建身体
+    /// （加入者的输入只对主机上同名的 actor 生效，主机自己的玩家拒绝远端输入）。</para>
     ///
     /// <para>平台不支持时（WebGL 无 BSD socket）显示 <see cref="ILanBrowser.UnsupportedReason"/>。</para>
     /// </summary>
@@ -55,7 +54,7 @@ namespace Cs16.UI
         /// <c>"…" + LanProtocol.DefaultPort</c>（int）不是常量表达式 ⇒ 只能保持字面量，
         /// ⇒ 若引擎改了默认端口，**这里必须同步改**（判据：本类里出现的端口字面量只有这一处）。</remarks>
         public const string FooterText =
-            "刷新 = 真实发起一轮局域网扫描（UDP 47777）；Host LAN Game = 本机对外应答同网段的寻服查询。";
+            "Refresh = run a real LAN scan (UDP 47777); Host LAN Game = answer server queries from this machine.";
 
         public const string HostButtonIdleText = "Host LAN Game";
 
@@ -73,6 +72,12 @@ namespace Cs16.UI
         private readonly List<GameObject> _rows = new List<GameObject>();
         private bool _subscribed;
 
+        /// <summary>正在加入的主机（握手在后台线程，本面板每帧看结果）；null = 没有待加入的。</summary>
+        private LanHostInfo _joiningHost;
+
+        /// <summary>"本机自己的房间被剔除"只记一次（每次打开面板重置）。</summary>
+        private bool _selfHostLogged;
+
         public override void BuildLayout(RectTransform root)
         {
             CsUiStyle.CreateFullScreen("Backdrop", root, CsUiStyle.Backdrop);
@@ -80,12 +85,12 @@ namespace Cs16.UI
             CsUiStyle.CreateLabel("Title", root, "FIND SERVERS", 52, new Vector2(90f, -70f),
                 new Vector2(1000f, 68f), TextAnchor.MiddleLeft, CsUiStyle.Text);
             CsUiStyle.CreateBoxRect("TitleBar", root, new Vector2(92f, -142f), new Vector2(520f, 4f), CsUiStyle.Accent);
-            _status = CsUiStyle.CreateLabel("Status", root, "正在扫描局域网服务器…", 24,
+            _status = CsUiStyle.CreateLabel("Status", root, "Scanning LAN servers...", 24,
                 new Vector2(92f, -158f), new Vector2(1500f, 40f), TextAnchor.MiddleLeft, CsUiStyle.Accent);
 
             CsUiStyle.CreateBoxRect("ListBox", root, new Vector2(ListX, ListY),
-                new Vector2(ListWidth, ListHeight), CsUiStyle.Box);
-            CsUiStyle.CreateLabel("ListHeader", root, "局域网服务器 / LAN Servers", 20,
+                new Vector2(ListWidth, ListHeight), CsUiStyle.ListBg);
+            CsUiStyle.CreateLabel("ListHeader", root, "LAN SERVERS", 20,
                 new Vector2(ListX + 20f, ListY + 6f), new Vector2(700f, 30f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
 
             var listNode = UIFactory.CreateNode("Rows", root);
@@ -99,7 +104,7 @@ namespace Cs16.UI
 
             // 点击回调在 OnOpen 里绑（BuildLayout 里挂的运行时监听器不进预制体，见 CsPanelBase.Bind）
             _refreshButton = CsUiStyle.CreateButton("Btn_Refresh", root, "Refresh",
-                new Vector2(ListX, -900f), new Vector2(220f, 56f), null, accent: true);
+                new Vector2(ListX, -900f), new Vector2(220f, 56f), null);
             _backButton = CsUiStyle.CreateButton("Btn_Back", root, "Back",
                 new Vector2(ListX + 240f, -900f), new Vector2(220f, 56f), null);
 
@@ -110,6 +115,9 @@ namespace Cs16.UI
 
         public override void OnOpen(object param)
         {
+            // 预制体里存不下动态字体（见 CsUiStyle.ApplyOriginalFonts）⇒ 每次打开都重设一遍。
+            CsUiStyle.ApplyOriginalFonts(transform);
+
             WarnIfNull(_status, "状态文本");
             WarnIfNull(_listRoot, "列表容器");
             Bind(_refreshButton, OnRefresh, "Refresh");
@@ -129,6 +137,8 @@ namespace Cs16.UI
             UpdateHostButton();
 
             ClearRows();
+            _selfHostLogged = false;
+            _joiningHost = null;
 
             // 差异 #88：底注文案的唯一真源是 `FooterText`（<see cref="BuildLayout"/> 也用它）。
             //   所以每次打开按常量覆写一次，两者收敛。
@@ -149,14 +159,14 @@ namespace Cs16.UI
             var browser = Game.LanBrowser;
             if (browser == null)
             {
-                SetStatus("局域网寻服不可用（Game.LanBrowser 为 null）");
+                SetStatus("LAN browsing unavailable (Game.LanBrowser is null)");
                 Game.Logger.Error(Tag, "Game.LanBrowser 为 null：引擎的局域网寻服未挂接（CloverLan 的 Launch 钩子没跑？）");
                 return;
             }
 
             if (!browser.IsSupported)
             {
-                SetStatus($"本平台不支持局域网寻服：{browser.UnsupportedReason}");
+                SetStatus($"LAN browsing is not supported on this platform: {browser.UnsupportedReason}");
                 Game.Logger.Warn(Tag, $"当前平台不支持寻服：{browser.UnsupportedReason}");
                 return;
             }
@@ -172,7 +182,8 @@ namespace Cs16.UI
         /// 开关本机的局域网应答端（差异 #88）。
         ///
         /// <para>它**不是**"起一个游戏服务端"：只让同网段其他人的 <c>Find Servers</c> 能发现本机。
-        /// 真正能连上的前提是 <c>gateway</c> 指向一台在监听的真实网关（<c>CloverNet.Init</c> 的目标）。</para>
+        /// 广播出去的 <c>gateway</c> = 本工程 <see cref="CsLanGateway"/> 监听的对局网关口（8002），
+        /// 该网关只在**本机已经开局**（<c>CsMatch.IsRunning</c>）时才推世界快照。</para>
         /// </summary>
         private void OnHostToggle()
         {
@@ -180,7 +191,7 @@ namespace Cs16.UI
             {
                 CsLanHost.Stop();
                 UpdateHostButton();
-                SetStatus("已停止局域网广播（本机不再被同网段发现）");
+                SetStatus("LAN broadcast stopped (this machine is no longer discoverable).");
                 return;
             }
 
@@ -196,13 +207,13 @@ namespace Cs16.UI
 
             if (!ok)
             {
-                SetStatus($"开主机失败：{error}");
-                Game.UI.Toast($"开主机失败：{error}", 3f);
+                SetStatus($"Failed to host: {error}");
+                Game.UI.Toast($"Failed to host: {error}", 3f);
                 return;
             }
 
-            SetStatus($"本机已广播：{CsLanHost.Describe()}（同网段其他玩家点 Refresh 应能发现）");
-            Game.UI.Toast("已开启局域网广播：同网段的 Find Servers 应能发现本机", 3f);
+            SetStatus($"Broadcasting: {CsLanHost.Describe()} (Refresh on the same subnet should find it)");
+            Game.UI.Toast("LAN broadcast started: Find Servers on the same subnet can see this machine.", 3f);
         }
 
         private void UpdateHostButton()
@@ -222,6 +233,15 @@ namespace Cs16.UI
                 browser.OnScanFinished -= OnScanFinished;
             }
             _subscribed = false;
+
+            // 面板关掉时握手还没成 ⇒ 取消这次加入（否则后台读线程会一直连着）。
+            if (_joiningHost != null)
+            {
+                Game.Logger.Info(Tag, "离开服务器列表：取消未完成的加入（" + CsLanClient.Describe() + "）");
+                CsLanClient.Stop();
+                _joiningHost = null;
+            }
+
             ClearRows();
         }
 
@@ -241,7 +261,8 @@ namespace Cs16.UI
             }
 
             ClearRows();
-            SetStatus("正在扫描局域网服务器…");
+            _selfHostLogged = false;
+            SetStatus("Scanning LAN servers...");
             Game.Logger.Info(Tag, "发起局域网扫描（LanBrowser.Scan）");
             browser.Scan();
         }
@@ -254,16 +275,38 @@ namespace Cs16.UI
                 return;
             }
 
+            // 寻服查询会发到 127.0.0.1 与本网段广播，本机应答端也会答 ⇒ 不做这一步时
+            // 列表里一定出现"我自己开的房"，点进去还会连回自己。
+            if (CsLanHost.IsSelfHost(host))
+            {
+                if (!_selfHostLogged)
+                {
+                    _selfHostLogged = true;
+                    Game.Logger.Info(Tag,
+                        $"发现的主机 {host.Address} 就是本机自己开的（gateway={CsLanHost.GatewayPort}）⇒ 已从列表剔除；" +
+                        "要从另一台机器加入才是真的联机");
+                }
+                return;
+            }
+
             if (_listRoot == null)
             {
                 Game.Logger.Warn(Tag, $"列表容器缺失，主机 {host.Address} 未能显示");
                 return;
             }
 
+            // 本机自己开的房也会收到自己的广播（引擎发现端不做自我过滤）⇒ 列表里会冒出一条
+            // 指向自己的房，点进去等于连回自己。这里按地址剔除。
+            if (IsLocalHost(host))
+            {
+                Game.Logger.Info(Tag, $"忽略本机自己的广播：{host.Address}（列表不显示自己的房间）");
+                return;
+            }
+
             var index = _rows.Count;
             var label = string.IsNullOrEmpty(host.Name) ? host.Host : host.Name;
             var players = host.MaxPlayers > 0 ? $"{host.Players}/{host.MaxPlayers}" : host.Players.ToString();
-            var rowText = $"{label}          {host.Address}          玩家 {players}";
+            var rowText = $"{label}          {host.Address}          players {players}";
 
             var button = CsUiStyle.CreateButton($"Host_{index}", _listRoot, rowText,
                 new Vector2(0f, -index * RowStep), new Vector2(RowWidth, RowHeight),
@@ -274,13 +317,45 @@ namespace Cs16.UI
                 $"发现局域网主机: address={host.Address} name={host.Name} players={host.Players}/{host.MaxPlayers}");
         }
 
+        /// <summary>这条广播是不是本机自己发的（回环地址或本机任一 IPv4）。</summary>
+        private static bool IsLocalHost(LanHostInfo host)
+        {
+            var addr = host.Address ?? string.Empty;
+            var colon = addr.LastIndexOf(':');
+            var ip = colon > 0 ? addr.Substring(0, colon) : addr;
+            if (ip == "127.0.0.1" || ip == "::1" || ip == "localhost") return true;
+
+            try
+            {
+                var local = System.Net.Dns.GetHostAddresses(System.Net.Dns.GetHostName());
+                for (var i = 0; i < local.Length; i++)
+                {
+                    if (local[i].ToString() == ip) return true;
+                }
+            }
+            catch (System.Exception ex)
+            {
+                Game.Logger.Warn(Tag, $"取本机 IP 失败，无法过滤自己的房间：{ex.Message}");
+            }
+            return false;
+        }
+
         private void OnScanFinished()
         {
             var browser = Game.LanBrowser;
-            var count = browser?.Hosts?.Count ?? 0;
+            var answered = browser?.Hosts?.Count ?? 0;
+            var count = _rows.Count;      // 已剔除"本机自己"的可点行数
             if (count == 0)
             {
-                SetStatus("未找到局域网服务器");
+                if (answered > 0)
+                {
+                    SetStatus("Only this machine's own LAN host answered — start a second instance on another machine");
+                    Game.Logger.Info(Tag,
+                        $"局域网扫描结束：收到 {answered} 条应答，但全部是本机自己的房间 ⇒ 列表为空");
+                    return;
+                }
+
+                SetStatus("No LAN servers found");
                 Game.Logger.Info(Tag,
                     "局域网扫描结束：0 台主机。⛔ 这不是 bug 也不是降级 —— 是**本轮真实没有应答**：" +
                     "同网段要有人开了应答端（本面板的 Host LAN Game，或与引擎 LanProtocol 同协议的其它主机）才扫得到。" +
@@ -292,49 +367,94 @@ namespace Cs16.UI
             }
             else
             {
-                SetStatus($"找到 {count} 台主机");
-                Game.Logger.Info(Tag, $"局域网扫描结束：{count} 台主机");
+                SetStatus($"Found {count} server(s)");
+                Game.Logger.Info(Tag, $"局域网扫描结束：{count} 台主机（应答 {answered} 条，已剔除本机自己）");
             }
         }
 
         private void OnHostClicked(LanHostInfo host)
         {
-            //   （"单机版不连接任何服务器"）；现在**真的**发起连接 —— 走引擎的官方入口
-            //   `CloverNet.Init(host.Address, host.UdpAddress)`（非阻塞：连上/失败由 Net.OnConnected /
-            //   OnConnectFailed 反馈，见 Contracts.cs 的 INetwork）。地址直接用 LanHostInfo 的两个属性，
-            //   不在这里自己拼串（那两个属性就是为了"能直接喂给 CloverNet.Init"而存在的）。
-            var udp = string.IsNullOrEmpty(host.UdpAddress) ? null : host.UdpAddress;
+            if (host == null)
+            {
+                Game.Logger.Warn(Tag, "OnHostClicked 收到 null 主机，忽略");
+                return;
+            }
 
-            Game.Logger.Info(Tag,
-                $"加入局域网主机：name=\"{host.Name}\" addr={host.Address} udp={udp ?? "未提供"} → CloverNet.Init（非阻塞）");
-            SetStatus($"正在连接局域网服务器 {host.Address}…");
+            if (CsLanHost.IsSelfHost(host))
+            {
+                SetStatus($"This is this machine's own LAN host ({host.Address}) — join it from another machine");
+                Game.Logger.Warn(Tag, $"点到了本机自己开的房（{host.Address}）⇒ 不连接：本机既是主机又是客机会看到自己的角色");
+                return;
+            }
 
-            CloverNet.Init(host.Address, udp);
-
-            var attached = Game.Net != null;
-            Game.Logger.Info(Tag,
-                attached
-                    ? "网络模块已挂接（Game.Net != null）：连接结果由 Net.OnConnected / Net.OnConnectFailed 反馈"
-                    : "CloverNet.Init 没有挂上网络模块（Game.Net 仍为 null）—— 看同批日志里 Network 域的 Error 行");
-
-            //   两件事互不替代：CloverNet 是引擎的通用网络连接（本工程还没有"联网比赛模式"），
-            //   而 CsLanClient 消费主机推来的 CS16-LAN-SNAP/1 世界快照、把远端角色画到场上
-            //   （那是"能开局"看得见的那一半）。地址直接用 host.Address（= "host:gatewayPort"，
-            //   不在这里自己拼串 —— 那个属性就是为"能直接喂给连接入口"而存在的）。
-            string lanErr;
+            // 加入只走本工程的局域网对局客户端（CS16-LAN-JOIN/1 → WELCOME → SNAP）。
+            // ⛔ 不调 CloverNet.Init：那是引擎的通用 TCP 网络模块（服务端网关协议），
+            //    与本协议不是一套；它会在这台网关上多开一条永远不握手的连接。
             var playerName = CsPlayerSettingsStore.Load().PlayerName;
+            string lanErr;
+            Game.Logger.Info(Tag,
+                $"加入局域网主机：name=\"{host.Name}\" addr={host.Address} player=\"{playerName}\" → {CsLanGateway.JoinMagic}");
+            SetStatus($"Joining {host.Address} as \"{playerName}\" (waiting for {CsLanGateway.WelcomeMagic})...");
+
             var lanOk = CsLanClient.Start(host.Address, playerName, out lanErr);
             if (!lanOk)
             {
                 // 非预期分支：必须留痕 + 把原因摆到状态行上（不许"点了没反应"）
                 Game.Logger.Error(Tag, $"局域网客户端启动失败（{host.Address}）：{lanErr}");
-                SetStatus($"加入失败：{lanErr}");
-                Game.UI.Toast($"加入失败：{lanErr}", 3f);
+                SetStatus($"Join failed: {lanErr}");
+                Game.UI.Toast($"Join failed: {lanErr}", 3f);
                 return;
             }
 
-            SetStatus($"已连上 {host.Address}（玩家名 \"{playerName}\"）：{CsLanClient.Describe()}");
-            Game.UI.Toast(attached ? $"正在连接 {host.Address}…" : $"无法连接 {host.Address}（网络模块未挂接）", 3f);
+            _joiningHost = host;
+            Game.UI.Toast($"Connecting to {host.Address}...", 3f);
+        }
+
+        /// <summary>
+        /// 每帧看一眼待加入的握手结果：**真的握手成功**（<see cref="CsLanClient.Joined"/>）才进图，
+        /// 失败 / 超时就把原因摆到状态行（<see cref="CsLanClient"/> 自己也会在 JoinTimeoutMs 收尾）。
+        /// </summary>
+        public override void OnUpdate(float dt)
+        {
+            if (_joiningHost == null) return;
+
+            if (CsLanClient.Joined)
+            {
+                var host = _joiningHost;
+                _joiningHost = null;
+                EnterHostMatch(host);
+                return;
+            }
+
+            if (!CsLanClient.IsRunning)
+            {
+                var err = CsLanClient.LastError;
+                if (string.IsNullOrEmpty(err)) err = "连接已关闭（主机拒绝 / 网络中断）";
+                _joiningHost = null;
+                SetStatus($"Join failed: {err}");
+                Game.Logger.Error(Tag, $"加入 {CsLanClient.Endpoint} 失败：{err}");
+                Game.UI.Toast($"Join failed: {err}", 3f);
+            }
+        }
+
+        /// <summary>
+        /// 握手完成后进图：客户端本地开一局（**bots=0**，主机推来的 actors 由远端视图画），
+        /// 这样 <c>MatchModule.Update</c> 才会跑 <c>CsLanClient.Pump</c> / <c>CsLanRemoteView.SyncAll</c>。
+        /// </summary>
+        private void EnterHostMatch(LanHostInfo host)
+        {
+            var settings = CsPlayerSettingsStore.Load();
+            var cfg = new CsMatchConfig();
+            cfg.BotsPerTeam = 0;                 // 主机上的机器人与玩家都从快照来，客户端不再生成自己的
+            cfg.PlayerName = settings.PlayerName;
+            cfg.PlayerTeam = CsTeam.CT;          // 真实阵营由选阵营面板定（Events.TeamChosen）
+            cfg.ClientMode = CsLanClient.ServerDriven;   // 已握手 ⇒ 本机是客机：回合/比分跟主机快照
+
+            SetStatus($"Joined {host.Address} — loading {cfg.MapName}");
+            Game.Logger.Info(Tag,
+                $"已加入 {host.Address}（{CsLanClient.Describe()}）⇒ 进图 {cfg.MapName}，" +
+                $"本机 bots={cfg.BotsPerTeam}，客机模式={cfg.ClientMode}，远端角色由 {CsLanClient.Snapshots} 条快照驱动");
+            Game.Event.Emit(Events.LaunchMatch, cfg);
         }
 
         private void SetStatus(string text)

@@ -39,8 +39,6 @@ namespace Cs16.Module.View
 
         /// <summary>角色视图实例的池分组。</summary>
         private const string PoolGroupActorViews = "cs16.actorview";
-        /// <summary>头顶名牌实例的池分组。</summary>
-        private const string PoolGroupNameplates = "cs16.nameplate";
         /// <summary>世界掉落武器视图的池分组。</summary>
         private const string PoolGroupDrops = "cs16.dropview";
         /// <summary>世界里的 C4 视图（包点上的包 / 掉在地上的包）的池分组。</summary>
@@ -65,6 +63,60 @@ namespace Cs16.Module.View
 
         /// <summary>世界里的 C4 视图（已安放 / 掉在地上共用一个实例；包不在世界上时为 null）。</summary>
         private GameObject _bombView;
+
+        /// <summary>C4 视图的竖直抬升（米）：让模型底面贴地而不是枢轴贴地（见 <see cref="CreateBombView"/>）。</summary>
+        private float _bombViewLift;
+
+        // ---- C4 闪烁指示灯（LED）----
+        // 根因：C4 世界模型虽在渲染（3 渲染器、贴地、坐标正确），但只有 0.35×0.17m、
+        // 暗橄榄绿贴在沙地上、零自发光、无任何闪灯 ⇒ 正常视角下不显眼、"看不到"。
+        // 原版 CS1.6 靠**闪烁红 LED + 蜂鸣**让人在地上找到包；这里补上视觉那半：
+        // 一个贴在 C4 顶部的发光小球 + 点光源，随引信档位越接近爆炸闪得越快（与蜂鸣同拍）。
+
+        /// <summary>LED 发光小球（贴在 <c>_bombView</c> 顶部，随包一起移动）。</summary>
+        private GameObject _bombLed;
+
+        /// <summary>LED 的点光源（闪烁时把周围地面染红，暗处也能一眼看到包）。</summary>
+        private Light _bombLedLight;
+
+        /// <summary>LED 小球的自发光材质（闪烁 = 改 <c>_EmissionColor</c>）。</summary>
+        private Material _bombLedMat;
+
+        /// <summary>下一次 LED 亮起的时刻（<c>Time.time</c>）。</summary>
+        private float _bombLedNextToggle;
+
+        /// <summary>本次闪烁熄灭的时刻（<c>Time.time</c>）：在此之前保持亮。</summary>
+        private float _bombLedFlashUntil;
+
+        /// <summary>LED 在 C4 顶部的竖直偏移（米）：贴在计时屏旁。</summary>
+        private const float BombLedOffsetY = 0.15f;
+
+        /// <summary>LED 小球直径（米）。</summary>
+        private const float BombLedScale = 0.035f;
+
+        /// <summary>每次闪烁的"亮"时长（秒）。</summary>
+        private const float BombLedFlashSeconds = 0.18f;
+
+        /// <summary>闪烁亮起时点光源的强度。</summary>
+        private const float BombLedLightOn = 2.2f;
+
+        /// <summary>闪烁熄灭时点光源的强度（留一点微光，暗处也能定位包）。</summary>
+        private const float BombLedLightOff = 0.3f;
+
+        /// <summary>点光源的作用半径（米）。</summary>
+        private const float BombLedLightRange = 3.2f;
+
+        /// <summary>LED 亮起时的自发光色（HDR，>1 走 Standard 发光）。</summary>
+        private static readonly Color BombLedEmissionOn = new Color(2.6f, 0.14f, 0.14f);
+
+        /// <summary>LED 熄灭时的自发光色（暗红微光）。</summary>
+        private static readonly Color BombLedEmissionOff = new Color(0.3f, 0.03f, 0.03f);
+
+        /// <summary>
+        /// LED 闪烁间隔（秒）按引信档位 0..4 递减 —— 越接近爆炸闪得越快，与
+        /// <see cref="ICsMatch.BombBeepTier"/> 的蜂鸣加速一致。
+        /// </summary>
+        private static readonly float[] BombLedIntervals = { 1.2f, 1.0f, 0.8f, 0.55f, 0.35f };
         private readonly HashSet<string> _pending = new HashSet<string>();
         private readonly HashSet<string> _missing = new HashSet<string>();
 
@@ -100,16 +152,13 @@ namespace Cs16.Module.View
         private float _warmT0;
 
         /// <summary>预热总预算（秒）：从 <see cref="WarmUpMatchPrefabs"/> 发起那一刻起算，到点立即收尾放行。</summary>
-        private const float WarmupDeadlineSeconds = 14f;
+        private const float WarmupDeadlineSeconds = 40f;
 
         /// <summary>预热阶段：<c>0</c> = 空闲；<c>1</c> = 逐帧实例化；<c>2</c> = 渲染预热（见 <see cref="CsRenderWarmup"/>）。</summary>
         private int _warmPhase;
 
         /// <summary>本次预热整体起点（实例化段 + 渲染段共用同一份预算）。</summary>
         private float _warmupT0;
-
-        /// <summary>射线只被**世界几何**遮挡（排除角色层，否则目标自己就把视线挡了）。</summary>
-        private int _worldOnlyMask;
 
         /// <summary>上一帧的观战目标 id（0 = 没在观战）——用于只在"目标真的换了"时留一条日志。</summary>
         private long _lastSpectateTargetId;
@@ -157,20 +206,14 @@ namespace Cs16.Module.View
                 return;
             }
 
-            _worldOnlyMask = ~((1 << PhysicsLayers.Bot) | (1 << PhysicsLayers.Player));
-
             var rootGo = new GameObject("CsActorViews");
             Object.DontDestroyOnLoad(rootGo);
             _root = rootGo.transform;
 
-            // 名牌预制体：先异步加载进缓存（加载好之前视图照常显示，只是没有头顶牌子）。
-            // 实例化在 AttachNameplate 里走引擎对象池，按 CsViewTuning.NameplatePath 这个 key 取。
-            LoadPrefab(CsViewTuning.NameplatePath, null);
-
             Instance = this;
             _ready = true;
             SubscribeSpectateControl();
-            _log.Always($"视图模块就绪：角色模型 Art/{{T|CT}}/player，武器视图 viewmodel_*，名牌 {CsViewTuning.NameplatePath}");
+            _log.Always("视图模块就绪：角色模型 Art/{T|CT}/player，武器视图 viewmodel_*");
         }
 
         private void OnDestroy()
@@ -272,18 +315,21 @@ namespace Cs16.Module.View
             // 地上的枪用**世界模型**（Art/world_<武器id>，原版 models/w_*.mdl）——第一人称模型
             // （viewmodel_*）的原点与朝向是给相机用的，直接摆到地上会侧躺、且大半截埋进地面。
             // 没有世界模型的武器（原版并非每把枪都有 w_*.mdl）退回首人称模型，至少"有把枪"。
-            var world = true;
+            var world = HasWorldModel(d.WeaponId);
             var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + d.WeaponId;
-            if (!_prefabs.TryGetValue(path, out var prefab) || prefab == null)
+            if (world && (!_prefabs.TryGetValue(path, out var worldPrefab) || worldPrefab == null))
             {
                 // 首次走到这里时可能还在异步加载：发起一次，下一帧自动补上（与 EnsureView 同款）。
                 LoadPrefab(path, null);
                 if (!_missing.Contains(path)) return;
 
                 world = false;
+            }
+            if (!world)
+            {
                 var folder = d.Team == CsTeam.T ? CsViewTuning.TeamFolderT : CsViewTuning.TeamFolderCT;
                 path = CsViewTuning.ArtRoot + folder + "/" + CsViewTuning.ViewModelPrefix + d.WeaponId;
-                if (!_prefabs.TryGetValue(path, out prefab) || prefab == null)
+                if (!_prefabs.TryGetValue(path, out var viewPrefab) || viewPrefab == null)
                 {
                     LoadPrefab(path, null);
                     return;
@@ -355,7 +401,10 @@ namespace Cs16.Module.View
         /// </summary>
         private void SyncBombView()
         {
-            if (!_match.BombPlanted && !_match.BombDropped)
+            // 下包**进行中**也要有包（问题6："下包时候，地面上看不到包"）：
+            // 过去只在 Planted/Dropped 生成视图，进度条走的那几秒画面上不存在 C4。
+            // Planting 期间 CsBomb.AccumulatePlant 把 BombPosition 钉在下包者脚下 ⇒ 下面赋值即到位。
+            if (!_match.BombPlanted && !_match.BombDropped && !_match.BombPlanting)
             {
                 DestroyBombView();
                 return;
@@ -364,19 +413,26 @@ namespace Cs16.Module.View
             if (_bombView == null)
             {
                 CreateBombView();
-                if (_bombView == null) return;      // 预制体还在异步加载 / 缺失 —— 下一帧再试
+                if (_bombView == null) return;      // 生成失败（缺失 / 池不可用）—— 缺失已进 _missing 不再重试
             }
 
-            _bombView.transform.position = _match.BombPosition;
+            _bombView.transform.position = _match.BombPosition + Vector3.up * _bombViewLift;
+            TickBombLed();
         }
 
         private void CreateBombView()
         {
             var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + CsWeapons.C4;
-            if (!_prefabs.TryGetValue(path, out var prefab) || prefab == null)
+
+            // 存在性走**同步**探测，不再等 Game.Res 的异步落定：对象池自己就是
+            // Resources.Load 兜底（见 ObjectPool.CreateInstance），"先异步加载进 _prefabs 再 Spawn"
+            // 只是把"下包那一刻的可见性"押在一条与生成无关的异步链上 —— 该链在途回调丢失 /
+            // _pending 卡住时，包会凭空不可见且不留任何日志（正是"看不到匪下的包"的现象）。
+            // 已确认缺失的按 LoadPrefab 同款语义不重试。
+            if (_missing.Contains(path)) return;
+            if (Resources.Load<GameObject>(path) == null)
             {
-                LoadPrefab(path, null);
-                if (!_missing.Contains(path)) return;    // 首次走到这里时可能还在加载
+                _missing.Add(path);
                 _log.Error("bombview.missing",
                     $"C4 的世界模型缺失：Resources/{path}.prefab —— 包点上 / 地上的包看不见。" +
                     "请执行菜单 Clover/CS16/整理视图与音效资源 生成它");
@@ -408,19 +464,109 @@ namespace Cs16.Module.View
             }
 
             _bombView = go;
+            CreateBombLed(go.transform);
             _log.Info("bombview.create",
-                $"{(_match.BombPlanted ? "已安放" : "掉落")}的 C4 世界视图已生成" +
+                $"{(_match.BombPlanted ? "已安放" : _match.BombPlanting ? "下包中" : "掉落")}的 C4 世界视图已生成" +
                 $"（位置 ({_match.BombPosition.x:F2}, {_match.BombPosition.y:F2}, {_match.BombPosition.z:F2})，模型={path}）");
         }
 
         private void DestroyBombView()
         {
             if (_bombView == null) return;
+            DestroyBombLed();
             var pool = Game.Pool;
             if (pool != null) pool.Despawn(_bombView);
             else Object.Destroy(_bombView);
             _bombView = null;
             _log.Info("bombview.destroy", "C4 已不在世界（爆炸 / 拆包 / 被拾起）⇒ 回收世界视图");
+        }
+
+        // ==================================================================
+        //  C4 闪烁指示灯（LED）
+        // ==================================================================
+        /// <summary>
+        /// 在 C4 顶部挂一个闪烁红 LED（发光小球 + 点光源）。
+        ///
+        /// <para>C4 世界模型虽在渲染，但 0.35×0.17m 的暗绿小盒贴在沙地上、零自发光、无闪灯
+        /// ⇒ 正常视角下"看不到包"。原版靠闪烁红 LED + 蜂鸣让人在地上找到包；这里补视觉那半。
+        /// 小球/光源都是<b>运行时新建</b>、挂在 <paramref name="bombRoot"/> 下随包移动、
+        /// 随视图一起销毁，不进对象池（只是一个球 + 一盏灯，无需池化）。</para>
+        /// </summary>
+        private void CreateBombLed(Transform bombRoot)
+        {
+            DestroyBombLed();   // 防重入（池复用同实例时旧 LED 还挂着）
+
+            var led = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+            led.name = "BombLed";
+            // 剥掉球自带的碰撞体（世界物件不参与射线）
+            var col = led.GetComponent<Collider>();
+            if (col != null) Object.Destroy(col);
+
+            led.transform.SetParent(bombRoot, false);
+            led.transform.localPosition = new Vector3(0f, BombLedOffsetY, 0f);
+            led.transform.localScale = Vector3.one * BombLedScale;
+
+            var shader = Shader.Find("Standard");
+            if (shader == null) shader = Shader.Find("Legacy Shaders/Diffuse");
+            _bombLedMat = new Material(shader) { name = "BombLedMat" };
+            _bombLedMat.EnableKeyword("_EMISSION");
+            _bombLedMat.SetColor("_EmissionColor", BombLedEmissionOn);
+            _bombLedMat.color = new Color(0.9f, 0.06f, 0.06f);
+            led.GetComponent<Renderer>().sharedMaterial = _bombLedMat;
+
+            var lightGo = new GameObject("BombLedLight");
+            lightGo.transform.SetParent(led.transform, false);
+            _bombLedLight = lightGo.AddComponent<Light>();
+            _bombLedLight.type = LightType.Point;
+            _bombLedLight.color = new Color(1f, 0.18f, 0.14f);
+            _bombLedLight.range = BombLedLightRange;
+            _bombLedLight.intensity = BombLedLightOn;
+            _bombLedLight.shadows = LightShadows.None;
+
+            _bombLed = led;
+            _bombLedNextToggle = Time.time + BombLedFlashSeconds;
+            _bombLedFlashUntil = Time.time + BombLedFlashSeconds;
+        }
+
+        /// <summary>
+        /// 每帧推进 LED 闪烁：到点换状态，亮/灭用 <see cref="BombLedIntervals"/> 里
+        /// 按 <see cref="ICsMatch.BombBeepTier"/> 取的间隔（越接近爆炸闪得越快）。
+        /// 完全用 <c>Time.time</c> 推进 —— 不看 <c>BombBeepSerial</c>，免得被模拟侧的
+        /// 响次节奏绑死，掉在地上的包（未 <c>Planted</c>）也照闪。
+        /// </summary>
+        private void TickBombLed()
+        {
+            if (_bombLed == null) return;
+
+            // 掉落/下包中的包用中档闪烁；已安放的按引信档位加速
+            var tier = _match.BombPlanted
+                ? Mathf.Clamp(_match.BombBeepTier, 0, BombLedIntervals.Length - 1)
+                : 1;
+            var interval = BombLedIntervals[tier];
+
+            var now = Time.time;
+            if (now >= _bombLedNextToggle)
+            {
+                // 翻到"亮"，排下一个亮起点
+                _bombLedFlashUntil = now + BombLedFlashSeconds;
+                _bombLedNextToggle = now + interval;
+            }
+
+            var on = now < _bombLedFlashUntil;
+            if (_bombLedMat != null)
+                _bombLedMat.SetColor("_EmissionColor", on ? BombLedEmissionOn : BombLedEmissionOff);
+            if (_bombLedLight != null)
+                _bombLedLight.intensity = on ? BombLedLightOn : BombLedLightOff;
+        }
+
+        /// <summary>回收 LED（发光小球、点光源、材质）。</summary>
+        private void DestroyBombLed()
+        {
+            if (_bombLed != null) Object.Destroy(_bombLed);
+            _bombLed = null;
+            _bombLedLight = null;
+            if (_bombLedMat != null) Object.Destroy(_bombLedMat);
+            _bombLedMat = null;
         }
 
         // ==================================================================
@@ -433,12 +579,7 @@ namespace Cs16.Module.View
 
             var local = _match.LocalPlayer;
             var localId = local != null ? local.Id : 0;
-            var eye = local != null ? local.EyePosition : Vector3.zero;
-            var haveEye = local != null && local.IsAlive;
 
-            // 观战中：藏掉被观察者的**世界空间**名牌（Canvas + 血条 + 名字）。
-            // 那台相机正对着他 —— 观战机位是第三人称（见 Module/CameraRig/FirstPersonCamera.cs 的
-            // ResolveChaseDistance：机位在目标身后 CsConst.ChaseDistance 处），名牌会顶在镜头前糊住画面。
             var spectateTargetId = ResolveSpectateTargetId();
 
             _seen.Clear();
@@ -451,20 +592,18 @@ namespace Cs16.Module.View
                 var view = EnsureView(actor, localId);
                 if (view == null) continue;      // 预制体还没加载好 —— 已在 EnsureView 里留过日志
 
-                var isLocal = actor.Id == localId;
                 var isSpectateTarget = spectateTargetId != 0L && actor.Id == spectateTargetId;
-                var plateVisible = false;
-                var showName = false;
-                if (!isLocal && !isSpectateTarget && actor.IsAlive)
-                {
-                    EvaluateNameplate(actor, eye, haveEye, out plateVisible, out showName);
-                }
+
+                // 本地玩家身份每帧校正：视图按 actor id 只建一次，而"谁是本地玩家"可能晚于建视图
+                // 才成立（本地玩家那一帧还没就绪 / 换局换了 id）⇒ 那时 Bind 判成"别人"，
+                // 自己的身体就会一直画在第一人称镜头里。按边沿动作，不每帧反复开关。
+                view.SetLocal(actor.Id == localId);
 
                 // 观战档位 4（目标第一人称）：相机就架在被观察者的眼位上 ⇒ 按"自己的眼睛"藏掉他的
                 // 第三人称本体（原版该档只有视模型 + 准星 + HUD，见 ActorView.SetSpectateEye）。
                 view.SetSpectateEye(isSpectateTarget && CsSpectator.Mode == CsSpectatorMode.FirstPerson);
 
-                view.Apply(actor, plateVisible, showName, Time.time);
+                view.Apply(actor);
             }
 
             // ---- 回收：本帧没出现的 actor（被踢 / 换局 / 重建）----
@@ -488,58 +627,12 @@ namespace Cs16.Module.View
         }
 
         /// <summary>
-        /// 头顶名牌的可见性判定：**距离 + 视线 + 是否在画面里**（AoI 的简化实现）。
-        ///
-        /// <para>视线用自己发的射线（而不是 <c>ICsMatch.HasLineOfSight</c>）：因为角色自己的碰撞体
-        /// 就挡在射线上，引擎那个通用接口会把目标本人算成遮挡。这里用"只让世界几何挡"的层遮罩，
-        /// 语义正是我们要的"中间有没有墙"。</para>
-        /// </summary>
-        private void EvaluateNameplate(CsActor actor, Vector3 eye, bool haveEye,
-            out bool visible, out bool showName)
-        {
-            visible = false;
-
-            var myTeam = _localTeamOf();
-            var sameTeam = actor.Team == myTeam;
-            showName = sameTeam || CsViewTuning.ShowEnemyName;
-            if (!sameTeam && !CsViewTuning.ShowEnemyHealth) return;
-
-            var to = actor.Position + Vector3.up * CsViewTuning.LosTargetHeight;
-            var delta = to - eye;
-            var dist = delta.magnitude;
-            if (dist < 0.01f || dist > CsViewTuning.NameplateMaxDistance) return;
-
-            // 视野：只在"大致看向他"的时候显示（与 CS 里"看着队友才见名字"一致）
-            var cam = Camera.main;
-            if (cam != null)
-            {
-                var cos = Vector3.Dot(cam.transform.forward, delta / dist);
-                if (cos < CsViewTuning.NameplateMinFacingDot) return;
-            }
-
-            if (haveEye)
-            {
-                var blocked = Physics.Linecast(eye, to, out _, _worldOnlyMask,
-                    QueryTriggerInteraction.Ignore);
-                if (blocked) return;
-            }
-
-            visible = true;
-        }
-
-        private CsTeam _localTeamOf()
-        {
-            var l = _match != null ? _match.LocalPlayer : null;
-            return l != null ? l.Team : CsTeam.Spectator;
-        }
-
-        /// <summary>
         /// 本帧的观战目标 id（没在观战 / 目标为空 = 0）。
         ///
         /// <para><b>为什么每帧只解析一次</b>：<c>ICsMatch.SpectateTarget</c> 每次访问都会收集一次存活列表
         /// （还会顺手纠正越界的索引），放进 actor 循环里逐个比就是白跑 N 遍。</para>
         ///
-        /// <para>目标变化时留一条日志：这是"名牌为什么不见了"的唯一现场证据，且只在换目标时打一次
+        /// <para>目标变化时留一条日志：这是"换观战目标"的唯一现场证据，且只在换目标时打一次
         /// （不是每帧），不会刷屏。</para>
         /// </summary>
         private long ResolveSpectateTargetId()
@@ -553,10 +646,8 @@ namespace Cs16.Module.View
                 if (id != 0L)
                 {
                     // 用 Always（不降频）：本方法本就在"目标真的换了"时才走到这里（一局十几次），
-                    // 是"换观战目标时名牌为什么不见了"的唯一证据；用降频版会把它吞掉（实测第 2 次起就没了）。
-                    _log.Always(
-                        $"观战目标是 {target.Name}(id={id})：已隐藏他的头顶名牌" +
-                        $"（那台相机正对着他，世界空间血条+名字会顶在镜头前糊住画面）");
+                    // 是"换观战目标"的唯一证据；用降频版会把它吞掉。
+                    _log.Always($"观战目标是 {target.Name}(id={id})");
 
                     // 原版：玩家自己换目标就退出自动导演（hud_spectator.cpp:747-748，
                     // FIRE1/FIRE2 分支里的 m_autoDirector->value = 0.0f）。
@@ -842,47 +933,18 @@ namespace Cs16.Module.View
                 return null;
             }
 
-            // 复用的实例带着上一世的状态（名牌子节点 / 被关掉的渲染与碰撞体 / 尸体冻结 / 只报一次的闸）：
+            // 复用的实例带着上一世的状态（被关掉的渲染与碰撞体 / 尸体冻结 / 只报一次的闸）：
             // 必须先清理再 Bind —— 否则"上一世是本地玩家或尸体"的实例会让新角色隐身 / 打不中。
             view.PrepareForReuse();
 
-            // 先 Bind（量测身高时把名牌排除在外），再挂名牌。
             view.Bind(actor.Id, actor.Team, actor.IsBot, actor.Id == localId);
             view.SnapTo(actor);
-            var plate = AttachNameplate(go.transform, actor.Id);
-            view.SetPlate(plate);
             _views[actor.Id] = view;
 
             _log.Info("view.create",
                 $"新建角色视图 {actor.Name}(id={actor.Id}, {actor.Team}, bot={actor.IsBot}) " +
-                $"模型={path} 命中盒={view.Proxies.Length} 名牌={(plate != null ? "有" : "无")}");
+                $"模型={path} 命中盒={view.Proxies.Length}");
             return view;
-        }
-
-        private Nameplate AttachNameplate(Transform parent, long actorId)
-        {
-            // 存在性把关：预制体还没加载好（异步在途）/ 不存在时**不建**，也不重复发起加载（见 LoadPrefab）。
-            if (!_prefabs.TryGetValue(CsViewTuning.NameplatePath, out var prefab) || prefab == null) return null;
-
-            // 回收在 ActorView.PrepareForReuse（复用时）与 Despawn 链上。
-            var pool = Game.Pool;
-            if (pool == null)
-            {
-                _log.Error("pool.null", "Game.Pool 为 null（Game.Launch 未执行？），头顶名牌无法生成");
-                return null;
-            }
-            var go = pool.Spawn(CsViewTuning.NameplatePath, parent, PoolGroupNameplates);
-            if (go == null)
-            {
-                _log.Warn("plate.spawnfail",
-                    $"头顶名牌生成失败（对象池返回 null）：{CsViewTuning.NameplatePath}（池已记 Error）");
-                return null;
-            }
-            go.name = CsViewTuning.PlateNodeName;
-            go.transform.localPosition = new Vector3(0f, CsViewTuning.NameplateHeight, 0f);
-            go.transform.localRotation = Quaternion.identity;
-            go.transform.localScale = Vector3.one;   // 父节点不缩放（Body 才缩放）→ 名牌尺寸恒定
-            return go.GetComponent<Nameplate>();
         }
 
         private void RemoveView(long actorId)
@@ -896,9 +958,10 @@ namespace Cs16.Module.View
 
         private void ClearViews()
         {
+            // 退出 Play 时引擎表现域可能先于本模块释放：Pool 已为 null 就把回收交给场景卸载，不再 Despawn。
             foreach (var kv in _views)
             {
-                if (kv.Value != null) Game.Pool.Despawn(kv.Value.gameObject);
+                if (kv.Value != null && Game.Pool != null) Game.Pool.Despawn(kv.Value.gameObject);
             }
             _views.Clear();
             _skinOf.Clear();
@@ -983,6 +1046,7 @@ namespace Cs16.Module.View
                 _log.Error("res.null", "Game.Res 为 null（CloverRes.Init 未执行？），角色/武器视图无法加载任何预制体");
                 _pending.Remove(path);
                 _missing.Add(path);
+                onLoaded?.Invoke(null);      // 失败也必须回调：读条预热的等待计数靠它归零
                 return;
             }
 
@@ -995,6 +1059,7 @@ namespace Cs16.Module.View
                     _log.Warn("prefab.missing." + path,
                         $"预制体缺失：Resources/{path}.prefab —— 该资源不会显示（不会重复重试）。" +
                         "先执行菜单 Clover/CS16/整理视图与音效资源 生成它");
+                    onLoaded?.Invoke(null);  // 同上：缺失也要回调，否则等待方永远等不到"落定"
                     return;
                 }
                 _prefabs[path] = go;
@@ -1188,7 +1253,6 @@ namespace Cs16.Module.View
             into.Clear();
             AddTeamPaths(into, CsViewTuning.TeamFolderCT, CsViewTuning.SkinsCT);
             AddTeamPaths(into, CsViewTuning.TeamFolderT, CsViewTuning.SkinsT);
-            AddPath(into, CsViewTuning.NameplatePath);
         }
 
         private static void AddTeamPaths(List<string> into, string teamFolder, string[] skins)
@@ -1253,6 +1317,45 @@ namespace Cs16.Module.View
         {
             go = null;
             return _prefabs.TryGetValue(path, out go) && go != null;
+        }
+
+        /// <summary>
+        /// 该武器在原版里有没有**世界模型**（<c>models/w_*.mdl</c> ⇒ <c>Art/world_&lt;id&gt;</c>）。
+        ///
+        /// <para>投掷物只有第一人称/检视模型（<c>v_</c>/<c>p_</c>），没有 <c>w_</c>：
+        /// 对它们发起 <see cref="LoadPrefab"/> 只会得到一条"加载失败"，而且这条失败发生在
+        /// **读条预热**期间时会把"资源已就绪"的判定拖死（读条 20s 超时 → 回主菜单）。</para>
+        /// </summary>
+        internal static bool HasWorldModel(string weaponId)
+        {
+            if (string.IsNullOrEmpty(weaponId)) return false;
+            return weaponId != CsWeapons.HeGrenade
+                && weaponId != CsWeapons.Flashbang
+                && weaponId != CsWeapons.SmokeGrenade;
+        }
+
+        /// <summary>
+        /// 供 <see cref="ActorView.EnsureHeldWeapon" /> 查"这把武器有没有世界模型预制体"。
+        /// 原版就不存在世界模型的武器（手雷）**直接短路**：不发起加载、不写 Error/Warn。
+        /// 返回 true 才允许走 <c>Game.Pool.Spawn</c> —— 直接 Spawn 会绕开 <c>_prefabs/_missing</c>
+        /// 门，缺 prefab 的路径会在每帧打一条 [ObjectPool] Prefab not found Error。
+        /// </summary>
+        internal bool EnsureWorldModelReady(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return false;
+            if (TryGetViewModelPrefab(path, out _)) return true;
+            if (_missing.Contains(path)) return false;
+
+            // 路径形如 Art/world_<id>：先把"原版本来就没有世界模型"的武器挡在加载之前。
+            var worldPrefix = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix;
+            if (path.StartsWith(worldPrefix, System.StringComparison.Ordinal))
+            {
+                var weaponId = path.Substring(worldPrefix.Length);
+                if (!HasWorldModel(weaponId)) return false;
+            }
+
+            LoadPrefab(path, null);
+            return false;
         }
 
         internal CsModuleLog Log => _log;

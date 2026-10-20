@@ -8,13 +8,16 @@ using UnityEngine;
 namespace Cs16.Module.Audio
 {
     /// <summary>
-    /// **音效模块**（由 <c>Bootstrap</c> 挂在常驻对象上）：脚下/落地、换弹、命中反馈、死亡、
+    /// **音效模块**（由 <c>Bootstrap</c> 挂在常驻对象上）：脚下/落地/起跳、换弹、死亡、
     /// 回合开始与结束、炸弹蜂鸣与爆炸。
     ///
     /// <para><b>与 <c>Module/Combat</c> 的分工，一句话</b>：
     /// **枪声不归我**。射击队列（含机器人枪声）由 <c>CombatModule</c> 独占消费并播放
     /// <c>sfx/&lt;武器&gt;_fire</c>；本模块只补它没做的那几类，且命中标记（<c>sfx/hitmarker</c>）
     /// 也是它播 —— 所以这里绝不重复放。</para>
+    ///
+    /// <para><b>受击音也不归我</b>：本地玩家挨枪的 <c>sfx/hit_flesh</c> / <c>sfx/hit_kevlar</c>
+    /// 由 <c>CsDamage.ApplyDamage</c> 在扣血那一步按"护甲是否真的吸收"播一次，本模块不再重复播。</para>
     ///
     /// <para><b>只用权威状态，不抢模拟</b>：脚步按**原版冷却计时器**触发（<c>CsActor.Velocity</c> /
     /// <c>IsWalking</c> / <c>OnGround</c> 都是只读），换弹按 <c>ReloadEndTime</c> 前推，
@@ -50,6 +53,12 @@ namespace Cs16.Module.Audio
         private MatchModule _matchModule;
         private ICsMatch _match;
         private SfxService _sfx;
+
+        /// <summary>闪光致盲期间的程序化耳鸣（本地听者、2D）。</summary>
+        private readonly CsTinnitus _tinnitus = new CsTinnitus();
+
+        /// <summary>上一次给本地玩家记录的脚步表面族（表面切换时才打日志）。</summary>
+        private CsStepSurface _lastLocalStepSurface = CsStepSurface.Concrete;
 
         private bool _subscribed;
         private bool _ready;
@@ -105,12 +114,14 @@ namespace Cs16.Module.Audio
             _sfx.Prewarm(CsAudioTuning.BombBeepTiers);   // 5 档蜂鸣
 
             _ready = true;
-            _log.Always("音效模块就绪：脚步/落地、换弹、命中反馈、死亡、回合开始结束、炸弹蜂鸣（枪声归 agent-04）");
+            _log.Always("音效模块就绪：脚步/落地/起跳、换弹、死亡、回合开始结束、炸弹蜂鸣" +
+                "（枪声与受击音分别归 CombatModule / CsDamage）");
         }
 
         private void OnDestroy()
         {
             Unsubscribe();
+            _tinnitus.Dispose();
             _feet.Clear();
             _reloadWatch.Clear();
         }
@@ -124,7 +135,6 @@ namespace Cs16.Module.Audio
 
             // 比赛门面的表现事件（契约）
             _match.OnKill += OnKill;
-            _match.OnDamaged += OnDamaged;
             _match.OnRoundEnd += OnRoundEnd;
             _match.OnMatchEnd += OnMatchEnd;
             _match.OnBombStateChanged += OnBombStateChanged;
@@ -150,7 +160,6 @@ namespace Cs16.Module.Audio
             if (_match == null) return;
 
             _match.OnKill -= OnKill;
-            _match.OnDamaged -= OnDamaged;
             _match.OnRoundEnd -= OnRoundEnd;
             _match.OnMatchEnd -= OnMatchEnd;
             _match.OnBombStateChanged -= OnBombStateChanged;
@@ -179,6 +188,8 @@ namespace Cs16.Module.Audio
                     _reloadWatch.Clear();
                     _playedSerial = 0;
                     _wasPlanted = false;
+                    _lastLocalStepSurface = CsStepSurface.Concrete;
+                    _tinnitus.Stop();
                 }
                 else
                 {
@@ -193,6 +204,7 @@ namespace Cs16.Module.Audio
             TickFootsteps(dt);
             TickReloads();
             TickBombBeep();
+            TickTinnitus();
             TickRoundStartWatch();
             TickVolume(dt);
         }
@@ -226,8 +238,10 @@ namespace Cs16.Module.Audio
                 {
                     PlayFor(a, localId, CsAudioTuning.Land, spatialFrom: pos);
                 }
-                // ---- 起跳 ----
-                if (a.IsAlive && st.WasOnGround && !a.OnGround)
+                // ---- 起跳：必须带向上速度 ----
+                // 只判"离地"会把走下台阶 / 走出边缘也当成起跳（原版 pl_jump 只在 +jump 那一帧响，
+                // 起跳会给 velocity.z 一个正值，走落台阶时竖直速度不为正）。
+                if (a.IsAlive && st.WasOnGround && !a.OnGround && a.Velocity.y > 0f)
                 {
                     PlayFor(a, localId, CsAudioTuning.Jump, spatialFrom: pos);
                 }
@@ -280,20 +294,66 @@ namespace Cs16.Module.Audio
             for (var i = 0; i < _footStale.Count; i++) _feet.Remove(_footStale[i]);
         }
 
-        /// <summary>自己的声音用 2D（在耳边），别人的用 3D 且限距。脚步声随机取变体。</summary>
+        /// <summary>落地 / 起跳 / 换弹：自己的用 2D（在耳边），别人的用 3D 且限距。
+        /// 脚步单独走 <see cref="PlayStep"/>（按脚下材质变形，本地与远端都经业务音源池）。</summary>
         private void PlayFor(CsActor a, long localId, string clip, Vector3 spatialFrom)
         {
             var isLocal = a.Id == localId;
             if (clip == null)
             {
-                // 脚步：4 个变体随机
-                if (isLocal) _sfx.PlayRandom(CsAudioTuning.Step, false, Vector3.zero);
-                else PlaySpatialIfNear(CsAudioTuning.Step, spatialFrom);
+                PlayStep(a, localId, spatialFrom);
                 return;
             }
 
             if (isLocal) _sfx.Play(clip);
             else PlaySpatialIfNear(new[] { clip }, spatialFrom);
+        }
+
+        /// <summary>
+        /// 脚步：向下探一次脚下的碰撞体取贴图名，归到表面族（<see cref="CsAudioTuning.StepMixOf"/>）
+        /// 再按族给音高 / 音量。本地脚步声也在本地坐标起播 —— 引擎的 2D 播放接口没有音高形参，
+        /// 需要变调的播放统一走业务音源池。
+        /// </summary>
+        private void PlayStep(CsActor a, long localId, Vector3 feet)
+        {
+            if (a.Id != localId)
+            {
+                var local = _match != null ? _match.LocalPlayer : null;
+                if (local != null && Vector3.Distance(local.Position, feet) > CsAudioTuning.StepHearDistance) return;
+            }
+
+            var material = ProbeSurfaceMaterial(feet);
+            var mix = CsAudioTuning.StepMixOf(material);
+            _sfx.PlayRandom(CsAudioTuning.Step, true, feet, mix.Pitch, mix.Volume);
+
+            // 表面切换是低频事件 ⇒ 只在本地玩家的族变化时留痕，跑步时不会每步一条。
+            if (a.Id == localId && mix.Surface != _lastLocalStepSurface)
+            {
+                _lastLocalStepSurface = mix.Surface;
+                _log.Info("step.surface",
+                    $"脚下表面「{material ?? "null"}」→ {mix.Surface}：pitch {mix.Pitch:0.##}、音量 {mix.Volume:0.##}" +
+                    "（原版按材质字母换采样；本工程用现有脚步采样变调近似）");
+            }
+        }
+
+        /// <summary>
+        /// 向下探脚下的表面材质名：命中非角色碰撞体时取 <c>MeshRenderer.sharedMaterial.name</c>
+        /// （= BSP 贴图组名，与 <c>Firearm.ImpactMaterialName</c> 同一来源）；没命中 / 只打到角色 ⇒ null。
+        /// </summary>
+        private static string ProbeSurfaceMaterial(Vector3 feet)
+        {
+            var origin = feet + Vector3.up * CsAudioTuning.StepProbeUp;
+            if (!Physics.Raycast(origin, Vector3.down, out var hit, CsAudioTuning.StepProbeDistance,
+                    ~0, QueryTriggerInteraction.Ignore))
+            {
+                return null;
+            }
+            if (hit.collider == null) return null;
+            if (hit.collider.GetComponentInParent<CsHitboxProxy>() != null) return null;
+
+            var renderer = hit.collider.GetComponent<MeshRenderer>();
+            if (renderer != null && renderer.sharedMaterial != null) return renderer.sharedMaterial.name;
+            return hit.collider.gameObject != null ? hit.collider.gameObject.name : null;
         }
 
         private void PlaySpatialIfNear(string[] clips, Vector3 pos)
@@ -354,19 +414,6 @@ namespace Cs16.Module.Audio
                 $"{k.KillerName} → {k.VictimName}（{k.WeaponId}{(k.Headshot ? "，爆头" : string.Empty)}），死亡音已播放");
         }
 
-        private void OnDamaged(CsActor victim, int damage, bool headshot, bool lethal)
-        {
-            if (victim == null) return;
-
-            var local = _match.LocalPlayer;
-            if (local != null && victim.Id == local.Id)
-            {
-                // 自己被击中：有甲/头盔用 kevlar 音，否则 flesh（CS 1.6 的 bhit_* 采样）
-                var hasArmor = victim.Armor > 0 || victim.HasHelmet;
-                _sfx.Play(hasArmor ? CsAudioTuning.HitKevlar : CsAudioTuning.HitFlesh);
-            }
-        }
-
         // ==================================================================
         //  回合 / 比赛
         // ==================================================================
@@ -412,7 +459,7 @@ namespace Cs16.Module.Audio
         {
             // CS 1.6 的回合结束是 radio 播报"哪一方获胜"（与玩家阵营无关）
             var win = info.Winner == CsTeam.T ? CsAudioTuning.WinT : CsAudioTuning.WinCT;
-            _sfx.Play(win);
+            PlayWinSfx(win);
 
             if (info.Reason == CsRoundEndReason.BombExploded)
             {
@@ -430,9 +477,21 @@ namespace Cs16.Module.Audio
         private void OnMatchEnd()
         {
             var winner = _match.ScoreT >= _match.ScoreCT ? CsTeam.T : CsTeam.CT;
-            _sfx.Play(winner == CsTeam.T ? CsAudioTuning.WinT : CsAudioTuning.WinCT);
+            PlayWinSfx(winner == CsTeam.T ? CsAudioTuning.WinT : CsAudioTuning.WinCT);
             _log.Always($"比赛结束：{winner} 获胜（T {_match.ScoreT} : {_match.ScoreCT} CT），已播获胜播报");
         }
+
+        /// <summary>回合结束与比赛结束共用的获胜播报口。
+        /// 决胜回合里两个事件同帧到达，共用一条去重窗口 ⇒ 只响一次（同一支采样叠加会明显变大）。</summary>
+        private void PlayWinSfx(string clip)
+        {
+            if (Time.time - _lastWinSfx < EndSfxDedupeWindow) return;
+            _lastWinSfx = Time.time;
+            _sfx.Play(clip);
+        }
+
+        private float _lastWinSfx = -999f;
+        private const float EndSfxDedupeWindow = 1.0f;
 
         // ==================================================================
         //  炸弹
@@ -470,14 +529,45 @@ namespace Cs16.Module.Audio
 
             var tiers = CsAudioTuning.BombBeepTiers;
             var tier = Mathf.Clamp(_match.BombBeepTier, 0, tiers.Length - 1);
-            _sfx.PlayAt(tiers[tier], _match.BombPosition);
+            // 盘上只有两支采样 ⇒ 档位差由音高阶梯给出（两条表同长，档位已夹在采样表范围内）。
+            var pitch = CsAudioTuning.BombBeepPitch[Mathf.Clamp(tier, 0, CsAudioTuning.BombBeepPitch.Length - 1)];
+            _sfx.PlayAt(tiers[tier], _match.BombPosition, pitch, 1f);
 
             // 逐响打前几响就够：前 BombBeepLogCount 响覆盖全部 5 个档位与间隔衰减，
             // 引信末段每秒可响十余次，逐响打会刷屏。
             if (serial <= CsAudioTuning.BombBeepLogCount)
             {
-                _log.Info("bomb.beep", $"C4 蜂鸣 #{serial}：档位 {tier + 1}/{tiers.Length}，剩余 {_match.BombTimeLeft:F1}s，clip = {tiers[tier]}");
+                _log.Info("bomb.beep", $"C4 蜂鸣 #{serial}：档位 {tier + 1}/{tiers.Length}（pitch {pitch:0.##}），" +
+                    $"剩余 {_match.BombTimeLeft:F1}s，clip = {tiers[tier]}");
             }
+        }
+
+        // ==================================================================
+        //  闪光耳鸣
+        // ==================================================================
+        /// <summary>
+        /// 致盲期间播程序化耳鸣：剩余时间与总时长都取本地玩家的
+        /// <c>FlashEndTime</c> / <c>FlashStartTime</c>（与 <c>CombatModule</c> 算全屏白同一对字段，
+        /// 时间基准同为 <c>CsClock.Now</c>）。没人被闪 / 本地玩家死亡 ⇒ 停止。
+        /// </summary>
+        private void TickTinnitus()
+        {
+            var local = _match != null ? _match.LocalPlayer : null;
+            if (local == null || !local.IsAlive)
+            {
+                _tinnitus.Stop();
+                return;
+            }
+
+            var now = CsClock.Now;
+            var remaining = local.FlashEndTime - now;
+            if (remaining <= 0f)
+            {
+                _tinnitus.Stop();
+                return;
+            }
+
+            _tinnitus.Tick(remaining, local.FlashEndTime - local.FlashStartTime);
         }
 
         // ==================================================================

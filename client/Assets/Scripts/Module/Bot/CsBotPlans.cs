@@ -78,16 +78,75 @@ namespace Cs16.Module.Bot
         public const int Slots = 4;
 
         /// <summary>
-        /// 队内序号 → 槽位：**模 <see cref="Slots"/> 的循环平移**，平移量 = 持 C4 那只 bot 的队内序号。
-        /// <c>carrierOrdinal &lt; 0</c>（该队没人持 C4 / CT 队）⇒ 不平移。
+        /// 本队只有 <paramref name="botCount"/> 只 bot 时实际使用的槽位表（紧凑，按优先级）。
+        /// <para>1 人 = 主攻；2 人 = 主攻 + 另一包点；3 人 = 主攻 / 中路 / 另一包点（巡逻让位）；
+        /// 4 人 = 全部四条。**另一包点在任何人数下都恒有人** —— 这正是"全走 B、A 没人"的结构性缺口。</para>
         /// </summary>
+        public static int[] SlotLayout(int botCount)
+        {
+            if (botCount <= 1) return new[] { 0 };
+            if (botCount == 2) return new[] { 0, 3 };
+            if (botCount == 3) return new[] { 0, 1, 3 };
+            return new[] { 0, 1, 2, 3 };
+        }
+
+        /// <summary>
+        /// 队内序号 → 槽位：在 <paramref name="botCount"/> 对应的**紧凑槽位表**里做循环平移，
+        /// 平移量 = 持 C4 那只 bot 的队内序号（<c>&lt; 0</c> ⇒ 不平移）。
+        /// <para>4 只 bot 时与旧行为逐值相同（表 = 0,1,2,3）；3 只时槽位 2（巡逻）让位，
+        /// 队内序号仍由 <see cref="TeamLocalOrdinal"/> 给出（真人 Id 最小 ⇒ bot 序号 1..n，
+        /// 取模后仍两两不同）。</para>
+        /// </summary>
+        public static int SlotOf(int teamLocalOrdinal, int carrierOrdinal, int botCount)
+        {
+            var layout = SlotLayout(botCount);
+            var n = layout.Length;
+            var ord = ((teamLocalOrdinal % n) + n) % n;
+            var shift = carrierOrdinal < 0 ? 0 : ((carrierOrdinal % n) + n) % n;
+            return layout[((ord - shift) % n + n) % n];
+        }
+
+        /// <summary>4 槽位口径（= <see cref="SlotOf(int,int,int)"/> 传 <see cref="Slots"/>）。</summary>
         public static int SlotOf(int teamLocalOrdinal, int carrierOrdinal)
         {
-            var ord = ((teamLocalOrdinal % Slots) + Slots) % Slots;
-            if (carrierOrdinal < 0) return ord;
+            return SlotOf(teamLocalOrdinal, carrierOrdinal, Slots);
+        }
 
-            var shift = ((carrierOrdinal % Slots) + Slots) % Slots;
-            return ((ord - shift) % Slots + Slots) % Slots;
+        /// <summary>本回合该队实际参与的 bot 数（只数 <c>IsBot</c>，真人玩家不占 bot 的槽位）。</summary>
+        private static int _cachedCountRound = int.MinValue;
+        private static int _cachedCountT = Slots;
+        private static int _cachedCountCT = Slots;
+
+        /// <summary>
+        /// **本回合**该队的 bot 数（回合内不变：中途阵亡不会让幸存者改路线）。
+        /// <para>只数 bot：槽位表是"bot 计划表"，真人玩家不执行它，不能占掉一个槽位 ——
+        /// 否则 3 bot + 1 真人时必然有一条路线没人走（用户看到的"全走 B"）。</para>
+        /// </summary>
+        public static int RoundBotCount(IReadOnlyList<CsActor> actors, CsTeam team, int roundNumber)
+        {
+            if (_cachedCountRound != roundNumber)
+            {
+                _cachedCountRound = roundNumber;
+                _cachedCountT = CountBots(actors, CsTeam.T);
+                _cachedCountCT = CountBots(actors, CsTeam.CT);
+            }
+
+            return team == CsTeam.T ? _cachedCountT : _cachedCountCT;
+        }
+
+        private static int CountBots(IReadOnlyList<CsActor> actors, CsTeam team)
+        {
+            var n = 0;
+            if (actors != null)
+            {
+                for (var i = 0; i < actors.Count; i++)
+                {
+                    var a = actors[i];
+                    if (a != null && a.Team == team && a.IsBot) n++;
+                }
+            }
+
+            return n < 1 ? 1 : (n > Slots ? Slots : n);
         }
 
         /// <summary>
@@ -304,6 +363,9 @@ namespace Cs16.Module.Bot
         {
             _cachedRound = int.MinValue;
             _cachedCarrierOrdinal = -1;
+            _cachedCountRound = int.MinValue;
+            _cachedCountT = Slots;
+            _cachedCountCT = Slots;
         }
 
         // ==================================================================
@@ -328,11 +390,12 @@ namespace Cs16.Module.Bot
             for (var i = 0; i < taken.Length; i++) taken[i] = false;
             if (actors == null) return taken;
 
+            var botCount = RoundBotCount(actors, team, roundNumber);
             for (var i = 0; i < actors.Count; i++)
             {
                 var a = actors[i];
-                if (a == null || a.Team != team || !a.IsAlive) continue;
-                var slot = SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal);
+                if (a == null || a.Team != team || !a.IsAlive || !a.IsBot) continue;
+                var slot = SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal, botCount);
                 if (slot >= 0 && slot < Slots) taken[slot] = true;
             }
 
@@ -349,11 +412,12 @@ namespace Cs16.Module.Bot
         {
             if (actors == null || string.IsNullOrEmpty(routeMarker)) return false;
 
+            var botCount = RoundBotCount(actors, team, roundNumber);
             for (var i = 0; i < actors.Count; i++)
             {
                 var a = actors[i];
-                if (a == null || a.Team != team || !a.IsAlive || a.Id == selfId) continue;
-                var p = For(team, SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal), roundNumber);
+                if (a == null || a.Team != team || !a.IsAlive || !a.IsBot || a.Id == selfId) continue;
+                var p = For(team, SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal, botCount), roundNumber);
                 if (p.RouteMarker == routeMarker) return true;
             }
 
@@ -381,11 +445,12 @@ namespace Cs16.Module.Bot
             var used = new bool[candidateCount];
             if (actors != null)
             {
+                var botCount = RoundBotCount(actors, team, roundNumber);
                 for (var i = 0; i < actors.Count; i++)
                 {
                     var a = actors[i];
-                    if (a == null || a.Team != team || !a.IsAlive || a.Id == selfId) continue;
-                    var p = For(team, SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal), roundNumber);
+                    if (a == null || a.Team != team || !a.IsAlive || !a.IsBot || a.Id == selfId) continue;
+                    var p = For(team, SlotOf(TeamLocalOrdinal(actors, team, a.Id), carrierOrdinal, botCount), roundNumber);
                     if (p.GoalMarker != goalMarker) continue;
                     used[((p.GoalOrdinal % candidateCount) + candidateCount) % candidateCount] = true;
                 }

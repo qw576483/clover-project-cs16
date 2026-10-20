@@ -368,15 +368,19 @@ def main():
     mats = sorted(set(r["material"] for r in rows))
     hp = sorted(set(r["health"] for r in rows))
     gib = sorted(set(r["gib"] for r in rows))
+    sf = sorted(set(r["spawnflags"] for r in rows))
     if mats != ["2"] or hp != ["1"] or gib != ["models/mil_crategibs.mdl"]:
         die("原版键值与既定口径不符：material=%s health=%s gibmodel=%s" % (mats, hp, gib))
+    if sf != ["1"]:
+        die("spawnflags 不是全 1：%s（本表口径依赖 SF_BREAK_TRIGGER_ONLY）" % sf)
 
     print("BSP       : %s  v30  %d bytes" % (os.path.relpath(a.bsp, ROOT).replace("\\", "/"), len(data)))
     print("geo       : %d 个材质组 / %d 三角面" % (len(geo["groups"]), sum(g["tris"] for g in geo["groups"])))
     print("轴映射    : unity = (hl.x, hl.z, hl.y)  平移候选 %s" % [["%.4f" % v for v in c] for c in cands])
     print("拟合结果  : 平移 %s -> 逐箱箱面三角面 %s（合计 %d，次优 %d）"
           % (["%.4f" % v for v in t], per, sum(per), second[0] if second else -1))
-    print("原版键值  : %d 箱  material=%s  health=%s  gibmodel=%s" % (len(rows), mats, hp, gib))
+    print("原版键值  : %d 箱  material=%s  health=%s  gibmodel=%s  spawnflags=%s"
+          % (len(rows), mats, hp, gib, sf))
     print()
     print("%-6s %-9s %-9s %-9s %-9s %-9s %-9s %-5s %-22s %s"
           % ("brush", "minX", "minY", "minZ", "maxX", "maxY", "maxZ", "unit", "textures", "target"))
@@ -402,17 +406,20 @@ def main():
         % ["%.4f" % v for v in t],
         "#       拟合得 %s，次优 %d）" % (per, second[0] if second else -1),
         "# 原版键值：material 2 / health 1 / gibmodel models/mil_crategibs.mdl / spawnflags 1（10/10）",
-        "# 列：brushModel\\tminX\\tminY\\tminZ\\tmaxX\\tmaxY\\tmaxZ\\ttextures(逗号分隔的材质组名)\\tmaterial\\thealth\\tgibmodel",
+        "# spawnflags 1 = SF_BREAK_TRIGGER_ONLY（HLSDK dlls/util.h:441）⇒ 原版这 10 个箱子",
+        "#   takedamage = DAMAGE_NO、且 SetTouch(NULL)（dlls/func_break.cpp:148-151 / :168-169）",
+        "#   ⇒ 子弹 / 手雷 / 撞击都打不碎，只有 trigger 触发才会碎。",
+        "# 列：brushModel\\tminX\\tminY\\tminZ\\tmaxX\\tmaxY\\tmaxZ\\ttextures(逗号分隔的材质组名)\\tmaterial\\thealth\\tgibmodel\\tspawnflags",
     ]
     for r in rows:
-        lines.append("%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\t%s\t%s"
+        lines.append("%d\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\t%s\t%s\t%s"
                      % (r["model"], r["min"][0], r["min"][1], r["min"][2],
                         r["max"][0], r["max"][1], r["max"][2], ",".join(r["textures"]),
-                        r["material"], r["health"], r["gib"]))
+                        r["material"], r["health"], r["gib"], r["spawnflags"]))
     with open(a.out, "w", encoding="utf-8", newline="\n") as fh:
         fh.write("\n".join(lines) + "\n")
-    print("\n已写出 %s（%d 行数据 + 7 行头）"
-          % (os.path.relpath(a.out, ROOT).replace("\\", "/"), len(rows)))
+    print("\n已写出 %s（%d 行数据 + %d 行头）"
+          % (os.path.relpath(a.out, ROOT).replace("\\", "/"), len(rows), len(lines) - len(rows)))
 
 
 if __name__ == "__main__":

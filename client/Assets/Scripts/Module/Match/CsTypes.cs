@@ -89,14 +89,62 @@ namespace Cs16.Module.Match
         public int ReloadSeq;
 
         /// <summary>
-        /// 差异 #68：当前武器的**消音器**是否装上（只对 <c>CsWeaponDef.CanSilence</c> 的武器有意义）。
-        /// <para>刻意**不**在切枪时清零：原版里消音器是装在**那把枪**上的（换走再换回来仍是装着的），
-        /// 而本工程只有一把主武器槽 + 一把手枪槽 ⇒ 挂在角色上、按当前手持武器是否 CanSilence 决定是否读它。</para>
+        /// 霰弹枪**逐发装填**还剩几发没装（0 = 不在逐发装填）。
+        /// 每装一发由 <c>CsInventory.CompleteReload</c> 递减，切枪 / 复活时归零。
         /// </summary>
-        public bool Silenced;
+        public int ShellReloadLeft;
+
+        /// <summary>
+        /// 消音器装在**哪些武器**上（原版 `m_bSecondarySilencerOn` 是**武器实体**的成员：
+        /// 换走再换回来仍是装着的，且 USP 装上不会让 M4A1 也变成消音）。
+        /// 读 <see cref="Silenced"/> 取"当前手持武器"那一格。
+        /// </summary>
+        public readonly HashSet<string> SilencedWeapons = new HashSet<string>();
+
+        /// <summary>
+        /// 当前手持武器的**消音器**是否装上（只对 <c>CsWeaponDef.CanSilence</c> 的武器有意义）。
+        /// <para>状态按武器 id 分开存放 ⇒ 切枪不丢、也不串到另一把枪上；角色阵亡换新武器时由
+        /// <c>CsInventory.ClearLoadout</c> 清空。</para>
+        /// </summary>
+        public bool Silenced
+        {
+            get => !string.IsNullOrEmpty(ActiveWeapon) && SilencedWeapons.Contains(ActiveWeapon);
+            set
+            {
+                if (string.IsNullOrEmpty(ActiveWeapon)) return;
+                if (value) SilencedWeapons.Add(ActiveWeapon);
+                else SilencedWeapons.Remove(ActiveWeapon);
+            }
+        }
+
+        /// <summary>
+        /// 切走之前手里那把武器（原版 `m_pLastItem`）：手雷投完自动换回它。
+        /// </summary>
+        public string PreviousWeapon;
+
+        /// <summary>
+        /// 本帧是否按住左键。原版 <c>ItemPostFrame</c> 的空仓自动换弹只在**没有按住攻击键**时发起
+        /// （<c>原版资源/hlsdk/dlls/weapons.cpp:713-753</c>）；按住时只干火。
+        /// </summary>
+        public bool FireHeld;
+
+        /// <summary>
+        /// 处于**连发模式**的武器 id（原版 `WPNSTATE_*_BURST_MODE` 是武器实体的成员 ⇒
+        /// Glock18 与 FAMAS 各记各的，切枪不互相串）。
+        /// </summary>
+        public readonly HashSet<string> BurstWeapons = new HashSet<string>();
 
         /// <summary>差异 #68：当前武器是否处于**连发模式**（只对 <c>CsWeaponDef.CanBurst</c> 的武器有意义）。</summary>
-        public bool BurstMode;
+        public bool BurstMode
+        {
+            get => !string.IsNullOrEmpty(ActiveWeapon) && BurstWeapons.Contains(ActiveWeapon);
+            set
+            {
+                if (string.IsNullOrEmpty(ActiveWeapon)) return;
+                if (value) BurstWeapons.Add(ActiveWeapon);
+                else BurstWeapons.Remove(ActiveWeapon);
+            }
+        }
 
         /// <summary>
         /// 当前武器是否**已开镜**（只对 <c>CsWeaponDef.CanZoom</c> 的武器有意义）。
@@ -141,6 +189,8 @@ namespace Cs16.Module.Match
         /// <summary>后坐力水平偏移当前往哪一侧累加（原版 <c>m_iDirection</c>）：+1 / -1。</summary>
         public int RecoilDir = 1;
         public float FlashEndTime;      // 被闪光弹致盲的结束时间
+        /// <summary>本次致盲的开始时间（绝对时间）。</summary>
+        public float FlashStartTime;    // 被闪光弹致盲的开始时间
         public float UseProgress;       // 下包/拆包进度 0~1
 
         public bool IsAliveAndPlayable => IsAlive;
@@ -243,7 +293,8 @@ namespace Cs16.Module.Match
                 case CsBotDifficulty.Easy:
                     return new CsBotProfile
                     {
-                        ReactionTime = 0.65f,
+                        // 1.0s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.65s）
+                        ReactionTime = 1.0f,
                         AimErrorDegrees = 6.0f,
                         AimSpeedDegrees = 160f,
                         FireBurstMin = 0.12f, FireBurstMax = 0.30f,
@@ -257,7 +308,8 @@ namespace Cs16.Module.Match
                 case CsBotDifficulty.Hard:
                     return new CsBotProfile
                     {
-                        ReactionTime = 0.15f,
+                        // 0.45s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.15s）
+                        ReactionTime = 0.45f,
                         AimErrorDegrees = 1.2f,
                         AimSpeedDegrees = 520f,
                         FireBurstMin = 0.28f, FireBurstMax = 0.60f,
@@ -271,7 +323,8 @@ namespace Cs16.Module.Match
                 default: // Normal
                     return new CsBotProfile
                     {
-                        ReactionTime = 0.32f,
+                        // 0.7s：本项目新增，出处=用户要求"看到人后先停一会再开火"（原 0.32s）
+                        ReactionTime = 0.7f,
                         AimErrorDegrees = 3.0f,
                         AimSpeedDegrees = 300f,
                         FireBurstMin = 0.18f, FireBurstMax = 0.42f,

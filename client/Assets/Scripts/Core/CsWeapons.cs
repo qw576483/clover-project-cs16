@@ -352,8 +352,33 @@ namespace Cs16.Core
         /// </summary>
         public bool UnzoomOnReload;
 
+        /// <summary>
+        /// true = **开火后自动退出开镜**（原版 CS 1.6 的 <c>CAWP::PrimaryAttack</c> /
+        /// <c>CScout::PrimaryAttack</c>：打完一发把 <c>m_iFOV</c> 复位成 <c>DEFAULT_FOV</c>、
+        /// <c>m_bIsScoped</c> 置 false ⇒ 玩家必须重新右键开镜；连狙 SG550/G3SG1 与 AUG/SG552
+        /// 没有这句，开火后保持开镜）。
+        /// </summary>
+        public bool UnzoomOnFire;
+
         /// <summary>开镜动作音的 SFX 短名（"" = 原版这把枪开镜没有音）。</summary>
         public string SoundZoom = "";
+
+        // ==================================================================
+        //  霰弹枪逐发装填（原版 DefaultShotgunReload）
+        //  出处 = 原版资源/cs16src/regamedll/dlls/wpn_shared/wpn_m3.cpp:189
+        //  （`DefaultShotgunReload(M3_RELOAD, M3_START_RELOAD, 0.45f, 0.55f)`）
+        //  + 原版资源/cs16src/regamedll/dlls/weapons.cpp:1586-1633
+        //  （进入装填后等 fStartDelay，之后每 fDelay 装一发、每发消耗一颗备弹）
+        // ==================================================================
+
+        /// <summary>true = 换弹按**逐发装填**推进（霰弹枪）：每发一个装填周期，中途可切枪取消。</summary>
+        public bool ShellReload;
+
+        /// <summary>逐发装填的第一发延迟（秒）= <c>DefaultShotgunReload</c> 的 <c>fStartDelay</c>。</summary>
+        public float ShellReloadStart;
+
+        /// <summary>逐发装填的每发周期（秒）= <c>DefaultShotgunReload</c> 的 <c>fDelay</c>。</summary>
+        public float ShellReloadInterval;
 
         // ==================================================================
         //  后坐力：原版 `KickBack` 的实参
@@ -560,6 +585,7 @@ namespace Cs16.Core
             foreach (var w in _all) _byId[w.Id] = w;
             ApplyAttack2Values();
             ApplyZoomValues();
+            ApplyShotgunReloadValues();
             ApplyPenetrationAndFalloffValues();
             ApplyArmorRatioValues();
             ApplyCycleTimes();
@@ -1092,6 +1118,7 @@ namespace Cs16.Core
                 awp.ZoomFovSecond = CsConst.ZoomFovSecondAwp;   // 10
                 awp.MaxSpeedZoom = Spd150;
                 awp.SoundZoom = ZoomSound;
+                awp.UnzoomOnFire = true;
             }
 
             var scout = Def(Scout);
@@ -1102,6 +1129,7 @@ namespace Cs16.Core
                 scout.ZoomFovSecond = CsConst.ZoomFovSecondOther; // 15
                 scout.MaxSpeedZoom = Spd220;
                 scout.SoundZoom = ZoomSound;
+                scout.UnzoomOnFire = true;
             }
 
             var sg550 = Def(Sg550);
@@ -1123,6 +1151,30 @@ namespace Cs16.Core
                 g3.MaxSpeedZoom = Spd150;
                 g3.SoundZoom = ZoomSound;
             }
+        }
+
+        /// <summary>
+        /// 霰弹枪的**逐发装填**参数。出处 = <c>wpn_m3.cpp:189</c> 的
+        /// <c>DefaultShotgunReload(M3_RELOAD, M3_START_RELOAD, 0.45f, 0.55f)</c>：
+        /// 第 3 实参 = 每发周期 0.55 s，第 4 实参 = 第一发延迟 0.45 s，
+        /// 装填循环在 <c>weapons.cpp:1586-1633</c>（每转一圈 <c>m_iClip++</c> 且备弹 −1）。
+        ///
+        /// <para>XM1014 的 <c>wpn_xm1014.cpp</c> 不在盘上（本机载体只有 9 个 wpn_shared 文件）
+        /// ⇒ 逐发装填**形态**按同一基类调用（原版全部霰弹枪都走 <c>DefaultShotgunReload</c>），
+        /// 时序暂沿用 M3 的 0.45 / 0.55 并在 <c>策划/差异登记.tsv</c> 登记为待取证。</para>
+        /// </summary>
+        private static void ApplyShotgunReloadValues()
+        {
+            void Set(string id)
+            {
+                if (!_byId.TryGetValue(id, out var def)) return;
+                def.ShellReload = true;
+                def.ShellReloadStart = 0.45f;
+                def.ShellReloadInterval = 0.55f;
+            }
+
+            Set(M3);
+            Set(Xm1014);
         }
 
         /// <summary>
@@ -1215,6 +1267,8 @@ namespace Cs16.Core
             SetDistance(FiveSeven, RangeMaxDistancePistol);
             SetDistance(P228, RangeMaxDistancePistol);
             SetDistance(P90, RangeMaxDistance);
+            SetDistance(M3, RangeMaxDistanceM3);
+            SetDistance(Xm1014, RangeMaxDistanceXm1014);
         }
 
         /// <summary>
@@ -1268,6 +1322,32 @@ namespace Cs16.Core
         /// —— USP `0x100E58A3`、Deagle `0x100D6DC9`（逐点见 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2）。
         /// </summary>
         public const float RangeMaxDistancePistol = 4096f;
+
+        /// <summary>M3 的射程实参（世界单位）= 3000（原版 <c>FireBuckshots(9, …, 3000)</c>，
+        /// <c>regamedll/dlls/wpn_shared/wpn_m3.cpp:132</c>）。</summary>
+        public const float RangeMaxDistanceM3 = 3000f;
+
+        /// <summary>XM1014 的射程实参（世界单位）= 3048（原版 <c>FireBuckshots(6, …, 3048)</c>，
+        /// <c>regamedll/dlls/wpn_shared/wpn_xm1014.cpp:130</c>）。</summary>
+        public const float RangeMaxDistanceXm1014 = 3048f;
+
+        /// <summary>
+        /// 一发子弹的**射线长度**（米）= 原版开火点传给 <c>FireBullets3</c> / <c>FireBuckshots</c>
+        /// 的射程实参（世界单位 × <see cref="CsConst.UnitToMeter"/>）：
+        /// 手枪族 4096 → 104.04 m、其余枪 8192 → 208.08 m、M3 3000 → 76.2 m、XM1014 3048 → 77.42 m。
+        ///
+        /// <para>逐枪的实参落值见 <see cref="CsWeaponDef.RangeModifierMaxDistance"/>
+        /// （来源 <c>.ai-tmp/test/mpdll-reverse/VALUES.md</c> §4.2 的「射程」列）；
+        /// 该字段为 0 的武器按大类回退（手枪 → 4096，其余 → 8192）。
+        /// <c>CsWeaponDef.Range</c> 是**旧模型的"有效射程"**，不是原版射线长度，⛔ 不要拿它当射线长度。</para>
+        /// </summary>
+        public static float ShotRange(CsWeaponDef def)
+        {
+            if (def == null) return 0f;
+            var units = def.RangeModifierMaxDistance;
+            if (units <= 0f) units = def.Class == CsWeaponClass.Pistol ? RangeMaxDistancePistol : RangeMaxDistance;
+            return units * CsConst.UnitToMeter;
+        }
 
         // ==================================================================
         //  差异 #68：两态取值的唯一入口（模拟 / 表现 / 自检共用，避免各写一份分支）

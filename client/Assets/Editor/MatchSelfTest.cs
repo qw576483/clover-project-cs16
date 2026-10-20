@@ -232,6 +232,13 @@ namespace Cs16.EditorTools
             public void LoadAsync(string mapResourcePath, Action onLoaded, Action<string> onFailed = null) => onLoaded?.Invoke();
             public void Unload() { }
             public bool WalkableAt(float x, float z) => true;
+            public bool HasSurfaceHeights => false;
+            public int SurfaceCountAt(int x, int z) => 0;
+            public bool TryGetSurfaceHeights(int x, int z, List<float> heightsOut)
+            {
+                heightsOut?.Clear();
+                return false;
+            }
             public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
                                  float height = CsConst.StandHeight) => true;
 
@@ -248,6 +255,19 @@ namespace Cs16.EditorTools
                 normal = Vector3.up;
                 return true;
             }
+
+            /// <summary>假地图是单一水平面 ⇒ 足迹探地与中心射线同解。</summary>
+            public bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                                 out Vector3 point, out Vector3 normal)
+                => TrySampleGround(pos, out point, out normal, maxDrop);
+
+            public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
+            {
+                legacy = true;
+                return true;
+            }
+
+            public bool StepFaceStandable(Vector3 pos, float height) => true;
 
             public Vector3 GetSpawnPoint(int index) => index % 2 == 0 ? SpawnTPos : SpawnCTPos;
 

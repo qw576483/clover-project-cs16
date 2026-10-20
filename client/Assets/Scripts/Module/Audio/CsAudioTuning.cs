@@ -1,18 +1,43 @@
 namespace Cs16.Module.Audio
 {
     /// <summary>
+    /// 脚下表面的材质族：脚步采样按族换音高与音量。
+    /// <para>原版按 <c>sound/materials.txt</c> 的材质字母选不同脚步声采样；
+    /// 本工程盘上只有一组混凝土脚步（<c>sfx/step{,2,3,4}</c>），de_dust2 的贴图名又全部不在
+    /// 原版表里 ⇒ 按贴图名关键字近似分族，听感差异由音高/音量变形给出
+    /// （**本项目合成，不是原版采样**）。</para>
+    /// </summary>
+    internal enum CsStepSurface
+    {
+        Concrete = 0,
+        Metal = 1,
+        Wood = 2,
+        Gravel = 3,
+        Water = 4,
+    }
+
+    /// <summary>一个表面族的脚步播放参数（音高 / 音量缩放）。</summary>
+    internal struct CsStepMix
+    {
+        public CsStepSurface Surface;
+        public float Pitch;
+        public float Volume;
+    }
+
+    /// <summary>
     ///
     /// <para><b>命名口径（必须与 <c>Module/Combat</c> 对齐）</b>：引擎的 <c>Game.Sound.PlaySFX(name)</c> 会加载
     /// <c>Resources/Sound/SFX/{name}</c>；本工程约定 <c>name = "sfx/&lt;短名&gt;"</c>
     /// 由 <c>tools</c> 侧的 <c>cs16_build.py</c> 从 CS 1.6 原始 wav 生成。**改短名 = 同时改这里和生成脚本**。</para>
     ///
-    /// <para><b>为什么本文件每一行都要有出处</b>（切片K 补）：本类的常量分两类 ——
+    /// <para><b>为什么本文件每一行都要有出处</b>：本类的常量分两类 ——
     /// ① **短名**（<c>"sfx/xxx"</c>）：出处 = 它在盘上的那个资源文件，以及"原版哪一个 wav"的映射，
     /// ② **数值**（间隔 / 并发上限 / 距离）：出处 = 本项目音频层的实现参数（原版无对应量），
     /// 或本工程另有定义处的那个文件。查不到出处的**不许编**，一律登记 <c>策划/差异登记.tsv</c>。</para>
     ///
     /// <para><b>为什么不重复播枪声</b>：枪声（含机器人枪声）由 <c>CombatModule</c> 统一发放
-    /// （它是射击队列的唯一消费者）。本模块只补它没做的：脚步 / 落地 / 换弹 / 命中反馈 / 死亡 /
+    /// （本地那一路在 <c>ConsumeShots</c>、远端那一路在 <c>FxRemoteShot</c>）。
+    /// 本模块只补它没做的：脚步 / 落地 / 换弹 / 命中反馈 / 死亡 /
     /// 回合开始结束 / 炸弹蜂鸣与爆炸。</para>
     /// </summary>
     internal static class CsAudioTuning
@@ -52,8 +77,8 @@ namespace Cs16.Module.Audio
         //  原版是**时间制**：`PM_ReduceTimers` 每帧 `flTimeStepSound -= cmd.msec`，
         //  `PM_UpdateStepSound` 在冷却归零后重新装填冷却并放音 ⇒ 跑得越快步幅越大。
         //  同一速度下两者步频差约 1.8 倍 ⇒ 本工程按原版取时间制（下面三条即口径）。
-        //  实测（S1，v=SpeedRifle 4.4 m/s）：3.40 Hz；
-        //  步幅制口径下同速是 6.00 Hz（比 1.76 x —— 步幅被钉在 0.62 m、又被 0.16 s 地面限流）。
+        //  同一速度下时间制步频 3.40 Hz（v = 4.4 m/s）；步幅制在同速下是 6.00 Hz（1.76 倍 ——
+        //  步幅被钉在 0.62 m、又被 0.16 s 地面限流）。
         //  出处：`原版资源/hlsdk/pm_shared/pm_shared.c:500-639`（PM_UpdateStepSound）、
         //  `:2400-2410`（PM_ReduceTimers，递减在 `:2404`）、调用点 `:2493`（PM_PlayerMove 内、PM_Duck 之后）。
         //  单位换算：1 unit = 0.0254 m，见 `client/Assets/Scripts/Core/CsConst.cs:11-12`。
@@ -87,6 +112,106 @@ namespace Cs16.Module.Audio
         /// 出处：**本项目新增**（音频层实现参数，原版无对应量）。</summary>
         public const float StepHearDistance = 26f;
 
+        // ------------------------------------------------------------------
+        //  逐材质脚步：五个表面族各自一组音高 / 音量（同一组混凝土采样做变形）
+        //  出处：**本项目新增**（音频层的表现参数）—— 原版每族各有一组采样
+        //  （<c>player/pl_step1..4</c> / <c>pl_metal*</c> / <c>pl_wood*</c> / …）；
+        //  那些采样**不在盘**，本工程用现有混凝土采样按音高/音量近似各族，
+        //  属于**本项目合成的近似，不是原版采样**。
+        // ------------------------------------------------------------------
+
+        /// <summary>探针起点相对脚底的抬高（米）：避免起点正好落在表面上而漏掉命中。</summary>
+        public const float StepProbeUp = 0.05f;
+
+        /// <summary>探针向下探的距离（米）：覆盖台阶 / 蹲姿脚下的落地差，又不至于抓到下一层地面。</summary>
+        public const float StepProbeDistance = 0.5f;
+
+        /// <summary>混凝土 / 沙土：原样播放。</summary>
+        public const float StepPitchConcrete = 1f;
+        /// <summary>混凝土 / 沙土的脚步音量。</summary>
+        public const float StepVolumeConcrete = 1f;
+
+        /// <summary>金属 / 铁皮：升高音高、略降音量（短促的金属声）。</summary>
+        public const float StepPitchMetal = 1.35f;
+        /// <summary>金属 / 铁皮的脚步音量。</summary>
+        public const float StepVolumeMetal = 0.9f;
+
+        /// <summary>木头 / 木板：略升音高、略降音量。</summary>
+        public const float StepPitchWood = 1.15f;
+        /// <summary>木头 / 木板的脚步音量。</summary>
+        public const float StepVolumeWood = 0.85f;
+
+        /// <summary>碎石 / 瓦砾：降音高、满音量。</summary>
+        public const float StepPitchGravel = 0.9f;
+        /// <summary>碎石 / 瓦砾的脚步音量。</summary>
+        public const float StepVolumeGravel = 1f;
+
+        /// <summary>水：明显降音高。</summary>
+        public const float StepPitchWater = 0.75f;
+        /// <summary>水的脚步音量。</summary>
+        public const float StepVolumeWater = 0.9f;
+
+        /// <summary>贴图名关键字 ⇒ 表面族。关键字按 de_dust2 与 CS 1.6 常见贴图名取，
+        /// 匹配大小写不敏感、命中顺序 = 水 → 金属 → 木 → 碎石。
+        /// 出处：**本项目新增**（原版这一步查 <c>materials.txt</c> 的材质字母；
+        /// de_dust2 的 38 个贴图名在该表里一个都没有 ⇒ 只能按贴图名近似）。</summary>
+        private static readonly string[] StepWaterKeywords = { "water", "wtr", "slime", "fluid", "toxic" };
+        /// <summary>金属 / 铁皮的关键字。</summary>
+        private static readonly string[] StepMetalKeywords = { "metal", "metl", "steel", "iron", "grate", "grid", "duct", "vent", "pipe" };
+        /// <summary>木头 / 木板的关键字。</summary>
+        private static readonly string[] StepWoodKeywords = { "wood", "crate", "crte", "box", "plank", "board", "panel" };
+        /// <summary>碎石 / 瓦砾的关键字。</summary>
+        private static readonly string[] StepGravelKeywords = { "gravel", "grvl", "rubble", "rock", "stone", "brick", "pebble", "debris" };
+
+        /// <summary>材质名 ⇒ 表面族；<c>null</c> / 空串 / 关键字未命中 ⇒ 混凝土（沙土也归这一族）。</summary>
+        public static CsStepSurface StepSurfaceOf(string materialName)
+        {
+            if (string.IsNullOrEmpty(materialName)) return CsStepSurface.Concrete;
+            if (ContainsAny(materialName, StepWaterKeywords)) return CsStepSurface.Water;
+            if (ContainsAny(materialName, StepMetalKeywords)) return CsStepSurface.Metal;
+            if (ContainsAny(materialName, StepWoodKeywords)) return CsStepSurface.Wood;
+            if (ContainsAny(materialName, StepGravelKeywords)) return CsStepSurface.Gravel;
+            return CsStepSurface.Concrete;
+        }
+
+        /// <summary>材质名 ⇒ 脚步音高 / 音量。</summary>
+        public static CsStepMix StepMixOf(string materialName)
+        {
+            var surface = StepSurfaceOf(materialName);
+            switch (surface)
+            {
+                case CsStepSurface.Metal:
+                    return new CsStepMix { Surface = surface, Pitch = StepPitchMetal, Volume = StepVolumeMetal };
+                case CsStepSurface.Wood:
+                    return new CsStepMix { Surface = surface, Pitch = StepPitchWood, Volume = StepVolumeWood };
+                case CsStepSurface.Gravel:
+                    return new CsStepMix { Surface = surface, Pitch = StepPitchGravel, Volume = StepVolumeGravel };
+                case CsStepSurface.Water:
+                    return new CsStepMix { Surface = surface, Pitch = StepPitchWater, Volume = StepVolumeWater };
+                default:
+                    return new CsStepMix { Surface = CsStepSurface.Concrete, Pitch = StepPitchConcrete, Volume = StepVolumeConcrete };
+            }
+        }
+
+        private static bool ContainsAny(string text, string[] keywords)
+        {
+            for (var i = 0; i < keywords.Length; i++)
+            {
+                if (text.IndexOf(keywords[i], System.StringComparison.OrdinalIgnoreCase) >= 0) return true;
+            }
+            return false;
+        }
+
+        /// <summary>3D 音效音源的**最小距离**（米）：听者与声源在这个距离内保持满音量。
+        /// 出处：**本项目新增**（音频层实现参数）—— 原版每个 sound 调用自带 attenuation / distance 档，
+        /// 本项目未解码那份逐音效数据 ⇒ 所有 3D 音效统一用这一档，消费点见 <see cref="SfxService.PlayAt(string, Vector3)"/>。</summary>
+        public const float SpatialMinDistance = 3f;
+
+        /// <summary>3D 音效音源的**最大距离**（米）。Unity 的 Logarithmic 滚降实际由
+        /// <c>minDistance</c> 与听者距离决定（volume = minDistance / distance），该值主要在 Linear 档生效；
+        /// 这里仍显式设成 120 m 作为项目口径。出处同 <see cref="SpatialMinDistance"/>（本项目新增的音频层参数）。</summary>
+        public const float SpatialMaxDistance = 120f;
+
         /// <summary>落地判定：落地前的下落速率超过它才出声（米/秒）= 原版 `PM_CrashLand` 的
         /// `else if (flFallVelocity &gt; PLAYER_MAX_SAFE_FALL_SPEED / 2)` = 580 / 2 = <b>290 units/s</b>
         /// x 0.0254 = <b>7.366 m/s</b>。
@@ -111,6 +236,10 @@ namespace Cs16.Module.Audio
         /// <summary>自己被击中（有甲 / 头盔）。出处：原版 CS 1.6 <c>sound/player/bhit_kevlar-1.wav</c>
         /// （映射见 <c>client/资源欠缺清单.md:34</c> 第 8 项）。</summary>
         public const string HitKevlar = "sfx/hit_kevlar";
+
+        /// <summary>本地玩家受击时的人声（盘上 = <c>sfx/pain.wav</c>，原版本是 pl_pain2..7 随机，
+        /// 本工程只有这一支 ⇒ 每次受击按概率播，避免机械重复）。</summary>
+        public const string Pain = "sfx/pain";
 
         /// <summary>别人的死亡音。出处：原版 CS 1.6 <c>sound/player/die1..3.wav</c>
         /// （映射见 <c>client/资源欠缺清单.md:35</c> 第 9 项；盘上 = <c>sfx/death{,2,3}.wav</c>）。</summary>
@@ -186,15 +315,21 @@ namespace Cs16.Module.Audio
         /// <c>sound/weapons/c4_beep1..5.wav</c> —— <c>mp.dll</c> 按档把声音名写进 <c>m_sBeepName</c> 的 5 个串：
         /// <c>0x10115160</c> / <c>0x10115178</c> / <c>0x10115190</c> / <c>0x101151A8</c> / <c>0x101151C0</c>。
         ///
-        /// <para><b>盘上只有两支采样</b>：<see cref="BombBeep"/>（= 原版 <c>c4_beep1.wav</c>）与
-        /// <see cref="BombBeepFast"/>（原版源文件名未记录，且与前者字节相同）。
+        /// <para><b>盘上只有两支采样</b>：<see cref="BombBeep"/>（= 原版 <c>c4_beep1.wav</c>，66220 B）与
+        /// <see cref="BombBeepFast"/>（原版源文件名未记录，10552 B = 更短的一支）。
         /// <c>c4_beep2..5</c> 四条采样不在盘、工程内也没有生成入口 ⇒ 5 档现在实际只换到这两支：
-        /// 档 0..3 用 <see cref="BombBeep"/>、档 4 用 <see cref="BombBeepFast"/>。
+        /// 档 0..3 用 <see cref="BombBeep"/>、档 4 用 <see cref="BombBeepFast"/>
+        /// （靠 <see cref="BombBeepPitch"/> 的音高阶梯做出五档区分）。
         /// 补齐采样后只改本表（已登记 <c>策划/差异登记.tsv</c>）。</para></summary>
         public static readonly string[] BombBeepTiers =
         {
             BombBeep, BombBeep, BombBeep, BombBeep, BombBeepFast,
         };
+
+        /// <summary>5 档蜂鸣的音高（下标 = 档位 0..4）：采样只有两支 ⇒ 档位差由音高阶梯给出。
+        /// 出处：**本项目新增**（音频层的表现参数）—— 原版每档是独立采样、不改音高；
+        /// 本项目用两支现有采样做变形，**不是原版采样**。</summary>
+        public static readonly float[] BombBeepPitch = { 1f, 1.12f, 1.24f, 1.38f, 1.55f };
 
         /// <summary>每轮安放里逐响打印蜂鸣明细的响数上限（超过只打换档）。
         /// 出处：**本项目新增**（日志降频；前 8 响已覆盖全部 5 个档位与间隔衰减，
@@ -225,6 +360,28 @@ namespace Cs16.Module.Audio
         /// （映射见 <c>client/资源欠缺清单.md:37</c> 第 11 项；盘上 = <c>sfx/grenade_explode.wav</c>）。
         /// 事件挂点：<c>Module/Match/CsDamage.ApplyHeExplosion</c>（HE 爆炸时按爆心播一次）。</summary>
         public const string GrenadeExplode = "sfx/grenade_explode";
+
+        // ------------------------------------------------------------------
+        //  手雷：撞墙弹跳音 + 烟雾弹释放音（同一支现有采样做音高变形）
+        //  出处：**本项目新增**（音频层表现参数）—— 原版手雷撞墙 / 烟雾弹释放各有专用采样，
+        //  那些采样不在盘 ⇒ 用 <c>sfx/hit_wall</c> / <c>sfx/grenade_explode</c> 变调近似，
+        //  属于**本项目合成的近似，不是原版采样**。
+        // ------------------------------------------------------------------
+
+        /// <summary>手雷撞到非角色碰撞体时的弹跳音音高（升高 = 金属弹跳感）。</summary>
+        public const float NadeBouncePitch = 1.55f;
+
+        /// <summary>手雷弹跳音音量缩放。</summary>
+        public const float NadeBounceVolume = 0.5f;
+
+        /// <summary>低于该速度（米/秒）的撞击不发声：落地后贴着地面的微动不连响。</summary>
+        public const float NadeBounceMinSpeed = 2f;
+
+        /// <summary>烟雾弹释放（烟球开始生长）的音高：降低 = 闷响，与 HE 爆球区分。</summary>
+        public const float SmokeReleasePitch = 0.7f;
+
+        /// <summary>烟雾弹释放音的音量缩放。</summary>
+        public const float SmokeReleaseVolume = 0.7f;
 
         // ==================================================================
         /// <summary>原版对「<c>materials.txt</c> 里没有该贴图」给的**默认材质字母** = <c>'C'</c>（concrete）。
@@ -1077,6 +1234,28 @@ namespace Cs16.Module.Audio
             }
         }
         // <<< 生成块结束
+
+        // ==================================================================
+        //  闪光耳鸣（程序化合成）
+        // ==================================================================
+        /// <summary>耳鸣采样率（Hz）。出处：**本项目新增**（合成参数）。</summary>
+        public const int TinnitusSampleRate = 44100;
+
+        /// <summary>耳鸣循环长度（秒）。出处：**本项目新增**（合成参数）。</summary>
+        public const float TinnitusLoopSeconds = 2f;
+
+        /// <summary>耳鸣基频（Hz）：4 kHz 正弦。出处：**本项目新增**（合成参数，
+        /// 原版闪光耳鸣采样不在盘 ⇒ 本项目程序化合成，不是原版采样）。</summary>
+        public const float TinnitusToneHz = 4000f;
+
+        /// <summary>叠加在正弦上的噪声比例（5%）。</summary>
+        public const float TinnitusNoiseAmount = 0.05f;
+
+        /// <summary>耳鸣基础音量（0~1）；随致盲剩余时间线性衰减。</summary>
+        public const float TinnitusVolume = 0.25f;
+
+        /// <summary>循环接缝的噪声收敛段（采样数，≈5 ms）：让噪声在环回点回到 0，避免咔哒声。</summary>
+        public const int TinnitusEdgeFadeSamples = 220;
 
         // ==================================================================
         //  高频防护 / 日志

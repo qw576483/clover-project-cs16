@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Cs16.Module.Bot
 {
-    /// <summary>某个难度档的累计统计（验收表 B1~B3 的证据载体）。</summary>
+    /// <summary>某个难度档的累计统计（按难度分档的统计载体）。</summary>
     public struct BotTierStat
     {
         /// <summary>射击次数（由 <c>NextFireTime</c> 推进量估算 —— 见 <see cref="BotWorldWatcher"/>）。</summary>
@@ -131,6 +131,17 @@ namespace Cs16.Module.Bot
 
         /// <summary>最近一次审计是否**没有**发现同队撞车。</summary>
         public bool RouteDistinctOk => _routeAuditClear;
+
+        /// <summary>全部 bot 本回合累计判定的卡住次数（探针只读；每回合在各 brain 内归零）。</summary>
+        public int TotalStuckEvents
+        {
+            get
+            {
+                var n = 0;
+                foreach (var kv in _brains) n += kv.Value.StuckEventCount;
+                return n;
+            }
+        }
 
         /// <summary>是否已拿到比赛门面（拿不到时本组件会自己禁用并打 Error）。</summary>
         public bool IsReady => _match != null;
@@ -678,7 +689,7 @@ namespace Cs16.Module.Bot
         }
 
         // ==================================================================
-        //  统计（验收表 B1~B3）
+        //  统计（按难度分档）
         // ==================================================================
         /// <summary>把"某人受到伤害"归属给刚开火的机器人 —— 契约的回调里没有攻击者，见 <see cref="BotHitAttribution"/>。</summary>
         private void OnDamaged(CsActor victim, int damage, bool headshot, bool lethal)
@@ -726,7 +737,7 @@ namespace Cs16.Module.Bot
                 $"{(e.Headshot ? "（爆头）" : string.Empty)}；该难度累计击杀 {s.Kills}");
         }
 
-        /// <summary>每 <see cref="CsBotConst.StatsLogInterval"/> 秒一条：验收表 B1~B3 要的就是这个格式。</summary>
+        /// <summary>每 <see cref="CsBotConst.StatsLogInterval"/> 秒一条：按难度分档的统计要的就是这个格式。</summary>
         public void LogStats()
         {
             for (var i = 0; i < 3; i++)

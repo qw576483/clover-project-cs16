@@ -58,6 +58,21 @@ namespace Cs16.Module.Bot
         /// </summary>
         private float _probeBadSince;
 
+        // ---- 侧向保持（见 Avoid 第 ⓪ 段）----
+        /// <summary>本帧 <see cref="Avoid"/> 内 <see cref="WalkableAhead"/> 的调用/放行计数（见 <see cref="LastProbeStats"/>）。</summary>
+        private int _probeCalls;
+        private int _probeBitmapOk;
+        private int _probePhysOk;
+
+        /// <summary>当前选定的一侧：+1 = 正偏角侧、-1 = 负偏角侧、0 = 没有保持。</summary>
+        private float _avoidSide;
+        /// <summary>侧向保持的到期时刻（= 选定时刻 + <see cref="CsBotConst.AvoidSideHoldSeconds"/>）。</summary>
+        private float _avoidSideUntil;
+        /// <summary>选定这一侧时的期望方向：期望方向明显变了 ⇒ 保持作废（那是另一段路）。</summary>
+        private Vector3 _avoidSideDesired;
+        /// <summary>选定这一侧时到最终目标的水平距离（判"实质进展"的基准）。</summary>
+        private float _avoidSideGoalDist;
+
         /// <summary>
         /// **测试入口（只读）**：最近一次 <see cref="Avoid"/> 是从哪个出口返回的
         /// （<c>map-null</c> / <c>hold-cached-ok</c> / <c>hold-sticky</c> / <c>dir-ok</c> / <c>pick</c> / <c>runway</c>）。
@@ -70,6 +85,18 @@ namespace Cs16.Module.Bot
 
         /// <summary>**测试入口**：见 <see cref="_lastAvoidBranch"/>。</summary>
         public string LastAvoidBranch => _lastAvoidBranch;
+
+        /// <summary>**测试入口（只读）**：侧向保持选定的那一侧（+1 / -1，0 = 没有保持）。</summary>
+        public float AvoidSide => _avoidSide;
+
+        /// <summary>**测试入口（只读）**：侧向保持的剩余时长（秒，0 = 没有保持）。</summary>
+        public float AvoidSideRemaining => _avoidSide != 0f ? Mathf.Max(0f, _avoidSideUntil - CsClock.Now) : 0f;
+
+        /// <summary>
+        /// **测试入口（只读）**：本帧 <see cref="Avoid"/> 里 <see cref="WalkableAhead"/> 的命中统计
+        /// （<c>bit</c> = 位图两采样点都放行、<c>phys</c> = 物理跑道兜底放行、<c>n</c> = 调用次数）。
+        /// </summary>
+        public string LastProbeStats => $"bit={_probeBitmapOk} phys={_probePhysOk} n={_probeCalls}";
 
         private float _nextSkipLogAt;
         /// <summary>"卡住"日志的时间闸（见 <see cref="ReportStuck"/>）：下一次最早可以记一条的时刻。</summary>
@@ -119,15 +146,70 @@ namespace Cs16.Module.Bot
         /// <summary>**测试入口**：本帧目标的世界坐标（见 <see cref="_lastTargetSrc"/>）。</summary>
         public Vector3 LastTarget => _lastTarget;
 
+        /// <summary>**测试入口（只读）**：本帧送进 <see cref="Avoid"/> 的期望方向（水平、已归一化）。</summary>
+        public Vector3 LastDesiredDir => _lastDesired;
+        /// <summary>**测试入口（只读）**：本帧 <see cref="ComputeMove"/> 真正返回的方向。</summary>
+        public Vector3 LastMoveDir => _lastMove;
+        /// <summary>**测试入口（只读）**：路径游标（<c>_pathIndex</c>）。</summary>
+        public int PathIndex => _pathIndex;
+        /// <summary>**测试入口（只读）**：当前路径节点数（无路径 = 0）。</summary>
+        public int PathCount => _path != null ? _path.Count : 0;
+        /// <summary>**测试入口（只读）**：当前路径的终点格。</summary>
+        public Vector2Int PathGoalCell => _pathGoalCell;
+        /// <summary>**测试入口（只读）**：累计成功求路径次数（<c>_replanCount</c>）。</summary>
+        public int ReplanCount => _replanCount;
+        /// <summary>**测试入口（只读）**：路线游标（<c>_index</c>）。</summary>
+        public int RouteIndex => _index;
+
+        /// <summary>**测试入口（只读）**：路线第 <paramref name="i"/> 个路点的世界坐标（越界 = 零向量）。</summary>
+        public Vector3 RouteWaypoint(int i) => i >= 0 && i < _route.Count ? _route[i] : Vector3.zero;
+
+        /// <summary>**测试入口（只读）**：路径前 <paramref name="max"/> 个节点的格坐标（"x,z;x,z"）。</summary>
+        public string PathPreview(int max)
+        {
+            if (_path == null || _path.Count == 0) return "EMPTY";
+            var n = Mathf.Min(max, _path.Count);
+            var sb = new System.Text.StringBuilder(n * 8);
+            for (var i = 0; i < n; i++)
+            {
+                if (i > 0) sb.Append(';');
+                sb.Append(_path[i].x).Append(',').Append(_path[i].y);
+            }
+            return sb.ToString();
+        }
+
+        private Vector3 _lastDesired;
+        private Vector3 _lastMove;
+
         // ---- 全局路径（引擎 A*；消除差异 #77「业务零使用 A*」）----
-        /// <summary>当前路径（引擎 <see cref="AStar"/> 的**格坐标**序列；null = 没有可用路径，退化为"朝目标直线走"）。</summary>
+        /// <summary>
+        /// 本实例的 A* 工作区（内部容器跨调用复用；<see cref="AStarContext"/> **非线程安全**，
+        /// 一个 navigator 只在自己的主线程里用）。
+        /// </summary>
+        private readonly AStarContext _astar = new AStarContext();
+
+        /// <summary>
+        /// 求路径的输出缓冲（**跨重求复用**，不每帧 new）。失败时留空，下次求路径原地覆盖。
+        /// </summary>
+        private readonly List<Vector2Int> _pathBuffer = new List<Vector2Int>();
+
+        /// <summary>
+        /// 当前路径（格坐标序列；有效时指向 <see cref="_pathBuffer"/>，null = 没有可用路径，
+        /// 退化为"朝目标直线走"）。
+        /// </summary>
         private List<Vector2Int> _path;
         /// <summary>沿 <see cref="_path"/> 推进到的下标。</summary>
         private int _pathIndex;
         /// <summary><see cref="_path"/> 的终点格：终点格一变就必须重求（这就是"目标变了"的判据）。</summary>
         private Vector2Int _pathGoalCell;
+        /// <summary>本次求路径的起点格：单格死角对它是放行的（否则站在死角里永远求不出路）。</summary>
+        private Vector2Int _pathStartCell = new Vector2Int(int.MinValue, int.MinValue);
         /// <summary>下一次最早允许重求路径的时刻（性能闸：不许每帧求路径）。</summary>
         private float _nextRepathAt;
+        /// <summary>上一次"确认沿路径有进展"时的路径游标（<see cref="PathProgressed"/> 用）。</summary>
+        private int _pathMarkIndex;
+        /// <summary>上一次"确认沿路径有进展"时到当前拐点的水平距离（米）。</summary>
+        private float _pathMarkDist;
         /// <summary>"求路径失败"日志的时间闸（见 <see cref="WarnPathFailed"/>）。</summary>
         private float _nextPathFailLogAt;
         /// <summary>本 bot 求路径成功的次数（"这条移动由 A* 给出"的计数）。</summary>
@@ -381,6 +463,8 @@ namespace Cs16.Module.Bot
         private Vector2Int _pathFailCell;
         /// <summary>"判到不连通"日志的时间闸。</summary>
         private float _nextUnreachableLogAt;
+        /// <summary>目标格"探不到落脚面"日志的时间闸（见 <see cref="GridWorldTarget"/>）。</summary>
+        private float _nextGroundTargetLogAt;
 
         /// <summary>当前路线是否至少有一个路点（false = 退化成"朝目标直线走"）。</summary>
         public bool HasRoute => _route.Count > 0;
@@ -622,8 +706,8 @@ namespace Cs16.Module.Bot
         /// <see cref="EnsurePath"/> 就**永远**返回 false ⇒ 退化成"朝它直线走" ⇒ 每 0.5s 判一次卡住 ⇒
         /// 无限循环（实测 373s 里 CT 进点 0、除真人外无 actor 位移 &gt; 5.8m）。</para>
         ///
-        /// <para><b>判据与运行时同源</b>：直接调引擎 <see cref="AStar.Find"/> + 本类同一个 <see cref="WalkableCell"/>
-        /// 推进顺序 = 上面刚排好的顺序（从机器人当前位置逐个走）。</para>
+        /// <para><b>判据与运行时同源</b>：直接调引擎 <see cref="AStarContext.CanReach"/>（只判连通、不回溯路径）
+        /// + 本类同一个 <see cref="WalkableCell"/> 推进顺序 = 上面刚排好的顺序（从机器人当前位置逐个走）。</para>
         ///
         /// <para>不许静默排点（降频 Warn，逐点给格号）；"整条路线全被排掉"时**退回未过滤的路线**并打 Error
         /// —— 与上面的 <c>CanStand</c> 层同口径，绝不复现"整条路线为空"这种更差的行为。</para>
@@ -635,7 +719,7 @@ namespace Cs16.Module.Bot
             if (mapData == null || !mapData.Loaded || mapData.CellSize <= 0f) return;   // 位图不可用：无从判连通
 
             var cursorCell = CellOf(mapData, fromPosition);
-            if (!SnapToWalkable(ref cursorCell)) return;      // 自己在图外/全是阻挡格：不排，交给运行时
+            if (!SnapToWalkable(fromPosition, ref cursorCell)) return;      // 自己在图外/全是阻挡格：不排，交给运行时
 
             var kept = new List<Vector3>(_route.Count);
             var dropped = 0;
@@ -643,13 +727,13 @@ namespace Cs16.Module.Bot
             {
                 var pt = _route[i];
                 var cell = CellOf(mapData, pt);
-                if (!SnapToWalkable(ref cell))
+                if (!SnapToWalkable(pt, ref cell))
                 {
                     kept.Add(pt);                             // 本格不可走这一支由运行时"跳过不可走路点"负责
                     continue;
                 }
 
-                if (AStar.Find(WalkableCell, cursorCell, cell, AStar.DefaultMaxNodes) == null)
+                if (!_astar.CanReach(WalkableCell, cursorCell, cell, AStar.DefaultMaxNodes))
                 {
                     dropped++;
                     if (Time.time >= _nextSkipLogAt)
@@ -659,7 +743,7 @@ namespace Cs16.Module.Bot
                         Game.Logger.Warn(Tag,
                             $"{_ownerName} 路线 '{marker}' 第 {i + 1}/{_route.Count} 个路点 " +
                             $"({pt.x:F1},{pt.y:F1},{pt.z:F1})（格 {cell}，世界 {c.x:F1},{c.z:F1}）" +
-                            $"**可走但走不到**（引擎 AStar.Find 判不连通）→ 已从路线里排掉（累计已排 {dropped} 个；" +
+                            $"**可走但走不到**（引擎 AStarContext.CanReach 判不连通）→ 已从路线里排掉（累计已排 {dropped} 个；" +
                             $"本日志按 {CsBotConst.StuckWarnCooldown:F0}s 降频）");
                     }
                     continue;
@@ -674,7 +758,7 @@ namespace Cs16.Module.Bot
             if (kept.Count == 0)
             {
                 Game.Logger.Error(Tag,
-                    $"{_ownerName} 路线 '{marker}' 的 {rawCount} 个标记点**全部**与当前位置判为不连通（引擎 AStar.Find 全返回 null）" +
+                    $"{_ownerName} 路线 '{marker}' 的 {rawCount} 个标记点**全部**与当前位置判为不连通（引擎 AStarContext.CanReach 全返回 false）" +
                     "→ 退回未过滤的路线（⛔ 不复现「整条路线为空」这种更差的行为）。" +
                     "多半是位图把该片区域封成了孤立分量（单层 2D 位图 + 多层几何），见 tools/probes/marker-connectivity.py");
                 return;
@@ -732,7 +816,7 @@ namespace Cs16.Module.Bot
         /// <param name="hullHeight">该 bot 的碰撞盒高度（调用方传 actor 的 Height）—— 只影响
         /// <see cref="PhysRunway"/> 用哪个盒试算物理位移，默认 = 站立高。</param>
         public Vector3 ComputeMove(Vector3 selfPosition, Vector3 goal, float arriveRadius, float now,
-            bool viaRoute = true, float hullHeight = CsConst.StandHeight)
+            bool viaRoute = true, float hullHeight = CsConst.StandHeight, bool forcePath = false)
         {
             _hullHeight = hullHeight;
             var target = viaRoute ? ResolveNextTarget(selfPosition, goal) : goal;
@@ -743,6 +827,8 @@ namespace Cs16.Module.Bot
             var routeDone = !viaRoute || _index >= _route.Count;
             if (routeDone && toGoal.magnitude <= arriveRadius)
             {
+                _lastDesired = Vector3.zero;
+                _lastMove = Vector3.zero;
                 NoteMovement(selfPosition, false, now);
                 return Vector3.zero;
             }
@@ -756,6 +842,8 @@ namespace Cs16.Module.Bot
             }
             if (delta.sqrMagnitude < 0.0004f)
             {
+                _lastDesired = Vector3.zero;
+                _lastMove = Vector3.zero;
                 NoteMovement(selfPosition, false, now);
                 return Vector3.zero;
             }
@@ -775,7 +863,12 @@ namespace Cs16.Module.Bot
             //    格边界上时会被 ±0.1m 的微动来回触发 ⇒ 目的地于是在"朝 goal 直线"与"A* 拐点"之间
             //    每帧二选一（两者都过 `WalkableAhead`、方向相差 ≈150°）⇒ 2s 净位移 ≈0。见
             //    `UseCornerInsteadOfStraight`。
-            if (!viaRoute && UseCornerInsteadOfStraight(selfPosition, desired, now))
+            //
+            //    <paramref name="forcePath"/> = 每一帧都走 A* 拐点（不做"直线 / 拐点"二选一）。
+            //    用于"目标点本身在墙后、且离得很远"的那一类追击（捡地上的 C4）：闸门判据只看一条射线，
+            //    远距离目标几乎恒为"挡住"，此时闸门的保持逻辑会让目的地在两个方向间来回足够久，
+            //    净位移接近 0；直接跟路径就没有这个二义性。路径求不出时照旧退回直线 + Avoid。
+            if (forcePath || (!viaRoute && UseCornerInsteadOfStraight(selfPosition, desired, now)))
             {
                 bool cornerOk;
                 using (MarkEnsurePath.Auto()) cornerOk = EnsurePath(selfPosition, goal);
@@ -794,6 +887,7 @@ namespace Cs16.Module.Bot
                 }
             }
             _lastTarget = target;
+            _lastDesired = desired;
 
             // ① 逃逸中：沿上次卡住时选定的"有跑道"方向继续走（保持一段时间 → 真的走出去）。
             //    不做卡住判定（这一段的位移正是为了脱离卡住），逃逸结束后会立刻重新判定。
@@ -802,6 +896,7 @@ namespace Cs16.Module.Bot
                 if (Runway(selfPosition, _escapeDir) > 0f)
                 {
                     _lastDir = _escapeDir;      // 逃逸方向也是"提交出去的方向"：它走不动时同样要记住
+                    _lastMove = _escapeDir;
                     DiagFlip(selfPosition, desired, _escapeDir, goal, target, "escape-hold-return", now);
                     return _escapeDir;
                 }
@@ -812,7 +907,7 @@ namespace Cs16.Module.Bot
 
             var branch = "avoid";
             Vector3 dir;
-            using (MarkAvoid.Auto()) dir = Avoid(selfPosition, desired, now);
+            using (MarkAvoid.Auto()) dir = Avoid(selfPosition, desired, now, toGoal.magnitude);
 
             if (NoteMovement(selfPosition, true, now, out var moved))
             {
@@ -839,6 +934,7 @@ namespace Cs16.Module.Bot
             }
 
             if (dir.sqrMagnitude > 0.5f) _lastDir = dir;
+            _lastMove = dir;
             DiagFlip(selfPosition, desired, dir, goal, target, branch, now);
             return dir;
         }
@@ -887,6 +983,15 @@ namespace Cs16.Module.Bot
             return _cornerGateState;
         }
 
+        /// <summary>
+        /// 是否在**沿既有路径**前进（游标推进，或到当前拐点的距离缩短了
+        /// <see cref="CsBotConst.PathProgressEpsilon"/> 以上）。上层据此判断"绕路算不算卡住"。
+        /// </summary>
+        public bool PathHasProgress(Vector3 selfPosition)
+        {
+            return PathProgressed(selfPosition);
+        }
+
         /// <summary>当前正在追的路点（供"朝行进方向看"用）；没有路线 / 不走路线时返回 goal。</summary>
         public Vector3 CurrentTarget(Vector3 selfPosition, Vector3 goal, bool viaRoute = true)
         {
@@ -917,7 +1022,24 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>卡住计数是否已经达到"必须换目标"的阈值（自检/日志用，不消费）。</summary>
-        public bool StuckEscalated => _stuckEscalate;
+        public bool StuckEscalate => _stuckEscalate;
+
+        /// <summary>
+        /// 导航侧记录的"为什么走不动"（诊断用；没有记录时返回 <c>null</c>）。
+        /// 来源只有本类已经把事实记下来的两处：① 实测位移证明某个方向走不动
+        /// （<see cref="_blockedDir"/> / <see cref="_blockedUntil"/>）；② 某终点格求不出路径
+        /// （<see cref="_unreachableCell"/>）。
+        /// </summary>
+        public string BlockedReason(Vector3 position, float now)
+        {
+            if (now < _blockedUntil && _blockedDir.sqrMagnitude > 0.5f)
+                return $"方向({_blockedDir.x:F2},{_blockedDir.z:F2}) 在 {(_blockedUntil - now):F1}s 内已被实测走不动";
+
+            if (_hasUnreachableCell)
+                return $"终点格 {_unreachableCell} 与起点不连通";
+
+            return null;
+        }
 
         // ==================================================================
         /// <summary>
@@ -929,14 +1051,14 @@ namespace Cs16.Module.Bot
         /// （A* + 视线拉直）。</para>
         ///
         /// <para><b>与 <see cref="Avoid"/> 的分工（两者叠加，缺一不可，不是二选一）</b>：
-        /// ① **全局** = 本方法 + <see cref="EnsurePath"/>：用 <see cref="AStar.FindSmoothed"/> 在可走位图上
+        /// ① **全局** = 本方法 + <see cref="EnsurePath"/>：用引擎 <see cref="AStarContext.TryFindSmoothed"/> 在可走位图上
         /// 求"从我在哪到目标该走哪几格"，解决"绕开整片墙 / 走哪条通道"；
         /// ② **局部** = <see cref="Avoid"/>：A* 只给"格子级"的通行方向，1m 格内仍会贴墙角、被别的角色挤住、
         /// 被<see cref="ICsMap.WalkableAt"/> 说可走而物理走不动的落差卡住 —— 那一段由前向试探 / 偏角 /
         /// 跑道扫描 / 逃逸负责。A* 看不见"这一帧被谁挤住"，<see cref="Avoid"/> 不知道"该绕远路"。</para>
         ///
         /// <para><b>退化口径</b>：不许比既有实现更差：地图位图未加载 / 起点终点都 snap 不到可走格 /
-        /// 不可达（<see cref="AStar.Find"/> 返回 null）⇒ 走**既有**的"朝标记点（或 goal）直线走"，
+        /// 不可达（<see cref="AStarContext.TryFindSmoothed"/> 返回 false）⇒ 走**既有**的"朝标记点（或 goal）直线走"，
         /// 并留一条降频 Warn（见 <see cref="WarnPathFailed"/>，不许静默）。</para>
         ///
         /// <list type="number">
@@ -1059,7 +1181,7 @@ namespace Cs16.Module.Bot
 
             var from = CellOf(map, selfPosition);
             var cell = CellOf(map, wp);
-            if (!SnapToWalkable(ref from)) return false;        // 自己被卡在位图外 ⇒ 不是路点的问题
+            if (!SnapToWalkable(selfPosition, ref from)) return false;        // 自己被卡在位图外 ⇒ 不是路点的问题
             if (!WalkableCell(cell)) return false;              // 位图判挡 ⇒ 交给"跳过不可走的路点"那条
 
             if (_reachCheckedIndex == _index && _reachCheckedFrom == from && _reachCheckedCell == cell
@@ -1105,7 +1227,7 @@ namespace Cs16.Module.Bot
 
             // `AStar.Find` 的入参契约 = 起点/终点格**必须可走**，否则直接返回 null。机器人被挤进位图判阻挡的
             // 格子（1m 格 + 0.4m 角色半径，贴墙时很常见）时若不 snap，就会**永远**求不出路径。
-            if (!SnapToWalkable(ref from) || !SnapToWalkable(ref to))
+            if (!SnapToWalkable(selfPosition, ref from) || !SnapToWalkable(target, ref to))
             {
                 InvalidatePath();
                 WarnPathFailed(target, $"起点格或终点格在 {CsBotConst.PathSnapRadiusCells} 格内找不到可走格" +
@@ -1113,26 +1235,38 @@ namespace Cs16.Module.Bot
                 return false;
             }
 
-            if (_path != null && _pathGoalCell == to && _pathIndex < _path.Count && CsClock.Now < _nextRepathAt)   // replan gate is decision timing; not injected it is literally Time.time
+            if (_path != null && _pathGoalCell == to && _pathIndex < _path.Count)
             {
-                return true;                       // 沿用既有路径（时间闸未到）
+                if (CsClock.Now < _nextRepathAt) return true;   // 沿用既有路径（时间闸未到）
+
+                // 时间闸到点，但这一秒确实在沿既有路径前进 ⇒ 继续沿用。
+                // 重求会用**当前格**重新跑一次 A*：等价代价的两条分支（绕这栋楼 / 绕那栋楼）会在
+                // 起点的微小变化下互换 ⇒ 机器人按新路径掉头，表现为"同一路点上来回拉锯"。
+                if (PathProgressed(selfPosition))
+                {
+                    _nextRepathAt = CsClock.Now + CsBotConst.PathReplanInterval;
+                    return true;
+                }
             }
 
             _nextRepathAt = CsClock.Now + CsBotConst.PathReplanInterval;
+            _pathStartCell = from;
+            EnsureDeadEndMask();
 
             //   位图本体与 `ICsMap.WalkableAt` / `CsMap.WalkableAt` 的语义**一字不动**（玩家行为零影响）。
             //   失败（位图不可用 / 自己脚下探不到地面 / 可达规模超上限）⇒ 不加这一层，行为同既有。
             bool heightOk;
             using (MarkHeightReach.Auto()) heightOk = BuildHeightReach(from, selfPosition) != null;
 
-            // `FindSmoothed` = `Find`（8 邻接、对角要求两侧可走）+ 视线拉直（拐角变成长直线，正合走位）。
+            // `TryFindSmoothed` = `Find`（8 邻接、对角要求两侧可走）+ 视线拉直（拐角变成长直线，正合走位），
+            // 路径写进本实例的复用缓冲 `_pathBuffer`（不每次 new 列表）。
             // 节点上限用引擎既有的 `DefaultMaxNodes`（不自己加魔法数）。
-            List<Vector2Int> path;
+            bool found;
             using (MarkAStarFind.Auto())
-                path = AStar.FindSmoothed(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);
-            if (path == null || path.Count == 0)
+                found = _astar.TryFindSmoothed(WalkableCellHeightAware, from, to, _pathBuffer, AStar.DefaultMaxNodes);
+            if (!found)
             {
-                //   起/终点会**先**返回 null 并打 `badstart`/`badgoal`），所以这一支的真实含义是
+                //   起/终点会**先**返回 false 并打 `badstart`/`badgoal`），所以这一支的真实含义是
                 //   **「两格都可走，但位图上不连通」**（`AStar.cs:130` 的 `astar.nopath`）——
                 //   与"位图不可用""起终点不可走"是三件不同的事，不许混在一句日志里（旧日志写
                 //   "位图不可用 / 目标点不可达"，实测会把人引到错误的方向）。
@@ -1140,7 +1274,7 @@ namespace Cs16.Module.Bot
                 //   目标格本身走不到时，换向/跳点都救不了，只有换目标或跳掉该路点两条路（都不许无限循环）。
                 NotePathFail(to);
                 InvalidatePath();
-                //   引擎 `AStar.Find` 会在 `walkable(to) == false` 时**先**返回 null（键 `astar.badgoal`）——
+                //   引擎 `AStarContext` 会在 `walkable(to) == false` 时**先**返回 false（键 `astar.badgoal`）——
                 //   而这里的 `walkable` = `WalkableCellHeightAware`，所以"终点不可走"并不等于"位图把这一格标成阻挡格"，
                 //   它同样可能是"高度一致性层没扩展到这一格"。实测（br-hold-plant-log.tsv）13 次 badgoal 全被旧日志
                 //   写成"位图孤立分量"，而真·孤立分量只有 18 次 ⇒ 修 bug 的人会去修位图、修不到真正的门。
@@ -1149,10 +1283,8 @@ namespace Cs16.Module.Bot
                     ? $"**终点格在高度一致性层里不存在**（终点 {to}：位图判可走 = {WalkableCell(to)}，" +
                       $"但从起点 {from} 起按抬腿 ≤ {CsConst.StepUpHeight:F2}m 扩张到不了它）—— 该点多半被摆在抬升面/墙里" +
                       "（判据见 tools/probes/bu-goal-reachability.py）。选目标时应先用 BotNavigator.CanReach 过滤"
-                    : (path == null
-                        ? $"**两格都可走但位图不连通**（起点 {from} / 终点 {to}）—— 位图孤立分量（单层 2D 位图 + 多层几何）"
-                          + HeightVerdict(from, to, heightOk)
-                        : $"A* 返回空路径（起点 {from} / 终点 {to}）"));
+                    : $"**两格都可走但位图不连通**（起点 {from} / 终点 {to}）—— 位图孤立分量（单层 2D 位图 + 多层几何）"
+                      + HeightVerdict(from, to, heightOk));
                 return false;
             }
 
@@ -1170,14 +1302,45 @@ namespace Cs16.Module.Bot
             // 往返幅度 ±0.5m、速度 3.7m/s ⇒ 总路径 90m / 净位移 6m、rev% 78%、
             // 且 15 帧采样的 A/B 两行都出现"位移恒为 0.00"（频闪锁定）。去掉起点节点，游标从**真正的第一个拐点**开始。
             // 出处：引擎 `AStar.Find`/`Smooth` 的节点语义（`clover-client-unity-engine/Runtime/Core/AStar.cs:73-76,95,160`）。
-            if (path.Count > 1 && path[0] == from) path.RemoveAt(0);
+            if (_pathBuffer.Count > 1 && _pathBuffer[0] == from) _pathBuffer.RemoveAt(0);
 
-            _path = path;
+            _path = _pathBuffer;
             _pathIndex = 0;
             _pathGoalCell = to;
+            MarkPathProgress(selfPosition);
             ClearPathFail();
-            PathLog(from, to, path);
+            PathLog(from, to, _pathBuffer);
             return true;
+        }
+
+        /// <summary>
+        /// 这一秒是否在**沿既有路径**前进：游标推进过，或到当前拐点的距离缩短了
+        /// <see cref="CsBotConst.PathProgressEpsilon"/> 以上。锚点在每次重求 / 每次确认进展时刷新。
+        /// </summary>
+        private bool PathProgressed(Vector3 selfPosition)
+        {
+            if (_path == null || _pathIndex >= _path.Count) return false;
+
+            if (_pathIndex > _pathMarkIndex)
+            {
+                MarkPathProgress(selfPosition);
+                return true;
+            }
+
+            var d = FlatDistance(selfPosition, _path[_pathIndex]);
+            if (d > _pathMarkDist - CsBotConst.PathProgressEpsilon) return false;
+
+            MarkPathProgress(selfPosition);
+            return true;
+        }
+
+        /// <summary>把"进展锚点"刷到当前游标 / 当前距离。</summary>
+        private void MarkPathProgress(Vector3 selfPosition)
+        {
+            _pathMarkIndex = _pathIndex;
+            _pathMarkDist = _path != null && _pathIndex < _path.Count
+                ? FlatDistance(selfPosition, _path[_pathIndex])
+                : 0f;
         }
 
         /// <summary>累计本 bot 成功求出路径的次数（<see cref="_replanCount"/> 的唯一自增口）。</summary>
@@ -1197,7 +1360,7 @@ namespace Cs16.Module.Bot
         ///
         /// <para><b>口径与 <see cref="EnsurePath"/> 逐字同源</b>（不另立一套判据）：同一份
         /// <see cref="SnapToWalkable"/>（半径 <see cref="CsBotConst.PathSnapRadiusCells"/>）、同一份
-        /// <see cref="WalkableCellHeightAware"/>、同一个引擎 <see cref="AStar.Find"/> + <c>DefaultMaxNodes</c>。
+        /// <see cref="WalkableCellHeightAware"/>、同一个引擎 <see cref="AStarContext.CanReach"/> + <c>DefaultMaxNodes</c>。
         /// 差别只有一点：**不写 <c>_path</c> / 不动告警计数** —— 它是"问一句"，不是"走一步"。</para>
         ///
         /// <para><b>代价</b>：起点格相同时 <see cref="BuildHeightReach"/> 命中缓存（见
@@ -1211,7 +1374,7 @@ namespace Cs16.Module.Bot
 
             var from = CellOf(map, fromPosition);
             var to = CellOf(map, toPosition);
-            if (!SnapToWalkable(ref from) || !SnapToWalkable(ref to)) return false;
+            if (!SnapToWalkable(fromPosition, ref from) || !SnapToWalkable(toPosition, ref to)) return false;
             if (from == to) return true;
 
             using (MarkHeightReach.Auto()) BuildHeightReach(from, fromPosition);   // null ⇒ _hasHeightReach=false ⇒ 与 WalkableCell 等价
@@ -1228,7 +1391,8 @@ namespace Cs16.Module.Bot
             if (_canReachMemo.TryGetValue(query, out var known)) return known;
 
             bool ok;
-            using (MarkAStarFind.Auto()) ok = AStar.Find(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes) != null;
+            using (MarkAStarFind.Auto())
+                ok = _astar.CanReach(WalkableCellHeightAware, from, to, AStar.DefaultMaxNodes);
             if (_canReachMemo.Count >= CanReachMemoCap) _canReachMemo.Clear();
             _canReachMemo[query] = ok;
             return ok;
@@ -1306,7 +1470,50 @@ namespace Cs16.Module.Bot
                 _pathIndex++;
             }
 
-            return _pathIndex < _path.Count ? CellCenter(_path[_pathIndex]) : target;
+            return _pathIndex < _path.Count
+                ? GridWorldTarget(_path[_pathIndex], selfPosition.y)
+                : target;
+        }
+
+        /// <summary>
+        /// 格坐标 → **世界目标点**：格心 x/z + 该列**真实落脚面**高度。
+        ///
+        /// <para>⛔ 不能直接把 <see cref="CellCenter"/> 的 y 交给上层：它的 y 是**位图平面基准 0**
+        /// （那是"同一格水平距离"用的口径，见其注释），一旦当世界点用，上层
+        /// （<c>CsBotBrain</c> 的 <c>WithEyeHeight(_nav.CurrentTarget(…))</c> 瞄准链）就会把
+        /// "格心就在脚边"读成"格心在几米高的地方" ⇒ 抬枪朝天。量级：真实 dust2 的脚面在
+        /// CT / T 出生点那两侧分别是 -3.25 / +3.25 m（见 <c>Assets/Resources/MapData/de_dust2_markers.bytes</c>
+        /// 的 <c>Spawn_CT</c> / <c>Spawn_T</c>），按 y=0 算出的瞄准点固定是 +1.62 m
+        /// ⇒ 同一个目标点会被读成 28~80° 的仰角（越靠近越大）。</para>
+        ///
+        /// <para>落脚面判据复用高度一致性层那一份（<see cref="GroundYAbove"/>：格心射线 + 整格 5×5 回退），
+        /// 不再另写一套带内判据；取不到时退回"同层"（见下方注释）并留一条降频 Warn。</para>
+        ///
+        /// <para><b>只影响 y</b>：所有调用方都先 <c>d.y = 0</c> 再算方向 ⇒ 位图/路径/A* 的口径一字未动。</para>
+        /// </summary>
+        private Vector3 GridWorldTarget(Vector2Int cell, float fromY)
+        {
+            var c = CellCenter(cell);
+
+            // 落脚面判据仍是高度一致性层那一份（同一个方法、同一条带内可站立面规则），只是把**起点抬一个台阶**：
+            // 上层拿这个点当"目标所在层"的参照，楼梯上"目标格比我高一两级"是常态，而抬一个台阶之后
+            // 向上的容差仍是 CsConst.StepUpHeight（同一个常量，不引新数值），向下依旧是到图底的探测深度。
+            var y = GroundYAbove(cell, fromY + CsConst.StepUpHeight);
+            if (!float.IsNaN(y)) return new Vector3(c.x, y, c.z);
+
+            // 这一格在我（脚面 + 一个台阶）的容差里取不到带内可站面（陡坡面、上不去的台沿、正贴着爬不上去的墙）
+            // ⇒ 退回**我脚下的地面高度**：路径是高度逐格校验过的，下一个拐点通常就在同层或一步之内，
+            // "同层"是有界的近似；⛔ 绝不退回 CellCenter 的位图平面 y=0（那是绝对基准，
+            // CT/T 出生点两侧能差 3.25 m ⇒ 抬枪朝天）。
+            if (Time.time >= _nextGroundTargetLogAt)
+            {
+                _nextGroundTargetLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                Game.Logger.Warn(Tag,
+                    $"{_ownerName} 目标格 {cell}（世界 {c.x:F1},{c.z:F1}）脚面 + 一个台阶内探不到落脚面" +
+                    $"（脚面 y={fromY:F2}）⇒ 该点高度按**同层**（{fromY:F2}）交出，瞄准参照会略偏；" +
+                    "这一格大概率不该被追（可站判据见 CanStand / 高度一致性层）");
+            }
+            return new Vector3(c.x, fromY, c.z);
         }
 
         /// <summary>
@@ -1323,6 +1530,9 @@ namespace Cs16.Module.Bot
                 var ix = cell.x;
                 var iz = cell.y;
                 if (ix < 0 || iz < 0 || ix >= _walkW || iz >= _walkD) return false;   // 图外 = 不可走（IMapData.WalkableAt 同口径）
+                // 单格死角（四邻可走 ≤ 1）不进 A* 路径：身体半径 ≈ 格宽，走进去只能原路退出，
+                // 而退出需要精确 180° 反向 —— 表现就是"卡在凹槽里"整回合不动。
+                if (IsDeadEndCell(cell)) return false;
                 return _walkBitmap[iz * _walkW + ix];
             }
 
@@ -1342,6 +1552,8 @@ namespace Cs16.Module.Bot
             _walkMap = map;
             _walkW = map.Width;
             _walkD = map.Depth;
+            _deadEndReady = false;      // 换图 / 位图重建 ⇒ 死角掩码作废
+            _deadEnd = null;
             var bits = new bool[_walkW * _walkD];
             var size = map.CellSize;
             var ox = map.Origin.x;
@@ -1471,7 +1683,7 @@ namespace Cs16.Module.Bot
         /// <summary>"抬腿可达集"扩张（<see cref="BuildHeightReach"/>）的耗时。</summary>
         private static readonly ProfilerMarker MarkHeightReach = new ProfilerMarker("BotNavigator.HeightReach");
 
-        /// <summary>对引擎 A\* 的同步调用（<see cref="AStar.Find"/> / <see cref="AStar.FindSmoothed"/>）。</summary>
+        /// <summary>对引擎 A\* 的同步调用（<see cref="AStarContext.CanReach"/> / <see cref="AStarContext.TryFindSmoothed"/>）。</summary>
         private static readonly ProfilerMarker MarkAStarFind = new ProfilerMarker("BotNavigator.AStarFind");
 
         /// <summary>局部避障（<see cref="Avoid"/>）。</summary>
@@ -1641,6 +1853,61 @@ namespace Cs16.Module.Bot
             if (!_hasHeightReach || _gReach == null) return true;
             var idx = GeoIdx(cell);
             return idx >= 0 && _gReach[idx] == _gGen;
+        }
+
+        // ==================================================================
+        //  单格死角（"凹槽"）：四邻可走 ≤ 1 的格
+        // ==================================================================
+        private bool[] _deadEnd;
+        private bool _deadEndReady;
+
+        /// <summary>
+        /// 这一格是不是"单格死角"：位图可走、但四个正邻格里可走的 ≤ 1 个。
+        ///
+        /// <para>为什么要挡：角色半径 0.4m、格宽 1m ⇒ 走进 1x1m 的死角后，身体两侧都贴着墙，
+        /// 只能沿原路精确反向退出；而导航的候选方向表（<see cref="CsBotConst.AvoidAngles"/>）
+        /// 与"反向未验证不许提交"这条约束都不会给出那个精确反向 ⇒ 表现是**贴着凹槽整段不动**
+        /// （A 点包点西侧 x≈29.5,z≈31.5 那格就是这种形状）。</para>
+        ///
+        /// <para>例外：机器人**已经站在**死角里（起点格）时不算 —— 否则它连退出的机会都没有。</para>
+        /// </summary>
+        private bool IsDeadEndCell(Vector2Int cell)
+        {
+            if (!_deadEndReady) return false;
+            if (cell == _pathStartCell) return false;
+            var ix = cell.x;
+            var iz = cell.y;
+            if (ix < 0 || iz < 0 || ix >= _walkW || iz >= _walkD) return false;
+            return _deadEnd[iz * _walkW + ix];
+        }
+
+        private void EnsureDeadEndMask()
+        {
+            if (_deadEndReady) return;
+
+            var map = Game.Map;
+            if (map == null || !map.Loaded || map.CellSize <= 0f) return;
+            if (!EnsureWalkBitmap(map)) return;
+            if (_walkBitmap == null || _walkW <= 0 || _walkD <= 0) return;
+
+            _deadEnd = new bool[_walkW * _walkD];
+            for (var iz = 0; iz < _walkD; iz++)
+            {
+                for (var ix = 0; ix < _walkW; ix++)
+                {
+                    var i = iz * _walkW + ix;
+                    if (!_walkBitmap[i]) continue;
+
+                    var open = 0;
+                    if (ix > 0 && _walkBitmap[i - 1]) open++;
+                    if (ix + 1 < _walkW && _walkBitmap[i + 1]) open++;
+                    if (iz > 0 && _walkBitmap[i - _walkW]) open++;
+                    if (iz + 1 < _walkD && _walkBitmap[i + _walkW]) open++;
+                    _deadEnd[i] = open <= 1;
+                }
+            }
+
+            _deadEndReady = true;
         }
 
         /// <summary>
@@ -2015,15 +2282,27 @@ namespace Cs16.Module.Bot
         }
 
         /// <summary>
-        /// 把一个格坐标挪到最近的可走格（只看半径 ≤ <see cref="CsBotConst.PathSnapRadiusCells"/> 的那几环），
-        /// 挪不动返回 false。
-        /// <para>口径出处：<c>Assets/Editor/MapGen/MapConnectivityProbe.cs</c> 的 <c>SnapToWalkable</c>
-        /// （逐环扩张搜最近可走格）——本类只把半径收小：角色半径 0.4m &lt; 1 格边长，`AStar.Find` 对"起点不可走"
-        /// 直接判 null，snap 半径取 2 格足以覆盖"被挤进相邻格"的情形。</para>
+        /// 把一个格坐标挪到**离 <paramref name="position"/> 最近**的可走格（只看半径
+        /// ≤ <see cref="CsBotConst.PathSnapRadiusCells"/> 的那几环），挪不动返回 false。
+        ///
+        /// <para>判据 = 格心到该位置的水平距离，取最小；平局按扫描序（dz 外层、dx 内层）——
+        /// 同一个位置必然得到同一个格，A* 的起点/终点不会在等价候选之间互换。</para>
+        ///
+        /// <para>⛔ 不能按"环扫描序取第一个可走格"：1m 位图比几何粗，角色贴墙时脚下正是阻挡格，
+        /// 墙**两侧**都能在 1 环内找到可走格；扫描序在 dx=-1 先命中，于是把角色吸到墙的另一侧。
+        /// 那一侧与角色实际所在分量不同，A* 给出的第一个拐点在墙里/绕墙另一面 ⇒ 角色只能沿墙滑，
+        /// 每次重解又会按新位置的扫描序换到另一侧 ⇒ 同一段上来回走。按距离取最近才是"我这一侧"。</para>
+        ///
+        /// <para>半径沿用 <see cref="CsBotConst.PathSnapRadiusCells"/>：角色半径 0.4m &lt; 1 格边长，
+        /// `AStar.Find` 对"起点不可走"直接判 null，2 格足以覆盖"被挤进相邻格"的情形。</para>
         /// </summary>
-        private bool SnapToWalkable(ref Vector2Int cell)
+        private bool SnapToWalkable(Vector3 position, ref Vector2Int cell)
         {
             if (WalkableCell(cell)) return true;
+
+            var best = cell;
+            var bestD = float.MaxValue;
+            var found = false;
 
             for (var r = 1; r <= CsBotConst.PathSnapRadiusCells; r++)
             {
@@ -2034,13 +2313,24 @@ namespace Cs16.Module.Bot
                         if (Mathf.Abs(dx) != r && Mathf.Abs(dz) != r) continue;   // 只看这一环（里环已经查过）
                         var c = new Vector2Int(cell.x + dx, cell.y + dz);
                         if (!WalkableCell(c)) continue;
-                        cell = c;
-                        return true;
+
+                        var center = CellCenter(c);
+                        var ddx = center.x - position.x;
+                        var ddz = center.z - position.z;
+                        var d = ddx * ddx + ddz * ddz;
+                        if (d < bestD)
+                        {
+                            bestD = d;
+                            best = c;
+                            found = true;
+                        }
                     }
                 }
             }
 
-            return false;
+            if (!found) return false;
+            cell = best;
+            return true;
         }
 
         /// <summary>
@@ -2077,6 +2367,8 @@ namespace Cs16.Module.Bot
         {
             _path = null;
             _pathIndex = 0;
+            _pathMarkIndex = 0;
+            _pathMarkDist = 0f;
             _nextRepathAt = 0f;
         }
 
@@ -2100,12 +2392,59 @@ namespace Cs16.Module.Bot
         // ==================================================================
         //  避障（基于 ICsMap.WalkableAt 的前向试探）
         // ==================================================================
-        private Vector3 Avoid(Vector3 position, Vector3 dir, float now)
+        /// <param name="goalDist">到最终目标的水平距离（米）—— 判"侧向保持是否已有实质进展"的基准。</param>
+        private Vector3 Avoid(Vector3 position, Vector3 dir, float now, float goalDist)
         {
             if (_map == null || !_map.IsLoaded)
             {
                 _lastAvoidBranch = "map-null";
                 return dir;   // 没有地图就没有"空间事实"，直线走（外层已打过 Error）
+            }
+
+            _probeCalls = 0;
+            _probeBitmapOk = 0;
+            _probePhysOk = 0;
+
+            // ⓪ 侧向保持：选定一侧后，同一期望方向下必须沿这一侧走到**实质进展**或**超时**，
+            //    这期间绝不交给"期望方向当前可走"那一支去走直线。
+            //
+            //    为什么需要：偏角缓存只有 ProbeHoldSeconds，而绕一个转角需要的位移远大于它。
+            //    缓存到期（或沿偏角走开半米后期望方向又能走）就退回直线 ⇒ 直线又把人送回同一个转角，
+            //    表现是输出方向在"偏角一侧 / 期望方向"之间以缓存时长的周期来回，位置在转角前后往返。
+            //    保持期的两个出口：
+            //      (a) **实质进展**：到最终目标的距离比选定这一侧时缩短 AvoidSideProgressMeters ⇒ 转角已绕过；
+            //      (b) **超时**：AvoidSideHoldSeconds 到点 ⇒ 允许重新选向。
+            //    期望方向本身明显变了（换目标 / 改用 A* 拐点）不是"同一段障碍"，保持直接作废。
+            if (_avoidSide != 0f)
+            {
+                if (Vector3.Angle(_avoidSideDesired, dir) > CsBotConst.AvoidSideDesiredDegrees)
+                {
+                    // 偏角是"相对选定时的期望方向"的；参考方向换了，旧偏角套上去是另一个方向。
+                    ClearAvoidSide();
+                    _probeAngle = 0f;
+                    _probeUntil = 0f;
+                    _probeBadSince = 0f;
+                }
+                else if (now >= _avoidSideUntil
+                         || goalDist <= _avoidSideGoalDist - CsBotConst.AvoidSideProgressMeters)
+                {
+                    ClearAvoidSide();
+                }
+                else
+                {
+                    var keep = PickAvoidAngleOnSide(position, dir, _avoidSide, _probeAngle, now);
+                    if (keep != 0f)
+                    {
+                        _probeAngle = keep;
+                        _probeUntil = now + CsBotConst.ProbeHoldSeconds;
+                        _probeBadSince = 0f;
+                        _lastAvoidBranch = "hold-side";
+                        return Rotate(dir, keep);
+                    }
+
+                    // 这一侧已经没有任何可走候选（位图 + 物理都说不行）⇒ 不是换主意，是没得走。
+                    ClearAvoidSide();
+                }
             }
 
             // ① 上一次选定的偏角还有效 → 先沿用（带惯性，防止贴着障碍物左右抖）。
@@ -2145,6 +2484,7 @@ namespace Cs16.Module.Bot
                         var sticky = PickAvoidAngle(position, dir, _probeAngle, now);
                         if (sticky != 0f)
                         {
+                            BeginAvoidSide(sticky, dir, now, goalDist);
                             _lastAvoidBranch = "hold-sticky";
                             return Rotate(dir, sticky);
                         }
@@ -2174,6 +2514,7 @@ namespace Cs16.Module.Bot
                 _probeAngle = angle;
                 _probeUntil = now + CsBotConst.ProbeHoldSeconds;
                 _probeBadSince = 0f;
+                BeginAvoidSide(angle, dir, now, goalDist);
                 _lastAvoidBranch = "pick";
                 return Rotate(dir, angle);
             }
@@ -2233,6 +2574,62 @@ namespace Cs16.Module.Bot
             }
 
             return 0f;
+        }
+
+        /// <summary>
+        /// 在 <see cref="CsBotConst.AvoidAngles"/> 里**只挑 <paramref name="side"/> 这一侧**的落地偏角
+        /// （<paramref name="side"/> = +1 正角侧 / -1 负角侧；0 = 一个都不通）。
+        ///
+        /// <para>试序与 <see cref="PickAvoidAngle"/> 相同（离 <paramref name="anchor"/> 最近的先试），
+        /// 但候选集被限制在同一侧 ⇒ 侧向保持期内输出方向不会跨到期望方向的另一侧。
+        /// <paramref name="anchor"/> 不在这一侧时退化为"这一侧最小偏角优先"（最小偏差）。</para>
+        /// </summary>
+        private float PickAvoidAngleOnSide(Vector3 position, Vector3 dir, float side, float anchor, float now)
+        {
+            var anchorOnSide = anchor != 0f && Mathf.Sign(anchor) == side;
+            var usedMask = 0;
+            for (var k = 0; k < CsBotConst.AvoidAngles.Length; k++)
+            {
+                var pick = -1;
+                var pickDist = float.MaxValue;
+                for (var i = 0; i < CsBotConst.AvoidAngles.Length; i++)
+                {
+                    if ((usedMask & (1 << i)) != 0) continue;
+                    var angle = CsBotConst.AvoidAngles[i];
+                    if (Mathf.Sign(angle) != side) continue;
+                    var dist = anchorOnSide ? Mathf.Abs(angle - anchor) : Mathf.Abs(angle);
+                    if (dist < pickDist)
+                    {
+                        pickDist = dist;
+                        pick = i;
+                    }
+                }
+
+                if (pick < 0) break;
+                usedMask |= 1 << pick;
+
+                var candidate = Rotate(dir, CsBotConst.AvoidAngles[pick]);
+                if (!WalkableAhead(position, candidate)) continue;
+                if (IsBlockedDir(candidate, now)) continue;
+                return CsBotConst.AvoidAngles[pick];
+            }
+
+            return 0f;
+        }
+
+        /// <summary>记下"沿这一侧走"的承诺（见 <see cref="Avoid"/> 第 ⓪ 段）。</summary>
+        private void BeginAvoidSide(float angle, Vector3 dir, float now, float goalDist)
+        {
+            _avoidSide = Mathf.Sign(angle);
+            _avoidSideUntil = now + CsBotConst.AvoidSideHoldSeconds;
+            _avoidSideDesired = dir;
+            _avoidSideGoalDist = goalDist;
+        }
+
+        private void ClearAvoidSide()
+        {
+            _avoidSide = 0f;
+            _avoidSideUntil = 0f;
         }
 
         /// <summary>这个方向最近被证明"走不动"吗（<see cref="CsBotConst.BlockedDirMemorySeconds"/> 内、夹角 ≤ 35°）。</summary>
@@ -2340,9 +2737,22 @@ namespace Cs16.Module.Bot
         /// </summary>
         private bool WalkableAhead(Vector3 position, Vector3 dir)
         {
+            _probeCalls++;
+
             //   孤立格区一票否决：那里位图说可走、物理往往没有落脚面，且 **A\* 到不了任何目标**
             //   （走进去 = 目标选择整条链全失败）⇒ 不许把这一帧的方向提交给它（见 StepsIntoTrap）。
             if (StepsIntoTrap(position, dir)) return false;
+
+            //   单格死角（凹槽）同样一票否决：走进去只能沿精确反向退出，而候选方向表不保证给出那个反向。
+            //   已经在死角里时放行（否则连退出的方向都被自己否掉）。
+            if (!_deadEndReady) EnsureDeadEndMask();
+            var mapData = Game.Map;
+            if (_deadEndReady && mapData != null && mapData.Loaded)
+            {
+                var here = CellOf(mapData, position);
+                if (!IsDeadEndCell(here) &&
+                    IsDeadEndCell(CellOf(mapData, position + dir * CsBotConst.ProbeClearance))) return false;
+            }
 
             var near = position + dir * CsBotConst.ProbeClearance;
             var far = position + dir * CsBotConst.ProbeDistance;
@@ -2350,11 +2760,21 @@ namespace Cs16.Module.Bot
             //   台沿两侧都标可走，而落脚面差 > StepUpHeight ⇒ 物理顶死在台沿上（实测：位移 0、速度被清 0，
             //   机器人每一帧都朝它走）。这里加一层与 EnsurePath 同一份的高度判据。
             if (_map.WalkableAt(near.x, near.z) && _map.WalkableAt(far.x, far.z)
-                && HeightReachOk(position, near) && HeightReachOk(position, far)) return true;
+                && HeightReachOk(position, near) && HeightReachOk(position, far))
+            {
+                _probeBitmapOk++;
+                return true;
+            }
 
             //   阈值 = 近端探距的一半（与 CsMatchConst.WallBlockVelocityRatio 同源的"走成了没有"口径）：
             //   近端都迈不过去 ⇒ 真的顶住了墙（1m 厚墙的用例照旧被拦住，物理会在墙前停下）。
-            return PhysRunway(position, dir) >= CsBotConst.ProbeClearance * CsBotConst.PhysRunwayRatio;
+            if (PhysRunway(position, dir) >= CsBotConst.ProbeClearance * CsBotConst.PhysRunwayRatio)
+            {
+                _probePhysOk++;
+                return true;
+            }
+
+            return false;
         }
 
         private static Vector3 Rotate(Vector3 dir, float degrees)
@@ -2651,6 +3071,7 @@ namespace Cs16.Module.Bot
             _probeAngle = 0f;          // 迟滞状态随"卡住状态"一起归零（换路线/重开时不许带着旧锚点）
             _probeUntil = 0f;
             _probeBadSince = 0f;
+            ClearAvoidSide();          // 侧向保持同理：换路线/重开时不许带着旧侧
         }
 
         // ==================================================================

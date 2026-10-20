@@ -86,17 +86,8 @@ namespace Cs16.Module.CameraRig
 
         private readonly HashSet<Camera> _handledForeignCameras = new HashSet<Camera>();
 
-        /// <summary>
-        /// 当前被本组件藏起来的 actor（<see cref="_hasHiddenBody"/> = false 时无意义）。
-        /// 观战切换时靠它知道"上一个目标是谁"，才能把上一批渲染还回去。
-        /// </summary>
+        /// <summary>上一次自检记录的"应隐藏的 actor"（只用于"目标变了才打日志"，不参与显隐）。</summary>
         private long _hiddenBodyActorId;
-        private bool _hasHiddenBody;
-
-        /// <summary>
-        /// 本组件**亲手**关掉的渲染 —— 只装**当前这一个 actor** 的（去重，避免每秒重复关）。
-        /// </summary>
-        private readonly HashSet<Renderer> _hiddenBodyRenderers = new HashSet<Renderer>();
 
         private Camera _camera;
         private ICsMatch _match;
@@ -159,10 +150,18 @@ namespace Cs16.Module.CameraRig
         // ---- 观战机位状态（第三人称追尾 / 目标第一人称）----
         /// <summary>当前平滑后的机位距离（米）。进第三人称时按原版重置为 <see cref="CsConst.ChaseMinDistance"/>。</summary>
         private float _chaseDistance = CsConst.ChaseDistance;
+        /// <summary>本帧实际用给相机的距离（米）：安全圈收缩按 <see cref="ChaseShrinkSpeed"/> 限速，放宽即时。
+        /// 与 <see cref="_chaseDistance"/>（平滑后的理想距离）分开，否则每帧的理想收敛会把收缩结果立刻拉回去。</summary>
+        private float _chaseApplied = CsConst.ChaseDistance;
+        /// <summary>安全圈收缩时相机距离的最大变化速率（米/秒）。本项目新增的防御量，不是原版常量：
+        /// 原版只做一条一维射线，没有"球体安全圈"这一步，因此也没有对应的收敛速率。</summary>
+        private const float ChaseShrinkSpeed = 4f;
         /// <summary>上一帧是否在观战（用于"进入观战时重置机位距离"）。</summary>
         private bool _lastSpectating;
         /// <summary>本帧射线命中点距眼位的距离（米）；&lt;0 = 本帧没打到墙。仅用于日志。</summary>
         private float _chaseHitDistance = -1f;
+        /// <summary>本帧按"机位安全圈"（见 <see cref="CsConst.ChaseCameraRadius"/>）收缩后得到的距离（米）。仅用于日志。</summary>
+        private float _chaseClearDistance = CsConst.ChaseDistance;
         /// <summary>上一帧的观战档位（用于"档位变了就当场换机位 + 换模型显隐"）；非观战时记默认档。</summary>
         private CsSpectatorMode _lastSpectateMode = CsSpectatorMode.ChaseFree;
 
@@ -462,7 +461,13 @@ namespace Cs16.Module.CameraRig
             // 观战档位（控制面）决定机位：4 = 原版 OBS_IN_EYE（目标第一人称）、2 = 原版 OBS_CHASE_FREE（追尾）、
             // 3 = 原版 OBS_ROAMING（观察者**自己**的自由飞行）、5 / 6 = 俯视概览（不动 3D 机位，见下面 overview）。
             // 非观战永远是自己第一人称。
-            var inEye = spectating && CsSpectator.Mode == CsSpectatorMode.FirstPerson;
+            //
+            // 尸体视角停留例外：目标就是**本地自己**（尸体）时不当作"目标第一人称" ——
+            // 该档位的语义是"相机在被观察者眼位 + 按隐藏口径藏他的本体"，套在自己尸体上等于
+            // 把刚还回来的尸体又藏一次（EnterCorpse 显示了它），表现成"尸体视角一片空"。
+            // ⇒ 停留期一律按第三人称追尾处理（机位退到尸体身后）。
+            var corpseView = spectating && local != null && target.Id == local.Id;
+            var inEye = spectating && CsSpectator.Mode == CsSpectatorMode.FirstPerson && !corpseView;
 
             // 自由飞行**不要求有观战目标**（原版 SetModes 里 OBS_ROAMING 是唯一"没有 g_iUser2 也放行"的档位，
             // 见 hud_spectator.cpp:814；它的原点就是观察者自己、不看别人）⇒ 判据只取 IsSpectating。
@@ -539,22 +544,22 @@ namespace Cs16.Module.CameraRig
                 }
             }
 
-            // 模型显隐（换目标或换观战档位都要**同帧**改，不然最多 1 秒的自检间隔里会看到不该看的模型）：
+            // 模型显隐（换目标、换观战档位、**进入/退出观战**都要同帧改，不然最多 1 秒的自检间隔里会看到
+            // 不该看的模型）：
             // · 自己第一人称 —— 藏掉自己的身体，否则镜头被自己的后脑勺糊满；
             // · 第三人称追尾 / 自由飞行 —— **必须把被观察者的模型露出来**（相机在他身外，藏了就看不到人），
             //   还把之前藏过的还回去；
             // · 目标第一人称 —— 相机就在被观察者的眼睛上，藏掉他自己的模型（同原版 OBS_IN_EYE 看不到自己的身子）。
-            if (targetChanged || spectateModeChanged)
+            //
+            //   第三项（观战状态翻转）是尸体视角停留那条路的必需项：死亡时 `SpectateTarget` 指回**自己**，
+            //   target.Id 与死前相同 ⇒ `targetChanged` 为 false；默认档位也没变 ⇒ `spectateModeChanged` 也为 false。
+            //   少了它就没人把死前藏起来的自己还回来 ⇒ 尸体视角对着一团被隐藏的模型（尸体"消失"）。
+            if (targetChanged || spectateModeChanged || spectating != _lastSpectating)
             {
-                if (observeCamera)
-                {
-                    if (inEye) ApplyHiddenBody(target, true);
-                    else RestoreHiddenBody();
-                }
-                else
-                {
-                    ApplyHiddenBody(target, false);
-                }
+                // 模型显隐**不在这里写**：`ActorView` 是 `Renderer.enabled` 的唯一写者，
+                // 由 `ViewModule` 每帧按 `SetLocal` / `SetSpectateEye` 驱动（两个写者会逐帧互翻）。
+                // 这里只做一次只读核对与留痕，真正该藏谁由 ViewModule 决定。
+                VerifyBodyVisibility(target, observeCamera && inEye || !observeCamera);
             }
 
             // 进入 / 离开第三人称：按原版 CAM_ToThirdPerson（in_camera.cpp:446-456）把机位距离重置为
@@ -563,6 +568,7 @@ namespace Cs16.Module.CameraRig
             {
                 _lastSpectating = spectating;
                 _chaseDistance = CsConst.ChaseMinDistance;
+                _chaseApplied = CsConst.ChaseMinDistance;
                 _chaseHitDistance = -1f;
                 // 观战开始时若已在自由飞行档位：同样要对齐到当前机位（不然会从 (0,0,0) 起飞）。
                 if (freeLook) _roamNeedsStart = true;
@@ -637,8 +643,10 @@ namespace Cs16.Module.CameraRig
                 var viewPosition = simPosition + _viewInterp.Playback(simPosition, _viewClock,
                                                                      CsViewInterp.DefaultWindow,
                                                                      smoothing: false);
+                // 竖直速度一起交给台阶平滑：只有跳跃上升段需要视位与身体同帧吸附，
+                // 贴地爬升（含贴地标志单帧翻转）继续按原版追赶速度收敛。
                 viewPosition.y += _viewInterp.StepOffset(simPosition.y, dt, target.OnGround,
-                                                        smoothing: false);
+                                                        smoothing: false, target.Velocity.y);
 
                 // 眼位锚点落在视位上，"脚 → 眼"的高度交给 rig 的 EyeOffset
                 // ⇒ rig.EyePosition = 视位 + (0, _eyeHeight, 0)。
@@ -717,7 +725,7 @@ namespace Cs16.Module.CameraRig
                                                      target.Yaw, target.Pitch, out var camYaw, out var camPitch);
 
                     var chaseLook = CameraMath.AimDirection(camYaw, camPitch);
-                    var dist = ResolveChaseDistance(_eyePosition, chaseLook);
+                    var dist = ResolveChaseDistance(_eyePosition, chaseLook, dt);
                     _pendingRotation = Quaternion.Euler(-camPitch, camYaw, 0f);
                     _pendingPosition = _eyePosition - chaseLook * dist;
                     _hasPendingView = true;
@@ -795,9 +803,9 @@ namespace Cs16.Module.CameraRig
             SyncCameraEnabled(running);
             if (!running)
             {
-                // 离开比赛（回主菜单 / 换图）：把藏过的模型还回去，免得"下一局的 actor id 与上一局重号"时
-                // 因为"目标没变"而漏掉一次隐藏（角色视图会被重建，留着旧账只会误导）。
-                RestoreHiddenBody();
+                // 离开比赛（回主菜单 / 换图）：忘掉上一次核对的目标 —— 下一局的 actor id 可能重号，
+                // 留着旧 id 会让"同 id 不重复核对"挡住一次本该做的核对。
+                _hiddenBodyActorId = 0L;
                 return;
             }
 
@@ -901,6 +909,7 @@ namespace Cs16.Module.CameraRig
                         $"，相机↔目标眼位 水平距离={dh:F4} m（三维 {d3:F4} m）" +
                         $"，理想={CsConst.ChaseDistance:F4} 下限={CsConst.ChaseMinDistance:F4} " +
                         $"当前距离={_chaseDistance:F4} m，本帧射线命中点={(_chaseHitDistance >= 0f ? _chaseHitDistance.ToString("F4") : "无（未贴墙）")}" +
+                        $"，安全圈(r={CsConst.ChaseCameraRadius:F3} m)收缩后={_chaseClearDistance:F4} m" +
                         "（cl_chasedist 112 unit + CAM_MIN_DIST 30 unit + V_GetChaseOrigin）");
         }
 
@@ -914,15 +923,21 @@ namespace Cs16.Module.CameraRig
         /// <summary>
         /// 当前是否**外部机位**的观战档位（原版 <c>OBS_CHASE_LOCKED</c> / <c>OBS_CHASE_FREE</c> = 两种追尾 /
         /// <c>OBS_ROAMING</c> = 自由飞行）—— 这几种机位相机都不在目标身上，被观察者的模型必须看得见。
+        /// 尸体视角停留（目标 = 本地自己）也算外部机位：相机在尸体身后追尾，尸体必须看得见
+        /// （即使档位停在 4，机位也已强制走追尾，见 <see cref="PrepareView"/> 的 corpseView）。
         /// </summary>
         private bool IsExternalSpectate()
         {
             if (!IsSpectateWithTarget()) return false;
+            if (IsCorpseView()) return true;
             var mode = CsSpectator.Mode;
             return mode == CsSpectatorMode.ChaseLocked
                 || mode == CsSpectatorMode.ChaseFree
                 || mode == CsSpectatorMode.FreeLook;
         }
+
+        /// <summary>当前是否处于尸体视角停留期（目标 = 本地自己；见 <c>ICsMatch.CorpseViewActive</c>）。</summary>
+        private bool IsCorpseView() => _match != null && _match.CorpseViewActive;
 
         /// <summary>当前是否目标第一人称档位（原版 <c>OBS_IN_EYE</c>）。</summary>
         private bool IsFirstPersonSpectate()
@@ -1010,11 +1025,12 @@ namespace Cs16.Module.CameraRig
             // （藏了就没东西可看）；只把之前（第一人称时期）藏过的还回去。
             if (IsExternalSpectate())
             {
-                RestoreHiddenBody();
+                VerifyBodyVisibility(null, false);
+                _hiddenBodyActorId = 0L;   // 外部机位下被观察者要显示，下次进眼位重新核对一遍
                 return;
             }
 
-            var target = DesiredBodyActor(out var spectating);
+            var target = DesiredBodyActor(out _);
             if (target == null)
             {
                 // 非预期分支：比赛在跑，却既没有观战目标也拿不到本地玩家 ⇒ 不知道藏谁，本帧不动（留痕）。
@@ -1023,8 +1039,7 @@ namespace Cs16.Module.CameraRig
                 return;
             }
 
-            ApplyHiddenBody(target, spectating);   // 目标变了 → 在这里"还原上一个 + 关掉这一个"
-            HideRenderersOf(target.Id);            // 幂等再关一遍：兜住"视图被重建 / 别人又把它打开"
+            VerifyBodyVisibility(target, true);
         }
 
         /// <summary>
@@ -1054,68 +1069,28 @@ namespace Cs16.Module.CameraRig
         /// <b>先还原上一个</b>（否则被看过的人的模型会一直隐形），再关掉这一个。
         /// </summary>
         /// <returns>目标确实变了（做了"还原 + 关一遍"）→ true；目标没变 → false。</returns>
-        private bool ApplyHiddenBody(CsActor actor, bool spectating)
+        private void VerifyBodyVisibility(CsActor actor, bool expectHidden)
         {
-            if (actor == null) return false;
-            if (_hasHiddenBody && _hiddenBodyActorId == actor.Id) return false;
+            if (actor == null) return;
 
-            var previous = _hasHiddenBody ? _hiddenBodyActorId : 0L;
-            var restored = RestoreHiddenBody();
-
+            var enabled = CountEnabledRenderers(actor.Id);
+            if (actor.Id == _hiddenBodyActorId) return;   // 同一个目标只核对一次，避免每秒刷日志
             _hiddenBodyActorId = actor.Id;
-            _hasHiddenBody = true;
 
-            // 只在"目标真的变了"时打（本方法开头已挡住"目标没变"的重复调用）——
-            // 自检是 1 秒一次，这里不会刷屏。尾巴只在**真的还回去了**时才说"已还原"。
-            var tail = restored > 0 ? $"；上一个目标（id={previous}）的 {restored} 个渲染已还原" : string.Empty;
-            _log.Always(spectating
-                ? $"观战：已隐藏被观察者 {actor.Name}（id={actor.Id}）的模型渲染" +
-                  $"（相机正在他的眼睛上，藏掉才不会被他的模型糊满屏幕）{tail}"
-                : $"第一人称：已隐藏本地玩家 {actor.Name}（id={actor.Id}）的模型渲染" +
-                  $"（碰撞体保留，敌人照样打得到我）{tail}");
-
-            HideRenderersOf(actor.Id);
-            return true;
+            _log.Always((expectHidden ? "该藏" : "该显示") +
+                        $"：{actor.Name}（id={actor.Id}）当前有 {enabled} 个渲染处于开启状态" +
+                        "（显隐由 ActorView 每帧按 SetLocal / SetSpectateEye 写，本组件不再直接改 Renderer）");
+            if (expectHidden && enabled > 0)
+            {
+                _log.Warn("body.visible.unexpected",
+                    $"{actor.Name}（id={actor.Id}）在相机眼位上仍有 {enabled} 个渲染开启 —— 检查 ViewModule 的 SetLocal / SetSpectateEye 是否当帧写入");
+            }
         }
 
-        /// <summary>还原 <see cref="_hiddenBodyRenderers"/> 里那批（= 上一个 actor 的）渲染。</summary>
-        /// <returns>真的被重新打开的渲染个数（0 = 本来没关过 / 对象已销毁）。</returns>
-        private int RestoreHiddenBody()
+        /// <summary>只读：数某个 actor 的受击体下**开着**的渲染个数（用于核对显隐，不写 Renderer.enabled）。</summary>
+        private static int CountEnabledRenderers(long actorId)
         {
-            if (!_hasHiddenBody) return 0;
-
-            var actorId = _hiddenBodyActorId;
-            var restored = 0;
-            var gone = 0;
-            foreach (var rend in _hiddenBodyRenderers)
-            {
-                if (rend == null) { gone++; continue; }   // 视图已被销毁（换局 / 换图）
-                if (rend.enabled) continue;
-                rend.enabled = true;
-                restored++;
-            }
-            _hiddenBodyRenderers.Clear();
-            _hiddenBodyActorId = 0L;
-            _hasHiddenBody = false;
-
-            if (gone > 0)
-            {
-                _log.Info("body.restore.gone",
-                    $"还原 actor {actorId} 的模型渲染时发现 {gone} 个渲染已被销毁（角色视图被重建？），已跳过");
-            }
-            if (restored > 0)
-            {
-                _log.Always($"模型显隐切换：已还原 actor {actorId} 的 {restored} 个模型渲染（相机不再看他）");
-            }
-            return restored;
-        }
-
-        /// <summary>
-        /// 把某个 actor 的所有受击体渲染关掉（幂等；只把**还在开着**的记进 <see cref="_hiddenBodyRenderers"/> ——
-        /// 已经关着的不抢账，免得把别人的隐藏逻辑（<c>ActorView.HideOwnRenderers</c>）也算成自己关的）。
-        /// </summary>
-        private void HideRenderersOf(long actorId)
-        {
+            var count = 0;
             var proxies = Object.FindObjectsByType<CsHitboxProxy>(FindObjectsInactive.Include);
             for (var i = 0; i < proxies.Length; i++)
             {
@@ -1125,12 +1100,10 @@ namespace Cs16.Module.CameraRig
                 var renderers = p.GetComponentsInChildren<Renderer>(true);
                 for (var r = 0; r < renderers.Length; r++)
                 {
-                    var rend = renderers[r];
-                    if (rend == null || !rend.enabled) continue;
-                    _hiddenBodyRenderers.Add(rend);
-                    rend.enabled = false;
+                    if (renderers[r] != null && renderers[r].enabled) count++;
                 }
             }
+            return count;
         }
 
         // ==================================================================
@@ -1155,7 +1128,7 @@ namespace Cs16.Module.CameraRig
         /// 收缩**即时生效**（原版那条 trace 也是每帧重打的），不参与 ① 的平滑，
         /// 否则贴着墙走的那几帧会看到墙里。</para>
         /// </summary>
-        private float ResolveChaseDistance(Vector3 pivot, Vector3 lookDirection)
+        private float ResolveChaseDistance(Vector3 pivot, Vector3 lookDirection, float dt)
         {
             // ① 理想距离的平滑收敛
             var ideal = CsConst.ChaseDistance;
@@ -1177,7 +1150,42 @@ namespace Cs16.Module.CameraRig
             {
                 _chaseHitDistance = -1f;
             }
-            return _chaseDistance;
+
+            // ③ 机位自身的安全圈：① 的射线是一维的，贴墙/进角落时**相机中心**仍可能落在墙里或贴脸
+            //（观战截图里"左右两侧各一大块墙"即这种：墙不在目标→相机的这条线上，而在相机两侧）。
+            // 把机位当半径 ChaseCameraRadius 的球（覆盖近裁面矩形），从当前距离往回找第一个不与世界重叠的位置。
+            // ③ 的结果分两个量：`clearDistance` = 本帧安全圈给出的目标距离（可能等于 _chaseDistance），
+            // `_chaseApplied` = 真正用给相机的距离。收缩按 ChaseShrinkSpeed 限速、放宽即时 ——
+            // 安全圈在楼梯/坡道上会逐帧在"占住 / 让开"之间翻转，直接把 clearDistance 当结果用
+            // 就等于让相机逐帧前后跳。射线收缩（②）不受这个限速：它是贴墙时的防穿墙下限，
+            // 因此下面取 min(applied, _chaseDistance)，收缩目标永远不高于射线给出的可用距离。
+            var clearDistance = _chaseDistance;
+            var spot = pivot - lookDirection * _chaseDistance;
+            if (Physics.CheckSphere(spot, CsConst.ChaseCameraRadius, worldMask, QueryTriggerInteraction.Ignore))
+            {
+                var step = CsConst.ChaseCameraRadius * 0.5f;
+                for (var d = _chaseDistance - step; d >= CsConst.ChaseMinDistance; d -= step)
+                {
+                    if (Physics.CheckSphere(pivot - lookDirection * d, CsConst.ChaseCameraRadius, worldMask,
+                            QueryTriggerInteraction.Ignore))
+                        continue;
+                    clearDistance = d;
+                    break;
+                }
+            }
+            _chaseClearDistance = clearDistance;
+
+            if (clearDistance < _chaseApplied)
+            {
+                var maxShrink = ChaseShrinkSpeed * (dt > 0f ? dt : 0f);
+                _chaseApplied = Mathf.Max(clearDistance, _chaseApplied - maxShrink);
+            }
+            else
+            {
+                _chaseApplied = clearDistance;
+            }
+            if (_chaseApplied > _chaseDistance) _chaseApplied = _chaseDistance;
+            return _chaseApplied;
         }
 
         // ==================================================================

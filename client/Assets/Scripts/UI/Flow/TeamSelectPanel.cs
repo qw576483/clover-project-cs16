@@ -1,6 +1,7 @@
 using CloverEngine;
 using Cs16.Core;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 
 namespace Cs16.UI
@@ -69,6 +70,37 @@ namespace Cs16.UI
         /// </summary>
         private static readonly float[] RowY = { 116f, 148f, 180f, 212f, 244f, 276f, 308f };
 
+        /// <summary>
+        /// 全屏压暗层：实机帧 `class_select_team_panel.png` 的控件压在**明显压暗过**的地图上（约 5 成黑），
+        /// 否则橙字/橙框在亮地图上几乎看不见。
+        /// </summary>
+        private static readonly Color DimBackdrop = new Color(0f, 0f, 0f, 0.5f);
+
+        /// <summary>
+        /// 16:9 下原版把 640 宽的设计区**横向居中**（实机帧证据：`.res` 的 `xpos 76` 落在 640×360 帧的
+        /// 137 px 处 = 80 px 左留白 + 76 × 0.75）⇒ 画布上要补 (1920 − 640 × 2.25) / 2 = 240 px 的左边距。
+        /// </summary>
+        private const float CenterX = (1920f - 640f * CsUiStyle.ResScale) * 0.5f;
+
+        // ─────────── 左上角：阵营图标 + 大标题（实机帧量得，单位 = 设计像素）───────────
+        /// <summary>图标框：帧上 106..121 px × 18..44 px（= 设计 20×35），相对 `Frame` 左移 41。</summary>
+        private const float IconX = -41f, IconY = 24f, IconW = 20f, IconH = 35f;
+
+        /// <summary>图标字号：图标框高 35 设计单位，字标取框高的 ~0.55。</summary>
+        private const int IconFontSize = 44;
+
+        // ─────────── 右侧描述框（实机帧量得：640×360 下 x 264..502、y 88..302）───────────
+        private const float DescX = 245f, DescY = 117f, DescW = 319f, DescH = 285f;
+        /// <summary>文本框内缩（原版文字离边框约 3 px @360p）。</summary>
+        private const float DescInset = 5f;
+        /// <summary>滚动箭头方块（帧上 18×19 px ≈ 设计 24×25），贴框内右上 / 右下。</summary>
+        private const float ArrowW = 24f, ArrowH = 25f, ArrowInset = 3f;
+
+        // ─────────── 右下角金钱（实机帧量得：右边缘距屏右 8 px、文字高 13 px @360p；按 ×3 换成画布单位）───────────
+        private const float MoneyMarginRight = 24f, MoneyMarginBottom = 150f;
+        private const float MoneyW = 300f, MoneyH = 45f;
+        private const int MoneyFontSize = 40;
+
         // ─────────── 选阵营页（`TeamMenu.res` 的节点名与命令）───────────
         /// <summary>`.res` 的 `fieldName`（节点名与它一致，便于与 `.res` 逐条对照）。</summary>
         private static readonly string[] ButtonNames =
@@ -77,29 +109,21 @@ namespace Cs16.UI
         };
 
         /// <summary>
+        /// 文案逐字取自 `cstrike_english.txt` 的 token：`Cstrike_Terrorist_Forces` :85 /
+        /// `Cstrike_CT_Forces` :86 / `Cstrike_VIP_Team` :87 / `Cstrike_Team_AutoAssign` :88 /
+        /// `Cstrike_Menu_Spectate` :89 / `Cstrike_Cancel` :79。
+        /// VGUI 把 `&amp;` 当热键前缀（显示时去掉 `&amp;`、保留后面的字符），所以这里就是去 `&amp;` 后的原文。
         ///
-        /// <para><b>原版出处仍在，只是不再直接显示</b>：原版文案取自 `cstrike_english.txt` 的 token
-        /// （去 `&amp;` 后显示）：`Cstrike_Terrorist_Forces` :85 / `Cstrike_CT_Forces` :86 /
-        /// `Cstrike_VIP_Team` :87 / `Cstrike_Team_AutoAssign` :88 / `Cstrike_Menu_Spectate` :89 /
-        /// `Cstrike_Cancel` :79（英文原文逐字见下方注释）。中文译法取 CS 中文版的通行译名。</para>
-        ///
-        /// <para>这是**本项目新增**的可见差异（登记在 `策划/差异登记.tsv`）：中文字面在原版载体里
-        /// **不存在**。之所以做：① 用户明确要求；② 本面板本来就已经带一条**非原版**的底部署名
-        /// `by clover-engine`；③ 工程字体链已内置 CJK 回退族
-        /// （`CsUiStyle.OriginalFont` = Verdana → Microsoft YaHei → PingFang SC → Noto Sans CJK SC），
-        /// 该回退族本身也已登记为「允许的差异」⇒ 中文能正常出字形，不是方框。</para>
-        ///
-        /// <para>`ButtonCommands` 侧的 `jointeam 1/2/3/5/6` + `vguicancel` **逐字不变**（那是 `.res` 的
-        /// 命令，翻译它等于改行为）。</para>
+        /// <para>`ButtonCommands` 侧的 `jointeam 1/2/3/5/6` + `vguicancel` 是 `.res` 的命令，逐字不变。</para>
         /// </summary>
         private static readonly string[] ButtonTexts =
         {
-            "1 恐怖分子",     // 原版 Cstrike_Terrorist_Forces :85 → "&1 TERRORIST FORCES"
-            "2 反恐精英",     // 原版 Cstrike_CT_Forces :86        → "&2 CT FORCES"
-            "3 VIP",          // 原版 Cstrike_VIP_Team :87         → "&3 VIP"（专有名词，保留原文）
-            "5 自动分配",     // 原版 Cstrike_Team_AutoAssign :88  → "&5 AUTO ASSIGN"
-            "6 观战",         // 原版 Cstrike_Menu_Spectate :89    → "&6 SPECTATE"
-            "0 取消",         // 原版 Cstrike_Cancel :79           → "&0 CANCEL"
+            "1 TERRORIST FORCES",
+            "2 CT FORCES",
+            "3 VIP",
+            "5 AUTO ASSIGN",
+            "6 SPECTATE",
+            "0 CANCEL",
         };
 
         /// <summary>`.res` 的 `command` / `Command`（原版就是大小写混用：最后一个是 `"Command"`）。</summary>
@@ -108,8 +132,29 @@ namespace Cs16.UI
             "jointeam 1", "jointeam 2", "jointeam 3", "jointeam 5", "jointeam 6", "vguicancel",
         };
 
-        /// <summary>`#Cstrike_Join_Team` = `SELECT TEAM`（`cstrike_english.txt:84`）。显示中文「选择阵营」。</summary>
-        private const string TitleText = "选择阵营";
+        /// <summary>标题 = `#Cstrike_Join_Team`「SELECT TEAM」（`cstrike_english.txt:84`）。</summary>
+        private const string TitleText = "SELECT TEAM";
+
+        /// <summary>
+        /// 右侧描述框的内容 = 本图（de_dust2）的任务简报，结构与实机帧一致：
+        /// 首行「地图名 - 模式」，随后 CT / T 各一段目标，末行补两条机制说明。
+        /// 原版的这段文字来自地图 worldspawn 的 message（不在 `cstrike_english.txt` 里），本工程按同一结构写。
+        /// </summary>
+        private static readonly string TeamBriefing =
+            "DE_DUST II  -  Bomb Defusal\n" +
+            "\n" +
+            "Counter-Terrorists: Prevent the Terrorists\n" +
+            "from planting the bomb at either bombsite.\n" +
+            "Eliminate the entire Terrorist team to win\n" +
+            "the round.\n" +
+            "\n" +
+            "Terrorists: Plant the bomb at bombsite A or B\n" +
+            "and defend it until it detonates. Eliminate\n" +
+            "the entire Counter-Terrorist team to win the\n" +
+            "round.\n" +
+            "\n" +
+            "Other Notes: Two bombsites (A / B). The bomb\n" +
+            $"explodes {CsConst.BombTimer:0} seconds after it is planted.";
 
         /// <summary>
         /// AUTO ASSIGN（原版 `jointeam 5`）对半随机挑边的**实际范围**：本按钮只在**赛前**（选阵营站点）可达，
@@ -127,17 +172,16 @@ namespace Cs16.UI
         /// `Cstrike_Urban :100` = "&amp;1 SEAL TEAM 6"、`Cstrike_GSG9 :101` = "&amp;2 GSG-9"、
         /// `Cstrike_SAS :102` = "&amp;3 SAS"、`Cstrike_GIGN :103` = "&amp;4 GIGN"、
         /// `Cstrike_Spetsnaz :104` = "&amp;5 SPETSNAZ"。
-        /// 中译取 CS 中文版的通行译名；GSG-9 / SAS / GIGN 在中文版里也是原文简写，故保留。
         /// </summary>
         private static readonly string[] ClassNamesCT = { "urban", "gsg9", "sas", "gign", "spetsnaz" };
 
         private static readonly string[] ClassTextsCT =
         {
-            "1 海豹六队",          // &1 SEAL TEAM 6
-            "2 GSG-9",            // &2 GSG-9
-            "3 SAS",              // &3 SAS
-            "4 GIGN",             // &4 GIGN
-            "5 俄罗斯特种部队",    // &5 SPETSNAZ
+            "1 SEAL TEAM 6",
+            "2 GSG-9",
+            "3 SAS",
+            "4 GIGN",
+            "5 SPETSNAZ",
         };
 
         /// <summary>
@@ -150,11 +194,11 @@ namespace Cs16.UI
 
         private static readonly string[] ClassTextsTER =
         {
-            "1 凤凰战士",      // &1 PHOENIX CONNEXION
-            "2 精英部队",      // &2 ELITE CREW
-            "3 北极复仇者",    // &3 ARCTIC AVENGERS
-            "4 游击战士",      // &4 GUERILLA WARFARE
-            "5 中西部民兵",    // &5 MIDWEST MILITIA
+            "1 PHOENIX CONNEXION",
+            "2 ELITE CREW",
+            "3 ARCTIC AVENGERS",
+            "4 GUERILLA WARFARE",
+            "5 MIDWEST MILITIA",
         };
 
         /// <summary>
@@ -163,7 +207,7 @@ namespace Cs16.UI
         /// —— 它的 `&amp;5` 与第 5 个兵种的 `&amp;5` 同号（原版数据如此，不是这里写错）。
         /// </summary>
         private const string ClassAutoCommand = "joinclass 6";
-        private const string ClassAutoText = "5 随机选择";
+        private const string ClassAutoText = "5 AUTO-SELECT";
         private const string ClassAutoNameCT = "autoselect_ct";
         private const string ClassAutoNameTER = "autoselect_t";
 
@@ -174,10 +218,10 @@ namespace Cs16.UI
         /// </summary>
         private const string ClassCancelCommand = "vguicancel";
         private const string ClassCancelName = "cancelbutton";
-        private const string ClassCancelText = "0 取消";
+        private const string ClassCancelText = "0 CANCEL";
 
-        /// <summary>选兵种页的标题 = `#Cstrike_Join_Class`（`cstrike_english.txt:92` = "CHOOSE A CLASS"），显示中文。</summary>
-        private const string ClassTitleText = "选择兵种";
+        /// <summary>选兵种页的标题 = `#Cstrike_Join_Class`（`cstrike_english.txt:92` = "CHOOSE A CLASS"）。</summary>
+        private const string ClassTitleText = "CHOOSE A CLASS";
 
         [SerializeField] private RectTransform _teamFrame;
         [SerializeField] private Text _titleLabel;
@@ -195,10 +239,16 @@ namespace Cs16.UI
         [SerializeField] private Button _classAutoButtonTER;
         [SerializeField] private Button _classCancelButton;
 
+        /// <summary>右侧描述框的正文（两页共用）。</summary>
+        [SerializeField] private Text _descText;
+        /// <summary>右下角金钱。</summary>
+        [SerializeField] private Text _moneyText;
+
         public override void BuildLayout(RectTransform root)
         {
-            // 原版 `.res` 里**没有全屏压暗控件**（只有 Frame / SysMenu / 可见的那些行）⇒ 本面板不铺全屏 Backdrop。
-            //
+            // 全屏压暗层（最先建 ⇒ 在所有控件之下），raycast=true 把背景的点击挡在这一层。
+            CsUiStyle.CreateFullScreen("Backdrop", root, DimBackdrop);
+
             // 两个 Frame 的底色都取 scheme 默认的 `BgColor` → `ControlBG "0 0 0 0"`
             // （`clientscheme.res:38` + `:101`）⇒ **Frame 本身完全透明，没有黑板**。
             // 它仍然要存在：两页的子控件坐标都相对各自的 Frame。
@@ -206,29 +256,29 @@ namespace Cs16.UI
             _classFrame = BuildFrame("ClassMenu", root);
 
             // ── 选阵营页 ──
-            _titleLabel = CsUiStyle.CreateLabel("joinTeam", _teamFrame, TitleText,
-                CsUiStyle.OriginalTitleFontSize, ResPos(TitleX, TitleY), ResSize(TitleW, TitleH),
-                TextAnchor.MiddleLeft, CsUiStyle.Text);
+            _titleLabel = BuildHeader(_teamFrame, "joinTeam", TitleText);
 
             _buttons = new Button[ButtonNames.Length];
             for (var i = 0; i < ButtonNames.Length; i++)
             {
-                _buttons[i] = CsUiStyle.CreateOriginalButton(ButtonNames[i], _teamFrame,
-                    ButtonTexts[i], ResPos(BtnX, RowY[i]), ResSize(BtnW, BtnH), null);
+                _buttons[i] = CsUiStyle.CreateBorderedButton(ButtonNames[i], _teamFrame,
+                    ButtonTexts[i], ResLocal(BtnX, RowY[i]), ResSize(BtnW, BtnH), null);
             }
 
             // ── 选兵种页 ──
-            _classTitleLabel = CsUiStyle.CreateLabel("joinClass", _classFrame, ClassTitleText,
-                CsUiStyle.OriginalTitleFontSize, ResPos(TitleX, TitleY), ResSize(TitleW, TitleH),
-                TextAnchor.MiddleLeft, CsUiStyle.Text);
+            _classTitleLabel = BuildHeader(_classFrame, "joinClass", ClassTitleText);
 
             BuildClassRows("ClassRows_CT", ClassNamesCT, ClassTextsCT, ClassAutoNameCT,
                 out _classRowsCT, out _classButtonsCT, out _classAutoButtonCT);
             BuildClassRows("ClassRows_TER", ClassNamesTER, ClassTextsTER, ClassAutoNameTER,
                 out _classRowsTER, out _classButtonsTER, out _classAutoButtonTER);
 
-            _classCancelButton = CsUiStyle.CreateOriginalButton(ClassCancelName, _classFrame,
-                ClassCancelText, ResPos(BtnX, RowY[6]), ResSize(BtnW, BtnH), null);
+            _classCancelButton = CsUiStyle.CreateBorderedButton(ClassCancelName, _classFrame,
+                ClassCancelText, ResLocal(BtnX, RowY[6]), ResSize(BtnW, BtnH), null);
+
+            // ── 两页共用的右侧描述框 + 右下角金钱 ──
+            BuildDescriptionBox(root);
+            BuildMoney(root);
 
             ShowTeamPage(false);
 
@@ -255,6 +305,7 @@ namespace Cs16.UI
                 {
                     var index = i;
                     Bind(_buttons[index], () => OnTeamCommand(index), $"{ButtonNames[index]}（{ButtonCommands[index]}）");
+                    BindRowHover(_buttons[index]);
                 }
             }
 
@@ -264,15 +315,36 @@ namespace Cs16.UI
 
             // 每次打开都回到第一页（选阵营），避免上一次的兵种页残留
             ShowTeamPage(false);
+            RefreshMoney();
 
             // 预制体里存不下动态字体（见 ApplyOriginalFonts 的说明）⇒ 每次打开都重设一遍。
             CsUiStyle.ApplyOriginalFonts(transform);
             CsUiStyle.ApplyTitleFont(_titleLabel);
             CsUiStyle.ApplyTitleFont(_classTitleLabel);
 
+            // 预制体里存的是生成时的文字位置（旧版带 8 px 左内缩）⇒ 每次打开把按钮文字重贴到边框左缘。
+            ApplyButtonTextInsets();
+
             Game.Logger.Info(Tag,
                 "选阵营面板已打开（原版 teammenu.res：6 项，命令 jointeam 1/2/3/5/6 + vguicancel；" +
                 "选完阵营进选兵种页 = 原版 Classmenu_{CT,TER}.res：5 个兵种 + joinclass 6 + vguicancel）");
+        }
+
+        /// <summary>把两页所有边框按钮的文字重贴到边框左缘（口径见 <see cref="CsUiStyle.CreateBorderedButton"/>）。</summary>
+        private void ApplyButtonTextInsets()
+        {
+            ApplyTextInset(_buttons);
+            ApplyTextInset(_classButtonsCT);
+            ApplyTextInset(_classButtonsTER);
+            CsUiStyle.ApplyBorderedButtonTextInset(_classAutoButtonCT);
+            CsUiStyle.ApplyBorderedButtonTextInset(_classAutoButtonTER);
+            CsUiStyle.ApplyBorderedButtonTextInset(_classCancelButton);
+        }
+
+        private static void ApplyTextInset(Button[] buttons)
+        {
+            if (buttons == null) return;
+            for (var i = 0; i < buttons.Length; i++) CsUiStyle.ApplyBorderedButtonTextInset(buttons[i]);
         }
 
         /// <summary>建一个 `Frame`（透明底），返回它的矩形当作子控件的坐标空间。</summary>
@@ -281,6 +353,91 @@ namespace Cs16.UI
             var frame = CsUiStyle.CreateBoxRect(name, root,
                 ResPos(FrameX, FrameY), ResSize(FrameW, FrameH), CsUiStyle.ControlBg, true);
             return frame.rectTransform;
+        }
+
+        /// <summary>
+        /// 左上角：阵营图标 + 大标题（实机帧里图标在标题左侧、标题橙色且明显大于菜单项）。
+        /// 原版图标是一张 VGUI 贴图，本机载体 `gfx/vgui` 里只有买枪图标、没有队伍图标
+        /// ⇒ 这里用同色的 "CT" 字标占位。
+        /// </summary>
+        private static Text BuildHeader(RectTransform frame, string titleName, string titleText)
+        {
+            var badge = CsUiStyle.CreateLabel("TeamIcon", frame, "CT", IconFontSize,
+                ResLocal(IconX, IconY), ResSize(IconW, IconH), TextAnchor.MiddleCenter, CsUiStyle.Text);
+            if (badge != null)
+            {
+                badge.fontStyle = FontStyle.Bold;
+                badge.horizontalOverflow = HorizontalWrapMode.Overflow;
+                badge.verticalOverflow = VerticalWrapMode.Overflow;
+            }
+
+            return CsUiStyle.CreateLabel(titleName, frame, titleText, CsUiStyle.MenuTitleFontSize,
+                ResLocal(TitleX, TitleY), ResSize(TitleW, TitleH), TextAnchor.MiddleLeft, CsUiStyle.Text);
+        }
+
+        /// <summary>右侧描述框：深色底 + 1 px 橙边 + 多行英文 + 右上 / 右下滚动箭头。</summary>
+        private void BuildDescriptionBox(RectTransform root)
+        {
+            var size = ResSize(DescW, DescH);
+            var box = CsUiStyle.CreateBoxRect("ClassInfo", root, ResPos(DescX, DescY), size,
+                CsUiStyle.WindowBg, false);
+            CsUiStyle.CreateBorderEdges(box.rectTransform, size, CsUiStyle.BorderWidth, CsUiStyle.BorderLine);
+
+            _descText = CsUiStyle.CreateLabel("textLabel", box.transform, TeamBriefing,
+                CsUiStyle.OriginalFontSize, ResLocal(DescInset, DescInset),
+                ResSize(DescW - DescInset * 2f, DescH - DescInset * 2f), TextAnchor.UpperLeft, CsUiStyle.Text);
+            if (_descText != null)
+            {
+                _descText.horizontalOverflow = HorizontalWrapMode.Wrap;
+                _descText.verticalOverflow = VerticalWrapMode.Truncate;
+                _descText.lineSpacing = 1f;
+            }
+            else
+            {
+                Game.Logger.Warn(Tag, "描述框正文建不出来（CreateLabel 返回 null）");
+            }
+
+            BuildArrow(box.rectTransform, "ScrollUp", ArrowInset);
+            BuildArrow(box.rectTransform, "ScrollDown", DescH - ArrowInset - ArrowH);
+        }
+
+        /// <summary>
+        /// 框内右侧的滚动箭头方块（上 / 下）。正文放得下时它们保持原版的"不可滚"状态（暗色），
+        /// 因此这里只画不绑点击 —— 画一个能点但没反应的按钮比画一个暗色箭头更糟。
+        /// </summary>
+        private static void BuildArrow(RectTransform box, string name, float y)
+        {
+            var size = ResSize(ArrowW, ArrowH);
+            var arrow = CsUiStyle.CreateBoxRect(name, box,
+                ResLocal(DescW - ArrowInset - ArrowW, y), size, CsUiStyle.ControlBg, false);
+            CsUiStyle.CreateBorderEdges(arrow.rectTransform, size, CsUiStyle.BorderWidth, CsUiStyle.BorderLine);
+
+            var glyph = CsUiStyle.CreateLabel("Glyph", arrow.transform,
+                name == "ScrollUp" ? "\u25B2" : "\u25BC", 14,
+                Vector2.zero, size, TextAnchor.MiddleCenter, CsUiStyle.TextDim);
+            if (glyph != null)
+            {
+                glyph.raycastTarget = false;
+                glyph.horizontalOverflow = HorizontalWrapMode.Overflow;
+                glyph.verticalOverflow = VerticalWrapMode.Overflow;
+            }
+        }
+
+        /// <summary>右下角金钱：原版在选人界面右下角一直显示 `$ 16000`（位置按实机帧，屏幕锚定、不随设计区居中）。</summary>
+        private void BuildMoney(RectTransform root)
+        {
+            var size = new Vector2(MoneyW, MoneyH);
+            var pos = new Vector2(1920f - MoneyW - MoneyMarginRight, -(1080f - MoneyH - MoneyMarginBottom));
+            _moneyText = CsUiStyle.CreateLabel("Money", root, "$ " + CsConst.MaxMoney,
+                MoneyFontSize, pos, size, TextAnchor.MiddleRight, CsUiStyle.Text);
+            if (_moneyText == null)
+            {
+                Game.Logger.Warn(Tag, "右下角金钱文本建不出来（CreateLabel 返回 null）");
+                return;
+            }
+
+            _moneyText.horizontalOverflow = HorizontalWrapMode.Overflow;
+            _moneyText.verticalOverflow = VerticalWrapMode.Overflow;
         }
 
         /// <summary>建一组兵种行（5 个兵种 + 自动选择）到 `ClassMenu` 下，返回这组的宿主节点以便整组开关。</summary>
@@ -293,12 +450,12 @@ namespace Cs16.UI
             rows = new Button[names.Length];
             for (var i = 0; i < names.Length; i++)
             {
-                rows[i] = CsUiStyle.CreateOriginalButton(names[i], group, texts[i],
-                    ResPos(BtnX, RowY[i]), ResSize(BtnW, BtnH), null);
+                rows[i] = CsUiStyle.CreateBorderedButton(names[i], group, texts[i],
+                    ResLocal(BtnX, RowY[i]), ResSize(BtnW, BtnH), null);
             }
 
-            auto = CsUiStyle.CreateOriginalButton(autoName, group, ClassAutoText,
-                ResPos(BtnX, RowY[names.Length]), ResSize(BtnW, BtnH), null);
+            auto = CsUiStyle.CreateBorderedButton(autoName, group, ClassAutoText,
+                ResLocal(BtnX, RowY[names.Length]), ResSize(BtnW, BtnH), null);
         }
 
         /// <summary>把原版 `.res` 的 `command` 派到本工程的事件上；每条命令都留痕（含未实现的那条）。</summary>
@@ -318,7 +475,7 @@ namespace Cs16.UI
                 case "jointeam 3":
                     // 原版 jointeam 3 = VIP 阵营（`cstrike_english.txt:87` 的 `&3 VIP`）。
                     // 本工程的阵营契约 `CsTeam` 只有 Spectator/T/CT（`Core/CsEnums.cs`），没有 VIP
-                    // ⇒ 按 VIP 属 CT 一侧落到 CT，并留一条 Warn（登记在验收表「允许的差异」）。
+                    // ⇒ 按 VIP 属 CT 一侧落到 CT，并留一条 Warn（登记在 `策划/差异登记.tsv`）。
                     Game.Logger.Warn(Tag,
                         "原版 jointeam 3 = VIP 阵营；本工程 CsTeam 契约无 VIP ⇒ 落到 CT 侧（VIP 模式未实现）");
                     ShowClassPage(CsTeam.CT, "VIP");
@@ -358,10 +515,43 @@ namespace Cs16.UI
                     var index = i;
                     Bind(rows[index], () => OnClassChosen(team, names[index], index + 1),
                         $"{names[index]}（joinclass {index + 1}）");
+                    BindRowHover(rows[index]);
                 }
             }
 
             Bind(auto, () => OnClassAuto(team), $"{team} 侧自动选择（{ClassAutoCommand}）");
+            BindRowHover(auto);
+        }
+
+        /// <summary>右下角金钱 = 本地玩家当前金钱（HUD 快照）；快照还没建立时用起始金钱。</summary>
+        private void RefreshMoney()
+        {
+            if (_moneyText == null) return;
+            _moneyText.text = "$ " + (CsHudSnapshot.Valid ? CsHudSnapshot.Money : CsConst.MaxMoney);
+        }
+
+        /// <summary>悬停 / 选中文字色 = 黑（`SelectionBG` 橙条上的原版做法，见选兵种页实机帧里高亮的 SAS 行）。</summary>
+        private static readonly Color HoverTextColor = new Color32(0x00, 0x00, 0x00, 0xFF);
+
+        /// <summary>
+        /// 悬停时把行文字换成黑色：底色由 `Button` 的 ColorTint 换成 `SelectionBG`，
+        /// 文字不是 `targetGraphic` ⇒ 只能靠指针事件改色。
+        /// </summary>
+        private static void BindRowHover(Button button)
+        {
+            if (button == null) return;
+            var label = button.GetComponentInChildren<Text>();
+            if (label == null) return;
+
+            var trigger = button.GetComponent<EventTrigger>();
+            if (trigger == null) trigger = button.gameObject.AddComponent<EventTrigger>();
+            trigger.triggers.Clear();
+            var enter = new EventTrigger.Entry { eventID = EventTriggerType.PointerEnter };
+            enter.callback.AddListener(_ => label.color = HoverTextColor);
+            trigger.triggers.Add(enter);
+            var exit = new EventTrigger.Entry { eventID = EventTriggerType.PointerExit };
+            exit.callback.AddListener(_ => label.color = CsUiStyle.Text);
+            trigger.triggers.Add(exit);
         }
 
         // ═══════════════════════════════ 两页的切换 ═══════════════════════════════
@@ -456,8 +646,15 @@ namespace Cs16.UI
         /// <summary>
         /// 原版设计空间坐标 → 本工程画布坐标（唯一换算处，见 <see cref="CsUiStyle.ResScale"/>）。
         /// `.res` 的 `ypos` 向下为正，而 <see cref="CsUiStyle.AnchoredTopLeft"/> 的 y 向上为正 ⇒ **y 取负**。
+        /// 只用于挂在面板根节点上的控件（`Frame` / 描述框），会补上 16:9 的横向居中位移 <see cref="CenterX"/>。
         /// </summary>
         private static Vector2 ResPos(float x, float y)
+        {
+            return new Vector2(x * CsUiStyle.ResScale + CenterX, -y * CsUiStyle.ResScale);
+        }
+
+        /// <summary>同上，但**不加**居中位移 —— 挂在 `Frame` 里、坐标相对 Frame 左上角的子控件用这个。</summary>
+        private static Vector2 ResLocal(float x, float y)
         {
             return new Vector2(x * CsUiStyle.ResScale, -y * CsUiStyle.ResScale);
         }

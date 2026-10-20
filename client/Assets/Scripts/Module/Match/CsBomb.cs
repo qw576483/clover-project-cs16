@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
+using Cs16.Module.Audio;
 using Cs16.Module.Map;
 using UnityEngine;
 
@@ -18,6 +19,11 @@ namespace Cs16.Module.Match
 
         private readonly CsMatch _m;
         private readonly Dictionary<long, bool> _useHeld = new Dictionary<long, bool>();
+        /// <summary>每个 actor 是否按住左键（下包触发；拆包仍走 <see cref="_useHeld"/> = E）。</summary>
+        private readonly Dictionary<long, bool> _plantHeld = new Dictionary<long, bool>();
+
+        /// <summary>拆包动作音（<c>sfx/bomb_defuse</c> = 原版 <c>weapons/c4_disarm.wav</c>）的转发层。</summary>
+        private readonly SfxService _sfx = new SfxService("Bomb");
 
         private long _plantingId;
         private long _defusingId;
@@ -70,6 +76,13 @@ namespace Cs16.Module.Match
         /// <summary>下包/拆包进度 0~1（-1 = 未在进行）。</summary>
         public float ActiveUseProgress { get; private set; } = -1f;
 
+        /// <summary>
+        /// 是否**正在下包**（进度条进行中、尚未 <see cref="Planted"/>）。
+        /// 表现层据此在下包期间就把 C4 画在地面上（问题6："下包时候，地面上看不到包" ——
+        /// 过去视图只在 Planted/Dropped 时生成，下包的几秒钟里包在画面上不存在）。
+        /// </summary>
+        public bool Planting => _plantingId != 0 && !Planted;
+
         /// <summary>本次安放已经响过的蜂鸣次数（下包瞬间清零；未安放 = 0）。节拍 = 首响 0.5s、之后固定 1.4s。
         /// 表现层按它判断"哪一帧该响一声"，因此不必再自带一份蜂鸣计时器。</summary>
         public int BeepSerial => _beepSerial;
@@ -99,6 +112,7 @@ namespace Cs16.Module.Match
             _defuseProgress = 0f;
             ResetBeepState();
             _useHeld.Clear();
+            _plantHeld.Clear();
         }
 
         /// <summary>蜂鸣状态归零（未安放 / 收尾都走这里）。</summary>
@@ -134,6 +148,13 @@ namespace Cs16.Module.Match
             _useHeld.Remove(actorId);
         }
 
+        /// <summary>某个 actor 是否按住左键（下包触发；每帧由 CsMatch 写入，机器人写 intent.Fire）。</summary>
+        public void SetPlantState(CsActor a, bool held)
+        {
+            if (a == null) return;
+            _plantHeld[a.Id] = held;
+        }
+
         // ==================================================================
         //  每帧推进
         // ==================================================================
@@ -143,6 +164,22 @@ namespace Cs16.Module.Match
 
             var list = _m.ActorList;
             for (var i = 0; i < list.Count; i++) list[i].UseProgress = -1f;
+
+            // 只在冻结期 / 交战期推进：回合结算与比赛结束期间 C4 停止倒计时、蜂鸣与操作进度，
+            // 否则"回合已经判完"之后还会在结算画面里响、甚至把爆炸伤害打到结算中的角色身上。
+            var phase = _m.Phase;
+            if (phase != CsRoundPhase.Freeze && phase != CsRoundPhase.Live)
+            {
+                if (_plantingId != 0 || _defusingId != 0)
+                {
+                    Game.Logger.Info(Tag, $"回合已结束（{phase}）：C4 操作进度清零");
+                    _plantingId = 0;
+                    _plantProgress = 0f;
+                    _defusingId = 0;
+                    _defuseProgress = 0f;
+                }
+                return;
+            }
 
             // ---- 已安放：倒计时 + 蜂鸣 ----
             if (Planted)
@@ -161,6 +198,7 @@ namespace Cs16.Module.Match
             // ---- 下包（T）----
             if (!Planted)
             {
+                if (phase == CsRoundPhase.Live) LogPlantKeyHints();
                 TickPlant(dt);
             }
             else
@@ -221,21 +259,48 @@ namespace Cs16.Module.Match
         // ==================================================================
         //  下包
         // ==================================================================
+        /// <summary>
+        /// 持包进包点却按 E：E 是拆包键，下包要**先切出 C4（5 号槽）再按住左键**。
+        /// 只在对局进行中、未安放、人活着且确实在包点内时留痕，按 actor 限速。
+        /// </summary>
+        private void LogPlantKeyHints()
+        {
+            var list = _m.ActorList;
+            for (var i = 0; i < list.Count; i++)
+            {
+                var a = list[i];
+                if (a == null || !a.IsAlive || a.Team != CsTeam.T) continue;
+                if (!a.HasBomb || !IsHoldingUse(a)) continue;
+                if (!IsInBombsite(a.Position, out var site)) continue;
+
+                if (a.ActiveWeapon != CsWeapons.C4)
+                {
+                    _m.RateInfo("plant.use.notc4." + a.Id,
+                        $"{a.Name} 在 {site} 按住 E 不能下包：未切出 C4（按 5 切出 C4，按住左键下包）");
+                }
+                else
+                {
+                    _m.RateInfo("plant.use.c4." + a.Id,
+                        $"{a.Name} 在 {site} 按住 E 不能下包：已切出 C4，下包要按住左键（E 只用于拆包）");
+                }
+            }
+        }
+
         private void TickPlant(float dt)
         {
             // 1) 沿用当前的下包者（只要条件仍满足）
             if (_plantingId != 0)
             {
                 var cur = _m.Find(_plantingId);
-                if (cur != null && IsHoldingUse(cur) && CanPlant(cur, out _))
+                if (cur != null && IsHoldingPlant(cur) && CanPlant(cur, out _))
                 {
                     AccumulatePlant(cur, dt);
                     return;
                 }
 
-                if (cur == null || !IsHoldingUse(cur))
+                if (cur == null || !IsHoldingPlant(cur))
                 {
-                    Interrupt(_plantingId, cur == null ? "下包者已离线" : "松开 E");
+                    Interrupt(_plantingId, cur == null ? "下包者已离线" : "松开左键");
                 }
                 else
                 {
@@ -251,7 +316,7 @@ namespace Cs16.Module.Match
             for (var i = 0; i < list.Count; i++)
             {
                 var a = list[i];
-                if (!IsHoldingUse(a)) continue;
+                if (!IsHoldingPlant(a)) continue;
 
                 if (CanPlant(a, out var reason))
                 {
@@ -262,7 +327,7 @@ namespace Cs16.Module.Match
                     return;
                 }
 
-                _m.RateInfo("plant.holding.invalid", $"{a.Name} 按住 E 但无法下包：{reason}");
+                _m.RateInfo("plant.holding.invalid", $"{a.Name} 按住左键但无法下包：{reason}");
             }
         }
 
@@ -272,6 +337,11 @@ namespace Cs16.Module.Match
             var p = Mathf.Clamp01(_plantProgress);
             a.UseProgress = p;
             ActiveUseProgress = p;
+
+            // 下包进行中把包钉在下包者脚下：表现层画世界视图用的坐标（BombPosition）在
+            // Planted 之前只能取 LastKnownPosition —— 不更新它就会画在上一次的已知位置 / 原点。
+            Position = a.Position;
+            LastKnownPosition = Position;
 
             if (_plantProgress >= 1f)
             {
@@ -286,6 +356,7 @@ namespace Cs16.Module.Match
             if (a.Team != CsTeam.T) { reason = "只有 T 能下包"; return false; }
             if (Planted) { reason = "炸弹已经安放"; return false; }
             if (!a.HasBomb) { reason = "身上没有 C4"; return false; }
+            if (a.ActiveWeapon != CsWeapons.C4) { reason = "未切出 C4"; return false; }
             if (!IsInBombsite(a.Position, out var site)) { reason = "不在 A/B 包点内"; return false; }
             if (IsMoving(a)) { reason = "移动中（下包需要停下）"; return false; }
             return true;
@@ -300,6 +371,8 @@ namespace Cs16.Module.Match
             Dropped = false;
             CarrierId = 0;
             a.HasBomb = false;
+            // 安放后 C4 已离开手上：换回主武器（原版 C4::PrimaryAttack 安放完会 SelectItem 换枪）。
+            _m.Inventory.SelectBestWeapon(a);
             a.UseProgress = -1f;
             a.Score += CsMatchConst.ScorePerBombObjective;
             _plantingId = 0;
@@ -312,7 +385,7 @@ namespace Cs16.Module.Match
             Game.Logger.Info(Tag,
                 $"★ {a.Name} 安放 C4 于 {Position}（{CsConst.BombTimer:F0}s 倒计时开始）");
 
-            _m.PublishMessage(a, "炸弹已安放！");
+            _m.PublishMessage(a, "The bomb has been planted.");
             _m.EmitEvent(Events.BombPlanted);
             _m.RaiseBombStateChanged();
         }
@@ -355,8 +428,9 @@ namespace Cs16.Module.Match
                     _defusingId = a.Id;
                     _defuseProgress = 0f;
                     var dur = a.HasDefuser ? CsConst.DefuseTimeWithKit : CsConst.DefuseTime;
+                    _sfx.PlayAt(CsAudioTuning.BombDefuse, Position);
                     Game.Logger.Info(Tag,
-                        $"{a.Name} 开始拆除 C4（{(a.HasDefuser ? "有拆弹器" : "无拆弹器")}，需 {dur:F1}s）");
+                        $"{a.Name} 开始拆除 C4（{(a.HasDefuser ? "有拆弹器" : "无拆弹器")}，需 {dur:F1}s），已播拆包动作音");
                     AccumulateDefuse(a, dt);
                     return;
                 }
@@ -414,7 +488,7 @@ namespace Cs16.Module.Match
             Game.Logger.Info(Tag,
                 $"★ {a.Name} 拆除 C4 成功 → CT 赢下本回合（拆包者无个人奖励：原版奖金表无此档）");
 
-            _m.PublishMessage(a, "炸弹已被拆除！");
+            _m.PublishMessage(a, "The bomb has been defused.");
             _m.EmitEvent(Events.BombDefused);
             _m.RaiseBombStateChanged();
             _m.Round.EndRound(CsTeam.CT, CsRoundEndReason.BombDefused);
@@ -435,9 +509,10 @@ namespace Cs16.Module.Match
             Game.Logger.Info(Tag, $"★★ C4 于 {pos} 爆炸 → T 赢下本回合");
 
             _m.EmitEvent(Events.BombExploded);
+            _m.RaiseBombExploded(pos);
             _m.RaiseBombStateChanged();
             _m.Damage.ApplyBombExplosion(pos);
-            _m.PublishMessage(null, "炸弹已爆炸！");
+            _m.PublishMessage(null, "The bomb has exploded.");
             _m.Round.EndRound(CsTeam.T, CsRoundEndReason.BombExploded);
         }
 
@@ -466,7 +541,7 @@ namespace Cs16.Module.Match
             LastKnownPosition = Position;
 
             Game.Logger.Info(Tag, $"{a.Name} 携带的 C4 掉落在 {Position}（T 走过去可拾取）");
-            _m.PublishMessage(null, $"{a.Name} 携带的 C4 掉落了");
+            _m.PublishMessage(null, $"{a.Name} dropped the bomb.");
             _m.RaiseBombStateChanged();
         }
 
@@ -497,7 +572,7 @@ namespace Cs16.Module.Match
             CarrierId = a.Id;
 
             Game.Logger.Info(Tag, $"{a.Name} 拾起了掉落的 C4");
-            _m.PublishMessage(a, $"{a.Name} 捡起了 C4");
+            _m.PublishMessage(a, $"{a.Name} picked up the bomb.");
             _m.RaiseBombStateChanged();
         }
 
@@ -507,6 +582,11 @@ namespace Cs16.Module.Match
         private bool IsHoldingUse(CsActor a)
         {
             return a != null && _useHeld.TryGetValue(a.Id, out var v) && v;
+        }
+
+        private bool IsHoldingPlant(CsActor a)
+        {
+            return a != null && _plantHeld.TryGetValue(a.Id, out var v) && v;
         }
 
         private static bool IsMoving(CsActor a)

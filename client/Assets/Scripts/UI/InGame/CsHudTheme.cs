@@ -42,12 +42,16 @@ namespace Cs16.UI
 
         // ─────────────── 状态色 ───────────────
         /// <summary>血量健康（> 60）。</summary>
-        public static readonly Color HealthOk = new Color32(0x9C, 0xFF, 0x9C, 0xFF);
+        // 原版帧（hud_ingame_full.png / hud_ingame_cs_italy.png）里血量数字是**白色**：
+        // 逐像素取样（y 304..322, x 22..60）拿到 (138,144,150)（视频压缩 + 低亮度把白色压暗了），
+        // 按"白 + 轻微冷调"还原为 (0xF0,0xF0,0xF0)。
+        public static readonly Color HealthOk = new Color32(0xF0, 0xF0, 0xF0, 0xFF);
         /// <summary>血量中等（25 ~ 60）。</summary>
         public static readonly Color HealthMid = new Color32(0xFF, 0xE1, 0x64, 0xFF);
         /// <summary>血量危险（&lt; 25）—— 规格要求 &lt;25 变红。</summary>
         public static readonly Color HealthLow = new Color32(0xFF, 0x4B, 0x3C, 0xFF);
-        public static readonly Color ArmorColor = new Color32(0x9C, 0xD8, 0xFF, 0xFF);
+        // 护甲数字 = 浅蓝白（原版帧里比血量略偏蓝、亮度略低）。
+        public static readonly Color ArmorColor = new Color32(0xD0, 0xE4, 0xFF, 0xFF);
         /// <summary>金钱常态（灰绿，CS 1.6 的钱是偏暗的绿）。</summary>
         public static readonly Color MoneyNormal = new Color32(0x86, 0xD8, 0x86, 0xFF);
         /// <summary>可以买东西时高亮（规格：<c>CanBuy</c> 时高亮绿）。</summary>
@@ -61,8 +65,16 @@ namespace Cs16.UI
 
         // ─────────────── 阵营色（CT 蓝 / T 橙红，与 CsUiStyle 的主菜单橙区分开）───────────────
         public static readonly Color TeamCT = new Color32(0x6C, 0xA8, 0xFF, 0xFF);
-        public static readonly Color TeamT = new Color32(0xFF, 0xA8, 0x50, 0xFF);
+        // 原版记分板 / 击杀条里 T 是红、CT 是蓝。
+        public static readonly Color TeamT = new Color32(0xFF, 0x60, 0x50, 0xFF);
         public static readonly Color TeamSpec = new Color32(0xB0, 0xB0, 0xB0, 0xFF);
+
+        // 回合 / 比赛结算的胜方标题色：原版用胜方队色，且比记分板里的队伍色更饱和、更亮
+        // （CT 亮蓝 / T 亮红）。取值在 TeamCT / TeamT 的色相上提高饱和度与亮度。
+        /// <summary>胜方 = CT 时的结算标题色（亮蓝）。</summary>
+        public static readonly Color RoundEndWinCT = new Color32(0x2F, 0x8D, 0xFF, 0xFF);
+        /// <summary>胜方 = T 时的结算标题色（亮红）。</summary>
+        public static readonly Color RoundEndWinT = new Color32(0xFF, 0x30, 0x20, 0xFF);
 
         // ─────────────── 底板 / 控件 ───────────────
         public static readonly Color PanelBg = new Color32(0x00, 0x00, 0x00, 0x99);
@@ -136,7 +148,7 @@ namespace Cs16.UI
         /// <c>radar640.spr</c> 的 <b>原始 128×128</b> 像素。</para>
         ///
         /// <para><b>"要不要按分辨率放大"= 有实测判据</b>：同一批原版 1920×1080 截图里
-        /// 秒表元素的 ink 实测 <b>23×25</b>（<c>策划/验收表.md</c> H15 / 对照表 U-34；
+        /// 秒表元素的 ink 实测 <b>23×25</b>（对照表 U-34；
         /// 载体重测口径见 <c>CsHudTheme</c> 秒表一节），而 <c>hud.txt:127</c> 给它的源矩形是
         /// <b>24×24</b> ⇒ **640 档精灵在 1080p 上就是 1:1、不按屏幕缩放**。
         /// 右上角那条 <b>2×67</b> 竖线**不是** <c>hud.txt</c> 的 <c>divider</c>
@@ -146,7 +158,7 @@ namespace Cs16.UI
         /// <para>因此雷达边长 = <b>128</b>（原版源矩形的原生像素，不换算）。
         /// 对照表 U-06 的"差 +72"随之消除。</para>
         ///
-        /// <para>**仍无载体可证的一项**（登记在验收表「允许的差异」）：雷达**在屏幕上的落点**
+        /// <para>**仍无载体可证的一项**（登记在 `策划/差异登记.tsv`）：雷达**在屏幕上的落点**
         /// （原版写在 <c>cl_dlls/client.dll</c> 里，未反汇编）。底图 = 原版
         /// <c>overviews/de_dust2.bmp</c>（在盘，<c>原版资源/清单.md:87</c>：787510 B / 1024×768）
         /// 的逐像素转 PNG（<c>Resources/UI/Art/overview_de_dust2.png</c>）；
@@ -244,10 +256,18 @@ namespace Cs16.UI
         /// <summary>
         /// 雷达**底图**的着色（含整体透明度）。
         ///
-        /// <para>原版雷达是把俯视图**半透明**压在 3D 画面上（点/图都能透出后面的世界）；
-        /// 具体 alpha 无载体可证 ⇒ 取 0.75，只调"能看清地图"这一件事。不谎称原版值。</para>
+        /// <para>底图取 <c>overviews/&lt;map&gt;.bmp</c> 的原像素（不压暗），但**按雷达的绿色调制**上屏：
+        /// 原版雷达是深色底 + 绿色地形轮廓，直接用底图的土黄原色在 128 px 框里会读成"金色线稿"。
+        /// 乘法着色后土黄 → 绿色（231,188,114 × 0.25,0.95,0.30 ≈ 58,179,34），
+        /// 透明区仍是透明，衬底保持深色。</para>
         /// </summary>
-        public static readonly Color RadarMapTint = new Color(1f, 1f, 1f, 0.75f);
+        public static readonly Color RadarMapTint = new Color(0.25f, 0.95f, 0.30f, 1f);
+
+        /// <summary>
+        /// 雷达圆盘底色：原版帧 <c>hud_ingame_full.png</c> 圆盘中心取样 (0,112,0)，
+        /// 取 85% 不透明压在 3D 画面上。
+        /// </summary>
+        public static readonly Color RadarDisc = new Color32(0x00, 0x70, 0x00, 0xD9);
 
         // ═══════════════════════ 俯视概览（观战档位 5 / 6）═══════════════════════
         //
@@ -302,7 +322,7 @@ namespace Cs16.UI
         // 绿这一支还有第二个旁证：原版 `radar640.spr` 的调色板是 `(0, G, 0)`（纯绿族，
         // G 取值 1..228，见上面 RadarSize 注释）⇒ 绿是原版雷达自己的颜色。
         // **逐通道 RGB 本机不可证**（原版点色写在 `client.dll` 里，未反汇编；项目内原版截图没有雷达）
-        // ⇒ 这三支色按上面那句判据取"绿/黄/蓝"三色，登记在验收表「允许的差异」。
+        // ⇒ 这三支色按上面那句判据取"绿/黄/蓝"三色，登记在 `策划/差异登记.tsv`。
 
         public static readonly Color RadarSelf = new Color32(0x28, 0xE6, 0x28, 0xFF);
 
@@ -314,15 +334,19 @@ namespace Cs16.UI
         public static readonly Color RadarBomb = new Color32(0xFF, 0x38, 0x28, 0xFF);
 
         // 点尺寸（px）。**本项目取值**（原版点尺寸写在 client.dll / overview bmp 里，本机不可证）；
-        // 按 128 px 雷达的可读性给，比例 = 自己 &gt; 队友 &gt; 观察者。
+        // 比例 = 自己 &gt; 炸弹 = 队友 &gt; 观察者。
+        //
+        // 上界由可读性定：雷达内区只有 122 px、覆盖约 104 m × 139 m（原版 overview 窗口），
+        // 同队 4 个人站在出生点时的间距只有几个像素 —— 边长 ≥ 5 时相邻两颗会连成一团、
+        // 把底图地形糊住。所以自己 6 / 队友与敌人 4 / 观察者 3。
         /// <summary>自己那一颗的边长（px）。</summary>
-        public const float RadarSelfDotPx = 7f;
+        public const float RadarSelfDotPx = 6f;
         /// <summary>队友/敌人那一颗的边长（px）。</summary>
-        public const float RadarMateDotPx = 5f;
+        public const float RadarMateDotPx = 4f;
         /// <summary>观察者那一颗的边长（px）。</summary>
-        public const float RadarSpecDotPx = 4f;
+        public const float RadarSpecDotPx = 3f;
         /// <summary>炸弹那一颗的边长（px）。</summary>
-        public const float RadarBombDotPx = 7f;
+        public const float RadarBombDotPx = 6f;
 
         // ═══════════════════════ 右上角比分 / 回合计时块（对照表 V-01~V-03）═══════════════════════
         //
@@ -428,20 +452,19 @@ namespace Cs16.UI
         //     ⇒ 51 × 0.2917 ≈ **15 px**。
         //   · 这个值同时是**唯一可行**的：竖分隔线右边到屏右只剩 1920−1778 = 142 px，
         //     而 `Map: de_dust2` 在本工程字号下约 124 px 宽 ⇒ 右缘缩进不可能大于 ~18 px。
-        //   ⇒ 残余（绝对 x 的 1080p 真值）已登记在 `策划/验收表.md` 的「允许的差异」里。
+        //   ⇒ 残余（绝对 x 的 1080p 真值）已登记在 `策划/差异登记.tsv` 里。
 
         /// <summary>
-        /// `Map: <地图名>` 行的**右缘**距屏幕右边的距离（px）—— 推导值
-        /// <c>ClockRightInsetPx × (28 / 96) ≈ 15</c>（28/96 = freecam 里 Map 行与计时行的右缘缩进之比）。
-        /// 推导过程与"为什么只能推导"见上面的整段注释。
+        /// `Map: <地图名>` 行的**右缘**距屏幕右边的距离（px）。
+        /// 该行位于比分 / 计时块下方、与计时行共用右缘缩进 <see cref="ClockRightInsetPx"/>（51 px），
+        /// 避免贴着屏幕右边，也不与竖分隔线相交。
         /// </summary>
-        public const float MapRightInsetPx = 15f;
+        public const float MapRightInsetPx = ClockRightInsetPx;
 
-        /// <summary>`Map: <地图名>` 行的上边缘（= 与比分行 1 同高，取 <see cref="ScoreCTTopPx"/>）。
+        /// <summary>`Map: <地图名>` 行的上边缘：比分两行（y=38 / y=65）与分隔线（至 y=94）之下。
         /// 出处：原版截图 `策划/基线图/original/de_dust2_freecam_A_00.jpg` 的 `Map: de_dust2` 行
-        /// ink y[35..50]（与比分行 1 **同一行高**，取证实录见上面那一整段）；
-        /// 原版**有**这一行这一事实 = `策划/对照表.md` §9-F01。</summary>
-        public const float MapTopPx = ScoreCTTopPx;
+        /// ink y[35..50]；原版**有**这一行这一事实 = `策划/对照表.md` §9-F01。</summary>
+        public const float MapTopPx = 100f;
 
         /// <summary>`Map: <地图名>` 行文本的固定前缀（原版 freecam 实测就是 <c>"Map: "</c> + 地图名）。</summary>
         public const string MapLabelPrefix = "Map: ";
@@ -496,34 +519,35 @@ namespace Cs16.UI
         // `Resources/UI/Art/hud_buyzone.png`（32×32 RGBA，编码 = RGB 白 + alpha 索引；
         // 该编码器对既有 `stopwatch.png` 复现 576/576 像素逐点相同）。
         // 屏幕落点**无载体**（原版写在 cl_dlls/client.dll 里，未反汇编；项目内带 HUD 的实机帧
-        // 都是交战期 / 旁观机位，画面里没有买枪期图标）⇒ 见 U-30 与验收表「允许的差异」。
+        // 都是交战期 / 旁观机位，画面里没有买枪期图标）⇒ 见 U-30 与 `策划/差异登记.tsv`。
 
         /// <summary>买枪区图标绘制尺寸 = 原版 <c>hud.txt:131</c> 的 640 档源矩形 <b>32×32</b>（1:1 绘制）。</summary>
         public const float BuyZoneIconSizePx = 32f;
 
-        // ═══════════════════════ 底部左侧 `Time Left: … min. Next Map: …` 行 ═══════════════════════
+        // ═══════════════════════ 底部中央 `Time Left: … min. Next Map: …` 行 ═══════════════════════
         //
-        // 出处 = `原版资源/参照物/hud/hud_ingame_1024x768.jpg`（1024×768 实机帧）逐像素实测
-        // （金色墨迹掩膜 = 原版 HUD 文字色 (255,176,0)±45）：
-        //   `Time Left: 4:15 min. Next Map: de_dust2`  ink bbox = x[11..304] y[602..613]（ink 高 12）
-        //   视口 = y[8..741]（上下黑边 y[0..7] / y[742..767]）⇒ 视口 1024×734
-        // 该帧与项目内 31 张 1920×1080 载体的 HUD **不是同一尺度**（同族问题见 F-01 一节），
-        // 所以这里只用**同图内的无量纲比例**换算，不把它的绝对像素当 1080p 真值：
-        //   左缘 11 / 1024 = 1.074%  ⇒ 1920 × 1.074%  = 20.6 ≈ **21**
-        //   下缘 (741 − 613) = 128 / 734 = 17.44% ⇒ 1080 × 17.44% = 188.2 ≈ **188**
-        // 文字格式逐字取自同一帧：`"Time Left: "` + `M:SS` + `" min. Next Map: "` + 地图名。
+        // 出处 = `原版资源/参照物/hud/hud_ingame_cs_italy.png`（768×480）与
+        //        `原版资源/参照物/hud/hud_ingame_full.png`（640×360）两张实机帧：
+        //   文字（`⌾ Time Left: …`）起点 = 0.44~0.45 屏宽；黄色小图标在文字前 24 px 左右；
+        //   整行贴底（下缘距屏底 ≈24 px @1080）。
+        //   ⇒ 1920 × 0.44 = 844.8 ≈ **845**；图标 = 845 − 24 = **821**。
 
-        /// <summary>底部左侧 `Time Left: …` 行的左缘距屏幕左边的距离（px）= 1920 × 11/1024 ≈ 21。</summary>
-        public const float TimeLeftInsetPx = 21f;
+        /// <summary>`Time Left: …` 文本左缘距屏幕左边（px）= 1920 × 0.44 ≈ 845（原版两帧实测 0.44~0.45）。</summary>
+        public const float TimeLeftInsetPx = 845f;
 
-        /// <summary>该行下缘距屏幕底边的距离（px）= 1080 × 128/734 ≈ 188。</summary>
-        public const float TimeLeftBottomInsetPx = 188f;
+        /// <summary>该行下缘距屏幕底边的距离（px）= 24（原版帧贴底）。</summary>
+        public const float TimeLeftBottomInsetPx = 24f;
 
         /// <summary>该行文本框高（与右上角比分同一口径的 ink 高，文本垂直居中）。</summary>
         public const float TimeLeftBoxHeightPx = ScoreLineHeightPx;
 
         /// <summary>文本框宽（仅作容器，文本左对齐 ⇒ 宽度不影响落点）。</summary>
-        public const float TimeLeftBoxWidthPx = 420f;
+        public const float TimeLeftBoxWidthPx = 900f;
+
+        /// <summary>行首黄色小图标（原版帧里 `Time Left` 前那个圆点/表盘图标）的边长与左缘。</summary>
+        public const float TimeLeftIconSizePx = 16f;
+        public const float TimeLeftIconInsetPx = 821f;
+        public const float TimeLeftIconBottomInsetPx = 26f;
 
         /// <summary>该行的固定前缀（原版逐字 <c>"Time Left: "</c>）。</summary>
         public const string TimeLeftLabelPrefix = "Time Left: ";
@@ -757,11 +781,12 @@ namespace Cs16.UI
         {
             switch (reason)
             {
-                case CsRoundEndReason.BombExploded: return "炸弹爆炸";
-                case CsRoundEndReason.BombDefused: return "炸弹被拆除";
-                case CsRoundEndReason.AllTargetsEliminated: return "一方被全歼";
-                case CsRoundEndReason.TimeExpired: return "时间到";
-                default: return "回合结束";
+                // 原版 cstrike_english.txt:676/980 的结算串（本工程把"全歼 / 时间到"按同一套措辞表达）。
+                case CsRoundEndReason.BombExploded: return "Target Successfully Bombed!";
+                case CsRoundEndReason.BombDefused: return "The bomb has been defused!";
+                case CsRoundEndReason.AllTargetsEliminated: return "All targets eliminated";
+                case CsRoundEndReason.TimeExpired: return "Time expired";
+                default: return "Round over";
             }
         }
 

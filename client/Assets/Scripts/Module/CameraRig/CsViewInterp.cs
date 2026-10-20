@@ -140,12 +140,20 @@ namespace Cs16.Module.CameraRig
         }
 
         /// <summary>
-        /// 上台阶的视高平滑（原版 "smooth out stair step ups"，view.cpp:698-720）：踩在地面且模拟原点
-        /// 高于当前视位（正在上台阶）时，视位竖直以 <see cref="StepFollowSpeed"/> 追赶、落后不超过
+        /// 上台阶的视高平滑（原版 "smooth out stair step ups"，view.cpp:698-720）：模拟原点高于当前视位
+        /// （正在上台阶 / 上坡）时，视位竖直以 <see cref="StepFollowSpeed"/> 追赶、落后不超过
         /// <see cref="StepLagMax"/>；其余情况（下落 / 平移 / <paramref name="smoothing"/>）直接吸附。
         /// 返回要加到视位上的竖直位移（≤ 0）。
+        ///
+        /// <para><b>触发条件为什么不是 <c>onGround</c> 单独决定</b>：逐帧贴地判定在斜坡与楼梯上会在
+        /// "踩住 / 离地"之间翻转（脚面与踏面的采样差一帧就够）。视位竖直一旦在翻转那一帧吸附，
+        /// 就会把积累了最多 <see cref="StepLagMax"/> 的落后量在一帧里补上 —— 画面表现为逐帧上下跳。
+        /// 竖直速度 ≤ 0 说明身体不在跳跃上升段：此时身体与视位的竖直关系仍然是"贴地爬升"，
+        /// 继续按原版的追赶速度收敛。跳跃上升段（竖直速度 &gt; 0）必须吸附，否则视位会落后于身体，
+        /// 起跳看起来变矮。</para>
         /// </summary>
-        public float StepOffset(float simZ, float dt, bool onGround, bool smoothing)
+        public float StepOffset(float simZ, float dt, bool onGround, bool smoothing,
+                                float verticalVelocity = 0f)
         {
             if (!_hasStep)
             {
@@ -155,7 +163,7 @@ namespace Cs16.Module.CameraRig
                 return 0f;
             }
 
-            if (!smoothing && onGround && simZ - _stepZ > 0f)
+            if (!smoothing && (onGround || verticalVelocity <= 0f) && simZ - _stepZ > 0f)
             {
                 var steptime = dt > 0f ? dt : 0f;
                 _stepZ += steptime * StepFollowSpeed;

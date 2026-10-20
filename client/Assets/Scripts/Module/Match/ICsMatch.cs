@@ -61,6 +61,11 @@ namespace Cs16.Module.Match
         bool BombPlanted { get; }
         /// <summary>C4 是否掉在地上等人捡（表现层据此在 <see cref="BombPosition"/> 画世界模型）。</summary>
         bool BombDropped { get; }
+        /// <summary>
+        /// 是否**正在下包**（进度条进行中、尚未安放）—— 表现层据此在下包期间就把 C4 画在下包者脚下
+        /// （问题6："下包时候，地面上看不到包"：过去只在已安放/已掉落时生成视图）。
+        /// </summary>
+        bool BombPlanting { get; }
         Vector3 BombPosition { get; }
         /// <summary>炸弹剩余秒数（未下包为 -1）。</summary>
         float BombTimeLeft { get; }
@@ -138,6 +143,12 @@ namespace Cs16.Module.Match
 
         // ==================== 观战 ====================
         bool IsSpectating { get; }
+        /// <summary>
+        /// **尸体视角停留窗口**：本地玩家刚阵亡后的几秒内为 true —— 相机留在**自己的尸体第三人称**
+        /// 而不是立刻切到观战目标（用户报"我死亡以后，视角不会在尸体第三视角呆一会吗？不会瞬移到观战"）。
+        /// 窗口内主动换观战目标（<see cref="SpectateNext"/>）立即结束停留；本地复活则自然失效。
+        /// </summary>
+        bool CorpseViewActive { get; }
         /// <summary>切换观战目标（dir = +1 下一个 / -1 上一个）。</summary>
         void SpectateNext(int dir);
 
@@ -157,6 +168,20 @@ namespace Cs16.Module.Match
         void AddBot(CsTeam team, CsBotDifficulty diff);
         /// <summary>踢出最后一个加入的机器人。</summary>
         void KickBot();
+
+        // ==================== 外部玩家（局域网对局） ====================
+        /// <summary>
+        /// 为一个**外部玩家**（另一台客户端控制的真人，不是机器人）建出主机侧的身体：
+        /// 发默认装备、比赛进行中立刻出生；与场上已有角色重名时自动加后缀（<c>Bob#2</c>），不覆盖别人。
+        /// </summary>
+        /// <returns>新 actor 的 id；比赛未开始 / 阵营非法 / 该阵营已满员时返回 0（原因见日志）。</returns>
+        int AddRemotePlayer(string name, CsTeam team);
+
+        /// <summary>
+        /// 移除一个外部玩家的身体（客机断开 / 超时）。机器人、本地玩家、不存在的 id 一律拒绝并留痕。
+        /// 回合重开不走这里 —— 仍存在的远端 actor 与其他参赛者一起在回合开始时重新出生。
+        /// </summary>
+        void RemoveRemotePlayer(int actorId);
         /// <summary>切换全部机器人难度（对已存在的 bot 即时生效）。</summary>
         void SetBotDifficulty(CsBotDifficulty diff);
         CsBotDifficulty BotDifficulty { get; }
@@ -185,14 +210,18 @@ namespace Cs16.Module.Match
         /// <summary>（受击者, 伤害, 是否爆头, 是否致死）</summary>
         event Action<CsActor, int, bool, bool> OnDamaged;
         /// <summary>
-        /// （受击者, 命中点, 弹道方向, 是否爆头）—— **子弹确实打中了角色**时触发，供表现层出受击血迹。
+        /// （受击者, 命中点, 弹道方向, 是否爆头, 伤害量）—— **子弹确实打中了角色**时触发，供表现层出受击血迹。
         ///
         /// <para><b>为什么不能拿 <see cref="OnDamaged"/> 代替</b>：① 它带的是**伤害值**不是命中点，
         /// 而原版血迹贴在"命中点后面的那个面"上（没有命中点就贴不准）；② 友好伤害关闭 / 护甲全吸收时
         /// <c>OnDamaged</c> 根本不触发，但"打中了"这件事在原版照样出血（血与扣血是两件事）；
         /// ③ 它按"结算后"发，本事件按"命中时"发。</para>
+        ///
+        /// <para><b>为什么还带伤害量</b>：原版血雾的 size 字节是 <c>clamp(amount * 2 / 10, 3, 16)</c>
+        /// （多人模式先翻倍；`mp.dll` VA 0x1008f609 / 0x1008f676–0x1008f6b0），<c>amount</c> 就是这一发的
+        /// 伤害值 ⇒ 由本事件一起送出去，表现层不必再按"爆头 / 普通"猜档位。</para>
         /// </summary>
-        event Action<CsActor, Vector3, Vector3, bool> OnBulletHit;
+        event Action<CsActor, Vector3, Vector3, bool, int> OnBulletHit;
         /// <summary>（行为者, 文本）—— 无线电/系统提示，用于 HUD 消息栏。</summary>
         event Action<CsActor, string> OnMessage;
         /// <summary>炸弹状态变化（下包/拆包/爆炸）时触发，供音效与 HUD。</summary>

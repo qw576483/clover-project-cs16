@@ -202,7 +202,12 @@ namespace Cs16.EditorTools
         {
             // 先把 func_breakable 的箱面从"按贴图合并的大网格"里认出来（见 ExtractCrates 的口径），
             // 再逐组重建合并网格 —— 被拆走的三角面不再留在合并网格里（否则箱子碎掉后碰撞体还在）。
-            var crates = Dust2Breakables.Load();
+            //
+            // 只有"会被伤害打碎"的箱体才拆出来：原版 de_dust2 的 10 个箱子 spawnflags 全是 1
+            // （= SF_BREAK_TRIGGER_ONLY ⇒ takedamage = DAMAGE_NO，见 Dust2Breakables.SpawnFlagTriggerOnly）
+            // ⇒ 一个都不拆 ⇒ 它们留在合并静态网格里，原版贴图 / MeshCollider / 碰撞一起保留。
+            var allCrates = Dust2Breakables.Load();
+            var crates = Dust2Breakables.DamageBreakable(allCrates);
             var taken = ExtractCrates(geo, crates, out var crateTris);
 
             int ok = 0, missingTex = 0;
@@ -237,7 +242,10 @@ namespace Cs16.EditorTools
                 var go = new GameObject(g.PngName);
                 go.transform.SetParent(visualRoot.transform, false);
                 go.AddComponent<MeshFilter>().sharedMesh = mesh;
-                go.AddComponent<MeshRenderer>().sharedMaterial = LoadOrMakeMaterial(g.PngName, ref missingTex);
+                // `white` 是 BSP 的工具纹理（原版那批面不参与可见渲染）。照常渲染会在画面右侧
+                // 糊一整块半透明白纱。保留碰撞体、去掉渲染器。
+                if (!string.Equals(g.PngName, "white.png", System.StringComparison.OrdinalIgnoreCase))
+                    go.AddComponent<MeshRenderer>().sharedMaterial = LoadOrMakeMaterial(g.PngName, ref missingTex);
                 // 非凸 MeshCollider：子弹打墙、脚下地面、斜坡台阶全部靠它（运行时那套）
                 go.AddComponent<MeshCollider>().sharedMesh = mesh;
                 // 静态批处理：地图不动，标记成静态后 Unity 会合批绘制
@@ -245,12 +253,26 @@ namespace Cs16.EditorTools
                 ok++;
             }
 
-            // 碎块数据（原版 gib 模型的贴图子网格）：一次读盘，10 个箱子共用同一份几何 / UV
-            var gibs = LoadGibShards(ref missingTex);
-            int cratesBuilt = BuildCrates(geo, visualRoot, crates, crateTris, gibs, ref missingTex);
+            int cratesBuilt = 0;
+            int shardCount = 0;
+            if (crates.Length == 0)
+            {
+                // 碎块数据（原版 gib 模型）只在真的存在可破坏箱体时才读盘 —— 没有可破坏体时
+                // 一片碎块都不该生成，连模型数据都不必加载。
+                Debug.Log($"{Tag} func_breakable：表里 {allCrates.Length} 个箱体全部是 spawnflags 1" +
+                          "（SF_BREAK_TRIGGER_ONLY ⇒ 原版 takedamage = DAMAGE_NO、SetTouch(NULL)）" +
+                          "⇒ 不生成可破坏体 / 不生成碎块；箱面留在合并静态网格里（原版贴图 + MeshCollider）");
+            }
+            else
+            {
+                // 碎块数据（原版 gib 模型的贴图子网格）：一次读盘，各可破坏箱体共用同一份几何 / UV
+                var gibs = LoadGibShards(ref missingTex);
+                shardCount = gibs?.Center.Length ?? 0;
+                cratesBuilt = BuildCrates(geo, visualRoot, crates, crateTris, gibs, ref missingTex);
+            }
             Debug.Log($"{Tag} 几何：{ok} 个材质组已上场景（缺贴图回落到沙色材质 {missingTex} 个）" +
-                      $"｜func_breakable 箱体 {cratesBuilt} 个（箱面已从合并网格拆出，各自独立 MeshCollider）" +
-                      $"｜碎块 {gibs?.Center.Length ?? 0} 片（每片 = 原版 gib 模型一张贴图下的全部三角面）");
+                      $"｜func_breakable 箱体 {allCrates.Length} 个（可被伤害打碎 {crates.Length} → 生成 {cratesBuilt}）" +
+                      $"｜碎块 {shardCount} 片（每片 = 原版 gib 模型一张贴图下的全部三角面）");
         }
 
         // ==================================================================
@@ -373,6 +395,9 @@ namespace Cs16.EditorTools
         /// <summary>
         /// 逐箱建游戏对象：网格按源材质组切子网格（一个箱一个 MeshCollider），并把碎块数据
         /// （原版 gib 模型的贴图子网格，见 <paramref name="gibs"/>）写进 <see cref="CsBreakable"/>。
+        ///
+        /// <para>只对**会被伤害打碎**的箱体调用（<see cref="Dust2Breakables.DamageBreakable"/>）；
+        /// de_dust2 的 10 个箱子全是 <c>spawnflags 1</c>（trigger-only）⇒ 本方法不会被调用。</para>
         /// </summary>
         private static int BuildCrates(Dust2GeoData geo, GameObject visualRoot, Dust2BreakableBox[] crates,
             List<CrateTri>[] crateTris, GibShardData gibs, ref int missingTex)
@@ -930,8 +955,11 @@ namespace Cs16.EditorTools
             // 这样能在同一 meanLum 下把 ≥250 像素压到基线量级。最终档 sun 0.70 + 环境梯度 ×1.40：
             //   meanLum **123.5**（Δ +0.4 / +0.3%）· p50 118 · p95 208 · 平均饱和度 0.384 · ≥250 像素 **0.145%**。
             // 只动光照参数，不加任何滤镜/后处理；未把材质色乘算加回来。
-            sun.intensity = 0.70f;
-            sun.shadows = LightShadows.Soft;
+            // 0.70 时全图均值达标，但室外沙地整片过曝成白（CT 出生区右侧那面沙地丢掉全部纹理细节）。
+            // 降到 0.55、差额补进环境梯度；阴影改硬阴影（软阴影在大地图上把帧时间拉高，
+            // 原版 GoldSrc 本来也没有实时阴影，角色接地感由 CsBlobShadow 提供）。
+            sun.intensity = 0.55f;
+            sun.shadows = LightShadows.Hard;
             sun.shadowStrength = 0.75f;
 
             RenderSettings.ambientMode = AmbientMode.Trilight;

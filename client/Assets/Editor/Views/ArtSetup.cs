@@ -29,7 +29,6 @@ namespace Cs16.EditorTools
     /// Assets/Resources/Art/CT/{player,gsg9,sas,gign,vip}.prefab
     /// Assets/Resources/Art/{T,CT}/viewmodel_{武器id}.prefab
     /// Assets/Resources/Art/world_{武器id}.prefab
-    /// Assets/Resources/UI/WorldNameplate.prefab
     /// </code>
     ///
     /// <para><b>角色预制体的结构（运行期 <see cref="ActorView"/> 依赖它）</b>：</para>
@@ -54,10 +53,6 @@ namespace Cs16.EditorTools
         private const string TexDir = ArtDir + "/Tex";
         private const string MatDir = ArtDir + "/Mat";
         private const string MeshDir = ArtDir + "/Mesh";
-        private const string UiDir = "Assets/Resources/UI";
-
-        /// <summary>1×1 白 sprite（UI Image 必须有 sprite，见 <see cref="NameplatePrefabBuilder"/>）。</summary>
-        private const string WhiteTextureName = "ui_white";
 
         /// <summary>角色模型 key → (阵营子目录, 预制体名)。</summary>
         private static readonly string[][] PlayerTargets =
@@ -85,6 +80,9 @@ namespace Cs16.EditorTools
                 return;
             }
 
+            // 贴图兜底查找的缓存跨执行会陈旧（本轮可能新增了 PNG）：每轮生成前作废。
+            _prefixedTexCache = null;
+
             var ok = true;
             var msg = new List<string>();
 
@@ -102,13 +100,10 @@ namespace Cs16.EditorTools
                 EnsureFolder(MatDir);
                 EnsureFolder(MeshDir);
                 EnsureFolder(AnimSetup.AnimDir);
-                EnsureFolder(UiDir);
                 EnsureFolder(ArtDir + "/T");
                 EnsureFolder(ArtDir + "/CT");
 
                 ok &= FixTextureImporters(msg);
-                var white = EnsureWhiteSprite(msg);
-                ok &= white != null;
 
                 var files = Directory.Exists(ModelDataDir)
                     ? Directory.GetFiles(ModelDataDir, "*.cs16anim")
@@ -186,21 +181,6 @@ namespace Cs16.EditorTools
                     if (AnimSetup.BuildStaticModelPrefab(
                             a, CsViewTuning.WorldModelPrefix + weapon, materials, msg)) _prefabCount++;
                     else ok = false;
-                }
-
-                // ---- 头顶名牌 ----
-                if (white != null)
-                {
-                    if (NameplatePrefabBuilder.Build(white, out var plateMsg))
-                    {
-                        _prefabCount++;
-                        msg.Add($"✓ {plateMsg}");
-                    }
-                    else
-                    {
-                        Debug.LogError($"{LogTag} 名牌预制体生成失败：{plateMsg}");
-                        ok = false;
-                    }
                 }
 
                 AssetDatabase.SaveAssets();
@@ -415,8 +395,6 @@ namespace Cs16.EditorTools
         public static void Verify()
         {
             var ok = true;
-            ok &= Report(File.Exists(NameplatePrefabBuilder.PrefabAssetPath),
-                NameplatePrefabBuilder.PrefabAssetPath);
 
             for (var i = 0; i < PlayerTargets.Length; i++)
             {
@@ -494,27 +472,17 @@ namespace Cs16.EditorTools
                     continue;
                 }
 
-                var isWhite = Path.GetFileNameWithoutExtension(path) == WhiteTextureName;
                 var dirty = false;
-                var wantType = isWhite ? TextureImporterType.Sprite : TextureImporterType.Default;
-                if (importer.textureType != wantType) { importer.textureType = wantType; dirty = true; }
-                if (isWhite)
-                {
-                    if (importer.spriteImportMode != SpriteImportMode.Single) { importer.spriteImportMode = SpriteImportMode.Single; dirty = true; }
-                    if (importer.mipmapEnabled) { importer.mipmapEnabled = false; dirty = true; }
-                }
-                else
-                {
-                    // 出处：GoldSrc 硬件渲染默认**双线性 + mip**（原版侧无出处文件 ⇒ 见 对照表 BLOCKED-W1，
-                    //   按"最接近不做处理的硬件默认"取 Bilinear）；`textureCompression = Uncompressed` 与
-                    //   `maxTextureSize = 2048 ≥ 源尺寸最大边 256` ⇒ 不缩放（W-01）。
-                    if (importer.filterMode != FilterMode.Bilinear) { importer.filterMode = FilterMode.Bilinear; dirty = true; }
-                    if (!importer.mipmapEnabled) { importer.mipmapEnabled = true; dirty = true; }
-                    if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; dirty = true; }
-                    if (importer.maxTextureSize != 2048) { importer.maxTextureSize = 2048; dirty = true; }
-                    if (importer.textureCompression != TextureImporterCompression.Uncompressed) { importer.textureCompression = TextureImporterCompression.Uncompressed; dirty = true; }
-                    if (importer.anisoLevel != 1) { importer.anisoLevel = 1; dirty = true; }
-                }
+                if (importer.textureType != TextureImporterType.Default) { importer.textureType = TextureImporterType.Default; dirty = true; }
+                // 出处：GoldSrc 硬件渲染默认**双线性 + mip**（原版侧无出处文件 ⇒ 见 对照表 BLOCKED-W1，
+                //   按"最接近不做处理的硬件默认"取 Bilinear）；`textureCompression = Uncompressed` 与
+                //   `maxTextureSize = 2048 ≥ 源尺寸最大边 256` ⇒ 不缩放（W-01）。
+                if (importer.filterMode != FilterMode.Bilinear) { importer.filterMode = FilterMode.Bilinear; dirty = true; }
+                if (!importer.mipmapEnabled) { importer.mipmapEnabled = true; dirty = true; }
+                if (importer.wrapMode != TextureWrapMode.Repeat) { importer.wrapMode = TextureWrapMode.Repeat; dirty = true; }
+                if (importer.maxTextureSize != 2048) { importer.maxTextureSize = 2048; dirty = true; }
+                if (importer.textureCompression != TextureImporterCompression.Uncompressed) { importer.textureCompression = TextureImporterCompression.Uncompressed; dirty = true; }
+                if (importer.anisoLevel != 1) { importer.anisoLevel = 1; dirty = true; }
 
                 if (!dirty) continue;
                 importer.SaveAndReimport();
@@ -523,43 +491,6 @@ namespace Cs16.EditorTools
 
             msg.Add($"✓ 贴图导入设置已规范化 {changed} / {files.Length} 张（{TexDir}）");
             return true;
-        }
-
-        private static Sprite EnsureWhiteSprite(List<string> msg)
-        {
-            var texPath = $"{TexDir}/{WhiteTextureName}.png";
-            if (!File.Exists(texPath))
-            {
-                var tex = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-                var px = new Color32[16];
-                for (var i = 0; i < px.Length; i++) px[i] = new Color32(255, 255, 255, 255);
-                tex.SetPixels32(px);
-                tex.Apply();
-                File.WriteAllBytes(texPath, tex.EncodeToPNG());
-                Object.DestroyImmediate(tex);
-                AssetDatabase.ImportAsset(texPath);
-                Debug.Log($"{LogTag} 生成 1×1 白 sprite 源文件 {texPath}");
-            }
-
-            var importer = AssetImporter.GetAtPath(texPath) as TextureImporter;
-            if (importer != null && importer.textureType != TextureImporterType.Sprite)
-            {
-                importer.textureType = TextureImporterType.Sprite;
-                importer.spriteImportMode = SpriteImportMode.Single;
-                importer.filterMode = FilterMode.Point;
-                importer.mipmapEnabled = false;
-                importer.SaveAndReimport();
-            }
-
-            var sprite = AssetDatabase.LoadAssetAtPath<Sprite>(texPath);
-            if (sprite == null)
-            {
-                Debug.LogError($"{LogTag} 取不到白 sprite：{texPath}（Image 没有 sprite 会不渲染）");
-                msg.Add($"✗ 白 sprite 缺失：{texPath}");
-                return null;
-            }
-            msg.Add($"✓ 白 sprite 就绪：{texPath}");
-            return sprite;
         }
 
         private static Material EnsureMaterial(string texName, bool masked, List<string> msg)
@@ -581,6 +512,11 @@ namespace Cs16.EditorTools
             else if (mat.shader != shader) mat.shader = shader;
 
             var tex = AssetDatabase.LoadAssetAtPath<Texture2D>($"{TexDir}/{texName}.png");
+            // 裸名找不到时兜底扫目录：导出的 PNG 带模型前缀（player_T_arctic_ARTIC_Working1.png），
+            // 且大小写不保证与材质名一致（player_CT_sas_sas_dmbase1 vs SAS_DMBASE1）⇒ 忽略大小写按
+            // 「同名 / 前缀_材质名」找，同名多份（Chrome1）任取其一。不兜底就会生成一批 _MainTex
+            // 为空的材质 —— 运行期表现为"部分人物模型是白色的"。
+            if (tex == null) tex = FindPrefixedTexture(texName);
             if (tex != null) mat.mainTexture = tex;
             else
             {
@@ -628,6 +564,40 @@ namespace Cs16.EditorTools
             else EditorUtility.SetDirty(mat);
             return mat;
         }
+
+        /// <summary>
+        /// 裸名贴图缺失时的兜底查找：扫 <c>TexDir</c> 找「同名 / 任意前缀_材质名」的 PNG
+        /// （忽略大小写 —— 导出文件名与材质名大小写不保证一致）。同名多份任取其一。
+        /// 结果（含"确实没有"）按材质名缓存，避免逐材质重复扫目录。
+        /// </summary>
+        private static Texture2D FindPrefixedTexture(string texName)
+        {
+            if (!Directory.Exists(TexDir)) return null;
+
+            if (_prefixedTexCache == null)
+                _prefixedTexCache = new Dictionary<string, Texture2D>(System.StringComparer.Ordinal);
+            if (_prefixedTexCache.TryGetValue(texName, out var cached)) return cached;
+
+            Texture2D found = null;
+            var suffix = "_" + texName.ToLowerInvariant();
+            var files = Directory.GetFiles(TexDir, "*.png");
+            for (var i = 0; i < files.Length; i++)
+            {
+                var stem = Path.GetFileNameWithoutExtension(files[i]);
+                var lower = stem.ToLowerInvariant();
+                if (lower == texName.ToLowerInvariant() || lower.EndsWith(suffix))
+                {
+                    found = AssetDatabase.LoadAssetAtPath<Texture2D>($"{TexDir}/{stem}.png");
+                    if (found != null) break;
+                }
+            }
+
+            _prefixedTexCache[texName] = found;
+            return found;
+        }
+
+        /// <summary><see cref="FindPrefixedTexture"/> 的按材质名结果缓存。</summary>
+        private static Dictionary<string, Texture2D> _prefixedTexCache;
 
         // ==================================================================
         //  小工具

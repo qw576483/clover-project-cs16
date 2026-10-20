@@ -55,6 +55,34 @@ namespace Cs16.Module.Bot
 
             cand.Sort(CompareXZ);
 
+            // 只保留**首个包点标记**附近的点：标记表第一个点就是该包点的标准下包点（A#0/B#0），
+            // 其余标记可能横跨十几米。按"离队友最远"挑会把守卫挑到最外侧标记、离实际下包位置十几米。
+            // 收进标准下包点 6m 内 = 在下包点附近守。
+            if (cand.Count > 1)
+            {
+                var center = pts[0];
+                center.y = 0f;
+
+                var near = new List<Vector3>(cand.Count);
+                for (var i = 0; i < cand.Count; i++)
+                {
+                    var d = cand[i] - center;
+                    d.y = 0f;
+                    if (d.magnitude <= CsBotConst.HoldSpotCenterRadius) near.Add(cand[i]);
+                }
+
+                // 重心附近一个都没有（标记点围成一圈、重心落在几何外）⇒ 退回全部候选，不让守位表空掉。
+                if (near.Count > 0) cand = near;
+
+                cand.Sort((a, b) =>
+                {
+                    var da = a - center; da.y = 0f;
+                    var db = b - center; db.y = 0f;
+                    var c = da.sqrMagnitude.CompareTo(db.sqrMagnitude);
+                    return c != 0 ? c : CompareXZ(a, b);
+                });
+            }
+
             for (var i = 0; i < cand.Count; i++)
             {
                 var tooClose = false;

@@ -26,6 +26,10 @@ namespace Cs16.Module.Audio
     /// ⇒ "缺失"这件事的唯一真相仍**在引擎**，本类不记账，只在"引擎说没有"时把这件事实经引擎
     /// <c>LogThrottle.WarnOnce</c> 说一次然后静音。</para>
     ///
+    /// <para><b>2D / 3D 都走引擎</b>：3D 用 <c>Game.Sound.PlaySFXAt(clip, pos, SfxAtOptions)</c> 显式给
+    /// 距离衰减 / 音量 / 音高（<see cref="CsAudioTuning.SpatialMinDistance"/> /
+    /// <see cref="CsAudioTuning.SpatialMaxDistance"/>）；2D 用 <c>PlaySFX</c>。</para>
+    ///
     /// <para><b>与 <c>CombatAudio</c> 的分工</b>：枪声归 <c>Module/Combat</c>（它自带一份探测缓存）；
     /// 同一个模式应当也收敛到本类这条路径上。</para>
     /// </summary>
@@ -43,21 +47,27 @@ namespace Cs16.Module.Audio
         }
 
         /// <summary>2D 播放（自己的脚步 / 命中 / 回合播报）。</summary>
-        public void Play(string clip) => Fire(clip, Vector3.zero, false);
+        public void Play(string clip) => Fire(clip, Vector3.zero, false, 1f, 1f);
 
         /// <summary>3D 定点播放（别人的脚步 / 死亡 / 爆炸）。</summary>
-        public void PlayAt(string clip, Vector3 position) => Fire(clip, position, true);
+        public void PlayAt(string clip, Vector3 position) => Fire(clip, position, true, 1f, 1f);
 
-        /// <summary>随机取一个变体播放（脚步/死亡这类多采样音效，避免"复读机"）—— 选变体是玩法表现，不是闸门。</summary>
-        public void PlayRandom(string[] clips, bool spatial, Vector3 position)
+        /// <summary>3D 定点播放 + 音高 / 音量缩放（逐材质脚步、手雷弹跳、烟雾弹释放、C4 蜂鸣档位）。
+        /// 位置必须给：引擎按它算距离衰减。</summary>
+        public void PlayAt(string clip, Vector3 position, float pitch, float volumeScale)
+            => Fire(clip, position, true, pitch, volumeScale);
+
+        /// <summary>随机取一个变体播放（脚步/死亡这类多采样音效，避免"复读机"）—— 选变体是玩法表现，不是闸门。
+        /// <paramref name="pitch"/> / <paramref name="volumeScale"/> 为变形参数（默认不变形）。</summary>
+        public void PlayRandom(string[] clips, bool spatial, Vector3 position, float pitch = 1f, float volumeScale = 1f)
         {
             if (clips == null || clips.Length == 0) return;
             // 选变体是**表现**（避免"复读机"），与玩法无关；但**必须**走 CsRng 而不是
             // UnityEngine.Random —— 后者是全局静态流，脚步/死亡每秒多次，用它抽会把
             // 玩法侧的散布/瞄准序列推位。独立一路 SfxVariant ⇒ 表现抽多少次都不动玩法流。
             var idx = clips.Length == 1 ? 0 : CsRng.Stream(CsRngStream.SfxVariant).Next(0, clips.Length);
-            if (spatial) PlayAt(clips[idx], position);
-            else Play(clips[idx]);
+            if (spatial) PlayAt(clips[idx], position, pitch, volumeScale);
+            else Fire(clips[idx], position, false, pitch, volumeScale);
         }
 
         /// <summary>
@@ -82,9 +92,15 @@ namespace Cs16.Module.Audio
             res.Preload(paths, null);
         }
 
-        private void Fire(string clip, Vector3 position, bool spatial)
+        private void Fire(string clip, Vector3 position, bool spatial, float pitch, float volumeScale)
         {
-            if (string.IsNullOrEmpty(clip)) return;
+            if (string.IsNullOrEmpty(clip))
+            {
+                // 空短名 = 调用点拼错 / 该武器没有这一档采样（如 attack2 没有切换音的武器）。
+                // 原本这里是静默 return，表现成"这条音效就是不响"而无从定位。
+                LogThrottle.WarnOnce(_tag, "sfx.empty", "音效短名为空，本次播放已跳过（检查调用点的武器 / 档位）");
+                return;
+            }
 
             var res = Game.Res;
             if (res == null)
@@ -114,8 +130,26 @@ namespace Cs16.Module.Audio
             }
 
             // 单帧上限 / 同 clip 并发上限都在引擎里判（默认 0 = 不限；本项目在 AudioModule.Start 下发阈值）。
-            if (spatial) sound.PlaySFXAt(clip, position);
-            else sound.PlaySFX(clip);
+            if (spatial)
+            {
+                sound.PlaySFXAt(clip, position, new SfxAtOptions(
+                    CsAudioTuning.SpatialMinDistance,
+                    CsAudioTuning.SpatialMaxDistance,
+                    AudioRolloffMode.Logarithmic,
+                    volumeScale,
+                    pitch));
+                return;
+            }
+
+            if (pitch != 1f || volumeScale != 1f)
+            {
+                // 非预期分支：2D 播放没有音高 / 音量形参，变形会被丢掉（当前调用点都不走到这里）。
+                LogThrottle.WarnOnce(_tag, "sfx.2d.deform",
+                    $"2D 音效「{clip}」请求了音高/音量变形（pitch={pitch:F2} volume={volumeScale:F2}），" +
+                    "引擎 2D 播放接口没有这两个形参 ⇒ 按原样播放");
+            }
+
+            sound.PlaySFX(clip);
         }
     }
 }

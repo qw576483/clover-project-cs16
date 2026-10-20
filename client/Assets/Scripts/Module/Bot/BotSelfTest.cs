@@ -20,9 +20,9 @@ namespace Cs16.Module.Bot
     /// <list type="number">
     /// <item><c>Clover/自检/机器人 3 档难度（4v4 快进 3×45s）</c> —— 自包含：假地图 + 假时钟 + 受击体 +
     /// **真实的 <see cref="CsBotBrain"/>**（不是我另写的简化大脑），三档各跑一轮，打印
-    /// <c>shots / hits / acc / kills</c> 对比表。它是验收表 B1~B3 的可复现证据（不用进 Play、不用等真实 45 秒）。</item>
+    /// <c>shots / hits / acc / kills</c> 对比表。它是分档命中率的可复现证据（不用进 Play、不用等真实 45 秒）。</item>
     /// <item><c>Clover/自检/机器人 当前统计（Play 模式）</c> 与 <c>Clover/自检/机器人/三档轮换跑（Play 模式）</c>
-    /// —— 作用在**真实场景**里的 <see cref="BotModule"/> 上，读它的分档统计 / 轮换难度（对应验收表 B4）。</item>
+    /// —— 作用在**真实场景**里的 <see cref="BotModule"/> 上，读它的分档统计 / 轮换难度（对应难度即时生效）。</item>
     /// </list>
     /// </summary>
     public static class BotSelfTest
@@ -245,7 +245,7 @@ namespace Cs16.Module.Bot
             var cfg = new CsMatchConfig
             {
                 MapName = "bot_selftest",
-                BotsPerTeam = 4,                       // 4v4（验收表要求）
+                BotsPerTeam = 4,                       // 4v4
                 BotDifficulty = difficulty,
                 PlayerTeam = CsTeam.CT,
                 PlayerName = "SelfTestPlayer",
@@ -328,7 +328,7 @@ namespace Cs16.Module.Bot
                     match.Tick(FrameDt);
                     simTime += FrameDt;
 
-                    // 位移统计（每 0.5s 采一次）：验收表 B7"会走、不卡死"的量化证据
+                    // 位移统计（每 0.5s 采一次）："会走、不卡死"的量化证据
                     moveSampleAccumulator += FrameDt;
                     if (moveSampleAccumulator >= MoveSampleInterval)
                     {
@@ -399,7 +399,7 @@ namespace Cs16.Module.Bot
             }
             else if (hard.Accuracy > normal.Accuracy && normal.Accuracy > easy.Accuracy)
             {
-                sb.AppendLine(">>> 结论: PASS —— 命中率随难度单调上升（Hard > Normal > Easy），与验收表 B1~B3 一致");
+                sb.AppendLine(">>> 结论: PASS —— 命中率随难度单调上升（Hard > Normal > Easy），与分档判据一致");
             }
             else
             {
@@ -471,7 +471,7 @@ namespace Cs16.Module.Bot
             _cycleStart = EditorApplication.timeSinceStartup;
             ApplyCycleDifficulty();
             Emit($"三档轮换开始：每档 {CycleSeconds:F0}s（顺序 Easy → Normal → Hard）。" +
-                 "结束时打印三档统计 —— 这就是验收表 B4 的证据（难度即时生效）");
+                 "结束时打印三档统计 —— 这就是难度即时生效的证据");
 
             EditorApplication.update -= OnCycleUpdate;
             EditorApplication.update += OnCycleUpdate;
@@ -546,6 +546,14 @@ namespace Cs16.Module.Bot
 
             public bool WalkableAt(float x, float z) => Mathf.Abs(x) <= Half && Mathf.Abs(z) <= Half;
 
+            public bool HasSurfaceHeights => false;
+            public int SurfaceCountAt(int x, int z) => 0;
+            public bool TryGetSurfaceHeights(int x, int z, List<float> heightsOut)
+            {
+                heightsOut?.Clear();
+                return false;
+            }
+
             public bool CanStand(Vector3 pos, float radius = CsConst.PlayerRadius,
                                  float height = CsConst.StandHeight)
             {
@@ -585,6 +593,19 @@ namespace Cs16.Module.Bot
                 point = new Vector3(pos.x, 0f, pos.z);
                 return true;
             }
+
+            /// <summary>假地图是单一水平面 ⇒ 足迹探地与中心射线同解。</summary>
+            public bool TrySampleGroundUnderBody(Vector3 pos, float radius, float maxDrop, float maxLift,
+                                                 out Vector3 point, out Vector3 normal)
+                => TrySampleGround(pos, out point, out normal, maxDrop);
+
+            public bool BodyHeightClearForTest(Vector3 pos, float radius, out bool legacy)
+            {
+                legacy = true;
+                return WalkableAt(pos.x, pos.z);
+            }
+
+            public bool StepFaceStandable(Vector3 pos, float height) => WalkableAt(pos.x, pos.z);
 
             public Vector3 GetSpawnPoint(int index)
             {

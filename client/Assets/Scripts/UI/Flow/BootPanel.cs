@@ -65,17 +65,20 @@ namespace Cs16.UI
 
             _title = CsUiStyle.CreateLabel("Title", root, "COUNTER-STRIKE", 84,
                 new Vector2(160f, -200f), new Vector2(1400f, 100f), TextAnchor.MiddleLeft, CsUiStyle.Text);
-            CsUiStyle.CreateLabel("Subtitle", root, "1.6   ·   单机版 / Standalone", 36,
+            CsUiStyle.CreateLabel("Subtitle", root, "1.6   ·   SINGLE-PLAYER", 36,
                 new Vector2(166f, -320f), new Vector2(1400f, 56f), TextAnchor.MiddleLeft, CsUiStyle.Accent);
-            _hint = CsUiStyle.CreateLabel("Hint", root, "按任意键开始 / Press any key", 22,
+            _hint = CsUiStyle.CreateLabel("Hint", root, "PRESS ANY KEY", 22,
                 new Vector2(166f, -860f), new Vector2(900f, 40f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
             CsUiStyle.CreateLabel("Copyright", root,
-                "学习用单机复刻工程；Counter-Strike 为 Valve Corporation 的商标，本项目与 Valve 无关。", 18,
+                "Single-player remake for study. Counter-Strike is a trademark of Valve Corporation; this project is not affiliated with Valve.", 18,
                 new Vector2(60f, -1035f), new Vector2(1700f, 30f), TextAnchor.MiddleLeft, CsUiStyle.TextDim);
         }
 
         public override void OnOpen(object param)
         {
+            // 预制体里存不下动态字体（见 CsUiStyle.ApplyOriginalFonts）⇒ 每次打开都重设一遍。
+            CsUiStyle.ApplyOriginalFonts(transform);
+
             _advanced = false;
             _frameGapChecked = false;
             _stay.Restart();                       // 基准 = 打开这一刻的墙钟（见类注释）

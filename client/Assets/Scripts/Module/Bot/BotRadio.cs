@@ -1,6 +1,8 @@
+using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
 using Cs16.Module.Match;
+using UnityEngine;
 
 namespace Cs16.Module.Bot
 {
@@ -10,15 +12,34 @@ namespace Cs16.Module.Bot
     ///
     /// <para><b>节流口径全部来自原版</b>（逐条出处见 <see cref="CsRadio"/> 的常量注释）：
     /// 同队任意两条 ≥ <see cref="CsRadio.TeamMinInterval"/>（原版 <c>m_radioSilenceInterval</c> 是**按队**的，
-    /// <c>cs_bot_chatter.cpp:1606</c>）；同一条消息 ≥ <see cref="CsRadio.SameLineInterval"/>（10.0f）。</para>
+    /// <c>cs_bot_chatter.cpp:1606</c>）；同一条消息 ≥ <see cref="SameLineSeconds"/>（原版 10.0f）。</para>
     ///
-    /// <para><b>为什么没有语音</b>：原版 bot 语音 wav 与 <c>bot_phrases.txt</c> 本机不在盘
-    /// （见 <see cref="CsRadioLine.NoVoice"/>）⇒ 只发屏幕文本，不自造音频；
-    /// 首次发言时打一条 Warn 说明这件事，避免"看起来发过就以为有声音"。</para>
+    /// <para><b>语音</b>：原版无线电语音 wav 已接入（<c>Assets/Resources/Sound/radio/</c>，8 条，
+    /// 资源路径见 <see cref="CsRadio.VoiceOf"/>，出处 = 原版 <c>sound/sentences.txt</c> 的 <c>MRAD_*</c> 段）。
+    /// 资源缺失时回退 <see cref="PlayBeep"/>（代码合成的 1kHz 短提示音，只作"有人发了无线电"的
+    /// 听觉提示，不冒充原版台词）。两者都由本机 <c>AudioSource</c> 播放、不进网络同步。</para>
     /// </summary>
     internal sealed class BotRadio
     {
         private const string Tag = BotModule.Tag;
+
+        /// <summary>
+        /// 同一条消息的最小重复间隔（秒）。出处：原版 <c>cs_bot_chatter.cpp:1798</c>（<c>NeedBackup</c>）、
+        /// <c>:1830</c>（<c>PinnedDown</c>）、<c>:1915</c>（<c>GoingToPlantTheBomb</c>）——
+        /// 三处都是 <c>const float duration = 10.0f</c>。
+        ///
+        /// <para>本类按原版 10s 执行；<see cref="CsRadio.SameLineInterval"/> 里的 30s 是 Core 层的取值，
+        /// 与这里不同源，机器人发言不使用它。</para>
+        /// </summary>
+        private const float SameLineSeconds = 10f;
+
+        /// <summary>
+        /// 无线电（原版 wav 与回退 beep 共用）的播放音量。
+        ///
+        /// <para>这个源不在引擎 <c>SoundGroup.SFX</c> 池里（<c>Sound.ApplyGroupVolume</c> 只改池内音源），
+        /// 按 master×sfx 算是 0.24，1.2~1.9s 的人声会被枪声/脚步压住；固定 0.6 才听得清。</para>
+        /// </summary>
+        private const float RadioVolume = 0.6f;
 
         /// <summary>同队无线电静默（按队一份）—— 原版 <c>m_radioSilenceInterval[team-1]</c>
         /// （<c>cs_bot_chatter.cpp:1606</c>、<c>:1616</c>）。</summary>
@@ -28,8 +49,17 @@ namespace Cs16.Module.Bot
         /// （<c>cs_bot_manager.h:243</c>、<c>cs_bot_manager.cpp:1893-1900</c>）。</summary>
         private static readonly float[,] LineLastAt = new float[CsRadio.Count + 1, 3];
 
-        /// <summary>语音载体缺失这件事只提醒一次（否则 8 只 bot 每回合刷屏）。</summary>
-        private static bool _warnedNoVoice;
+        // ---- 发言音频：优先播原版 wav，缺文件回退代码合成的短提示音 ----
+        /// <summary>合成好的提示音 clip（静态缓存，全进程只合成一次）。</summary>
+        private static AudioClip _beepClip;
+
+        /// <summary>常驻的本地 <c>AudioSource</c>（挂在隐藏的常驻对象上，不进网络同步）。</summary>
+        private static AudioSource _beepSource;
+
+        /// <summary>原版 wav 的加载结果缓存（静态，全进程只 Load 一次；null 也缓存避免重复 Load）。
+        /// 资源路径的真源 = <see cref="CsRadio.VoiceOf"/>（消息号 → <c>Resources/</c> 相对路径），
+        /// 本类不再另存一份映射。</summary>
+        private static readonly Dictionary<int, AudioClip> RadioClipCache = new Dictionary<int, AudioClip>();
 
         private readonly long _id;
         private readonly string _name;
@@ -43,6 +73,10 @@ namespace Cs16.Module.Bot
         /// <summary>本回合是否已经报过"我到位了 / 快撤"（原版：到达分工点后报一次）。</summary>
         private bool _reportedInPosition;
 
+        /// <summary>本回合是否已经报过"Sector clear"（10s 没见敌就报；每回合每 bot 至多一次，
+        /// 复用 <see cref="_reportedEnemies"/> 同款闩模式，回合开始在 <see cref="OnRoundStart"/> 复位）。</summary>
+        private bool _reportedClear;
+
         /// <summary>上一 tick 的可见敌人 / 可见队友计数（用于"归零"与"被压制"判据）。</summary>
         private int _visibleEnemies;
         private int _visibleFriends;
@@ -54,6 +88,23 @@ namespace Cs16.Module.Bot
         private float _lastEnemySeenAt;
 
         private int _round = -1;
+
+        /// <summary>
+        /// 共享节流表（<see cref="TeamLastAt"/> / <see cref="LineLastAt"/>）上一次清零时的回合号与时钟。
+        ///
+        /// <para><b>为什么要有这道闸</b>：那两张表是 <c>static</c> 的全队共享状态，而
+        /// <see cref="OnRoundStart"/> 是**每只 bot 各自**在新回合第一次 Tick 时调的。
+        /// 不加闸时同一帧内 bot 依次思考：bot1 清零 → 过队闸占位发消息 → bot2 又清零 → 又过闸……
+        /// 队静默（<see cref="CsRadio.TeamMinInterval"/> 12s）被反复清空 ⇒ 开局一帧里全队
+        /// 每只各发一条（用户报"开局时机器人的无线电发的很多、很频繁"的根因）。
+        /// 清零动作仍按原版 <c>ResetRadioMessageTimestamps</c> 每回合一次，只是**只准第一只
+        /// 观察到新回合的 bot 执行</c>。</para>
+        ///
+        /// <para>时钟回拨分支：新一局开赛时模拟时钟归零，回合号可能与静态记录撞上
+        /// （同为 1）——此时 <c>now &lt; _tableResetClock</c> 也判定需要清零。</para>
+        /// </summary>
+        private static int _tableResetRound = int.MinValue;
+        private static float _tableResetClock;
 
         public BotRadio(CsActor self)
         {
@@ -98,7 +149,7 @@ namespace Cs16.Module.Bot
             if (_round != match.RoundNumber)
             {
                 _round = match.RoundNumber;
-                OnRoundStart(team);
+                OnRoundStart(team, now);   // now 与 Gate 同源（Think 传入的模拟时钟）
             }
 
             // 原版：附近敌人归零 ⇒ "已报过敌人"这个闩复位（cs_bot_chatter.cpp:1396-1400）
@@ -111,10 +162,11 @@ namespace Cs16.Module.Bot
             // ---- 触发条件（按优先级；每条都对应原版 chatter 的一个分支）----
 
             // ① 刚击杀 → "Enemy down."（原版 ReportingIn 的 EnemyDown 分支，cs_bot_chatter.cpp:1775-1780）
-            if (_killPending)
+            //    _killPending 只在本条真的发出去时清掉：节流挡住时留着，下一个窗口再报。
+            if (_killPending && Gate(now, team, 21))
             {
                 _killPending = false;
-                if (Gate(now, team, 21)) return Emit(now, team, 21, "击杀");
+                return Emit(now, team, 21, "击杀");
             }
 
             // ② 被压制（附近队友 < 附近敌人-1）→ "Need backup."
@@ -127,11 +179,11 @@ namespace Cs16.Module.Bot
 
             // ③ 看见敌人且本回合还没报过 → "Enemy spotted."
             //    出处：cs_bot_chatter.cpp:1408-1419
-            if (_visibleEnemies > 0 && !_reportedEnemies)
+            //    节流挡住时**不置闩**（置了会整段"看得见敌人"期间都报不了），等下一个 12s 窗口。
+            if (_visibleEnemies > 0 && !_reportedEnemies && Gate(now, team, 14))
             {
                 _reportedEnemies = true;
-                if (Gate(now, team, 14)) return Emit(now, team, 14, $"发现 {_visibleEnemies} 个敌人");
-                return null;
+                return Emit(now, team, 14, $"发现 {_visibleEnemies} 个敌人");
             }
 
             // ④ 包已下、且自己是离 C4 最近的那个 T → "Get out of there, it's gonna blow!"
@@ -160,16 +212,23 @@ namespace Cs16.Module.Bot
 
             // ⑦ 最近 10s 没见过敌人、但场上还有敌人 → "Sector clear."
             //    出处：cs_bot_chatter.cpp:1775-1790（recentTime = 10.0f 之后的 "Clear" 分支）
-            if (!engaging && enemiesRemaining > 0 && _lastEnemySeenAt > 0f &&
-                now - _lastEnemySeenAt >= CsRadio.EnemyRecentSeconds && Gate(now, team, 16))
+            //    每回合每 bot 至多报一次
+            //    （_reportedClear，回合开始在 OnRoundStart 复位）—— 否则同一只 bot 一回合里
+            //    只要再隔 10s 没见敌就会复读这条。
+            if (!engaging && enemiesRemaining > 0 && _lastEnemySeenAt > 0f && !_reportedClear &&
+                now - _lastEnemySeenAt >= CsRadio.EnemyRecentSeconds)
             {
-                return Emit(now, team, 16, $"已 {now - _lastEnemySeenAt:F1}s 没见过敌人");
+                _reportedClear = true;
+                if (Gate(now, team, 16))
+                    return Emit(now, team, 16, $"已 {now - _lastEnemySeenAt:F1}s 没见过敌人（每回合最多报一次）");
+                return null;
             }
 
             // ⑧ 无线电静默超过 30s、场上还有敌人、且"说了有人听" → "Reporting in."
             //    出处：cs_bot_chatter.cpp:1457-1464（longTime = 30.0f）+ ShouldSpeak（:1586-1597）
             if (friendsRemaining > 0 && _visibleFriends < friendsRemaining && enemiesRemaining > 0 &&
-                now - TeamLastAt[team] >= CsRadio.ReportInSilence)
+                now - TeamLastAt[team] >= CsRadio.ReportInSilence &&
+                Gate(now, team, 18))
             {
                 return Emit(now, team, 18, "无线电静默超 30s");
             }
@@ -186,34 +245,47 @@ namespace Cs16.Module.Bot
 
         /// <summary>
         /// 这条消息此刻能不能发：同队静默（<see cref="CsRadio.TeamMinInterval"/>）+ 同条消息间隔
-        /// （<see cref="CsRadio.SameLineInterval"/>）。返回 true 就立刻记时刻（先占位再发，避免同帧重复）。
+        /// （<see cref="SameLineSeconds"/>）。返回 true 就立刻记时刻（先占位再发，避免同帧重复）。
         /// </summary>
         private static bool Gate(float now, int team, int id)
         {
             if (now - TeamLastAt[team] < CsRadio.TeamMinInterval) return false;
-            if (now - LineLastAt[id, team] < CsRadio.SameLineInterval) return false;
+            if (now - LineLastAt[id, team] < SameLineSeconds) return false;
 
             TeamLastAt[team] = now;
             LineLastAt[id, team] = now;
             return true;
         }
 
-        /// <summary>新回合：清本 bot 的闩，并把按队/按消息的时刻表清零（原版 <c>ResetRadioMessageTimestamps</c>，
-        /// <c>cs_bot_manager.cpp:1903-1906</c>）。</summary>
-        private void OnRoundStart(int team)
+        /// <summary>新回合：清本 bot 的闩（每只 bot 各自一份，永远都清）；共享的按队/按消息时刻表
+        /// **每回合只清一次**（由静态闸 <see cref="_tableResetRound"/> 挑第一只观察到新回合的 bot 执行，
+        /// 否则同帧依次思考的每只 bot 都清一遍、队静默被清空 ⇒ 开局全队各发一条）。
+        /// 清零动作对应原版 <c>ResetRadioMessageTimestamps</c>（<c>cs_bot_manager.cpp:1903-1906</c>）。</summary>
+        private void OnRoundStart(int team, float now)
         {
             _reportedEnemies = false;
             _reportedInPosition = false;
+            _reportedClear = false;
             _killPending = false;
             _lastEnemySeenAt = 0f;
 
-            for (var t = 0; t < 3; t++)
+            if (_tableResetRound != _round || now < _tableResetClock)
             {
-                TeamLastAt[t] = 0f;
-                for (var id = 1; id <= CsRadio.Count; id++) LineLastAt[id, t] = 0f;
+                _tableResetRound = _round;
+                _tableResetClock = now;
+
+                for (var t = 0; t < 3; t++)
+                {
+                    TeamLastAt[t] = 0f;
+                    for (var id = 1; id <= CsRadio.Count; id++) LineLastAt[id, t] = 0f;
+                }
+
+                Game.Logger?.Info(Tag,
+                    $"{_name} 无线电：第 {_round} 回合开始，本 bot 闩复位 + **全队**节流表清零（本轮首清，队 {team}）");
+                return;
             }
 
-            Game.Logger?.Info(Tag, $"{_name} 无线电：第 {_round} 回合开始，闩与节流表清零（队 {team}）");
+            Game.Logger?.Info(Tag, $"{_name} 无线电：第 {_round} 回合开始，本 bot 闩复位（队 {team}；节流表已由本轮首只 bot 清过）");
         }
 
         /// <summary>记一次可见敌/友计数（由 <c>CsBotBrain.UpdatePerception</c> 在同一趟判定里累加）。</summary>
@@ -294,15 +366,127 @@ namespace Cs16.Module.Bot
                 $"[RADIO] id={line.Id} 组={line.SetLabel}(radio{(int)line.Set + 1}) 槽={line.Slot} " +
                 $"{line.EventName} 原文=\"{line.Text}\" ⇒ HUD 行=\"{_pending}\"（触发：{why}）");
 
-            if (!_warnedNoVoice)
-            {
-                _warnedNoVoice = true;
-                Game.Logger?.Warn(Tag,
-                    "无线电只发了屏幕文本、没有语音：原版 bot 语音 wav 与 bot_phrases.txt 本机不在盘" +
-                    "（CsRadioLine.Voice 全部 = 原版无）⇒ 不自造音频；拿到原版载体后在此处接播放");
-            }
+            PlayRadio(id);
 
             return _pending;
+        }
+
+        /// <summary>
+        /// 发一条无线电时播一次原版语音。
+        ///
+        /// <para>按 <see cref="CsRadio.VoiceOf"/> 给出的资源路径加载原版 wav（结果进
+        /// <see cref="RadioClipCache"/> 缓存，加载失败的 null 也缓存，避免每次发消息都重复 <c>Load</c>）。
+        /// 加载成功 → 复用 <see cref="PlayBeep"/> 的常驻 2D <c>AudioSource</c>
+        /// （spatialBlend=0，耳机里的声音、不按世界位置衰减）<c>PlayOneShot</c> 播放；
+        /// 该条没有语音载体或文件不在盘 → 回退 <see cref="PlayBeep"/> 合成提示音。</para>
+        ///
+        /// <para><b>只在本机播，不进网络同步</b>：直接操作本机 <c>AudioSource</c>。</para>
+        /// </summary>
+        private static void PlayRadio(int id)
+        {
+            var path = CsRadio.VoiceOf(id);
+            AudioClip clip = null;
+            if (path != null)
+            {
+                if (!RadioClipCache.TryGetValue(id, out clip))
+                {
+                    clip = Resources.Load<AudioClip>(path);
+                    RadioClipCache[id] = clip;   // null 也缓存，避免重复 Load
+                }
+            }
+
+            if (clip == null)
+            {
+                if (path != null)
+                {
+                    LogThrottle.WarnOnce(Tag, "radio.missing:" + path,
+                        $"无线电语音缺失：Resources/{path}.wav（消息 {id}），回退合成提示音");
+                }
+                PlayBeep();   // 缺文件回退：代码合成的短提示音
+                return;
+            }
+
+            EnsureSource();
+            if (_beepSource == null)
+            {
+                Game.Logger?.Error(Tag, $"无线电语音无法播放：消息 {id} 的常驻 AudioSource 建不出来（clip={clip.name}）");
+                return;
+            }
+
+            ApplyVolume(_beepSource);
+            _beepSource.PlayOneShot(clip);
+
+            Game.Logger?.Info(Tag,
+                $"[RADIO-AUDIO] 消息 {id} 播放原版语音 clip={clip.name} path=Resources/{path}.wav " +
+                $"长度={clip.length:F2}s 音量={_beepSource.volume:F2} isPlaying={_beepSource.isPlaying} " +
+                $"源={_beepSource.gameObject.name}(2D spatialBlend={_beepSource.spatialBlend:F1}) mute={_beepSource.mute}");
+        }
+
+        /// <summary>
+        /// 播放代码合成的短提示音（原版 wav 缺失时的回退）。
+        ///
+        /// <para><b>合成参数</b>：1kHz 正弦 <c>AudioClip.Create</c> 0.08s / 单声道 / 44100Hz，
+        /// 只当"有人发了无线电"的听觉提示。</para>
+        ///
+        /// <para><b>只在本机播，不进网络同步</b>：直接操作本机 <c>AudioSource</c>，与
+        /// <c>Module/Audio</c> 的 <c>SfxService</c> 无关（那边走的是 <c>Game.Sound.PlaySFX</c>
+        /// 的资源路径，而本 clip 是代码合成、没有资源路径可喂）。</para>
+        /// </summary>
+        private static void PlayBeep()
+        {
+            if (_beepClip == null)
+            {
+                const int sampleRate = 44100;
+                const float seconds = 0.08f;
+                var count = Mathf.CeilToInt(sampleRate * seconds);
+
+                var samples = new float[count];
+                for (var i = 0; i < count; i++)
+                {
+                    samples[i] = Mathf.Sin(2f * Mathf.PI * 1000f * i / sampleRate) * 0.3f;
+                }
+
+                _beepClip = AudioClip.Create("bot_radio", count, 1, sampleRate, false);
+                _beepClip.SetData(samples, 0);
+
+                Game.Logger?.Info(Tag, "bot 无线电提示音已合成（1kHz 正弦 0.08s，本机 AudioSource 播放，不进网络同步）");
+            }
+
+            EnsureSource();
+
+            if (_beepSource != null && _beepClip != null)
+            {
+                ApplyVolume(_beepSource);
+                _beepSource.PlayOneShot(_beepClip);
+
+                Game.Logger?.Info(Tag,
+                    $"[RADIO-AUDIO] 合成提示音（该条没有原版 wav） 音量={_beepSource.volume:F2} " +
+                    $"isPlaying={_beepSource.isPlaying} 源={_beepSource.gameObject.name}" +
+                    $"(2D spatialBlend={_beepSource.spatialBlend:F1}) mute={_beepSource.mute}");
+            }
+        }
+
+        /// <summary>
+        /// 把玩家设置里的主音量 × 音效音量写到这条本机 <c>AudioSource</c> 上。
+        /// 这条源不经过引擎 <c>Game.Sound</c>（合成 beep 没有资源路径），分组音量收不到它 ⇒ 必须自己同步；
+        /// 否则玩家把音量调到 0 仍能听见无线电。
+        /// </summary>
+        private static void ApplyVolume(AudioSource src)
+        {
+            if (src == null) return;
+            src.volume = RadioVolume;
+        }
+
+        /// <summary>懒建常驻的本机 <c>AudioSource</c>（原版 wav 与合成 beep 共用；只建一次）。</summary>
+        private static void EnsureSource()
+        {
+            if (_beepSource != null) return;
+
+            var go = new GameObject("BotRadioBeep") { hideFlags = HideFlags.HideAndDontSave };
+            Object.DontDestroyOnLoad(go);
+            _beepSource = go.AddComponent<AudioSource>();
+            _beepSource.playOnAwake = false;
+            _beepSource.spatialBlend = 0f;   // 2D：无线电是耳机里的声音，不按世界位置衰减
         }
     }
 }

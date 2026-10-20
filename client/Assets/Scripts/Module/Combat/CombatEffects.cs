@@ -12,7 +12,8 @@ namespace Cs16.Module.Combat
     ///
     /// <para><b>贴图都是原版载体解出的像素</b>：枪口火焰 ← <c>sprites/muzzleflash*.spr</c>、
     /// 弹痕 ← <c>decals.wad</c> 的 <c>{shot1..5</c>、血迹贴花 ← <c>decals.wad</c> 的 <c>{blood1..6</c>、
-    /// 血雾 ← <c>valve/sprites/bloodspray.spr</c>（64×64×10 帧）；只有 <c>fx_spark</c> 一张是本项目生成
+    /// 命中主血雾 ← <c>valve/sprites/bloodspray.spr</c>（64×64×10 帧）、飞散血滴 ←
+    /// <c>valve/sprites/blood.spr</c>（16×16×9 帧）；只有 <c>fx_spark</c> 一张是本项目生成
     /// （原版击中火星没有独立载体，登记在 <c>client/资源欠缺清单.md</c>）。
     /// 换素材是**同名覆盖 PNG**，本类一行不用改。</para>
     ///
@@ -50,6 +51,12 @@ namespace Cs16.Module.Combat
         /// <summary>池中同类特效的软上限（超出即复用最久的一个，不会无限增长）。</summary>
         private const int SoftPoolLimit = 256;
 
+        /// <summary>烟团贴片的软边贴图边长（像素）。</summary>
+        private const int SmokeTextureSize = 64;
+
+        /// <summary>烟团三张交叉面绕 Y 轴的夹角（度）：任意视角都至少有一张正对相机。</summary>
+        private static readonly float[] SmokeCrossAngles = { 0f, 60f, 120f };
+
         private enum Shape
         {
             Sphere = 0,
@@ -57,6 +64,8 @@ namespace Cs16.Module.Combat
             Sprite = 2,
             /// <summary>自带网格的实体（弹壳）：它的几何来自 <see cref="CsShellModels"/>，不是程序化建形状。</summary>
             Mesh = 3,
+            /// <summary>半透明烟团：三张交叉的软边贴片，材质走 <c>Sprites/Default</c>（alpha 混合）。</summary>
+            Smoke = 4,
         }
 
         private sealed class EffectItem
@@ -83,12 +92,40 @@ namespace Cs16.Module.Combat
             /// <summary>是不是**血迹**贴花（与墙上弹痕分开计数、分开上限，见 <see cref="AcquireDecal"/>）。</summary>
             public bool Blood;
 
+            /// <summary>逐帧播放的贴片（血雾）：为 true 时 <see cref="Frames"/> 按寿命均匀推进。</summary>
+            public bool Animated;
+            /// <summary>动画贴片的帧序列（血点 / 血雾各一套）。</summary>
+            public Sprite[] Frames;
+            /// <summary>当前帧下标。</summary>
+            public int Frame;
+            /// <summary>当前帧已过的时间（秒）。</summary>
+            public float FrameTime;
+
             /// <summary>是不是飞行中的弹壳（每帧积分速度/自旋，撞到世界面反弹，见 <see cref="TickShell"/>）。</summary>
             public bool Shell;
-            /// <summary>弹壳速度（米/秒）。</summary>
+            /// <summary>弹壳 / 血滴的速度（米/秒）。</summary>
             public Vector3 Velocity;
             /// <summary>弹壳自旋（度/秒，绕本地三轴）。</summary>
             public Vector3 Spin;
+
+            /// <summary>血滴：每帧受慢重力（见 <see cref="CsCombatTuning.BloodDropGravityScale"/>）并沿速度平移。</summary>
+            public bool Falling;
+
+            /// <summary>是不是血滴（与主血雾分开计数、单独上限，见 <see cref="AcquireBloodDrop"/>）。</summary>
+            public bool BloodDrop;
+
+            /// <summary>贴片绕视线方向的滚转角（度）：血雾每张随机一个，避免整片正面朝上、每次看起来一模一样。</summary>
+            public float Roll;
+
+            /// <summary>烟团上升速度（米/秒）：C4 烟柱用，其余物件恒为 0。</summary>
+            public float RiseSpeed;
+
+            /// <summary>
+            /// 本物件**自己克隆出来**的材质（<c>Renderer.material</c> 的实例）：
+            /// Unity 不随 GameObject 一起销毁它 ⇒ <see cref="Dispose"/> 里手动销毁。
+            /// 贴片用的是共享的 <c>Sprites/Default</c>，这里恒为 null（⛔ 不许销毁共享材质）。
+            /// </summary>
+            public Material OwnedMaterial;
         }
 
         private readonly CsModuleLog _log = new CsModuleLog("Combat");
@@ -110,11 +147,17 @@ namespace Cs16.Module.Combat
         private Texture2D _texShellRifle;
         private Texture2D _texShellPistol;
         private bool _shellWarned;
+        /// <summary>特效池满、本次特效应丢弃的次数（日志按首次 + 每 <see cref="CsCombatTuning.LogRateEvery"/> 次输出）。</summary>
+        private int _poolFullCount;
+        /// <summary>血雾因池满被降级（主贴片或血滴少出）的次数，口径同上。</summary>
+        private int _bloodPoolWarned;
         /// <summary>弹痕**五变体**（原版 `decals.wad` 的 `{shot1..5`，key 表见 <see cref="ResPaths.FxBulletHoleKeys"/>）。</summary>
         private readonly Sprite[] _sprShots = new Sprite[ResPaths.FxBulletHoleVariants];
         /// <summary>血迹**六变体**（原版 `decals.wad` 的 `{blood1..6`，key 表见 <see cref="ResPaths.FxBloodKeys"/>）。</summary>
         private readonly Sprite[] _sprBlood = new Sprite[ResPaths.FxBloodVariants];
-        /// <summary>血雾**十帧**（原版 `valve/sprites/bloodspray.spr`，key 表见 <see cref="ResPaths.FxBloodSprayKeys"/>）。</summary>
+        /// <summary>飞散血滴**九帧**（原版 `valve/sprites/blood.spr`；只取第 0 帧，key 表见 <see cref="ResPaths.FxBloodHitKeys"/>）。</summary>
+        private readonly Sprite[] _sprBloodHit = new Sprite[ResPaths.FxBloodHitVariants];
+        /// <summary>主血雾**十帧**（原版 `valve/sprites/bloodspray.spr`，key 表见 <see cref="ResPaths.FxBloodSprayKeys"/>）。</summary>
         private readonly Sprite[] _sprBloodSpray = new Sprite[ResPaths.FxBloodSprayVariants];
         /// <summary>碎裂族**三变体**（原版 `decals.wad` 的 `{break1..3`，48×48，key 表见 <see cref="ResPaths.FxBreakKeys"/>）。</summary>
         private readonly Sprite[] _sprBreaks = new Sprite[ResPaths.FxBreakVariants];
@@ -123,6 +166,7 @@ namespace Cs16.Module.Combat
         private bool _spritesRequested;
         private bool _spriteWarned;
         private bool _bloodWarned;
+        private bool _bloodHitWarned;
         private bool _bloodSprayWarned;
 
         /// <summary>
@@ -142,13 +186,16 @@ namespace Cs16.Module.Combat
         private bool _fxAdditiveWarned;
 
         /// <summary>
+        /// 烟团贴片：运行时生成的径向软边 alpha 贴图包成的 sprite（PPU = 贴图边长 ⇒ scale 1 时正好 1 米见方）。
+        /// 池内所有烟团共用这一张，染色走 <c>SpriteRenderer.color</c>（见 <see cref="SmokeColor"/>）。
+        /// </summary>
+        private Sprite _sprSmoke;
+
+        /// <summary>
         /// 贴片"自带"的那份材质（<c>AddComponent&lt;SpriteRenderer&gt;</c> 时 Unity 给的默认件，
         /// 名为 <c>Sprites-Default</c> / 着色器 <c>Sprites/Default</c>）：贴片每次从池里借出都复位成它。
         /// </summary>
         private Material _spriteMat;
-
-        /// <summary>本发血雾用到的帧名（复用，只喂 <c>blood.spray</c> 日志，避免每次命中产生垃圾）。</summary>
-        private readonly List<string> _puffFrames = new List<string>(CsCombatTuning.BloodSprayMinCount);
 
         // ---- 颜色 ----
         /// <summary>
@@ -168,8 +215,11 @@ namespace Cs16.Module.Combat
         private static readonly Color BloodSprayTint = new Color(139f / 255f, 0f, 0f, 1f);
         private static readonly Color TracerColor = new Color(1f, 0.97f, 0.78f, 1f);
         private static readonly Color BlastColor = new Color(1f, 0.58f, 0.20f, 1f);
+        /// <summary>闪光弹在爆点的白光（与 <see cref="CsHudSnapshot.FlashAlpha"/> 驱动的全屏白同源）。</summary>
+        private static readonly Color FlashBlastColor = new Color(0.92f, 0.96f, 1f, 1f);
         private static readonly Color NadeColor = new Color(0.30f, 0.34f, 0.26f, 1f);
-        private static readonly Color SmokeColor = new Color(0.78f, 0.78f, 0.78f, 1f);
+        /// <summary>烟团颜色：白灰 + 半透明（与软边贴图的 alpha 相乘，交叉面叠出体积感）。</summary>
+        private static readonly Color SmokeColor = new Color(0.78f, 0.78f, 0.78f, 0.70f);
 
         /// <summary>创建常驻特效根节点（只做一次）。</summary>
         public void Init()
@@ -187,6 +237,8 @@ namespace Cs16.Module.Combat
         {
             for (var i = 0; i < _items.Count; i++)
             {
+                // 先销毁本物件自己克隆的材质，再销毁物件（Unity 不会跟着 GameObject 释放 renderer.material）。
+                if (_items[i].OwnedMaterial != null) Object.Destroy(_items[i].OwnedMaterial);
                 if (_items[i].Go != null) Object.Destroy(_items[i].Go);
             }
             _items.Clear();
@@ -198,10 +250,26 @@ namespace Cs16.Module.Combat
                 _root = null;
             }
 
-            // 贴花材质是本类现造的 ⇒ 随本实例销毁；同时把"贴图已请求"的标记复位，让同一个实例
-            // 被再次 Init 时会重新请求（否则 _decalMat 会永远停在 null，弹痕再也不会裁切）。
+            // 贴花 / 枪口火焰的材质都是本类现造的 ⇒ 随本实例销毁；同时把"贴图已请求"的标记复位，
+            // 让同一个实例被再次 Init 时会重新请求（否则 _decalMat 会永远停在 null，弹痕再也不会裁切）。
             if (_decalMat != null) Object.Destroy(_decalMat);
             _decalMat = null;
+            if (_fxAdditiveMat != null) Object.Destroy(_fxAdditiveMat);
+            _fxAdditiveMat = null;
+            // 烟团 sprite 与它的贴图都是运行时现造的（不是资产）⇒ 同样要手动销毁。
+            if (_sprSmoke != null)
+            {
+                if (_sprSmoke.texture != null) Object.Destroy(_sprSmoke.texture);
+                Object.Destroy(_sprSmoke);
+            }
+            _sprSmoke = null;
+
+            // 碎裂族贴片是 Sprite.Create 现包的（不是资产）⇒ 同样要手动销毁，否则每次重开都留 3 张。
+            for (var i = 0; i < _sprBreaks.Length; i++)
+            {
+                if (_sprBreaks[i] != null) Object.Destroy(_sprBreaks[i]);
+                _sprBreaks[i] = null;
+            }
             _spritesRequested = false;
         }
 
@@ -247,7 +315,14 @@ namespace Cs16.Module.Combat
                 res.LoadAsset<Sprite>(ResPaths.FxBloodKeys[i], s => _sprBlood[slot] = s);
             }
 
-            // 血雾十帧（原版 bloodspray.spr）：同上，走字面量表。
+            // 命中血点九帧（原版 blood.spr）：同上，走字面量表。
+            for (var i = 0; i < ResPaths.FxBloodHitKeys.Length; i++)
+            {
+                var slot = i;
+                res.LoadAsset<Sprite>(ResPaths.FxBloodHitKeys[i], s => _sprBloodHit[slot] = s);
+            }
+
+            // 爆头血雾十帧（原版 bloodspray.spr）：同上，走字面量表。
             for (var i = 0; i < ResPaths.FxBloodSprayKeys.Length; i++)
             {
                 var slot = i;
@@ -339,6 +414,16 @@ namespace Cs16.Module.Combat
                 if (pool[i] == null) continue;
                 if (pick == 0) return pool[i];
                 pick--;
+            }
+            return null;
+        }
+
+        /// <summary>取序列里第一张加载到的贴图（全缺时为 null）。</summary>
+        private static Sprite FirstLoaded(Sprite[] frames)
+        {
+            for (var i = 0; i < frames.Length; i++)
+            {
+                if (frames[i] != null) return frames[i];
             }
             return null;
         }
@@ -697,7 +782,9 @@ namespace Cs16.Module.Combat
         /// 原版判据的两个字段（`[surf+0x8C]` / `[surf+0x68]`），再走原版三步选族 —— 碎裂族 1.2192 m、
         /// 防弹族 / 普通族 0.4064 m。表里没有该材质（含 null）⇒ 回落普通弹痕并只 Warn 一次。</para>
         /// </summary>
-        public void BulletImpact(Vector3 point, Vector3 normal, string materialName)
+        /// <param name="placeDecal">false = 只出火星、不贴弹痕。用于"这一发就把木箱打碎"的命中：
+        /// 碎掉的箱体会关渲染（<c>CsBreakable.Break</c>），先贴上去的弹痕会留在空气里。</param>
+        public void BulletImpact(Vector3 point, Vector3 normal, string materialName, bool placeDecal = true)
         {
             if (normal.sqrMagnitude < 0.0001f) normal = Vector3.up;
             normal.Normalize();
@@ -716,46 +803,54 @@ namespace Cs16.Module.Combat
             }
 
             // ---- 弹痕：贴面 + 沿法线抬起 1cm（防 z-fighting），尺寸随族（碎裂 1.2192 m / 其余 0.4064 m）----
-            var sprite = PickBulletHole(family, out var sizeMeters);
-            var decal = AcquireDecal(blood: false);
-            if (decal != null)
+            if (!placeDecal)
             {
-                decal.Tr.position = point + normal * 0.01f;
-                decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
-                // 尺寸是"整块画布"的米数，必须按贴片自己的宽度反算倍率，
-                // 不能直接写 `Vector3.one * sizeMeters`：那少乘 1/PPU 倍（见 SpriteScaleForMeters）。
-                var scale = SpriteScaleForMeters(sprite, sizeMeters);
-                decal.Tr.localScale = Vector3.one * scale;
-                decal.Sprite.sprite = sprite;
-                decal.Sprite.enabled = sprite != null;
-                decal.Billboard = false;
-                // 裁掉软晕、只画硬核（原版贴花绘制时开 GL_ALPHA_TEST + gl_alphamin=0.25）。
-                ApplyDecalMaterial(decal.Sprite);
-
-                // 可核对日志：贴图=null / 启用=False ⇒ 贴图没加载到；世界宽只允许是**该族**的那一个值
-                // （碎裂 1.2192 / 其余 0.4064），对不上就是尺寸口径坏了。
-                // 「可见核心宽」= 整块 × 载体实测的核心占比（`{shot*`：alpha≥32 的墨迹水平跨度 4~5 texel / 16）
-                // —— 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
-                // （口径：0.127 m 的墨迹在 5 m 处约 24 px）。距离用相机（弹痕的观察者恒是本地相机）。
-                var cam = Camera.main;
-                var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
-                // 可见核心宽按**这一发实际用的族尺寸**算（碎裂族的 48 texel 贴图核心占比与 {shot* 不同，
-                // 故只用整块宽度乘占比这一个口径，不写死）。
-                var coreM = sizeMeters * CsCombatTuning.DecalOpaqueCoreRatio;
-                var corePx = dist > 0.0001f ? coreM * CsCombatTuning.ScreenPixelsPerMeter(dist) : 0f;
-
-                _log.Info("shot.decal",
-                    $"弹痕落在 {point}（法线 {normal}）→ 材质「{material ?? "null"}」族 {family}" +
-                    $" 贴图 {(sprite != null ? sprite.name : "null")}" +
-                    $" 启用={decal.Sprite.enabled} 世界宽={sizeMeters:F3}m" +
-                    $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}/{ResPaths.FxBreakVariants}" +
-                    $" 可见核心宽={coreM:F4}m（占比 {CsCombatTuning.DecalOpaqueCoreRatio:F2}）" +
-                    $" 本发距离={dist:F2}m ⇒ 核心投影 {corePx:F1}px");
+                _log.Info("shot.decal.skip",
+                    $"弹痕落在 {point}（材质「{material ?? "null"}」族 {family}）：命中面本发就碎（木箱）⇒ 不贴弹痕");
             }
             else
             {
-                // 取不到物件 = 特效池满（Create 返回 null）⇒ 这一发**静默不留弹痕**，必须留痕。
-                _log.Warn("shot.decal.null", $"弹痕物件取不到（特效池满？）：本发落在 {point} 不留痕");
+                var sprite = PickBulletHole(family, out var sizeMeters);
+                var decal = AcquireDecal(blood: false);
+                if (decal != null)
+                {
+                    decal.Tr.position = point + normal * 0.01f;
+                    decal.Tr.rotation = Quaternion.LookRotation(-normal, SurfaceUp(normal));
+                    // 尺寸是"整块画布"的米数，必须按贴片自己的宽度反算倍率，
+                    // 不能直接写 `Vector3.one * sizeMeters`：那少乘 1/PPU 倍（见 SpriteScaleForMeters）。
+                    var scale = SpriteScaleForMeters(sprite, sizeMeters);
+                    decal.Tr.localScale = Vector3.one * scale;
+                    decal.Sprite.sprite = sprite;
+                    decal.Sprite.enabled = sprite != null;
+                    decal.Billboard = false;
+                    // 裁掉软晕、只画硬核（原版贴花绘制时开 GL_ALPHA_TEST + gl_alphamin=0.25）。
+                    ApplyDecalMaterial(decal.Sprite);
+
+                    // 可核对日志：贴图=null / 启用=False ⇒ 贴图没加载到；世界宽只允许是**该族**的那一个值
+                    // （碎裂 1.2192 / 其余 0.4064），对不上就是尺寸口径坏了。
+                    // 「可见核心宽」= 整块 × 载体实测的核心占比（`{shot*`：alpha≥32 的墨迹水平跨度 4~5 texel / 16）
+                    // —— 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
+                    // （口径：0.127 m 的墨迹在 5 m 处约 24 px）。距离用相机（弹痕的观察者恒是本地相机）。
+                    var cam = Camera.main;
+                    var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
+                    // 可见核心宽按**这一发实际用的族尺寸**算（碎裂族的 48 texel 贴图核心占比与 {shot* 不同，
+                    // 故只用整块宽度乘占比这一个口径，不写死）。
+                    var coreM = sizeMeters * CsCombatTuning.DecalOpaqueCoreRatio;
+                    var corePx = dist > 0.0001f ? coreM * CsCombatTuning.ScreenPixelsPerMeter(dist) : 0f;
+
+                    _log.Info("shot.decal",
+                        $"弹痕落在 {point}（法线 {normal}）→ 材质「{material ?? "null"}」族 {family}" +
+                        $" 贴图 {(sprite != null ? sprite.name : "null")}" +
+                        $" 启用={decal.Sprite.enabled} 世界宽={sizeMeters:F3}m" +
+                        $" 缩放={scale:F3} 变体数={ResPaths.FxBulletHoleVariants}/{ResPaths.FxBreakVariants}" +
+                        $" 可见核心宽={coreM:F4}m（占比 {CsCombatTuning.DecalOpaqueCoreRatio:F2}）" +
+                        $" 本发距离={dist:F2}m ⇒ 核心投影 {corePx:F1}px");
+                }
+                else
+                {
+                    // 取不到物件 = 特效池满（Create 返回 null）⇒ 这一发**静默不留弹痕**，必须留痕。
+                    _log.Warn("shot.decal.null", $"弹痕物件取不到（特效池满？）：本发落在 {point} 不留痕");
+                }
             }
 
             // ---- 火星：一记极短的白点（原版打在墙上会有一小撮灰/火星）----
@@ -791,10 +886,111 @@ namespace Cs16.Module.Combat
         }
 
         /// <summary>
-        /// **子弹打中角色**：命中点上一团血雾 + 在**后面的那个面**上贴一张血迹贴花。
+        /// 命中点上的**血雾** = 原版 <c>TE_BLOODSPRITE</c>（115）的两层贴片：
         ///
-        /// <para><b>两层都走原版载体</b>（两者是同一条原版消息里的两个模型索引）：
-        /// ① 血雾 = <c>valve/sprites/bloodspray.spr</c> 的十帧（<see cref="ResPaths.FxBloodSprayKeys"/>）；
+        /// <list type="number">
+        /// <item><b>sprite1</b>（<c>bloodspray.spr</c> 十帧）**1 张**：命中点上方的动画血雾，
+        /// 帧序列按 <see cref="CsCombatTuning.BloodPuffDuration"/>（10 帧播 0.25 s）逐帧推进，
+        /// 世界宽由 <see cref="CsCombatTuning.BloodSprayWidthMeters"/> 按 size 随机给。</item>
+        /// <item><b>sprite2</b>（<c>blood.spr</c> 第 0 帧）**size + rand(1,8) + rand(1,8) 张**：从命中点
+        /// 向四周飞散的血滴，带慢重力，生命 rand(1,3) s（见 <see cref="TickBloodDrop"/>）。</item>
+        /// </list>
+        ///
+        /// <para><b>size 从哪来</b>：原版是 <c>clamp(amount * 2 / 10, 3, 16)</c>（多人模式先翻倍），
+        /// <c>amount</c> 就是这一发的伤害量 —— 由 <c>CsDamage.ApplyHit</c> 随 <c>OnBulletHit</c> 一起
+        /// 送进来，不再按"爆头 / 普通"猜两档。伤害量 ≤ 0 时退到按爆头取上界。</para>
+        ///
+        /// <para><b>贴片染色</b> = <see cref="BloodSprayTint"/>（两张载体都是灰阶像素）。</para>
+        /// </summary>
+        /// <param name="point">命中点（世界坐标）</param>
+        /// <param name="direction">弹道方向（保留给调用方语义；血滴初速是原版的世界向随机，不取这个方向）</param>
+        /// <param name="headshot">是否爆头（只在伤害量不可达时决定 size 的兜底档，并写进日志）</param>
+        /// <param name="amount">这一发打出的伤害量（原版 TE_BLOODSPRITE 的 <c>amount</c>）</param>
+        public void BloodSpray(Vector3 point, Vector3 direction, bool headshot, int amount)
+        {
+            Init();
+
+            var size = amount > 0
+                ? CsCombatTuning.BloodSpraySizeForAmount(amount)
+                : (headshot ? CsCombatTuning.BloodSpraySizeMax : CsCombatTuning.BloodSpraySizeMin);
+            var rng = CsRng.Stream(CsRngStream.FxVariant);
+
+            // ---- sprite1：主血雾（1 张，十帧动画；原版在命中点抬高 2..4 unit）----
+            var spray = FirstLoaded(_sprBloodSpray);
+            if (spray == null) WarnBloodSprayOnce();
+            var main = AcquireSprite(Shape.Sprite, BloodSprayTint, CsCombatTuning.BloodPuffDuration);
+            var mainWidth = 0f;
+            if (main != null)
+            {
+                mainWidth = CsCombatTuning.BloodSprayWidthMeters(size, rng.Range(0f, 1f));
+                main.Tr.position = point + Vector3.up * rng.Range(2f, 4f) * CsConst.UnitToMeter;
+                main.Tr.localScale = Vector3.one * SpriteScaleForMeters(spray, mainWidth);
+                main.Frames = _sprBloodSpray;
+                main.Frame = 0;
+                main.FrameTime = 0f;
+                main.Animated = true;
+                main.Sprite.sprite = spray;
+                main.Sprite.enabled = spray != null;
+                main.Billboard = true;
+                main.Roll = rng.Range(0f, 360f);
+            }
+            else
+            {
+                WarnBloodPoolOnce($"血雾主贴片取不到（特效池 {_items.Count}/{SoftPoolLimit}）");
+            }
+
+            // ---- sprite2：血滴（blood.spr 第 0 帧；原版 FTENT_ROTATE 不播帧）----
+            var drop = FirstLoaded(_sprBloodHit);
+            if (drop == null) WarnBloodHitOnce();
+            var want = size + rng.Next(1, 9) + rng.Next(1, 9);
+            var spawned = 0;
+            if (drop != null)
+            {
+                for (var i = 0; i < want; i++)
+                {
+                    // 染色走池子的 key（同色才复用），不在取到物件后再改色 —— 否则会把同池的白贴片一起染红。
+                    var item = AcquireBloodDrop(
+                        rng.Range(CsCombatTuning.BloodDropLifeMin, CsCombatTuning.BloodDropLifeMax));
+                    if (item == null) break;
+
+                    item.Tr.position = point;
+                    item.Tr.localScale = Vector3.one * SpriteScaleForMeters(drop,
+                        CsCombatTuning.BloodDropWidthMeters(size, rng.Range(0f, 1f)));
+                    item.Sprite.sprite = drop;
+                    item.Sprite.enabled = true;
+                    item.Billboard = true;
+                    item.Roll = rng.Range(0f, 360f);
+                    item.Falling = true;
+                    item.Velocity = new Vector3(
+                        rng.Range(-CsCombatTuning.BloodDropSpeedUnits, CsCombatTuning.BloodDropSpeedUnits - 1f),
+                        rng.Range(-CsCombatTuning.BloodDropSpeedUnits, CsCombatTuning.BloodDropSpeedUnits - 1f),
+                        rng.Range(CsCombatTuning.BloodDropUpMinUnits, CsCombatTuning.BloodDropUpMaxUnits))
+                        * CsConst.UnitToMeter;
+                    spawned++;
+                }
+            }
+
+            if (spawned < want)
+            {
+                WarnBloodPoolOnce($"血滴只出到 {spawned}/{want} 张（特效池 {_items.Count}/{SoftPoolLimit}）");
+            }
+
+            // 可核对日志：主血雾张数 / 世界宽、血滴实际张数 / 期望张数，以及两者各自的寿命。
+            _log.Info("blood.spray",
+                $"命中 {point}（爆头={headshot} 伤害量={amount} → size={size}）→ " +
+                $"主血雾 {(main != null ? 1 : 0)}/1 张 世界宽={mainWidth:F3}m 帧={_sprBloodSpray.Length} " +
+                $"寿命={CsCombatTuning.BloodPuffDuration:F2}s；血滴 {spawned}/{want} 张 " +
+                $"世界宽={CsCombatTuning.BloodDropWidthMeters(size, 0f):F3}–" +
+                $"{CsCombatTuning.BloodDropWidthMeters(size, 1f):F3}m " +
+                $"寿命={CsCombatTuning.BloodDropLifeMin:F0}–{CsCombatTuning.BloodDropLifeMax:F0}s");
+        }
+
+        /// <summary>
+        /// **子弹打中角色**：命中点上一层血雾（<see cref="BloodSpray"/>）+ 在**后面的那个面**上贴一张血迹贴花。
+        ///
+        /// <para><b>两层都走原版载体</b>：
+        /// ① 血雾 = <c>valve/sprites/bloodspray.spr</c> 的十帧（主贴片）+ <c>valve/sprites/blood.spr</c>
+        /// 的第 0 帧（血滴），见 <see cref="BloodSpray"/>；
         /// ② 血迹贴花 = <c>decals.wad</c> 的 <c>{blood1..6</c>（<see cref="ResPaths.FxBloodKeys"/>；
         /// 红/黄分组由 cvar <c>violence_hblood</c> / <c>violence_ablood</c> 选，人类角色恒红）。
         /// 两族都出自 <c>mp.dll</c> 自己的 precache（<c>sprites/bloodspray.spr</c> 串在文件偏移
@@ -807,47 +1003,30 @@ namespace Cs16.Module.Combat
         /// </summary>
         /// <param name="point">命中点（世界坐标，来自射线）</param>
         /// <param name="direction">弹道方向（单位向量，从射手指向命中点）</param>
-        /// <param name="headshot">是否爆头（目前只影响日志口径；不做"爆头喷更多血"这类无出处的放大）</param>
+        /// <param name="headshot">是否爆头（只影响日志与 size 的兜底档；见 <see cref="BloodSpray"/>）</param>
+        /// <param name="amount">这一发打出的伤害量（原版 TE_BLOODSPRITE 的 <c>amount</c>）</param>
         /// <returns>是否真的落了血迹贴花（供自检 / 日志用）</returns>
-        public bool BloodImpact(Vector3 point, Vector3 direction, bool headshot)
+        public bool BloodImpact(Vector3 point, Vector3 direction, bool headshot, int amount)
+        {
+            BloodSpray(point, direction, headshot, amount);
+            return BloodDecal(point, direction, headshot);
+        }
+
+        /// <summary>
+        /// **血迹贴花**：从命中点沿弹道继续向前找"后面的面"，贴一张 <c>decals.wad</c> 的 <c>{blood1..6</c>。
+        /// 追不到面时返回 false（只留血雾，不把血硬塞到空气里）。
+        /// </summary>
+        /// <param name="point">命中点（世界坐标，来自射线）</param>
+        /// <param name="direction">弹道方向（单位向量，从射手指向命中点）</param>
+        /// <param name="headshot">是否爆头（只影响日志口径）</param>
+        /// <returns>是否真的落了血迹贴花</returns>
+        public bool BloodDecal(Vector3 point, Vector3 direction, bool headshot)
         {
             Init();
 
             var dir = direction.sqrMagnitude > 0.0001f ? direction.normalized : Vector3.forward;
 
-            // ---- ① 血雾：命中点上一小团，**原版载体**的十帧里随机取一（每张各取一次）----
-            // 张数取原版公式 clamp(amount/10, 3, 16) 的**下界**（自变量 amount 在受击者实体上，
-            // 表现层拿不到伤害 ⇒ 只能取下界；出处与缺口见 CsCombatTuning.BloodSprayMinCount）。
-            WarnBloodSprayOnce();
-            var sprayRng = CsRng.Stream(CsRngStream.FxVariant);
-            _puffFrames.Clear();
-            for (var i = 0; i < CsCombatTuning.BloodSprayMinCount; i++)
-            {
-                // 染色走池子的 key（同色才复用），不在取到物件后再改色 —— 否则会把同池的白贴片一起染红。
-                var puff = AcquireSprite(Shape.Sprite, BloodSprayTint, CsCombatTuning.BloodPuffDuration);
-                if (puff == null) break;
-
-                var frame = PickRandom(_sprBloodSpray);
-                var spread = CsCombatTuning.BloodPuffSpread;
-                puff.Tr.position = point + new Vector3(
-                    sprayRng.Range(-spread, spread),
-                    sprayRng.Range(-spread, spread),
-                    sprayRng.Range(-spread, spread));
-                puff.Tr.localScale = Vector3.one * SpriteScaleForMeters(frame, CsCombatTuning.BloodPuffSize);
-                puff.Sprite.sprite = frame;
-                puff.Sprite.enabled = frame != null;
-                puff.Billboard = true;
-                _puffFrames.Add(frame != null ? frame.name : "null");
-            }
-
-            // 可核对日志：张数 = clamp 下界；帧名逐个列出（看"是不是真的十帧都在用"）；
-            // 世界宽从 CsCombatTuning.BloodPuffSize（米）经 SpriteScaleForMeters 反算。
-            _log.Info("blood.spray",
-                $"命中 {point}（爆头={headshot}）→ 血雾 {_puffFrames.Count} 张" +
-                $"[{string.Join(",", _puffFrames)}] 世界宽={CsCombatTuning.BloodPuffSize:F3}m" +
-                $"（载体帧数={ResPaths.FxBloodSprayVariants}）");
-
-            // ---- ② 血迹贴花：从命中点继续向前找"后面的面" ----
+            // ---- 血迹贴花：从命中点继续向前找"后面的面" ----
             WarnBloodOnce();
             if (!Physics.Raycast(point + dir * 0.02f, dir, out var hit,
                     CsCombatTuning.BloodDecalTraceRange, ~0, QueryTriggerInteraction.Ignore))
@@ -901,7 +1080,37 @@ namespace Cs16.Module.Combat
                 "（受击时血雾照出、墙上不留血）");
         }
 
-        /// <summary>血雾十帧一张都没加载到时只 Warn 一次（高频路径，绝不每帧刷屏）。</summary>
+        /// <summary>命中血点九帧一张都没加载到时只 Warn 一次（高频路径，绝不每帧刷屏）。</summary>
+        private void WarnBloodHitOnce()
+        {
+            if (_bloodHitWarned) return;
+            var have = 0;
+            for (var i = 0; i < _sprBloodHit.Length; i++)
+            {
+                if (_sprBloodHit[i] != null) have++;
+            }
+            if (have > 0) return;
+            _bloodHitWarned = true;
+            _log.Warn("fx.bloodhit.missing",
+                $"血滴贴图一张都没加载到：Resources/{ResPaths.FxBloodHitKeys[0]}.png … " +
+                $"{ResPaths.FxBloodHitKeys[ResPaths.FxBloodHitKeys.Length - 1]}.png" +
+                "（命中时只有主血雾、没有飞散的血滴）");
+        }
+
+        /// <summary>
+        /// 血雾因**特效池满**被降级时的日志：首次 + 每 <see cref="CsCombatTuning.LogRateEvery"/> 次。
+        /// 连发时一帧可能少出十几张血滴，不降频会刷屏。
+        /// </summary>
+        private void WarnBloodPoolOnce(string message)
+        {
+            _bloodPoolWarned++;
+            if (_bloodPoolWarned == 1 || _bloodPoolWarned % CsCombatTuning.LogRateEvery == 0)
+            {
+                _log.Warn("fx.blood.pool", $"{message}（第 {_bloodPoolWarned} 次）");
+            }
+        }
+
+        /// <summary>主血雾十帧一张都没加载到时只 Warn 一次（高频路径，绝不每帧刷屏）。</summary>
         private void WarnBloodSprayOnce()
         {
             if (_bloodSprayWarned) return;
@@ -933,22 +1142,64 @@ namespace Cs16.Module.Combat
             item.Tr.localScale = new Vector3(CsCombatTuning.TracerThickness, CsCombatTuning.TracerThickness, length);
         }
 
-        /// <summary>爆炸（手雷 / C4）：一团快速膨胀的橙色亮球 + 点光。</summary>
+        /// <summary>爆炸（HE 手雷 / C4）：一团快速膨胀的橙色亮球 + 点光。</summary>
         public void Explosion(Vector3 position)
         {
-            var item = Acquire(Shape.Sphere, BlastColor, CsCombatTuning.ExplosionVisualDuration);
+            Explosion(position, BlastColor);
+        }
+
+        /// <summary>
+        /// 爆炸的**唯一实现**：颜色由调用方给（HE = 橙 <see cref="BlastColor"/>、
+        /// 闪光弹 = 白 <see cref="FlashBlastColor"/>），膨胀曲线与点光一致。
+        /// </summary>
+        public void Explosion(Vector3 position, Color color)
+        {
+            Explosion(position, color, CsCombatTuning.ExplosionVisualMaxRadius);
+        }
+
+        /// <summary>爆炸（自定义最终半径）：C4 的可见半径取爆炸伤害半径。</summary>
+        public void Explosion(Vector3 position, Color color, float maxRadius)
+        {
+            var item = Acquire(Shape.Sphere, color, CsCombatTuning.ExplosionVisualDuration);
             if (item == null) return;
 
             item.Tr.position = position;
             item.StartScale = 0.35f;
-            item.EndScale = CsCombatTuning.ExplosionVisualMaxRadius;
+            item.EndScale = Mathf.Max(0.35f, maxRadius);
             SetScale(item, item.StartScale);
 
+            // 点光只在这里点亮：Acquire 对所有借出的物件一律关灯（弹道 / 手雷体 / 烟雾球共用池槽）。
             if (item.Light != null)
             {
-                item.Light.color = BlastColor;
-                item.Light.range = 16f;
+                item.Light.color = color;
+                item.Light.range = Mathf.Clamp(1.5f * maxRadius, 16f, 32f);
                 item.Light.intensity = 6f;
+                item.Light.enabled = true;
+            }
+        }
+
+        /// <summary>
+        /// C4 爆炸的世界特效：火光球（半径 = 爆炸伤害半径）+ 一根上升的半透明烟柱。
+        /// 烟柱沿竖直方向排一列烟团，各自边升边涨；烟团贴片是软边 alpha 混合。
+        /// </summary>
+        public void BombBlast(Vector3 position, float radius)
+        {
+            // Unity 球体的 localScale = 直径 ⇒ 传 2 × 伤害半径，火光的可视半径才等于爆炸半径。
+            Explosion(position, BlastColor, 2f * radius);
+
+            for (var i = 0; i < CsCombatTuning.BombSmokePuffs; i++)
+            {
+                var t = CsCombatTuning.BombSmokePuffs > 1
+                    ? i / (float)(CsCombatTuning.BombSmokePuffs - 1)
+                    : 0f;
+                var item = Acquire(Shape.Smoke, SmokeColor, CsCombatTuning.BombSmokeLifetime);
+                if (item == null) return;
+
+                item.Tr.position = position + Vector3.up * (radius * (0.15f + 0.55f * t));
+                item.StartScale = radius * 0.45f;
+                item.EndScale = radius * (0.75f + 0.35f * t);
+                item.RiseSpeed = radius * 0.22f;
+                SetScale(item, item.StartScale);
             }
         }
 
@@ -985,8 +1236,14 @@ namespace Cs16.Module.Combat
         /// <summary>手雷体 / 烟雾球这类"常驻一段时间"的视觉：颜色与尺寸自定义。</summary>
         public GameObject RentSphereGrenade(float scale) => RentSphere(NadeColor, scale);
 
-        /// <summary>烟雾体（半透做不了就先用淡灰实心球，够读）——由 GrenadeThrower 借用。</summary>
-        public GameObject RentSmoke(float scale) => RentSphere(SmokeColor, scale);
+        /// <summary>半透明烟团（三张软边交叉面）——由 GrenadeThrower / C4 烟柱借用。</summary>
+        public GameObject RentSmoke(float scale)
+        {
+            var item = Acquire(Shape.Smoke, SmokeColor, 0f, persistent: true);
+            if (item == null) return null;
+            SetScale(item, scale);
+            return item.Go;
+        }
 
         /// <summary>每帧推进生命周期 + 把"朝相机"的贴片转向相机。</summary>
         public void Tick(float dt)
@@ -1001,8 +1258,13 @@ namespace Cs16.Module.Combat
 
                 if (item.Billboard && cam != null)
                 {
-                    item.Tr.rotation = Quaternion.LookRotation(item.Tr.position - cam.transform.position, cam.transform.up);
+                    var look = Quaternion.LookRotation(item.Tr.position - cam.transform.position, cam.transform.up);
+                    // 原版每张血雾/血滴给自己一个随机 roll（entity.angles[2] = rand(0,360)）：
+                    // 不滚转的话同一帧序列每次都长一个样。
+                    item.Tr.rotation = look * Quaternion.Euler(0f, 0f, item.Roll);
                 }
+
+                if (item.Animated) TickFrames(item, dt);
 
                 item.Life -= dt;
                 if (item.Life <= 0f)
@@ -1018,6 +1280,12 @@ namespace Cs16.Module.Combat
                 }
 
                 if (item.Shell) TickShell(item, dt);
+                if (item.Falling) TickBloodDrop(item, dt);
+
+                if (item.RiseSpeed != 0f)
+                {
+                    item.Tr.position += Vector3.up * (item.RiseSpeed * dt);
+                }
 
                 if (item.EndScale > item.StartScale)
                 {
@@ -1025,6 +1293,43 @@ namespace Cs16.Module.Combat
                     SetScale(item, Mathf.Lerp(item.StartScale, item.EndScale, t));
                 }
             }
+        }
+
+        /// <summary>
+        /// 逐帧推进动画贴片：帧时长 = 寿命 / 帧数，到最后一帧就停在那里；寿命到点由 <see cref="Tick"/> 回池。
+        /// </summary>
+        private static void TickFrames(EffectItem item, float dt)
+        {
+            if (item.Sprite == null) return;
+            var frames = item.Frames;
+            var n = frames != null ? frames.Length : 0;
+            if (n == 0) return;
+            var frameTime = item.MaxLife > 0f ? item.MaxLife / n : 0f;
+            if (frameTime <= 0f) return;
+
+            item.FrameTime += dt;
+            while (item.FrameTime >= frameTime && item.Frame < n - 1)
+            {
+                item.FrameTime -= frameTime;
+                item.Frame++;
+                var sprite = frames[item.Frame];
+                if (sprite != null) item.Sprite.sprite = sprite;
+            }
+            item.Sprite.enabled = item.Sprite.sprite != null;
+        }
+
+        /// <summary>
+        /// 血滴的一帧：原版 <c>FTENT_ROTATE | FTENT_SLOWGRAVITY</c> —— 沿初速平移，按
+        /// <see cref="CsCombatTuning.BloodDropGravityScale"/> × <see cref="CsConst.Gravity"/> 下落。
+        /// 不做碰撞：贴片走透明队列、深度测试照常，飞进墙/地的血滴会被几何遮住，
+        /// 画面上与"撞到世界面即停"等价，且省掉每滴每帧一条射线。
+        /// </summary>
+        private static void TickBloodDrop(EffectItem item, float dt)
+        {
+            var v = item.Velocity;
+            v.y -= CsConst.Gravity * CsCombatTuning.BloodDropGravityScale * dt;
+            item.Tr.position += v * dt;
+            item.Velocity = v;
         }
 
         // ==================================================================
@@ -1058,10 +1363,20 @@ namespace Cs16.Module.Combat
             target.Shell = false;
             target.Velocity = Vector3.zero;
             target.Spin = Vector3.zero;
+            target.Falling = false;
+            target.BloodDrop = false;
+            target.Roll = 0f;
+            target.RiseSpeed = 0f;
+            target.Animated = false;
+            target.Frames = null;
+            target.Frame = 0;
+            target.FrameTime = 0f;
             // 贴片池是按"形状 + 颜色"复用的（火焰 / 火星 / 弹痕同池）⇒ 每次借出都先把材质复位，
             // 否则一枚用过的弹痕被复用成枪口火焰时会带着弹痕的裁切材质（火焰软晕被切掉一片）。
             if (target.Sprite != null && _spriteMat != null) target.Sprite.sharedMaterial = _spriteMat;
-            if (target.Light != null) target.Light.enabled = shape != Shape.Sprite;
+            // 点光只在爆炸里点亮（见 Explosion）：弹道 / 手雷飞行体 / 烟雾球共用这些槽位，
+            // 一借出就点亮等于满场点光（每发弹道一盏、每颗雷一盏）。
+            if (target.Light != null) target.Light.enabled = false;
             target.Go.SetActive(true);
             return target;
         }
@@ -1126,12 +1441,61 @@ namespace Cs16.Module.Combat
             return created;
         }
 
+        /// <summary>
+        /// 取一枚**血滴**：与主血雾分开计数，超过 <see cref="CsCombatTuning.MaxBloodDrops"/> 时
+        /// 复用"剩得最少"的那一滴（= 最旧的一条），不挤占枪口火焰 / 弹痕 / 弹壳的池位。
+        /// </summary>
+        private EffectItem AcquireBloodDrop(float life)
+        {
+            Init();
+
+            EffectItem oldest = null;
+            var count = 0;
+            for (var i = 0; i < _items.Count; i++)
+            {
+                var item = _items[i];
+                if (!item.BloodDrop) continue;
+                count++;
+                if (item.Go == null || !item.Go.activeSelf)
+                {
+                    oldest = item;      // 已经有空闲的 ⇒ 直接用
+                    break;
+                }
+                if (oldest == null || item.Life < oldest.Life) oldest = item;
+            }
+
+            if (count >= CsCombatTuning.MaxBloodDrops && oldest != null)
+            {
+                oldest.Go.SetActive(true);
+                oldest.Life = life;
+                oldest.MaxLife = life;
+                oldest.StartScale = oldest.EndScale = 0f;
+                oldest.Animated = false;
+                oldest.Frames = null;
+                oldest.Frame = 0;
+                oldest.FrameTime = 0f;
+                oldest.Falling = true;
+                if (oldest.Sprite != null && _spriteMat != null) oldest.Sprite.sharedMaterial = _spriteMat;
+                return oldest;
+            }
+
+            var created = AcquireSprite(Shape.Sprite, BloodSprayTint, life);
+            if (created != null) created.BloodDrop = true;
+            return created;
+        }
+
         private EffectItem Create(Shape shape, Color color)
         {
             if (_items.Count >= SoftPoolLimit)
             {
-                _log.Warn("fx.pool.full",
-                    $"特效池已达上限 {SoftPoolLimit}，本次特效被丢弃（考虑降低开火频率或提高上限）");
+                // 连发时一帧可能连续取很多张（血滴），这里只报首次 + 每 N 次，避免刷屏。
+                _poolFullCount++;
+                if (_poolFullCount == 1 || _poolFullCount % CsCombatTuning.LogRateEvery == 0)
+                {
+                    _log.Warn("fx.pool.full",
+                        $"特效池已达上限 {SoftPoolLimit}，本次特效被丢弃（第 {_poolFullCount} 次；" +
+                        "可降低开火频率或提高上限）");
+                }
                 return null;
             }
 
@@ -1139,8 +1503,13 @@ namespace Cs16.Module.Combat
             MeshRenderer renderer = null;
             SpriteRenderer sprite = null;
             MeshFilter filter = null;
+            Material owned = null;          // 本物件克隆的材质（贴片除外，见 EffectItem.OwnedMaterial）
 
-            if (shape == Shape.Sprite)
+            if (shape == Shape.Smoke)
+            {
+                go = CreateSmokeVisual(color);
+            }
+            else if (shape == Shape.Sprite)
             {
                 go = new GameObject("FX_Sprite");      // 贴片走 SpriteRenderer：没有碰撞体、自带 Sprites/Default
                 sprite = go.AddComponent<SpriteRenderer>();
@@ -1161,6 +1530,7 @@ namespace Cs16.Module.Combat
                 // 取一次 .material 得到本实例的克隆，之后换贴图不会影响别的物件。
                 var shellMat = renderer.material;
                 if (shellMat != null) shellMat.color = Color.white;
+                owned = shellMat;
             }
             else
             {
@@ -1185,6 +1555,7 @@ namespace Cs16.Module.Combat
                     // 取一次 .material 会给本实例克隆一份材质（Unity 语义），随后改颜色不会影响别的物件。
                     var mat = renderer.material;
                     if (mat != null) mat.color = color;
+                    owned = mat;
                 }
             }
 
@@ -1215,9 +1586,87 @@ namespace Cs16.Module.Combat
                 Light = light,
                 Shape = shape,
                 Color = color,
+                OwnedMaterial = owned,
             };
             _items.Add(item);
             return item;
+        }
+
+        /// <summary>
+        /// 建一个烟团：三张绕 Y 轴交叉的软边贴片，每张一个 <see cref="SpriteRenderer"/>
+        /// （<c>Sprites/Default</c>：alpha 混合、双面绘制），尺寸由 <see cref="RentSmoke"/> 的调用方逐帧控制。
+        /// </summary>
+        private GameObject CreateSmokeVisual(Color color)
+        {
+            var root = new GameObject("FX_Smoke");
+            var sprite = GetSmokeSprite();
+
+            for (var i = 0; i < SmokeCrossAngles.Length; i++)
+            {
+                var face = new GameObject("FX_SmokeFace");
+                var renderer = face.AddComponent<SpriteRenderer>();
+                renderer.sprite = sprite;
+                renderer.color = color;
+                renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                renderer.receiveShadows = false;
+                // 贴图没造出来就整面不画（⛔ 不画成白块）。
+                renderer.enabled = sprite != null;
+
+                face.transform.SetParent(root.transform, false);
+                face.transform.localRotation = Quaternion.Euler(0f, SmokeCrossAngles[i], 0f);
+            }
+
+            return root;
+        }
+
+        /// <summary>
+        /// 烟团 sprite：把运行时生成的径向软边贴图包成 1 米见方（PPU = 贴图边长），
+        /// 着色走 <see cref="SpriteRenderer"/> 自带的 <c>Sprites/Default</c>
+        /// （⛔ 不用 <c>Shader.Find</c> —— 那有"打包后被剥掉、烟团整片消失"的静默风险）。
+        /// </summary>
+        private Sprite GetSmokeSprite()
+        {
+            if (_sprSmoke != null) return _sprSmoke;
+
+            var tex = CreateSmokeTexture();
+            // FullRect：贴图 Apply 时已 makeNoLongerReadable，Tight 网格会去读像素生成轮廓。
+            _sprSmoke = Sprite.Create(tex, new Rect(0f, 0f, tex.width, tex.height),
+                new Vector2(0.5f, 0.5f), SmokeTextureSize, 0, SpriteMeshType.FullRect);
+            _sprSmoke.name = "FX_SmokeSoftEdge";
+            return _sprSmoke;
+        }
+
+        /// <summary>
+        /// 径向软边 alpha 贴图：半径 0.5 以内是实心核、之后平滑降到 0（白色 + alpha，染色由贴片颜色给）。
+        /// 实心核是"烟团"与"一层薄雾"的差别 —— 只有软边渐变时，半透明叠色后中心也留不住密度。
+        /// </summary>
+        private static Texture2D CreateSmokeTexture()
+        {
+            var tex = new Texture2D(SmokeTextureSize, SmokeTextureSize, TextureFormat.RGBA32, false)
+            {
+                name = "FX_SmokeSoftEdge",
+                wrapMode = TextureWrapMode.Clamp,
+                filterMode = FilterMode.Bilinear,
+            };
+
+            var pixels = new Color32[SmokeTextureSize * SmokeTextureSize];
+            for (var y = 0; y < SmokeTextureSize; y++)
+            {
+                for (var x = 0; x < SmokeTextureSize; x++)
+                {
+                    var dx = (x + 0.5f) / SmokeTextureSize * 2f - 1f;
+                    var dy = (y + 0.5f) / SmokeTextureSize * 2f - 1f;
+                    var r = Mathf.Sqrt(dx * dx + dy * dy);
+                    // 0.5 半径内实心，0.5 → 1.0 平滑落到 0。
+                    var a = Mathf.Clamp01((1f - r) / 0.5f);
+                    a = a * a * (3f - 2f * a);
+                    pixels[y * SmokeTextureSize + x] = new Color32(255, 255, 255, (byte)(a * 255f));
+                }
+            }
+
+            tex.SetPixels32(pixels);
+            tex.Apply(false, true);
+            return tex;
         }
 
         private static void SetScale(EffectItem item, float scale)

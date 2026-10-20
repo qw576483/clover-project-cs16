@@ -198,10 +198,11 @@ namespace Cs16.UI
                 "Press this button and enter password to disable\nvisuals inappropriate for younger players.") { Dull = true }, // :20
             //   文案里显式标注「本项目新增」，供验收逐条对账。坐标沿用原版该页的左右两列（x 40 / 248）与
             //   原版 label/slider 的尺寸（label 160×24、slider 160×50），不是新的排布口径。
-            new ResCtrl("FovLabel", Kind.Label, 40f, 120f, 160f, 24f, "Field of view（本项目新增）"),
+            // 本工程新增项，原版该页没有；坐标沿用原版左右两列（x 40 / 248）。
+            new ResCtrl("FovLabel", Kind.Label, 40f, 120f, 160f, 24f, "Field of view"),
             new ResCtrl("Fov", Kind.Slider, 40f, 142f, 160f, 50f)
                 { Min = CsPlayerSettingsStore.MinFov, Max = CsPlayerSettingsStore.MaxFov, Whole = true },
-            new ResCtrl("ShowFps", Kind.Check, 40f, 220f, 165f, 24f, "Display FPS（本项目新增）"),
+            new ResCtrl("ShowFps", Kind.Check, 40f, 220f, 165f, 24f, "Display FPS"),
         };
 
         // ── 对话框三个按钮（原版写在 optionssubmultiplayer.res 里的对话框级按钮）──
@@ -234,10 +235,9 @@ namespace Cs16.UI
             "Use / plant / defuse  E (hold)\n" +
             "Buy menu              B\n" +
             "Scoreboard            Tab (hold)\n" +
-            "Bot / quick menu      H\n" +
             "Change team           M\n" +
             "Radio                 Z / X / C\n" +
-            "Console               / or Num0\n" +
+            "Console               ` or ~\n" +
             "Pause menu            Esc";
 
         // ═══════════════════ 序列化引用（进预制体）═══════════════════
@@ -388,7 +388,7 @@ namespace Cs16.UI
                 RefreshValueLabels();
             };
             // 原版 `Suit Slider` = HEV 护甲音量；CS 里没有 HEV 护甲语音 ⇒ 本项目用它承载既有的
-            //    "主音量"设置（登记在验收表「允许的差异」：本项目新增映射）。
+            //    "主音量"设置（登记在 `策划/差异登记.tsv`：本项目新增映射）。
             _realSliders["audio/Suit Slider"] = v =>
             {
                 if (_working == null) return;
@@ -666,7 +666,7 @@ namespace Cs16.UI
         /// <summary>原版有、本工程没有对应实现的控件：一律留一条日志（不许静默变成"点了没反应"）。</summary>
         private void LogLimit(string key, string value)
         {
-            Game.Logger.Info(Tag, $"原版选项「{key}」= {value}：本工程无对应实现，仅复刻控件（见验收表「允许的差异」）");
+            Game.Logger.Info(Tag, $"原版选项「{key}」= {value}：本工程无对应实现，仅复刻控件（见 `策划/差异登记.tsv`）");
         }
 
         public override void OnOpen(object param)
@@ -744,7 +744,7 @@ namespace Cs16.UI
 
             CsPlayerSettingsStore.Save(_working);
             CsPlayerSettingsStore.ApplyToEngine(_working);
-            Game.UI.Toast("设置已保存", 1.5f);
+            Game.UI.Toast("Settings saved", 1.5f);
         }
 
         private void OnCancel()

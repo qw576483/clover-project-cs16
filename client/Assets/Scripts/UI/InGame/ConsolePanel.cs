@@ -10,18 +10,17 @@ namespace Cs16.UI
     /// <summary>
     /// 控制台面板：命令输入与回显（<c>bot_add</c> / <c>bot_kick</c> / <c>bot_difficulty</c>）。
     ///
-    /// <para><b>开关键</b>：<c>GameKey</c> 枚举里**没有 BackQuote（`）**（契约缺口：引擎键盘枚举未提供该键），
-    /// 因此这里与 <see cref="HudPanel"/> 一致：<c>/</c>（<see cref="GameKey.Slash"/>）或
-    /// <c>0</c>（<see cref="GameKey.Num0"/>）都能开关控制台。</para>
+    /// <para><b>开关键</b>：<c>GameKey.BackQuote</c>（原版默认绑定 <c>toggleconsole</c> 的 `` ` `` / `~` 键），
+    /// 与 <see cref="HudPanel"/> 同一判据。</para>
     ///
     /// <para><b>支持的命令</b>：<c>bot_add [easy|normal|hard]</c>、<c>bot_kick</c>、
-    /// <c>bot_difficulty &lt;easy|normal|hard&gt;</c>，以及观战五项
+    /// <c>bot_difficulty &lt;easy|normal|hard&gt;</c>、观战五项
     /// <c>spec_mode &lt;1-6&gt;</c> / <c>spec_player &lt;名字|#序号&gt;</c> / <c>spec_next</c> /
-    /// <c>spec_prev</c> / <c>spec_autodirector</c>；其余一律回显"未知命令"
+    /// <c>spec_prev</c> / <c>spec_autodirector</c>，以及打开开发者菜单的 <c>cs16_menu</c>；其余一律回显"未知命令"
     /// （不静默、不猜）。命令最终都只发 <c>Events.*</c> 事件或写 <c>CsSpectator</c> 控制面状态，
     /// 由视图模块 / 比赛模块执行。</para>
     ///
-    /// <para><b>层</b>：<see cref="UILayer.Top"/>。控制台要能盖在任何弹窗（买枪 / H 菜单）之上，
+    /// <para><b>层</b>：<see cref="UILayer.Top"/>。控制台要能盖在任何弹窗（买枪 / 开发者菜单）之上，
     /// 而且它不该参与 <c>Popup</c> 的互斥（开控制台把买枪菜单顶掉是错的）。</para>
     /// </summary>
     public class ConsolePanel : CsPanelBase
@@ -39,10 +38,11 @@ namespace Cs16.UI
             "bot_kick",
             "bot_difficulty <easy|normal|hard>",
             "spec_mode <1|2|3|4>",
-            "spec_player <名字|#序号>",
+            "spec_player <name|#index>",
             "spec_next",
             "spec_prev",
             "spec_autodirector",
+            "cs16_menu",
         };
 
         [SerializeField] private Text _logText;
@@ -70,7 +70,7 @@ namespace Cs16.UI
             CsHudTheme.PlaceTopLeft(title.rectTransform, new Vector2(20f, -12f), new Vector2(700f, 32f));
 
             var shortcut = CsHudTheme.CreateText("Shortcut", boxRt,
-                "GameKey 无 BackQuote → 用 / 或 0 开关；ESC 关闭", 16, TextAnchor.MiddleRight,
+                "` / ~ toggles console; ESC closes", 16, TextAnchor.MiddleRight,
                 CsHudTheme.TextDim);
             CsHudTheme.PlaceTopRight(shortcut.rectTransform, new Vector2(-20f, -12f), new Vector2(700f, 32f));
 
@@ -81,7 +81,7 @@ namespace Cs16.UI
             _logText.verticalOverflow = VerticalWrapMode.Truncate;
 
             _hintText = CsHudTheme.CreateText("Hint", boxRt,
-                "命令：" + string.Join("　·　", CommandList), 16, TextAnchor.MiddleLeft, CsHudTheme.TextDim);
+                "Commands: " + string.Join("   ", CommandList), 16, TextAnchor.MiddleLeft, CsHudTheme.TextDim);
             CsHudTheme.PlaceBottomLeft(_hintText.rectTransform, new Vector2(20f, 96f),
                 new Vector2(BoxWidth - 40f, 24f));
 
@@ -91,7 +91,7 @@ namespace Cs16.UI
             // 那条坑的说明与正确写法都在 UIFactory.CreateInputField 的注释里。
             _input = UIFactory.CreateInputField("Input", boxRt, new Vector2(0f, 0f), new Vector2(0f, 0f),
                 new Vector2(20f, 52f), new Vector2(BoxWidth - 40f, 36f),
-                "输入命令后回车（命令见上一行）", MaxInputLength, CsHudTheme.InputFieldStyle);
+                "Type a command and press Enter (list above)", MaxInputLength, CsHudTheme.InputFieldStyle);
 
             _statusText = CsHudTheme.CreateText("Status", boxRt, string.Empty, 17, TextAnchor.MiddleLeft,
                 CsHudTheme.Warn);
@@ -110,6 +110,9 @@ namespace Cs16.UI
 
             CsIngameCursor.UnlockForMenu(nameof(ConsolePanel));
 
+            // 命令清单以 CommandList 为准重写一遍：预制体里的副本可能落后于代码新增的命令。
+            if (_hintText != null) _hintText.text = "Commands: " + string.Join("   ", CommandList);
+
             LogBuffer.Drain();
             Render(true);
 
@@ -119,7 +122,7 @@ namespace Cs16.UI
                 _input.ActivateInputField();
             }
 
-            Game.Logger?.Info(Tag, "控制台已打开（显示最近日志；命令：bot_add / bot_kick / bot_difficulty）");
+            Game.Logger?.Info(Tag, "控制台已打开（显示最近日志；命令：bot_add / bot_kick / bot_difficulty / spec_* / cs16_menu）");
         }
 
         public override void OnClose()
@@ -141,9 +144,9 @@ namespace Cs16.UI
                 return;
             }
 
-            // 开关控制台键只在输入框没聚焦时才生效：不然想在命令里打 "/" 会直接被收起
+            // 开关控制台键只在输入框没聚焦时才生效：输入框聚焦时这个键是普通字符输入
             var typing = _input != null && _input.isFocused;
-            if (!typing && (input.GetKeyDown(GameKey.Slash) || input.GetKeyDown(GameKey.Num0)))
+            if (!typing && input.GetKeyDown(GameKey.BackQuote))
             {
                 Game.UI.Close<ConsolePanel>();
                 return;
@@ -207,8 +210,8 @@ namespace Cs16.UI
                 case "bot_kick":
                     Game.Logger?.Info(Tag, $"控制台命令 {raw} → 发 {Events.KickBot}");
                     Game.Event.Emit(Events.KickBot);
-                    SetStatus("已发送：踢出机器人", false);
-                    LogBuffer.Push("bot_kick → 已发送（事由比赛模块执行，结果见 [Match] 日志）");
+                    SetStatus("Sent: kick bot", false);
+                    LogBuffer.Push("bot_kick -> sent (match module executes; see [Match] log)");
                     break;
 
                 case "bot_difficulty":
@@ -235,11 +238,17 @@ namespace Cs16.UI
                     SpecAutoDirector();
                     break;
 
+                case "cs16_menu":
+                    Game.Logger?.Info(Tag, "控制台命令 cs16_menu → 打开开发者菜单（该面板没有默认键位）");
+                    Game.UI.Close<ConsolePanel>();
+                    Game.UI.Open<HMenuPanel>();
+                    break;
+
                 default:
                     Game.Logger?.Info(Tag, $"控制台收到未知命令：{raw}");
-                    SetStatus($"未知命令：{command}", true);
+                    SetStatus($"Unknown command: {command}", true);
                     LogBuffer.Push(
-                        $"未知命令：{command}（可用：" + string.Join(" / ", CommandList) + "）");
+                        $"Unknown command: {command} (available: " + string.Join(" / ", CommandList) + ")");
                     break;
             }
         }
@@ -250,15 +259,15 @@ namespace Cs16.UI
             if (tokens.Length > 1 && !TryParseDifficulty(tokens[1], out difficulty))
             {
                 Game.Logger?.Warn(Tag, $"控制台 bot_add 的难度参数无法识别：{tokens[1]}");
-                SetStatus($"无法识别的难度：{tokens[1]}（可用 easy / normal / hard）", true);
-                LogBuffer.Push($"bot_add {tokens[1]} → 无法识别的难度（可用 easy / normal / hard）");
+                SetStatus($"Unknown difficulty: {tokens[1]} (use easy / normal / hard)", true);
+                LogBuffer.Push($"bot_add {tokens[1]} -> unknown difficulty (use easy / normal / hard)");
                 return;
             }
 
             Game.Logger?.Info(Tag, $"控制台命令 bot_add → 添加机器人（{difficulty}）");
             Game.Event.Emit(Events.AddBot, difficulty);
-            SetStatus($"已发送：添加机器人（{difficulty}）", false);
-            LogBuffer.Push($"bot_add → 已发送（难度 {difficulty}）；结果见 [Match] 日志");
+            SetStatus($"Sent: add bot ({difficulty})", false);
+            LogBuffer.Push($"bot_add -> sent (difficulty {difficulty}); see [Match] log");
         }
 
         private void BotDifficulty(string[] tokens)
@@ -266,15 +275,15 @@ namespace Cs16.UI
             if (tokens.Length < 2 || !TryParseDifficulty(tokens[1], out var difficulty))
             {
                 Game.Logger?.Warn(Tag, $"控制台 bot_difficulty 参数缺失或无法识别：{string.Join(" ", tokens)}");
-                SetStatus("用法：bot_difficulty <easy|normal|hard>", true);
-                LogBuffer.Push("bot_difficulty → 用法：bot_difficulty <easy|normal|hard>");
+                SetStatus("Usage: bot_difficulty <easy|normal|hard>", true);
+                LogBuffer.Push("bot_difficulty -> usage: bot_difficulty <easy|normal|hard>");
                 return;
             }
 
             Game.Logger?.Info(Tag, $"控制台命令 bot_difficulty → {difficulty}");
             Game.Event.Emit(Events.SetBotDifficulty, difficulty);
-            SetStatus($"已发送：机器人难度 → {difficulty}", false);
-            LogBuffer.Push($"bot_difficulty {difficulty} → 已发送；结果见 [Match] 日志");
+            SetStatus($"Sent: bot difficulty -> {difficulty}", false);
+            LogBuffer.Push($"bot_difficulty {difficulty} -> sent; see [Match] log");
         }
 
         private static bool TryParseDifficulty(string text, out CsBotDifficulty difficulty)
@@ -341,8 +350,8 @@ namespace Cs16.UI
 
             Game.Logger?.Info(Tag,
                 $"控制台命令 spec_mode → {CsSpectator.ModeName(CsSpectator.Mode)}（档位 {(int)CsSpectator.Mode}/6）");
-            SetStatus($"观战档位 → {CsSpectator.ModeName(CsSpectator.Mode)}", false);
-            LogBuffer.Push($"spec_mode → {CsSpectator.ModeName(CsSpectator.Mode)}（机位已切换）");
+            SetStatus($"Spectator mode -> {CsSpectator.ModeName(CsSpectator.Mode)}", false);
+            LogBuffer.Push($"spec_mode -> {CsSpectator.ModeName(CsSpectator.Mode)} (view mode changed)");
         }
 
         /// <summary>
@@ -354,8 +363,8 @@ namespace Cs16.UI
             if (tokens.Length < 2)
             {
                 Game.Logger?.Warn(Tag, "控制台 spec_player 缺参数");
-                SetStatus("用法：spec_player <名字|#序号>", true);
-                LogBuffer.Push("spec_player → 用法：spec_player <名字|#序号>");
+                SetStatus("Usage: spec_player <name|#index>", true);
+                LogBuffer.Push("spec_player -> usage: spec_player <name|#index>");
                 return;
             }
 
@@ -363,14 +372,14 @@ namespace Cs16.UI
             if (bus == null)
             {
                 Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_player 发不出去");
-                SetStatus("事件总线不可用：spec_player 未发送", true);
+                SetStatus("Event bus unavailable: spec_player not sent", true);
                 return;
             }
 
             Game.Logger?.Info(Tag, $"控制台命令 spec_player → {tokens[1]}");
             bus.Emit(Events.SpectateTarget, tokens[1]);
-            SetStatus($"已发送：观战目标 {tokens[1]}", false);
-            LogBuffer.Push($"spec_player {tokens[1]} → 已发送（结果见 [View] 日志）");
+            SetStatus($"Sent: spectator target {tokens[1]}", false);
+            LogBuffer.Push($"spec_player {tokens[1]} -> sent (see [View] log)");
         }
 
         /// <summary>
@@ -384,14 +393,14 @@ namespace Cs16.UI
             if (bus == null)
             {
                 Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_next 发不出去");
-                SetStatus("事件总线不可用：spec_next 未发送", true);
+                SetStatus("Event bus unavailable: spec_next not sent", true);
                 return;
             }
 
             Game.Logger?.Info(Tag, $"控制台命令 spec_next → 发 {Events.SpectateNext}");
             bus.Emit(Events.SpectateNext);
-            SetStatus("已发送：下一个观战目标", false);
-            LogBuffer.Push("spec_next → 已发送（结果见 [Match]/[View] 日志）");
+            SetStatus("Sent: next spectator target", false);
+            LogBuffer.Push("spec_next -> sent (see [Match]/[View] log)");
         }
 
         /// <summary>
@@ -404,14 +413,14 @@ namespace Cs16.UI
             if (bus == null)
             {
                 Game.Logger?.Warn(Tag, "Game.Event 为 null（引擎未 Launch？），spec_prev 发不出去");
-                SetStatus("事件总线不可用：spec_prev 未发送", true);
+                SetStatus("Event bus unavailable: spec_prev not sent", true);
                 return;
             }
 
             Game.Logger?.Info(Tag, $"控制台命令 spec_prev → 发 {Events.SpectatePrev}");
             bus.Emit(Events.SpectatePrev);
-            SetStatus("已发送：上一个观战目标", false);
-            LogBuffer.Push("spec_prev → 已发送（结果见 [View] 日志）");
+            SetStatus("Sent: previous spectator target", false);
+            LogBuffer.Push("spec_prev -> sent (see [View] log)");
         }
 
         /// <summary>
@@ -434,7 +443,7 @@ namespace Cs16.UI
             else
                 Game.Logger?.Info(Tag, "控制台命令 spec_autodirector → 关");
 
-            SetStatus($"已发送：自动导演 {text}", false);
+            SetStatus($"Sent: auto director {text}", false);
             LogBuffer.Push($"spec_autodirector → {text}");
         }
     }

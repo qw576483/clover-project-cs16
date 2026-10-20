@@ -56,3 +56,7 @@ client/Assets/_shots.meta
 #   是"CWD=项目根 + 脚本用相对路径"的产物，曾达 382 文件 / 48.4 MB 且**未被忽略** ⇒ 一次 `git add -A`
 #   就会把全部证据扫进提交（与 *.bak 同类事故）。⇒ 拦住它；项目树内那份保留为可读副本，⛔ 不再新增。
 _cs16-evidence/
+
+# ★ Unity 崩溃恢复自动存档（临时产物，不入库）
+client/Assets/_Recovery/
+client/Assets/_Recovery.meta

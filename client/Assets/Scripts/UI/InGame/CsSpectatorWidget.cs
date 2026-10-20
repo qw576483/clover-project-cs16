@@ -31,13 +31,13 @@ namespace Cs16.UI
         /// <c>FIRE1 - Chase next player</c> / <c>FIRE2 - Chase previous player</c> /
         /// <c>JUMP - Change view modes</c>。
         /// </summary>
-        private const string KeysHint = "[左键] 下一个目标　[右键] 上一个目标　[空格] 切换观战档位";
+        private const string KeysHint = "FIRE1 - Chase next player   FIRE2 - Chase previous player   JUMP - Change view modes";
 
         /// <summary>
         /// 俯视概览（档位 5 / 6）的按键提示：原版在 map 档位里把前进/后退当缩放、左移/右移当平移
         /// （<c>hud_spectator.cpp:754-767</c> 的 <c>IN_FORWARD/IN_BACK/IN_MOVELEFT/IN_MOVERIGHT</c>）。
         /// </summary>
-        private const string MapKeysHint = "[左键] 下一个目标　[右键] 上一个目标　[W/S] 缩放　[A/D] 平移　[空格] 切换观战档位";
+        private const string MapKeysHint = "FIRE1 - Chase next player   FIRE2 - Chase previous player   W/S - Zoom   A/D - Pan   JUMP - Change view modes";
 
         public RectTransform Root;
         public Text Banner;
@@ -53,17 +53,18 @@ namespace Cs16.UI
                 return;
             }
 
+            // 宽度按原版英文按键提示的长度取（提示是单行、不换行）。
             var root = UIFactory.CreatePanel("Spectator", parent, CsHudTheme.PanelBgSoft, false);
-            CsHudTheme.PlaceTopCenter(root.rectTransform, new Vector2(0f, -150f), new Vector2(620f, 84f));
+            CsHudTheme.PlaceTopCenter(root.rectTransform, new Vector2(0f, -150f), new Vector2(1240f, 84f));
             Root = root.rectTransform;
 
-            Banner = CsHudTheme.CreateText("Banner", Root, "观战中", 34, TextAnchor.MiddleCenter,
+            Banner = CsHudTheme.CreateText("Banner", Root, "Spectating", 34, TextAnchor.MiddleCenter,
                 CsHudTheme.TextHud);
-            CsHudTheme.PlaceTopCenter(Banner.rectTransform, new Vector2(0f, -6f), new Vector2(600f, 42f));
+            CsHudTheme.PlaceTopCenter(Banner.rectTransform, new Vector2(0f, -6f), new Vector2(1200f, 42f));
 
-            Hint = CsHudTheme.CreateText("Hint", Root, ModeLine(), 20, TextAnchor.MiddleCenter,
+            Hint = CsHudTheme.CreateText("Hint", Root, ModeLine(), 16, TextAnchor.MiddleCenter,
                 CsHudTheme.TextDim);
-            CsHudTheme.PlaceTopCenter(Hint.rectTransform, new Vector2(0f, -50f), new Vector2(600f, 28f));
+            CsHudTheme.PlaceTopCenter(Hint.rectTransform, new Vector2(0f, -50f), new Vector2(1200f, 24f));
         }
 
         /// <summary>
@@ -95,7 +96,7 @@ namespace Cs16.UI
             if (!visible) return;
 
             if (Banner != null)
-                Banner.text = string.IsNullOrEmpty(targetName) ? "观战中" : $"观战中 - {targetName}";
+                Banner.text = string.IsNullOrEmpty(targetName) ? "Spectating" : $"Spectating - {targetName}";
 
             // 档位由控制台 spec_mode 改，不在本控件里缓存：每帧读一次状态，避免"控件与状态各存一份"。
             if (Hint != null) Hint.text = ModeLine();

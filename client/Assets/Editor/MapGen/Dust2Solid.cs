@@ -22,8 +22,9 @@ namespace Cs16.EditorTools
     /// 例如 <c>aaatrigger</c> 那类方向相反的刷面，直接跳过）；</item>
     /// <item>从面向下扫，找到**第一个空腔** ⇒ 实心区间 = <c>[空腔顶, 可站面]</c>；一路实心到下限则用下限
     /// （全图最低点再往下留一段，保证掉进实心里的角色一路都被体积挡住）；</item>
-    /// <item>盒顶 = 可站面本身（**绝不高出**它，否则会把合法地板顶掉），然后按
-    /// <c>(YMax, YMin)</c> 量化后贪心合并成矩形（平地板会合并成大块，盒数从几千降到几百）。</item>
+    /// <item>盒顶 = 该面**在本格内的最低高度**（<see cref="Dust2Surfaces.Face.MinY"/>）：盒顶处处不高出可见面，
+    /// 否则斜面上每格的格边界都会多出一块隐形立板；然后按 <c>(YMax, YMin)</c> 量化后贪心合并成矩形
+    /// （平地板会合并成大块，盒数从几千降到几百）。</item>
     /// </list>
     ///
     /// <para><b>为什么不参与烘焙</b>：本表生成的实心盒由 <see cref="Dust2Builder"/> 挂在
@@ -63,12 +64,6 @@ namespace Cs16.EditorTools
         // ==================================================================
         //  扫描参数
         // ==================================================================
-
-        /// <summary>朝上三角面的判定：法线 y 分量下限（与位图同格口径下的"能当可站面"）。</summary>
-        private const float UpFaceNormalY = 0.1f;
-
-        /// <summary>可站面高度的去重粒度（米）：同格内两片相差不到它的面算同一个面。</summary>
-        private const float FaceDedup = 0.02f;
 
         /// <summary>从面向下起扫的偏移（米）：绕开"面正好落在 leaf 边界"的浮点歧义。</summary>
         private const float SurfaceEps = 0.05f;
@@ -110,7 +105,7 @@ namespace Cs16.EditorTools
             var bsp = BspTree.Load(Dust2Layout.BspFile);
             if (bsp == null) return Array.Empty<Box>();
 
-            var faces = RasterizeUpFaces(geo);
+            var faces = Dust2Surfaces.BuildTable(geo);
             float limit = Mathf.Floor(geo.WorldMin.y) - BottomMargin;
 
             var boxes = new List<Box>();
@@ -120,21 +115,24 @@ namespace Cs16.EditorTools
                 for (int ix = 0; ix < geo.Width; ix++)
                 {
                     if (!walkable[iz * geo.Width + ix]) continue;
-                    if (!faces.TryGetValue(iz * geo.Width + ix, out var ys) || ys.Count == 0) continue;
+                    if (!faces.TryGetValue(iz * geo.Width + ix, out var cellFaces) || cellFaces.Count == 0) continue;
                     faceCells++;
 
                     float ux = geo.OriginX + (ix + 0.5f) * geo.CellSize;
                     float uz = geo.OriginZ + (iz + 0.5f) * geo.CellSize;
-                    ys.Sort();
+                    cellFaces.Sort((p, q) => p.CenterY.CompareTo(q.CenterY));
 
                     // 自检：最高可站面**之上**应当是空的（坐标对应错了这里会立刻塌掉）
-                    if (bsp.IsSolid(ux, ys[ys.Count - 1] + 0.3f, uz)) aboveSolidCount++;
+                    if (bsp.IsSolid(ux, cellFaces[cellFaces.Count - 1].CenterY + 0.3f, uz)) aboveSolidCount++;
 
                     lowerFaces.Clear();
-                    for (int f = 0; f < ys.Count; f++)
+                    for (int f = 0; f < cellFaces.Count; f++)
                     {
-                        float yTop = ys[f];
-                        if (!TrySolidBottom(bsp, ux, uz, yTop, limit, out float yBottom)) continue;
+                        // 盒顶 = 该面**在本格内**的最低高度：盒顶处处不高于可见面，格边界上不会多出立板。
+                        // 落点判定（面下方是不是 solid）仍按格心高度探，格心处一定在面下方。
+                        float yCenter = cellFaces[f].CenterY;
+                        float yTop = cellFaces[f].MinY;
+                        if (!TrySolidBottom(bsp, ux, uz, yCenter, limit, out float yBottom)) continue;
                         probeCount++;
 
                         // 盒顶插进"更低可站面"的站立带 ⇒ 会把那一层顶掉（数出来给调用方报错）
@@ -184,84 +182,6 @@ namespace Cs16.EditorTools
                 if (bsp.IsSolid(ux, mid, uz)) y = mid; else empty = mid;
             }
             yBottom = y;
-            return true;
-        }
-
-        // ==================================================================
-        //  朝上面 → 每格的"可站面"高度集合
-        // ==================================================================
-
-        private static Dictionary<int, List<float>> RasterizeUpFaces(Dust2GeoData geo)
-        {
-            var result = new Dictionary<int, List<float>>();
-            float cell = geo.CellSize;
-            float ox = geo.OriginX, oz = geo.OriginZ;
-
-            for (int g = 0; g < geo.Groups.Length; g++)
-            {
-                var grp = geo.Groups[g];
-                if (grp?.Indices == null || grp.Indices.Length < 3 || grp.Vertices == null) continue;
-                var idx = grp.Indices;
-                var v = grp.Vertices;
-
-                for (int t = 0; t + 2 < idx.Length; t += 3)
-                {
-                    var a = v[idx[t]];
-                    var b = v[idx[t + 1]];
-                    var c = v[idx[t + 2]];
-
-                    var n = Vector3.Cross(b - a, c - a);
-                    float ln = n.magnitude;
-                    if (ln < 1e-9f || n.y / ln <= UpFaceNormalY) continue;   // 只收朝上面
-
-                    int ix0 = Mathf.FloorToInt((Mathf.Min(a.x, b.x, c.x) - ox) / cell);
-                    int ix1 = Mathf.FloorToInt((Mathf.Max(a.x, b.x, c.x) - ox) / cell);
-                    int iz0 = Mathf.FloorToInt((Mathf.Min(a.z, b.z, c.z) - oz) / cell);
-                    int iz1 = Mathf.FloorToInt((Mathf.Max(a.z, b.z, c.z) - oz) / cell);
-
-                    for (int iz = iz0; iz <= iz1; iz++)
-                    {
-                        for (int ix = ix0; ix <= ix1; ix++)
-                        {
-                            if (!TryFaceHeightAtCellCenter(a, b, c, ox + (ix + 0.5f) * cell, oz + (iz + 0.5f) * cell,
-                                                           out float y)) continue;
-                            int key = iz * geo.Width + ix;
-                            if (!result.TryGetValue(key, out var list))
-                            {
-                                list = new List<float>();
-                                result[key] = list;
-                            }
-                            bool dup = false;
-                            for (int k = 0; k < list.Count; k++)
-                            {
-                                if (Mathf.Abs(list[k] - y) < FaceDedup) { dup = true; break; }
-                            }
-                            if (!dup) list.Add(y);
-                        }
-                    }
-                }
-            }
-
-            Debug.Log($"[Dust2Solid] 朝上面光栅化：{result.Count} 格拿到可站面");
-            return result;
-        }
-
-        /// <summary>格心 <c>(px, pz)</c> 是否落在三角面内（含边）；是则给出该处的高度。</summary>
-        private static bool TryFaceHeightAtCellCenter(Vector3 a, Vector3 b, Vector3 c, float px, float pz, out float y)
-        {
-            y = 0f;
-            float d0 = (b.x - a.x) * (pz - a.z) - (b.z - a.z) * (px - a.x);
-            float d1 = (c.x - b.x) * (pz - b.z) - (c.z - b.z) * (px - b.x);
-            float d2 = (a.x - c.x) * (pz - c.z) - (a.z - c.z) * (px - c.x);
-            bool neg = d0 < 0f || d1 < 0f || d2 < 0f;
-            bool pos = d0 > 0f || d1 > 0f || d2 > 0f;
-            if (neg && pos) return false;
-
-            float den = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
-            if (Mathf.Abs(den) < 1e-12f) return false;
-            float w0 = ((b.z - c.z) * (px - c.x) + (c.x - b.x) * (pz - c.z)) / den;
-            float w1 = ((c.z - a.z) * (px - c.x) + (a.x - c.x) * (pz - c.z)) / den;
-            y = w0 * a.y + w1 * b.y + (1f - w0 - w1) * c.y;
             return true;
         }
 

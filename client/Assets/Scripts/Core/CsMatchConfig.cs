@@ -37,6 +37,12 @@ namespace Cs16.Core
         /// <summary>半场交换：到 RoundsPerHalf 局时自动换边。</summary>
         public bool HalfTimeSwap = true;
 
+        /// <summary>
+        /// 客机模式：true = 本机不是这一局的权威（局域网客机）。
+        /// 回合阶段 / 比分来自主机快照；本机不生成机器人、不判全歼与超时、不结算购买与回合经济。
+        /// </summary>
+        public bool ClientMode = false;
+
         public CsMatchConfig Clone()
         {
             return (CsMatchConfig)MemberwiseClone();
