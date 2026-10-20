@@ -1494,12 +1494,6 @@ namespace Cs16.Module.Bot
         /// </summary>
         private const float RetargetHoldSeconds = 1.5f;
 
-        /// <summary>
-        /// 关掉片 C 的三条交战分支（狙蹲守 / 掩体 / peek），只留威胁排序。
-        /// 测试入口：用于同一环境里对"有 / 无这三条分支"的命中率做对照，不改变任何玩法数值。
-        /// </summary>
-        public static bool BranchDisabledForTest { get; set; }
-
         /// <summary>锁定的目标 id（0 = 没锁）；<see cref="_pinnedUntil"/> 到期后失效。</summary>
         private long _pinnedTargetId;
 

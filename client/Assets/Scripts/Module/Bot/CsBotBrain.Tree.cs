@@ -77,14 +77,14 @@ namespace Cs16.Module.Bot
                                         // 前三条在 CsBotBrain.Combat.cs 里（持狙远距蹲守 / 挡视线的掩体点 / 2s 探身节奏）。
                                         new BtSequence("engage-sniper-hold",
                                             new BtCondition("sniper-hold-due",
-                                                b => !BranchDisabledForTest && b.SniperHoldDue(b._tickSelf)),
+                                                b => b.SniperHoldDue(b._tickSelf)),
                                             new LeafSniperHold()),
                                         new BtSequence("engage-hide",
-                                            new BtCondition("hide-due", b => !BranchDisabledForTest && b.HideDue()),
+                                            new BtCondition("hide-due", b => b.HideDue()),
                                             new BtCooldown("hide-cooldown", HideCooldown, new LeafHide())),
                                         new BtSequence("engage-peek",
                                             new BtCondition("peek-due",
-                                                b => !BranchDisabledForTest && b.PeekDue(b._tickSelf)),
+                                                b => b.PeekDue(b._tickSelf)),
                                             new LeafPeek()),
                                         // 撤退 → 换弹 → 交战：残血且敌人还远才退；退的过程中本分支独占，
                                         // 窗口结束后 Success，由 BtCooldown 冷却一段时间再允许下一次后撤。

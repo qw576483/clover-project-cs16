@@ -102,6 +102,22 @@ namespace Cs16.Module.Bot
         /// <summary>"卡住"日志的时间闸（见 <see cref="ReportStuck"/>）：下一次最早可以记一条的时刻。</summary>
         private float _nextStuckLogAt;
 
+        // ---- 站进几何的脱困模式（见 TryGeoEscape）----
+        private const float GeoConfirmSeconds = 0.4f;    // 连续站进几何多久才算数（抖动过滤）
+        private const float GeoLockSeconds = 1.8f;       // 锁定出口方向多久（期间只走出口）
+        private const float GeoCooldownSeconds = 3f;     // 失败后冷却，禁止连试
+        private const float GeoProbeInterval = 0.2f;     // CanStand（物理判站）查询间隔
+        private const float GeoExitReachSqr = 0.04f;     // 距出口 0.2m 内算已站上
+        private float _geoBadSince = -1f;
+        private float _geoUntil;
+        private float _geoNextTryAt;
+        private Vector3 _geoExit;
+        private bool _geoExitValid;
+        private bool _geoLockActive;
+        private float _geoStandCheckAt;
+        private bool _geoStandOk;
+        private int _geoFailRound = -1;
+
         // ---- 卡住自恢复 ----
         private int _stuckStreak;
         private bool _stuckEvent;
@@ -823,6 +839,18 @@ namespace Cs16.Module.Bot
             if (!viaRoute) _lastTargetSrc = "goal-straight";
             var toGoal = goal - selfPosition;
             toGoal.y = 0f;
+
+            // 站进几何：锁定出口方向，忽略目标（见 TryGeoEscape）。期间不判卡住、不让行、不换目标。
+            if (TryGeoEscape(selfPosition, now, out var geoDir))
+            {
+                NoteMovement(selfPosition, false, now);
+                _lastTarget = target;
+                _lastDesired = geoDir;
+                _lastMove = geoDir;
+                _lastDir = geoDir;
+                _lastTargetSrc = "geo-escape";
+                return geoDir;
+            }
 
             var routeDone = !viaRoute || _index >= _route.Count;
             if (routeDone && toGoal.magnitude <= arriveRadius)
@@ -2997,6 +3025,124 @@ namespace Cs16.Module.Bot
         // ==================================================================
         //  卡住检测
         // ==================================================================
+        /// <summary>脱困模式是否正锁定出口（期间不判卡住、不让行、不换目标）。</summary>
+        public bool GeoEscapeActive => _geoLockActive;
+
+
+        /// <summary>
+        /// 站进几何（位图不可走 / 站不住）的脱困：连续 <see cref="GeoConfirmSeconds"/> 秒确认后，
+        /// **一次性**选最近的出口格并锁定方向 <see cref="GeoLockSeconds"/> 秒 —— 期间只走出口、忽略目标，
+        /// 避免"自救方向 ↔ 目标方向"每 tick 来回摆。走不出来则冷却 <see cref="GeoCooldownSeconds"/> 秒再试。
+        /// </summary>
+        private bool TryGeoEscape(Vector3 selfPosition, float now, out Vector3 dir)
+        {
+            dir = Vector3.zero;
+
+            if (_geoLockActive && now < _geoUntil)
+            {
+                if (!_geoExitValid) { _geoLockActive = false; return false; }
+                var toExit = _geoExit - selfPosition;
+                toExit.y = 0f;
+                if (toExit.sqrMagnitude <= GeoExitReachSqr)
+                {
+                    _geoLockActive = false;
+                    _geoBadSince = -1f;
+                    return false;
+                }
+                dir = toExit.normalized;
+                return true;
+            }
+
+            if (_geoLockActive) _geoLockActive = false;   // 锁定期到
+
+            if (!InGeometry(selfPosition, now))
+            {
+                _geoBadSince = -1f;
+                return false;
+            }
+
+            if (_geoBadSince < 0f) { _geoBadSince = now; return false; }
+            if (now - _geoBadSince < GeoConfirmSeconds) return false;
+            if (now < _geoNextTryAt) return false;
+
+            if (!TryFindGeoExit(selfPosition, out var exit))
+            {
+                _geoBadSince = -1f;
+                _geoNextTryAt = now + GeoLockSeconds + GeoCooldownSeconds;
+                LogGeoFailOnce(selfPosition);
+                return false;
+            }
+
+            _geoExit = exit;
+            _geoExitValid = true;
+            _geoLockActive = true;
+            _geoUntil = now + GeoLockSeconds;
+            _geoNextTryAt = _geoUntil + GeoCooldownSeconds;
+
+            var d = exit - selfPosition;
+            d.y = 0f;
+            if (d.sqrMagnitude <= GeoExitReachSqr) return false;
+            dir = d.normalized;
+            return true;
+        }
+
+
+        /// <summary>脚下是否"站进几何"：位图说不可走，或物理判站站不住（物理查询按 0.2s 缓存）。</summary>
+        private bool InGeometry(Vector3 p, float now)
+        {
+            var md = Game.Map;
+            if (_map == null || md == null || !md.Loaded || md.CellSize <= 0f) return false;
+            if (!_map.WalkableAt(p.x, p.z)) return true;
+
+            if (now >= _geoStandCheckAt)
+            {
+                _geoStandCheckAt = now + GeoProbeInterval;
+                _geoStandOk = _map.CanStand(p);
+            }
+            return !_geoStandOk;
+        }
+
+
+        /// <summary>最近的可走且站得住的格心（最多 3 格远，取曼哈顿最近）。</summary>
+        private bool TryFindGeoExit(Vector3 p, out Vector3 exit)
+        {
+            exit = Vector3.zero;
+            var md = Game.Map;
+            if (md == null || !md.Loaded || md.CellSize <= 0f) return false;
+
+            var size = md.CellSize;
+            var bestD = float.MaxValue;
+            for (var dz = -3; dz <= 3; dz++)
+            {
+                for (var dx = -3; dx <= 3; dx++)
+                {
+                    if (dx == 0 && dz == 0) continue;
+                    var x = p.x + dx * size;
+                    var z = p.z + dz * size;
+                    if (!_map.WalkableAt(x, z)) continue;
+                    var d = dx * dx + dz * dz;
+                    if (d >= bestD) continue;
+                    var cell = new Vector3(x, p.y, z);
+                    if (!_map.CanStand(cell)) continue;
+                    bestD = d;
+                    exit = cell;
+                }
+            }
+            return bestD != float.MaxValue;
+        }
+
+
+        /// <summary>脱困失败留痕（每 bot 每回合最多一条）。</summary>
+        private void LogGeoFailOnce(Vector3 p)
+        {
+            if (_geoFailRound >= 0 && Time.time - _geoFailRound < 30f) return;   // 每回合最多一条（30s 兜底）
+            _geoFailRound = (int)Time.time;
+            Game.Logger.Warn(Tag,
+                $"{_ownerName} 脱困失败：位置=({p.x:F1},{p.y:F1},{p.z:F1}) 3 格内没有可走且站得住的格" +
+                $"（位图可走={(_map != null && _map.WalkableAt(p.x, p.z))}）→ 冷却 {GeoCooldownSeconds:F0}s 后再试");
+        }
+
+
         /// <summary>
         /// 采样位移并判定卡住。<paramref name="wantMove"/> = 本帧表达了"想移动"。
         /// 返回 true = 本检测周期判定为卡住（调用方据此换向/换目标）；<paramref name="moved"/> 返回周期内位移。

@@ -746,6 +746,9 @@ namespace Cs16.Module.Bot
         /// </summary>
         private void TrackStuck(CsActor self, ref CsBotIntent intent, float now)
         {
+            // 脱困模式锁定了出口方向：期间不判卡住、不让行、不改目标（否则两套恢复互相抢）。
+            if (_nav.GeoEscapeActive) return;
+
             // 让行窗口内只替换移动方向；瞄准 / 开火 / 下包意图保持不变。
             if (now < _yieldUntil && intent.Move.sqrMagnitude > 0.0001f) intent.Move = _yieldDir;
 

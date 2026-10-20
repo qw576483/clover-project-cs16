@@ -20,6 +20,9 @@ namespace Cs16.Module.Bot
             if (!_nav.ConsumeStuck(out var moved, out var escalate)) return;
             if (!escalate) return;
 
+            // 脱困模式锁定出口期间不换目标（换目标会把出口方向一起换掉）。
+            if (_nav.GeoEscapeActive) return;
+
             // 正在下包/拆包时不换目标（一移动进度就清零）；拆包任务的目标是 C4，换目标没有意义。
             if (self.UseProgress >= 0f) return;
 
