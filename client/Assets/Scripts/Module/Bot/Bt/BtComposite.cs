@@ -1,16 +1,14 @@
 namespace Cs16.Module.Bot.Bt
 {
     /// <summary>
-    /// 复合节点基类：持有子节点数组与"上次停在哪个 Running 子节点"的记忆（<c>-1</c> = 无）。
-    /// <para>记忆语义：某个子节点返回 <see cref="BtStatus.Running"/> 时记住它的下标，下一帧从它开始 Tick；
-    /// 该子节点返回非 Running 时清下标（整棵子树重新从第一个子节点开始）。</para>
+    /// 复合节点基类：持有子节点数组。
+    /// <para><b>每 tick 从第一个子节点全量求值</b>（不记"上次停在哪个 Running 子节点"）：
+    /// 树的每层都夹着"每帧必须跑"的前置动作（感知、卡住恢复、任务/分支推导），
+    /// 一旦从 Running 子节点续跑就会把它们整帧跳过，导致感知与任务冻结数秒。</para>
     /// </summary>
     public abstract class BtComposite : BtNode
     {
         protected readonly BtNode[] Children;
-
-        /// <summary>上次返回 Running 的子节点下标；<c>-1</c> = 本节点不在"续跑"状态。</summary>
-        protected int RunningIndex = -1;
 
         protected BtComposite(string name, params BtNode[] children)
         {
@@ -19,13 +17,6 @@ namespace Cs16.Module.Bot.Bt
         }
 
         public override void Reset()
-        {
-            RunningIndex = -1;
-            for (var i = 0; i < Children.Length; i++) Children[i].Reset();
-        }
-
-        /// <summary>从头开始时清一遍子节点记忆（只清这一次，不是每帧）。</summary>
-        protected void ResetChildrenOnEntry()
         {
             for (var i = 0; i < Children.Length; i++) Children[i].Reset();
         }
@@ -38,26 +29,13 @@ namespace Cs16.Module.Bot.Bt
 
         public override BtStatus Tick(CsBotBrain brain, float dt, float now)
         {
-            var start = RunningIndex >= 0 ? RunningIndex : 0;
-            if (RunningIndex < 0) ResetChildrenOnEntry();
-
-            for (var i = start; i < Children.Length; i++)
+            for (var i = 0; i < Children.Length; i++)
             {
                 var status = Children[i].Tick(brain, dt, now);
-                if (status == BtStatus.Running)
-                {
-                    RunningIndex = i;
-                    return BtStatus.Running;
-                }
-
-                if (status == BtStatus.Success)
-                {
-                    RunningIndex = -1;
-                    return BtStatus.Success;
-                }
+                if (status == BtStatus.Running) return BtStatus.Running;
+                if (status == BtStatus.Success) return BtStatus.Success;
             }
 
-            RunningIndex = -1;
             return BtStatus.Failure;
         }
     }
@@ -69,26 +47,13 @@ namespace Cs16.Module.Bot.Bt
 
         public override BtStatus Tick(CsBotBrain brain, float dt, float now)
         {
-            var start = RunningIndex >= 0 ? RunningIndex : 0;
-            if (RunningIndex < 0) ResetChildrenOnEntry();
-
-            for (var i = start; i < Children.Length; i++)
+            for (var i = 0; i < Children.Length; i++)
             {
                 var status = Children[i].Tick(brain, dt, now);
-                if (status == BtStatus.Failure)
-                {
-                    RunningIndex = -1;
-                    return BtStatus.Failure;
-                }
-
-                if (status == BtStatus.Running)
-                {
-                    RunningIndex = i;
-                    return BtStatus.Running;
-                }
+                if (status == BtStatus.Failure) return BtStatus.Failure;
+                if (status == BtStatus.Running) return BtStatus.Running;
             }
 
-            RunningIndex = -1;
             return BtStatus.Success;
         }
     }

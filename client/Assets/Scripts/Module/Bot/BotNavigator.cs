@@ -116,7 +116,7 @@ namespace Cs16.Module.Bot
         private bool _geoLockActive;
         private float _geoStandCheckAt;
         private bool _geoStandOk;
-        private int _geoFailRound = -1;
+        private float _geoFailAt = float.NegativeInfinity;
 
         // ---- 卡住自恢复 ----
         private int _stuckStreak;
@@ -3135,8 +3135,8 @@ namespace Cs16.Module.Bot
         /// <summary>脱困失败留痕（每 bot 每回合最多一条）。</summary>
         private void LogGeoFailOnce(Vector3 p)
         {
-            if (_geoFailRound >= 0 && Time.time - _geoFailRound < 30f) return;   // 每回合最多一条（30s 兜底）
-            _geoFailRound = (int)Time.time;
+            if (Time.time - _geoFailAt < 30f) return;   // 同一 bot 30s 最多一条
+            _geoFailAt = Time.time;
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 脱困失败：位置=({p.x:F1},{p.y:F1},{p.z:F1}) 3 格内没有可走且站得住的格" +
                 $"（位图可走={(_map != null && _map.WalkableAt(p.x, p.z))}）→ 冷却 {GeoCooldownSeconds:F0}s 后再试");
