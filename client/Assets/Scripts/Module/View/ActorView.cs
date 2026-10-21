@@ -1788,7 +1788,12 @@ namespace Cs16.Module.View
             if (_texTable == null)
             {
                 _texTable = new Dictionary<string, Texture2D>(128, System.StringComparer.Ordinal);
-                var all = Resources.LoadAll<Texture2D>(CsViewTuning.TexArtRoot);
+                // 整目录取贴图走引擎资源门面。Game.Res.LoadAll 不驻留、不记引用计数
+                // ⇒ 取到的对象由本类持有，不需要（也不能）与之配对 Release。
+                var res = Game.Res;
+                var all = res != null
+                    ? res.LoadAll<Texture2D>(CsViewTuning.TexArtRoot)
+                    : System.Array.Empty<Texture2D>();
                 for (var i = 0; i < all.Length; i++)
                 {
                     if (all[i] == null || string.IsNullOrEmpty(all[i].name)) continue;

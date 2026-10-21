@@ -82,10 +82,10 @@ namespace Cs16.Module.View
         /// <summary>LED 小球的自发光材质（闪烁 = 改 <c>_EmissionColor</c>）。</summary>
         private Material _bombLedMat;
 
-        /// <summary>下一次 LED 亮起的时刻（<c>Time.time</c>）。</summary>
+        /// <summary>下一次 LED 亮起的时刻（<c>CsClock.Now</c>）。</summary>
         private float _bombLedNextToggle;
 
-        /// <summary>本次闪烁熄灭的时刻（<c>Time.time</c>）：在此之前保持亮。</summary>
+        /// <summary>本次闪烁熄灭的时刻（<c>CsClock.Now</c>）：在此之前保持亮。</summary>
         private float _bombLedFlashUntil;
 
         /// <summary>LED 在 C4 顶部的竖直偏移（米）：贴在计时屏旁。</summary>
@@ -424,13 +424,16 @@ namespace Cs16.Module.View
         {
             var path = CsViewTuning.ArtRoot + CsViewTuning.WorldModelPrefix + CsWeapons.C4;
 
-            // 存在性走**同步**探测，不再等 Game.Res 的异步落定：对象池自己就是
-            // Resources.Load 兜底（见 ObjectPool.CreateInstance），"先异步加载进 _prefabs 再 Spawn"
-            // 只是把"下包那一刻的可见性"押在一条与生成无关的异步链上 —— 该链在途回调丢失 /
-            // _pending 卡住时，包会凭空不可见且不留任何日志（正是"看不到匪下的包"的现象）。
+            // 存在性走引擎资源门面的同步查询（Game.Res.Exists：只回答"在不在"，不驻留、不动引用计数）。
             // 已确认缺失的按 LoadPrefab 同款语义不重试。
             if (_missing.Contains(path)) return;
-            if (Resources.Load<GameObject>(path) == null)
+            var res = Game.Res;
+            if (res == null)
+            {
+                _log.Error("res.null", "Game.Res 为 null（CloverRes.Init 未执行？），C4 世界模型存在性无法判定");
+                return;
+            }
+            if (!res.Exists(path))
             {
                 _missing.Add(path);
                 _log.Error("bombview.missing",
@@ -524,14 +527,14 @@ namespace Cs16.Module.View
             _bombLedLight.shadows = LightShadows.None;
 
             _bombLed = led;
-            _bombLedNextToggle = Time.time + BombLedFlashSeconds;
-            _bombLedFlashUntil = Time.time + BombLedFlashSeconds;
+            _bombLedNextToggle = CsClock.Now + BombLedFlashSeconds;
+            _bombLedFlashUntil = CsClock.Now + BombLedFlashSeconds;
         }
 
         /// <summary>
         /// 每帧推进 LED 闪烁：到点换状态，亮/灭用 <see cref="BombLedIntervals"/> 里
         /// 按 <see cref="ICsMatch.BombBeepTier"/> 取的间隔（越接近爆炸闪得越快）。
-        /// 完全用 <c>Time.time</c> 推进 —— 不看 <c>BombBeepSerial</c>，免得被模拟侧的
+        /// 完全用 <c>CsClock.Now</c> 推进 —— 不看 <c>BombBeepSerial</c>，免得被模拟侧的
         /// 响次节奏绑死，掉在地上的包（未 <c>Planted</c>）也照闪。
         /// </summary>
         private void TickBombLed()
@@ -544,7 +547,7 @@ namespace Cs16.Module.View
                 : 1;
             var interval = BombLedIntervals[tier];
 
-            var now = Time.time;
+            var now = CsClock.Now;
             if (now >= _bombLedNextToggle)
             {
                 // 翻到"亮"，排下一个亮起点
@@ -1285,7 +1288,7 @@ namespace Cs16.Module.View
         /// </summary>
         private void SyncViewModel()
         {
-            var cam = Camera.main;
+            var cam = Game.Camera != null ? Game.Camera.Main : null;
             if (cam == null) return;
 
             if (_viewModel != null && _viewModel.Host != cam)

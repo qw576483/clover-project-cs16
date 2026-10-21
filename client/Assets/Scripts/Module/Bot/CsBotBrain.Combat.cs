@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using CloverEngine;
 using Cs16.Core;
 using Cs16.Module.Bot.Bt;
+using BtStatus = Cs16.Module.Bot.Bt.BtStatus;
 using Cs16.Module.Map;
 using Cs16.Module.Match;
 using UnityEngine;

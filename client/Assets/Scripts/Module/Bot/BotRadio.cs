@@ -56,10 +56,13 @@ namespace Cs16.Module.Bot
         /// <summary>常驻的本地 <c>AudioSource</c>（挂在隐藏的常驻对象上，不进网络同步）。</summary>
         private static AudioSource _beepSource;
 
-        /// <summary>原版 wav 的加载结果缓存（静态，全进程只 Load 一次；null 也缓存避免重复 Load）。
+        /// <summary>原版 wav 的加载结果缓存（静态，全进程只取一次；null 也缓存，表示该条没有可播载体）。
         /// 资源路径的真源 = <see cref="CsRadio.VoiceOf"/>（消息号 → <c>Resources/</c> 相对路径），
         /// 本类不再另存一份映射。</summary>
         private static readonly Dictionary<int, AudioClip> RadioClipCache = new Dictionary<int, AudioClip>();
+
+        /// <summary>已向资源门面发起、尚未回包的语音请求（同一条消息只请求一次）。</summary>
+        private static readonly HashSet<int> RadioClipPending = new HashSet<int>();
 
         private readonly long _id;
         private readonly string _name;
@@ -374,35 +377,34 @@ namespace Cs16.Module.Bot
         /// <summary>
         /// 发一条无线电时播一次原版语音。
         ///
-        /// <para>按 <see cref="CsRadio.VoiceOf"/> 给出的资源路径加载原版 wav（结果进
-        /// <see cref="RadioClipCache"/> 缓存，加载失败的 null 也缓存，避免每次发消息都重复 <c>Load</c>）。
-        /// 加载成功 → 复用 <see cref="PlayBeep"/> 的常驻 2D <c>AudioSource</c>
-        /// （spatialBlend=0，耳机里的声音、不按世界位置衰减）<c>PlayOneShot</c> 播放；
-        /// 该条没有语音载体或文件不在盘 → 回退 <see cref="PlayBeep"/> 合成提示音。</para>
+        /// <para>按 <see cref="CsRadio.VoiceOf"/> 给出的资源路径向引擎资源门面要一次（结果进
+        /// <see cref="RadioClipCache"/> 缓存，加载失败的 null 也缓存，避免每次发消息都重复请求）。
+        /// 回包前 / 该条没有载体 / 文件不在盘 → 回退 <see cref="PlayBeep"/> 合成提示音；
+        /// 回包后同一条消息再发就走常驻 2D <c>AudioSource</c>
+        /// （spatialBlend=0，耳机里的声音、不按世界位置衰减）<c>PlayOneShot</c> 播放。</para>
         ///
         /// <para><b>只在本机播，不进网络同步</b>：直接操作本机 <c>AudioSource</c>。</para>
         /// </summary>
         private static void PlayRadio(int id)
         {
             var path = CsRadio.VoiceOf(id);
-            AudioClip clip = null;
-            if (path != null)
+            if (path == null)
             {
-                if (!RadioClipCache.TryGetValue(id, out clip))
-                {
-                    clip = Resources.Load<AudioClip>(path);
-                    RadioClipCache[id] = clip;   // null 也缓存，避免重复 Load
-                }
+                PlayBeep();   // 该条消息没有语音载体
+                return;
+            }
+
+            if (!RadioClipCache.TryGetValue(id, out var clip))
+            {
+                RequestRadioClip(id, path);
+                PlayBeep();   // 回包前先用合成提示音
+                return;
             }
 
             if (clip == null)
             {
-                if (path != null)
-                {
-                    LogThrottle.WarnOnce(Tag, "radio.missing:" + path,
-                        $"无线电语音缺失：Resources/{path}.wav（消息 {id}），回退合成提示音");
-                }
-                PlayBeep();   // 缺文件回退：代码合成的短提示音
+                // 缺失已在 RequestRadioClip 的回包里报过一次（LogThrottle 去重）。
+                PlayBeep();
                 return;
             }
 
@@ -420,6 +422,34 @@ namespace Cs16.Module.Bot
                 $"[RADIO-AUDIO] 消息 {id} 播放原版语音 clip={clip.name} path=Resources/{path}.wav " +
                 $"长度={clip.length:F2}s 音量={_beepSource.volume:F2} isPlaying={_beepSource.isPlaying} " +
                 $"源={_beepSource.gameObject.name}(2D spatialBlend={_beepSource.spatialBlend:F1}) mute={_beepSource.mute}");
+        }
+
+        /// <summary>向引擎资源门面要一次该条消息的语音（同一条消息只请求一次，结果落 <see cref="RadioClipCache"/>）。</summary>
+        private static void RequestRadioClip(int id, string path)
+        {
+            if (!RadioClipPending.Add(id)) return;   // 已在途
+
+            var res = Game.Res;
+            if (res == null)
+            {
+                RadioClipPending.Remove(id);
+                LogThrottle.WarnOnce(Tag, "radio.nores",
+                    "Game.Res 为 null（CloverRes.Init 未执行？），无线电语音不可用（回退合成提示音）");
+                return;
+            }
+
+            res.LoadAsset<AudioClip>(path, clip => OnRadioClipLoaded(id, path, clip));
+        }
+
+        private static void OnRadioClipLoaded(int id, string path, AudioClip clip)
+        {
+            RadioClipPending.Remove(id);
+            RadioClipCache[id] = clip;   // null 也缓存：该条没有可播的语音载体
+
+            if (clip != null) return;
+
+            LogThrottle.WarnOnce(Tag, "radio.missing:" + path,
+                $"无线电语音缺失：Resources/{path}.wav（消息 {id}），回退合成提示音");
         }
 
         /// <summary>

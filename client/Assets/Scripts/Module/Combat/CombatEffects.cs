@@ -30,10 +30,11 @@ namespace Cs16.Module.Combat
     /// <see cref="CsCombatTuning.MuzzleFlashSize"/> / <see cref="CsCombatTuning.MuzzleFlashDuration"/>。
     /// 点光是第一人称里最有效的"开枪了"读感（墙面会被照亮）。</para>
     ///
-    /// <para><b>为什么不用引擎对象池（<c>Game.Pool</c>）</b>：引擎的对象池是"按预制体 key 实例化"
-    /// （内部走 <c>Resources.Load&lt;GameObject&gt;(key)</c>），而本模块的产出路径里没有、也不该有预制体
-    /// （<c>Resources/UI/{类名}.prefab</c> 归 UI 生成器写）。key 缺失时引擎会**每次调用打一条 Error**，
-    /// 高频路径上等于刷屏；所以这里自带一个极小特效池（<c>SetActive</c> 复用），语义与对象池一致。</para>
+    /// <para><b>物件来自引擎对象池</b>：本模块的产出路径里没有、也不该有预制体
+    /// （<c>Resources/UI/{类名}.prefab</c> 归 UI 生成器写）⇒ 每个形状向 <c>Game.Pool</c> 注册一个
+    /// **代码工厂**（<c>IObjectPool.Register</c>），由池负责实例化、挂父级、命名与归还；
+    /// 复用策略（同形状 + 同颜色的空闲槽位、软上限 <see cref="SoftPoolLimit"/>）仍在本类，
+    /// 因为每个物件的寿命 / 帧序列 / 速度是表现状态，不属于池。</para>
     ///
     /// <para><b>几何来源</b>：球/方块走 <c>GameObject.CreatePrimitive</c>（Unity 内置网格），
     /// 贴片走 <c>SpriteRenderer</c>。贴片的着色器有两档，两档都保证"一定被打进包"
@@ -47,6 +48,9 @@ namespace Cs16.Module.Combat
     internal sealed class CombatEffects
     {
         private const string RootName = "CsCombatFX";
+
+        /// <summary>对象池里本模块的池分组（切场景时随组清理）。</summary>
+        private const string PoolGroup = "CS16FX";
 
         /// <summary>池中同类特效的软上限（超出即复用最久的一个，不会无限增长）。</summary>
         private const int SoftPoolLimit = 256;
@@ -229,20 +233,75 @@ namespace Cs16.Module.Combat
             Object.DontDestroyOnLoad(go);
             _root = go.transform;
 
+            EnsureFactories();
             RequestSprites();
+        }
+
+        /// <summary>把每个形状的"程序化造物"注册成引擎对象池的代码工厂（本模块没有预制体）。</summary>
+        private void EnsureFactories()
+        {
+            var pool = Game.Pool;
+            if (pool == null) return;
+
+            for (var s = Shape.Sphere; s <= Shape.Smoke; s++)
+            {
+                var shape = s;                       // 闭包捕获：循环变量会被共享
+                var key = PoolKeyOf(shape);
+                if (pool.IsRegistered(key)) continue;
+                pool.Register(key, () => BuildObject(shape));
+            }
+        }
+
+        /// <summary>形状 → 池键 / 节点名（池内对象按 key 命名，这里再改回可读名便于排障）。</summary>
+        private static string PoolKeyOf(Shape shape)
+        {
+            switch (shape)
+            {
+                case Shape.Sphere: return "CS16FX/Sphere";
+                case Shape.Cube: return "CS16FX/Cube";
+                case Shape.Sprite: return "CS16FX/Sprite";
+                case Shape.Mesh: return "CS16FX/Shell";
+                default: return "CS16FX/Smoke";
+            }
+        }
+
+        private static string NodeNameOf(Shape shape)
+        {
+            switch (shape)
+            {
+                case Shape.Sphere: return "FX_Sphere";
+                case Shape.Cube: return "FX_Cube";
+                case Shape.Sprite: return "FX_Sprite";
+                case Shape.Mesh: return "FX_Shell";
+                default: return "FX_Smoke";
+            }
+        }
+
+        /// <summary>把池里的一件物件还给池（池不可用时退回销毁）。</summary>
+        private static void ReleaseGo(GameObject go)
+        {
+            if (go == null) return;
+            var pool = Game.Pool;
+            if (pool != null) pool.Despawn(go);
+            else Object.Destroy(go);
         }
 
         /// <summary>销毁全部特效物件（比赛结束 / 模块销毁时）。</summary>
         public void Dispose()
         {
+            var pool = Game.Pool;
             for (var i = 0; i < _items.Count; i++)
             {
-                // 先销毁本物件自己克隆的材质，再销毁物件（Unity 不会跟着 GameObject 释放 renderer.material）。
+                // 先销毁本物件自己克隆的材质（Unity 不会跟着 GameObject 释放 renderer.material）。
                 if (_items[i].OwnedMaterial != null) Object.Destroy(_items[i].OwnedMaterial);
-                if (_items[i].Go != null) Object.Destroy(_items[i].Go);
+                // 池不可用时没有别的东西会收这件物件，逐个销毁。
+                if (pool == null && _items[i].Go != null) Object.Destroy(_items[i].Go);
             }
             _items.Clear();
             _shells.Clear();
+
+            // 本模块的池按分组整组清理：对象与池条目一起走，不留悬挂引用。
+            if (pool != null) pool.ClearGroup(PoolGroup);
 
             if (_root != null)
             {
@@ -831,7 +890,7 @@ namespace Cs16.Module.Combat
                     // 「可见核心宽」= 整块 × 载体实测的核心占比（`{shot*`：alpha≥32 的墨迹水平跨度 4~5 texel / 16）
                     // —— 并给出它在**当前这一发的实际距离**上的屏幕投影像素数
                     // （口径：0.127 m 的墨迹在 5 m 处约 24 px）。距离用相机（弹痕的观察者恒是本地相机）。
-                    var cam = Camera.main;
+                    var cam = Game.Camera != null ? Game.Camera.Main : null;
                     var dist = cam != null ? Vector3.Distance(cam.transform.position, point) : 0f;
                     // 可见核心宽按**这一发实际用的族尺寸**算（碎裂族的 48 texel 贴图核心占比与 {shot* 不同，
                     // 故只用整块宽度乘占比这一个口径，不写死）。
@@ -1230,7 +1289,7 @@ namespace Cs16.Module.Combat
                 item.Go.SetActive(false);
                 return;
             }
-            Object.Destroy(go);
+            ReleaseGo(go);
         }
 
         /// <summary>手雷体 / 烟雾球这类"常驻一段时间"的视觉：颜色与尺寸自定义。</summary>
@@ -1250,7 +1309,7 @@ namespace Cs16.Module.Combat
         {
             if (dt < 0f) dt = 0f;
 
-            var cam = Camera.main;
+            var cam = Game.Camera != null ? Game.Camera.Main : null;
             for (var i = 0; i < _items.Count; i++)
             {
                 var item = _items[i];
@@ -1499,68 +1558,84 @@ namespace Cs16.Module.Combat
                 return null;
             }
 
+            Init();
+
+            var pool = Game.Pool;
+            if (pool == null)
+            {
+                _log.Error("fx.nopool", "Game.Pool 为 null（Game.Launch 未执行？），特效无法生成");
+                return null;
+            }
+
+            EnsureFactories();
+            var go = pool.Spawn(PoolKeyOf(shape), _root, PoolGroup);
+            if (go == null)
+            {
+                _log.Error("fx.spawn.fail",
+                    $"特效物件生成失败（对象池返回 null）：{PoolKeyOf(shape)}（形状 {shape}）");
+                return null;
+            }
+            go.name = NodeNameOf(shape);
+
+            var item = Bind(go, shape);
+            item.Color = color;
+            ApplyColor(item, color);
+            _items.Add(item);
+            return item;
+        }
+
+        /// <summary>
+        /// 池的代码工厂：只造物件与所需组件（形状 / 材质实例 / 点光 / 编辑器隐藏标记），
+        /// 颜色与寿命由 <see cref="Bind"/> / <see cref="Acquire"/> 给。
+        /// </summary>
+        private GameObject BuildObject(Shape shape)
+        {
             GameObject go;
-            MeshRenderer renderer = null;
-            SpriteRenderer sprite = null;
-            MeshFilter filter = null;
-            Material owned = null;          // 本物件克隆的材质（贴片除外，见 EffectItem.OwnedMaterial）
 
             if (shape == Shape.Smoke)
             {
-                go = CreateSmokeVisual(color);
+                go = CreateSmokeVisual(SmokeColor);
             }
             else if (shape == Shape.Sprite)
             {
                 go = new GameObject("FX_Sprite");      // 贴片走 SpriteRenderer：没有碰撞体、自带 Sprites/Default
-                sprite = go.AddComponent<SpriteRenderer>();
-                sprite.color = color;
+                var sprite = go.AddComponent<SpriteRenderer>();
                 sprite.enabled = false;                // 贴图到位前不显示（绝不画成白块）
-                // 记下贴片自带的材质，池复用回非贴花用途时复位成它（见 Acquire）。
-                if (_spriteMat == null) _spriteMat = sprite.sharedMaterial;
             }
             else if (shape == Shape.Mesh)
             {
                 // 弹壳：几何来自 CsShellModels（原版 mdl 逐点搬运），网格由调用方每次换上。
                 go = new GameObject("FX_Shell");
-                filter = go.AddComponent<MeshFilter>();
-                renderer = go.AddComponent<MeshRenderer>();
+                go.AddComponent<MeshFilter>();
+                var renderer = go.AddComponent<MeshRenderer>();
                 renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                 renderer.receiveShadows = false;
                 // 新建 MeshRenderer 自带的内置 Default-Material（Standard，**一定**被打进包）——
                 // 取一次 .material 得到本实例的克隆，之后换贴图不会影响别的物件。
                 var shellMat = renderer.material;
                 if (shellMat != null) shellMat.color = Color.white;
-                owned = shellMat;
             }
             else
             {
                 var primitive = shape == Shape.Sphere ? PrimitiveType.Sphere : PrimitiveType.Cube;
                 go = GameObject.CreatePrimitive(primitive);
-                if (go == null)
-                {
-                    _log.Error("fx.create.fail", $"CreatePrimitive({primitive}) 失败，特效不可用");
-                    return null;
-                }
-                go.name = shape == Shape.Sphere ? "FX_Sphere" : "FX_Cube";
+                if (go == null) return null;
+                go.name = NodeNameOf(shape);
 
                 // 自建特效不能带碰撞体：否则弹道会打在"火焰/弹道"上（射线命中非角色碰撞体 = 一层墙）。
                 var collider = go.GetComponent<Collider>();
                 if (collider != null) Object.DestroyImmediate(collider);
 
-                renderer = go.GetComponent<MeshRenderer>();
+                var renderer = go.GetComponent<MeshRenderer>();
                 if (renderer != null)
                 {
                     renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
                     renderer.receiveShadows = false;
                     // 取一次 .material 会给本实例克隆一份材质（Unity 语义），随后改颜色不会影响别的物件。
                     var mat = renderer.material;
-                    if (mat != null) mat.color = color;
-                    owned = mat;
+                    if (mat != null) mat.color = Color.white;
                 }
             }
-
-            go.transform.SetParent(_root, false);
-            go.SetActive(false);
 
             // Unity 编辑器会在 Game view 之上给每个 **Light** 画一个「太阳」图标，而枪口点光就在
             // 相机正前方几厘米处 ⇒ 图标被投影成一大块（实测：只把这组宿主设成 HideInHierarchy 后，
@@ -1573,10 +1648,35 @@ namespace Cs16.Module.Combat
             var light = go.AddComponent<Light>();
             light.type = LightType.Point;
             light.shadows = LightShadows.None;
-            light.color = color;
             light.enabled = false;
 
-            var item = new EffectItem
+            go.SetActive(false);
+            return go;
+        }
+
+        /// <summary>把池里出来的物件绑成本类的表现状态（组件只在工厂里加一次，这里只取引用）。</summary>
+        private EffectItem Bind(GameObject go, Shape shape)
+        {
+            var renderer = go.GetComponent<MeshRenderer>();
+            var sprite = go.GetComponent<SpriteRenderer>();
+            var filter = go.GetComponent<MeshFilter>();
+            var light = go.GetComponent<Light>();
+
+            Material owned = null;
+            if (renderer != null)
+            {
+                // 本物件克隆的材质（贴片除外）：Unity 不随 GameObject 一起销毁它，见 Dispose。
+                owned = renderer.material;
+            }
+
+            if (sprite != null)
+            {
+                sprite.enabled = false;
+                // 记下贴片自带的材质，池复用回非贴花用途时复位成它（见 Acquire）。
+                if (_spriteMat == null) _spriteMat = sprite.sharedMaterial;
+            }
+
+            return new EffectItem
             {
                 Go = go,
                 Tr = go.transform,
@@ -1585,11 +1685,28 @@ namespace Cs16.Module.Combat
                 Mesh = filter,
                 Light = light,
                 Shape = shape,
-                Color = color,
                 OwnedMaterial = owned,
             };
-            _items.Add(item);
-            return item;
+        }
+
+        /// <summary>把颜色落到该形状实际参与渲染的部件上（贴片染色 / 材质染色 / 点光颜色 / 烟团每一面）。</summary>
+        private static void ApplyColor(EffectItem item, Color color)
+        {
+            if (item.Sprite != null)
+            {
+                item.Sprite.color = color;
+            }
+            else if (item.OwnedMaterial != null)
+            {
+                item.OwnedMaterial.color = color;
+            }
+            else if (item.Go != null)
+            {
+                var faces = item.Go.GetComponentsInChildren<SpriteRenderer>(true);
+                for (var i = 0; i < faces.Length; i++) faces[i].color = color;
+            }
+
+            if (item.Light != null) item.Light.color = color;
         }
 
         /// <summary>

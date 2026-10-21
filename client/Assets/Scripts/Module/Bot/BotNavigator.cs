@@ -645,9 +645,9 @@ namespace Cs16.Module.Bot
                 dropped++;
                 // 降频口径 = CsBotConst.StuckWarnCooldown（与「跳过不可走的路点」同一个闸：这是
                 // 每个 bot 每次换目标都会碰到的分支，只许按时间降频，不许每次打）。
-                if (Time.time >= _nextSkipLogAt)
+                if (CsClock.Now >= _nextSkipLogAt)
                 {
-                    _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                    _nextSkipLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                     Game.Logger.Warn(Tag,
                         $"{_ownerName} 路线 '{marker}' 第 {i + 1}/{pts.Length} 个路点 " +
                         $"({pts[i].x:F1},{pts[i].y:F1},{pts[i].z:F1}) 站不住（ICsMap.CanStand=false）" +
@@ -752,9 +752,9 @@ namespace Cs16.Module.Bot
                 if (!_astar.CanReach(WalkableCell, cursorCell, cell, AStar.DefaultMaxNodes))
                 {
                     dropped++;
-                    if (Time.time >= _nextSkipLogAt)
+                    if (CsClock.Now >= _nextSkipLogAt)
                     {
-                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        _nextSkipLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                         var c = CellCenter(cell);
                         Game.Logger.Warn(Tag,
                             $"{_ownerName} 路线 '{marker}' 第 {i + 1}/{_route.Count} 个路点 " +
@@ -1115,9 +1115,9 @@ namespace Cs16.Module.Bot
                 if (_map != null && _map.IsLoaded && !_map.WalkableAt(wp.x, wp.z))
                 {
                     // 路点落在墙里/图外 → 跳过。这类是地图标记问题，必须留痕（降频，避免每条路线每帧刷）。
-                    if (Time.time >= _nextSkipLogAt)
+                    if (CsClock.Now >= _nextSkipLogAt)
                     {
-                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        _nextSkipLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                         Game.Logger.Warn(Tag,
                             $"{_ownerName} 跳过不可走的路点 {wp}（路线 '{_marker}'，第 {_index + 1}/{_route.Count} 个）—— " +
                             "多半是地图标记摆进了几何体");
@@ -1133,9 +1133,9 @@ namespace Cs16.Module.Bot
                 //   路线推进到下一个**走得到**的路点（这正是"CT 进点 0 → >0"的前提）。
                 if (_hasUnreachableCell && Game.Map != null && CellOf(Game.Map, wp) == _unreachableCell)
                 {
-                    if (Time.time >= _nextSkipLogAt)
+                    if (CsClock.Now >= _nextSkipLogAt)
                     {
-                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        _nextSkipLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                         var c = CellCenter(_unreachableCell);
                         Game.Logger.Warn(Tag,
                             $"{_ownerName} 跳过**求不出路径**的路点 {wp}（格 {_unreachableCell}，世界 {c.x:F1},{c.z:F1}；" +
@@ -1155,9 +1155,9 @@ namespace Cs16.Module.Bot
                 //   判据与 <see cref="EnsurePath"/> 逐字同一份（<see cref="CanReach"/>），阈值一个都没改。
                 if (SkipUnreachableWaypoint(selfPosition, wp))
                 {
-                    if (Time.time >= _nextSkipLogAt)
+                    if (CsClock.Now >= _nextSkipLogAt)
                     {
-                        _nextSkipLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                        _nextSkipLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                         var cc = CellOf(Game.Map, wp);
                         var wc = CellCenter(cc);
                         Game.Logger.Warn(Tag,
@@ -1458,8 +1458,8 @@ namespace Cs16.Module.Bot
             _stuckEscalate = true;
             _lastStuckDistance = 0f;
 
-            if (Time.time < _nextUnreachableLogAt) return;
-            _nextUnreachableLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+            if (CsClock.Now < _nextUnreachableLogAt) return;
+            _nextUnreachableLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
             var c = CellCenter(to);
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 目标格 {to}（世界 {c.x:F1},{c.z:F1}）**与当前位置不连通**" +
@@ -1541,9 +1541,9 @@ namespace Cs16.Module.Bot
             // ⇒ 退回**我脚下的地面高度**：路径是高度逐格校验过的，下一个拐点通常就在同层或一步之内，
             // "同层"是有界的近似；⛔ 绝不退回 CellCenter 的位图平面 y=0（那是绝对基准，
             // CT/T 出生点两侧能差 3.25 m ⇒ 抬枪朝天）。
-            if (Time.time >= _nextGroundTargetLogAt)
+            if (CsClock.Now >= _nextGroundTargetLogAt)
             {
-                _nextGroundTargetLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                _nextGroundTargetLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                 Game.Logger.Warn(Tag,
                     $"{_ownerName} 目标格 {cell}（世界 {c.x:F1},{c.z:F1}）脚面 + 一个台阶内探不到落脚面" +
                     $"（脚面 y={fromY:F2}）⇒ 该点高度按**同层**（{fromY:F2}）交出，瞄准参照会略偏；" +
@@ -2143,9 +2143,9 @@ namespace Cs16.Module.Bot
             _hasHeightReach = true;
 
             // 退化留痕（非预期分支）：可达集塌成 1 格 ⇒ 扩张一步都没走通，是一条"走不动"的直接证据。
-            if (reach.Count <= 1 && Time.time >= _nextHeightLogAt)
+            if (reach.Count <= 1 && CsClock.Now >= _nextHeightLogAt)
             {
-                _nextHeightLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+                _nextHeightLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
                 Game.Logger.Warn(Tag,
                     $"{_ownerName} 高度一致性层的可达集塌成 {reach.Count} 格：从格 {from}（脚下地面 y={baseY:F3}）" +
                     $"按抬升 ≤ {CsConst.StepUpHeight:F2} 一个邻格都扩张不出去（被高度判死 {blocked} 格，" +
@@ -2294,8 +2294,8 @@ namespace Cs16.Module.Bot
         /// <summary>高度层"这次没生效"的原因（不许静默退化；同一原因按 <see cref="CsBotConst.StuckWarnCooldown"/> 降频）。</summary>
         private void HeightLayerOff(string why, Vector2Int from, Vector3 selfPosition)
         {
-            if (Time.time < _nextHeightLogAt) return;
-            _nextHeightLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+            if (CsClock.Now < _nextHeightLogAt) return;
+            _nextHeightLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 高度一致性层本帧**未生效**（原因：{why}）⇒ 本次求路径只用可走位图（既有行为）。" +
                 $"起点格 {from}，位置 ({selfPosition.x:F1},{selfPosition.y:F1},{selfPosition.z:F1})");
@@ -2429,8 +2429,8 @@ namespace Cs16.Module.Bot
         /// </summary>
         private void WarnPathFailed(Vector3 target, string why)
         {
-            if (Time.time < _nextPathFailLogAt) return;
-            _nextPathFailLogAt = Time.time + CsBotConst.StuckWarnCooldown;
+            if (CsClock.Now < _nextPathFailLogAt) return;
+            _nextPathFailLogAt = CsClock.Now + CsBotConst.StuckWarnCooldown;
 
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 求路径失败（位图不可用 / 目标点不可达）：目标 ({target.x:F1},{target.z:F1})，" +
@@ -3135,8 +3135,8 @@ namespace Cs16.Module.Bot
         /// <summary>脱困失败留痕（每 bot 每回合最多一条）。</summary>
         private void LogGeoFailOnce(Vector3 p)
         {
-            if (Time.time - _geoFailAt < 30f) return;   // 同一 bot 30s 最多一条
-            _geoFailAt = Time.time;
+            if (CsClock.Now - _geoFailAt < 30f) return;   // 同一 bot 30s 最多一条
+            _geoFailAt = CsClock.Now;
             Game.Logger.Warn(Tag,
                 $"{_ownerName} 脱困失败：位置=({p.x:F1},{p.y:F1},{p.z:F1}) 3 格内没有可走且站得住的格" +
                 $"（位图可走={(_map != null && _map.WalkableAt(p.x, p.z))}）→ 冷却 {GeoCooldownSeconds:F0}s 后再试");

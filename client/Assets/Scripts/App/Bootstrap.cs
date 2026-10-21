@@ -33,6 +33,9 @@ namespace Cs16.App
         private const string Tag = "App";
         private const string ResourceRoot = "Assets/Resources";
 
+        /// <summary>帧率上限（见 <see cref="Awake"/>：原版 `fps_max` 出厂 99，这里取 144 兼顾高刷屏）。</summary>
+        private const int TargetFrameRate = 144;
+
         /// <summary>
         /// <c>CloverRes.Init</c> 的参数语义是「**Resources 下的子目录前缀**」，**不是** Assets 路径：
         /// 空串 = 以 Resources 根为根（本工程资源就在 <c>Resources/{MapData,UI,Sound,Art}</c> 下）。
@@ -50,8 +53,14 @@ namespace Cs16.App
         private void Awake()
         {
             // 帧率上限：Unity 默认不限制，打包后会把 GPU 拉到满载、帧时间抖动变大（手感发飘）。
-            // 原版 `fps_max` 出厂 99；这里给 144，兼顾高刷屏与稳定（编辑器里由 vSync 接管，不冲突）。
-            Application.targetFrameRate = 144;
+            // 原版 `fps_max` 出厂 99；这里给 144，兼顾高刷屏与稳定。
+            // 写入只走引擎 FramePacingPolicy.Pin（帧节奏的唯一写点，它同时写 vSync 并读回校验）。
+            if (!FramePacingPolicy.Pin(TargetFrameRate, 0, out var fps, out var vSync, out var pacingError))
+            {
+                Game.Logger?.Warn(Tag,
+                    $"帧节奏未按目标生效：目标 targetFrameRate={TargetFrameRate} vSyncCount=0，" +
+                    $"实际 {fps}/{vSync}" + (pacingError != null ? $"（{pacingError}）" : ""));
+            }
 
             // 编辑器窗口失焦时也要跑帧（否则第一次点 Play 后切出去就会"卡住不动"）。
             // 必须在 Game.Launch 之前（本方法早于 Start），否则 DuplicateInstanceGuard / OwnAudioListener

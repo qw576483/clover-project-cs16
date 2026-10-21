@@ -4,6 +4,7 @@ using Cs16.Core;
 using Cs16.Module.Map;
 using Cs16.Module.Match;
 using Cs16.Module.Bot.Bt;
+using BtStatus = Cs16.Module.Bot.Bt.BtStatus;
 using UnityEngine;
 
 namespace Cs16.Module.Bot
